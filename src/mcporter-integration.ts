@@ -1,5 +1,5 @@
 /**
- * mcporter Integration for nanoclaw-copilot
+ * mcporter Integration for nanoclaw-github-copilot
  *
  * Uses mcporter CLI to manage MCP server connections, auth, and tool calls.
  * mcporter handles OAuth/PRM discovery, token management, and server lifecycle.

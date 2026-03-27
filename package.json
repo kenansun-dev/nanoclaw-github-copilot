@@ -1,5 +1,5 @@
 {
-  "name": "nanoclaw-copilot",
+  "name": "nanoclaw-github-copilot",
   "version": "1.2.19",
   "description": "AI assistant that runs agents in secure containers, powered by GitHub Copilot SDK",
   "type": "module",
@@ -43,7 +43,7 @@
     "node": ">=20"
   },
   "bin": {
-    "nanoclaw": "./bin/nanoclaw"
+    "nanoclaw": "./bin/nanoclaw.js"
   },
   "repository": {
     "type": "git",
@@ -75,6 +75,7 @@
     "install.sh",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "container/agent-runner/package-lock.json"
   ]
 }

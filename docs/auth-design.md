@@ -1,8 +1,8 @@
-# Authentication Design — nanoclaw-copilot
+# Authentication Design — nanoclaw-github-copilot
 
 ## Overview
 
-nanoclaw-copilot uses GitHub Copilot (via `@github/copilot-sdk`) as its AI backend.
+nanoclaw-github-copilot uses GitHub Copilot (via `@github/copilot-sdk`) as its AI backend.
 Authentication requires a GitHub OAuth token (`ghu_...`) which the SDK exchanges
 for short-lived Copilot API tokens at runtime.
 
@@ -63,7 +63,7 @@ OpenClaw's GHC provider (`@mariozechner/pi-ai`):
 4. Caches short-lived token with `expiresAt`
 5. Auto-refreshes when expired
 
-nanoclaw-copilot currently reuses step 2's output and delegates steps 3-5 to the SDK.
+nanoclaw-github-copilot currently reuses step 2's output and delegates steps 3-5 to the SDK.
 
 ## Verified ✅
 

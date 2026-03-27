@@ -10,12 +10,12 @@ set -euo pipefail
 # What it does:
 #   1. Detects OS and architecture
 #   2. Checks/installs Node.js (20+)
-#   3. Installs nanoclaw-copilot via npm
+#   3. Installs nanoclaw-github-copilot via npm
 #   4. Runs nanoclaw init
 #   5. Runs nanoclaw doctor
 # ============================================================
 
-PACKAGE_NAME="nanoclaw-copilot"
+PACKAGE_NAME="nanoclaw-github-copilot"
 MIN_NODE_VERSION=20
 REPO_URL="https://github.com/kenans/nanoclaw-github-copilot"
 

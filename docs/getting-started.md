@@ -4,7 +4,7 @@
 
 ```bash
 # 1. Install
-npm install -g nanoclaw-copilot
+npm install -g nanoclaw-github-copilot
 
 # 2. Initialize workspace
 nanoclaw init

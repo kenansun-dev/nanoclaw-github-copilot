@@ -7,7 +7,7 @@ import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-const PACKAGE_NAME = 'nanoclaw-copilot';
+const PACKAGE_NAME = 'nanoclaw-github-copilot';
 
 interface UpdateResult {
   currentVersion: string;
