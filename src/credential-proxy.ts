@@ -1,14 +1,19 @@
 /**
- * Credential proxy for container isolation.
- * Containers connect here instead of directly to the Anthropic API.
- * The proxy injects real credentials so containers never see them.
+ * Credential proxy for container isolation (Copilot SDK version).
  *
- * Two auth modes:
- *   API key:  Proxy injects x-api-key on every request.
- *   OAuth:    Container CLI exchanges its placeholder token for a temp
- *             API key via /api/oauth/claude_cli/create_api_key.
- *             Proxy injects real OAuth token on that exchange request;
- *             subsequent requests carry the temp key which is valid as-is.
+ * With Copilot SDK, the auth model is different from Anthropic's:
+ * - Copilot CLI handles its own auth via GitHub OAuth (stored credentials)
+ * - For BYOK mode, API keys are passed to the SDK directly
+ *
+ * This proxy now supports two modes:
+ * 1. GitHub auth: Pass GITHUB_TOKEN or GH_TOKEN to the container
+ *    (Copilot CLI uses stored OAuth by default, but we can inject tokens)
+ * 2. BYOK passthrough: Proxy API requests with injected keys for
+ *    custom providers (OpenAI, Anthropic, Azure, etc.)
+ *
+ * For standard Copilot auth, the proxy is optional — Copilot CLI
+ * authenticates directly with GitHub. The proxy is mainly needed for
+ * BYOK scenarios where you don't want keys in the container.
  */
 import { createServer, Server } from 'http';
 import { request as httpsRequest } from 'https';
@@ -17,32 +22,35 @@ import { request as httpRequest, RequestOptions } from 'http';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 
-export type AuthMode = 'api-key' | 'oauth';
-
-export interface ProxyConfig {
-  authMode: AuthMode;
-}
+export type AuthMode = 'github' | 'byok-openai' | 'byok-anthropic';
 
 export function startCredentialProxy(
   port: number,
   host = '127.0.0.1',
 ): Promise<Server> {
   const secrets = readEnvFile([
+    'GITHUB_TOKEN',
+    'GH_TOKEN',
+    'COPILOT_GITHUB_TOKEN',
+    // BYOK keys (optional)
+    'OPENAI_API_KEY',
     'ANTHROPIC_API_KEY',
-    'CLAUDE_CODE_OAUTH_TOKEN',
-    'ANTHROPIC_AUTH_TOKEN',
+    'AZURE_OPENAI_API_KEY',
     'ANTHROPIC_BASE_URL',
   ]);
 
-  const authMode: AuthMode = secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
-  const oauthToken =
-    secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN;
+  // Determine auth mode
+  const authMode: AuthMode =
+    secrets.OPENAI_API_KEY || secrets.AZURE_OPENAI_API_KEY
+      ? 'byok-openai'
+      : secrets.ANTHROPIC_API_KEY
+        ? 'byok-anthropic'
+        : 'github';
 
-  const upstreamUrl = new URL(
-    secrets.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
-  );
-  const isHttps = upstreamUrl.protocol === 'https:';
-  const makeRequest = isHttps ? httpsRequest : httpRequest;
+  // For BYOK Anthropic, use the same upstream proxy as before
+  const anthropicUpstream = secrets.ANTHROPIC_BASE_URL
+    ? new URL(secrets.ANTHROPIC_BASE_URL)
+    : new URL('https://api.anthropic.com');
 
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
@@ -50,62 +58,128 @@ export function startCredentialProxy(
       req.on('data', (c) => chunks.push(c));
       req.on('end', () => {
         const body = Buffer.concat(chunks);
-        const headers: Record<string, string | number | string[] | undefined> =
-          {
+
+        if (authMode === 'github') {
+          // GitHub auth mode: proxy is not needed for standard Copilot auth
+          // Return 200 with info message
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              message: 'GitHub auth mode — Copilot CLI handles auth directly',
+            }),
+          );
+          return;
+        }
+
+        if (authMode === 'byok-anthropic') {
+          // Same as original: proxy to Anthropic with injected key
+          const isHttps = anthropicUpstream.protocol === 'https:';
+          const makeRequest = isHttps ? httpsRequest : httpRequest;
+
+          const headers: Record<
+            string,
+            string | number | string[] | undefined
+          > = {
             ...(req.headers as Record<string, string>),
-            host: upstreamUrl.host,
+            host: anthropicUpstream.host,
             'content-length': body.length,
           };
 
-        // Strip hop-by-hop headers that must not be forwarded by proxies
-        delete headers['connection'];
-        delete headers['keep-alive'];
-        delete headers['transfer-encoding'];
-
-        if (authMode === 'api-key') {
-          // API key mode: inject x-api-key on every request
+          delete headers['connection'];
+          delete headers['keep-alive'];
+          delete headers['transfer-encoding'];
           delete headers['x-api-key'];
           headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
-        } else {
-          // OAuth mode: replace placeholder Bearer token with the real one
-          // only when the container actually sends an Authorization header
-          // (exchange request + auth probes). Post-exchange requests use
-          // x-api-key only, so they pass through without token injection.
-          if (headers['authorization']) {
-            delete headers['authorization'];
-            if (oauthToken) {
-              headers['authorization'] = `Bearer ${oauthToken}`;
+
+          const upstream = makeRequest(
+            {
+              hostname: anthropicUpstream.hostname,
+              port: anthropicUpstream.port || (isHttps ? 443 : 80),
+              path: req.url,
+              method: req.method,
+              headers,
+            } as RequestOptions,
+            (upRes) => {
+              res.writeHead(upRes.statusCode!, upRes.headers);
+              upRes.pipe(res);
+            },
+          );
+
+          upstream.on('error', (err) => {
+            logger.error(
+              { err, url: req.url },
+              'Credential proxy upstream error',
+            );
+            if (!res.headersSent) {
+              res.writeHead(502);
+              res.end('Bad Gateway');
             }
-          }
+          });
+
+          upstream.write(body);
+          upstream.end();
+          return;
         }
 
-        const upstream = makeRequest(
-          {
-            hostname: upstreamUrl.hostname,
-            port: upstreamUrl.port || (isHttps ? 443 : 80),
-            path: req.url,
-            method: req.method,
-            headers,
-          } as RequestOptions,
-          (upRes) => {
-            res.writeHead(upRes.statusCode!, upRes.headers);
-            upRes.pipe(res);
-          },
-        );
+        if (authMode === 'byok-openai') {
+          // OpenAI/Azure BYOK: proxy to OpenAI-compatible endpoint with injected key
+          const openaiBase = secrets.AZURE_OPENAI_API_KEY
+            ? new URL(
+                process.env.AZURE_OPENAI_ENDPOINT || 'https://api.openai.com',
+              )
+            : new URL('https://api.openai.com');
 
-        upstream.on('error', (err) => {
-          logger.error(
-            { err, url: req.url },
-            'Credential proxy upstream error',
-          );
-          if (!res.headersSent) {
-            res.writeHead(502);
-            res.end('Bad Gateway');
+          const isHttps = openaiBase.protocol === 'https:';
+          const makeRequest = isHttps ? httpsRequest : httpRequest;
+
+          const headers: Record<
+            string,
+            string | number | string[] | undefined
+          > = {
+            ...(req.headers as Record<string, string>),
+            host: openaiBase.host,
+            'content-length': body.length,
+          };
+
+          delete headers['connection'];
+          delete headers['keep-alive'];
+          delete headers['transfer-encoding'];
+          delete headers['authorization'];
+
+          if (secrets.AZURE_OPENAI_API_KEY) {
+            headers['api-key'] = secrets.AZURE_OPENAI_API_KEY;
+          } else {
+            headers['authorization'] = `Bearer ${secrets.OPENAI_API_KEY}`;
           }
-        });
 
-        upstream.write(body);
-        upstream.end();
+          const upstream = makeRequest(
+            {
+              hostname: openaiBase.hostname,
+              port: openaiBase.port || (isHttps ? 443 : 80),
+              path: req.url,
+              method: req.method,
+              headers,
+            } as RequestOptions,
+            (upRes) => {
+              res.writeHead(upRes.statusCode!, upRes.headers);
+              upRes.pipe(res);
+            },
+          );
+
+          upstream.on('error', (err) => {
+            logger.error(
+              { err, url: req.url },
+              'Credential proxy upstream error',
+            );
+            if (!res.headersSent) {
+              res.writeHead(502);
+              res.end('Bad Gateway');
+            }
+          });
+
+          upstream.write(body);
+          upstream.end();
+        }
       });
     });
 
@@ -120,6 +194,13 @@ export function startCredentialProxy(
 
 /** Detect which auth mode the host is configured for. */
 export function detectAuthMode(): AuthMode {
-  const secrets = readEnvFile(['ANTHROPIC_API_KEY']);
-  return secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
+  const secrets = readEnvFile([
+    'ANTHROPIC_API_KEY',
+    'OPENAI_API_KEY',
+    'AZURE_OPENAI_API_KEY',
+  ]);
+  if (secrets.OPENAI_API_KEY || secrets.AZURE_OPENAI_API_KEY)
+    return 'byok-openai';
+  if (secrets.ANTHROPIC_API_KEY) return 'byok-anthropic';
+  return 'github';
 }

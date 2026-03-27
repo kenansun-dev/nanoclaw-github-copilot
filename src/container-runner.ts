@@ -4,8 +4,10 @@
  */
 import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
+import { paths as wsPaths, resolveWorkspace } from './workspace.js';
 import {
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
@@ -41,6 +43,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  model?: string;
 }
 
 export interface ContainerOutput {
@@ -129,15 +132,8 @@ function buildVolumeMounts(
       JSON.stringify(
         {
           env: {
-            // Enable agent swarms (subagent orchestration)
-            // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
-            CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-            // Load CLAUDE.md from additional mounted directories
-            // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
-            CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-            // Enable Claude's memory feature (persists user preferences between sessions)
-            // https://code.claude.com/docs/en/memory#manage-auto-memory
-            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+            // Copilot SDK settings can be configured here
+            // Model selection, tool configuration, etc.
           },
         },
         null,
@@ -160,6 +156,21 @@ function buildVolumeMounts(
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
+    readonly: false,
+  });
+
+  // GHC CLI stores sessions in ~/.copilot/ (not ~/.claude/)
+  // Mount a persistent directory so sessions survive container restarts
+  const copilotSessionsDir = path.join(
+    DATA_DIR,
+    'sessions',
+    group.folder,
+    '.copilot',
+  );
+  fs.mkdirSync(copilotSessionsDir, { recursive: true });
+  mounts.push({
+    hostPath: copilotSessionsDir,
+    containerPath: '/home/node/.copilot',
     readonly: false,
   });
 
@@ -209,6 +220,36 @@ function buildVolumeMounts(
     mounts.push(...validatedMounts);
   }
 
+  // Mount workspace skills as read-only skill directory
+  const skillsDir = wsPaths.skills;
+  if (fs.existsSync(skillsDir)) {
+    mounts.push({
+      hostPath: skillsDir,
+      containerPath: '/workspace/skills',
+      readonly: true,
+    });
+  }
+
+  // Mount workspace mcp.json as read-only MCP config
+  const mcpConfigPath = wsPaths.mcpConfig;
+  if (fs.existsSync(mcpConfigPath)) {
+    mounts.push({
+      hostPath: mcpConfigPath,
+      containerPath: '/workspace/mcp.json',
+      readonly: true,
+    });
+  }
+
+  // Mount mcporter config directory for MCP server management skill
+  const mcporterDir = path.join(resolveWorkspace(), 'mcporter');
+  if (fs.existsSync(mcporterDir)) {
+    mounts.push({
+      hostPath: mcporterDir,
+      containerPath: '/workspace/mcporter',
+      readonly: false, // agent may need to add/auth servers
+    });
+  }
+
   return mounts;
 }
 
@@ -221,21 +262,57 @@ function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Route API traffic through the credential proxy (containers never see real secrets)
-  args.push(
-    '-e',
-    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-  );
-
-  // Mirror the host's auth method with a placeholder value.
-  // API key mode: SDK sends x-api-key, proxy replaces with real key.
-  // OAuth mode:   SDK exchanges placeholder token for temp API key,
-  //               proxy injects real OAuth token on that exchange request.
+  // Auth: Copilot SDK uses GitHub OAuth by default (stored credentials).
+  // For BYOK mode, route API traffic through the credential proxy.
   const authMode = detectAuthMode();
-  if (authMode === 'api-key') {
+  if (authMode === 'github') {
+    // GitHub auth: pass token so Copilot CLI can authenticate
+    // The token is needed for the CLI to access the Copilot API.
+    // In production, Copilot CLI uses its own stored OAuth flow.
+    let ghToken =
+      process.env.GITHUB_TOKEN ||
+      process.env.GH_TOKEN ||
+      process.env.COPILOT_GITHUB_TOKEN;
+
+    // Fallback: read from OpenClaw auth profile
+    if (!ghToken) {
+      try {
+        const profilePath = path.join(
+          process.env.HOME || '/root',
+          '.openclaw/agents/main/agent/auth-profiles.json',
+        );
+        if (fs.existsSync(profilePath)) {
+          const profiles = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
+          for (const profile of Object.values(profiles.profiles || {})) {
+            const p = profile as { provider?: string; token?: string };
+            if (p.provider === 'github-copilot' && p.token) {
+              ghToken = p.token;
+              break;
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (ghToken) {
+      args.push('-e', `COPILOT_GITHUB_TOKEN=${ghToken}`);
+    }
+  } else if (authMode === 'byok-anthropic') {
+    // BYOK Anthropic: route through credential proxy
+    args.push(
+      '-e',
+      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+    );
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
-  } else {
-    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+  } else if (authMode === 'byok-openai') {
+    // BYOK OpenAI/Azure: route through credential proxy
+    args.push(
+      '-e',
+      `OPENAI_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+    );
+    args.push('-e', 'OPENAI_API_KEY=placeholder');
   }
 
   // Runtime-specific args for host gateway resolution
@@ -403,9 +480,11 @@ export async function runContainerAgent(
     let timedOut = false;
     let hadStreamingOutput = false;
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
-    // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
-    // graceful _close sentinel has time to trigger before the hard kill fires.
-    const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
+    // idleTimeout <= 0 means never kill — container stays alive forever
+    const neverTimeout = IDLE_TIMEOUT <= 0;
+    const timeoutMs = neverTimeout
+      ? 0
+      : Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
     const killOnTimeout = () => {
       timedOut = true;
@@ -424,16 +503,19 @@ export async function runContainerAgent(
       });
     };
 
-    let timeout = setTimeout(killOnTimeout, timeoutMs);
+    let timeout: ReturnType<typeof setTimeout> | null = neverTimeout
+      ? null
+      : setTimeout(killOnTimeout, timeoutMs);
 
     // Reset the timeout whenever there's activity (streaming output)
     const resetTimeout = () => {
-      clearTimeout(timeout);
+      if (neverTimeout) return;
+      if (timeout) clearTimeout(timeout);
       timeout = setTimeout(killOnTimeout, timeoutMs);
     };
 
     container.on('close', (code) => {
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
       const duration = Date.now() - startTime;
 
       if (timedOut) {
@@ -638,7 +720,7 @@ export async function runContainerAgent(
     });
 
     container.on('error', (err) => {
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
       logger.error(
         { group: group.name, containerName, error: err },
         'Container spawn error',
@@ -694,7 +776,7 @@ export function writeGroupsSnapshot(
   groupFolder: string,
   isMain: boolean,
   groups: AvailableGroup[],
-  _registeredJids: Set<string>,
+  registeredJids: Set<string>,
 ): void {
   const groupIpcDir = resolveGroupIpcPath(groupFolder);
   fs.mkdirSync(groupIpcDir, { recursive: true });
