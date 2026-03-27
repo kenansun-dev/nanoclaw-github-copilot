@@ -33,6 +33,75 @@ curl -fsSL https://nanoclaw.dev/install-docker-sandboxes-windows.sh | bash
 
 <p align="center"><a href="https://nanoclaw.dev/blog/nanoclaw-docker-sandboxes">Read the announcement →</a>&nbsp; · &nbsp;<a href="docs/docker-sandboxes.md">Manual setup guide →</a></p>
 
+
+---
+
+## 🔄 NanoClaw GitHub Copilot Edition
+
+This is a fork of [NanoClaw](https://github.com/qwibitai/nanoclaw) that replaces Claude Code with **GitHub Copilot SDK** as the agent runtime.
+
+### What's different from original NanoClaw
+
+| Feature | Original NanoClaw | This Fork |
+|---|---|---|
+| **Agent runtime** | Claude Code (Anthropic) | GitHub Copilot SDK |
+| **Auth provider** | Anthropic API key | GitHub Copilot (OpenClaw profile / SSO / token) |
+| **Workspace** | Project-relative config | `~/.nanoclaw/` workspace with `nanoclaw.json` |
+| **CLI** | Through Claude Code `/setup` | `nanoclaw` CLI (init, start, stop, doctor, etc.) |
+| **Teams channel** | Not included | ✅ Built-in with cert + secret auth |
+| **MCP OAuth** | Via Claude Code | Custom PRM discovery + device code flow |
+| **Config** | Code-based (.env only) | `nanoclaw.json` — declarative config file |
+| **Chat pairing** | Manual DB edit | CLI (`nanoclaw chat add`) + config + auto-approve |
+
+### Quick start
+
+```bash
+# Install dependencies
+npm install
+
+# Initialize workspace
+npx tsx bin/nanoclaw.ts init
+
+# Check environment
+npx tsx bin/nanoclaw.ts doctor
+
+# Build agent container
+npx tsx bin/nanoclaw.ts sandbox build
+
+# Start
+npx tsx bin/nanoclaw.ts start
+```
+
+### Workspace
+
+All config lives in `~/.nanoclaw/`:
+
+```
+~/.nanoclaw/
+├── nanoclaw.json     Main config
+├── .env              Credentials
+├── AGENT.md          Agent personality
+├── skills/           Custom skills
+├── state/            Runtime data
+├── logs/             Logs
+└── docs/             Documentation
+```
+
+### CLI commands
+
+```
+nanoclaw init          Initialize workspace
+nanoclaw start/stop    Service management
+nanoclaw doctor        Check dependencies
+nanoclaw config        View/edit config
+nanoclaw provider      Auth management
+nanoclaw channel       Channel management
+nanoclaw chat          Chat pairing
+nanoclaw sandbox       Container management
+```
+
+See [docs/getting-started.md](docs/getting-started.md) for full setup guide.
+
 ---
 
 ## Why I Built NanoClaw
