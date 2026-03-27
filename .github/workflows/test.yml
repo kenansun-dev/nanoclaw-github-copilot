@@ -28,4 +28,4 @@ jobs:
         run: npm test
 
       - name: Build agent-runner
-        run: cd container/agent-runner && npm ci && npm run build
+        run: cd container/agent-runner && npm install && npm run build
