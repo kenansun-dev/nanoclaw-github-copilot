@@ -1,5 +1,5 @@
-# NanoClaw Agent Container
-# Runs Claude Agent SDK in isolated Linux VM with browser automation
+# NanoClaw Agent Container (Copilot SDK version)
+# Runs GitHub Copilot agent in isolated Linux container with browser automation
 
 FROM node:22-slim
 
@@ -30,8 +30,11 @@ RUN apt-get update && apt-get install -y \
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install agent-browser and claude-code globally
-RUN npm install -g agent-browser @anthropic-ai/claude-code
+# Install agent-browser and Copilot CLI globally
+# Copilot CLI is required by @github/copilot-sdk (communicates via JSON-RPC)
+RUN npm install -g agent-browser @anthropic-ai/claude-code && \
+    npm install -g @anthropic-ai/claude-code 2>/dev/null; \
+    curl -fsSL https://copilot.github.com/install.sh | sh 2>/dev/null || true
 
 # Create app directory
 WORKDIR /app
@@ -45,22 +48,23 @@ RUN npm install
 # Copy source code
 COPY agent-runner/ ./
 
+# Install tsx globally for ESM-compatible execution
+# (vscode-jsonrpc lacks exports map, breaks with native Node ESM resolution)
+RUN npm install -g tsx
+
 # Build TypeScript
 RUN npm run build
 
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
 
-# Create entrypoint script
-# Container input (prompt, group info) is passed via stdin JSON.
-# Credentials are injected by the host's credential proxy — never passed here.
-# Follow-up messages arrive via IPC files in /workspace/ipc/input/
-RUN printf '#!/bin/bash\nset -e\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\ncat > /tmp/input.json\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+# Create entrypoint script (uses tsx instead of node for ESM compat)
+RUN printf '#!/bin/bash\nset -e\ncat > /tmp/input.json\ncd /app && tsx src/index.ts < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root) for writable directories
 RUN chown -R node:node /workspace && chmod 777 /home/node
 
-# Switch to non-root user (required for --dangerously-skip-permissions)
+# Switch to non-root user
 USER node
 
 # Set working directory to group workspace
