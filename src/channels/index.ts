@@ -8,5 +8,9 @@
 // slack
 
 // telegram
+import './telegram.js';
+
+// teams
+import './teams.js';
 
 // whatsapp
