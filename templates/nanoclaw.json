@@ -1,0 +1,43 @@
+{
+  "assistant": {
+    "name": "Andy"
+  },
+  "providers": {
+    "github-copilot": {
+      "model": "gpt-4o-mini",
+      "auth": "sso"
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": false
+    },
+    "teams": {
+      "enabled": false
+    }
+  },
+  "chats": {},
+  "mcp": {
+    "servers": {}
+  },
+  "skills": {
+    "directories": [
+      "./skills"
+    ],
+    "disabled": []
+  },
+  "sandbox": {
+    "runtime": "docker",
+    "image": "nanoclaw-agent:latest",
+    "timeout": 1800000,
+    "maxConcurrent": 5,
+    "idleTimeout": -1
+  },
+  "security": {
+    "autoApproveChats": false
+  },
+  "credentialProxy": {
+    "port": 3001
+  },
+  "logLevel": "info"
+}

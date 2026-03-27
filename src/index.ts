@@ -8,6 +8,7 @@ import {
   POLL_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
+  getConfig,
 } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
@@ -33,6 +34,7 @@ import {
   getAllTasks,
   getMessagesSince,
   getNewMessages,
+  getRegisteredGroup,
   getRouterState,
   initDatabase,
   setRegisteredGroup,
@@ -319,6 +321,9 @@ async function runAgent(
         chatJid,
         isMain,
         assistantName: ASSISTANT_NAME,
+        model: getConfig().providers['github-copilot']?.model as
+          | string
+          | undefined,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -335,12 +340,54 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
+
+      // Send error feedback to user
+      try {
+        const errMsg = output.error || 'Unknown error';
+        let userMessage = '\u26a0\ufe0f Unable to process your message.';
+        if (errMsg.includes('docker') || errMsg.includes('Docker')) {
+          userMessage +=
+            ' Docker is not running or not installed. Run "nanoclaw doctor" to check.';
+        } else if (errMsg.includes('timeout')) {
+          userMessage += ' The agent timed out processing your request.';
+        } else {
+          userMessage += ' Error: ' + errMsg.slice(0, 200);
+        }
+        const errChannel = findChannel(channels, chatJid);
+        if (errChannel) await errChannel.sendMessage(chatJid, userMessage);
+      } catch {
+        // best-effort
+      }
+
       return 'error';
     }
 
     return 'success';
-  } catch (err) {
+  } catch (err: any) {
     logger.error({ group: group.name, err }, 'Agent error');
+
+    // Send error feedback to user instead of failing silently
+    try {
+      const errMsg = err?.message || String(err);
+      let userMessage = '\u26a0\ufe0f Unable to process your message.';
+      if (
+        errMsg.includes('docker') ||
+        errMsg.includes('ENOENT') ||
+        errMsg.includes('spawn')
+      ) {
+        userMessage +=
+          ' Docker may not be running or installed. Run "nanoclaw doctor" to check.';
+      } else if (errMsg.includes('timeout')) {
+        userMessage += ' The agent timed out processing your request.';
+      } else {
+        userMessage += ` Error: ${errMsg.slice(0, 200)}`;
+      }
+      const errChannel = findChannel(channels, chatJid);
+      if (errChannel) await errChannel.sendMessage(chatJid, userMessage);
+    } catch {
+      // best-effort — don't fail on the error message itself
+    }
+
     return 'error';
   }
 }
@@ -464,9 +511,25 @@ function recoverPendingMessages(): void {
   }
 }
 
+let containerRuntimeAvailable = false;
+
 function ensureContainerSystemRunning(): void {
-  ensureContainerRuntimeRunning();
-  cleanupOrphans();
+  try {
+    ensureContainerRuntimeRunning();
+    containerRuntimeAvailable = true;
+    cleanupOrphans();
+  } catch (err: any) {
+    containerRuntimeAvailable = false;
+    logger.warn(
+      { err: err.message },
+      'Container runtime not available. Service will start but message processing will fail. Run "nanoclaw doctor" to diagnose.',
+    );
+    console.warn(
+      '\n  \u26a0\ufe0f  WARNING: Docker is not running or not installed.',
+    );
+    console.warn('  Messages will not be processed until Docker is available.');
+    console.warn('  Run "nanoclaw doctor" to check your setup.\n');
+  }
 }
 
 async function main(): Promise<void> {
@@ -474,6 +537,17 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+
+  // Sync chats from nanoclaw.json config into DB
+  try {
+    const { loadConfig } = await import('./config-loader.js');
+    const { syncChatsFromConfig } = await import('./chat-manager.js');
+    const config = loadConfig();
+    syncChatsFromConfig(config);
+  } catch (err) {
+    logger.debug({ err }, 'Chat sync from config skipped');
+  }
+
   restoreRemoteControl();
 
   // Start credential proxy (containers route API calls through this)
