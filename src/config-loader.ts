@@ -10,14 +10,12 @@ import { paths, workspacePath } from './workspace.js';
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface NanoclawConfig {
-  assistant: {
-    name: string;
-    triggerWord: string;
-    hasOwnNumber: boolean;
-  };
   agents: {
     defaults: {
       model: string; // "provider/model" format, e.g. "github-copilot/claude-sonnet-4"
+      name: string;
+      triggerWord: string;
+      hasOwnNumber: boolean;
     };
   };
   channels: {
@@ -85,14 +83,12 @@ export interface NanoclawConfig {
 // ─── Defaults ────────────────────────────────────────────────────────────────
 
 const DEFAULTS: NanoclawConfig = {
-  assistant: {
-    name: 'Andy',
-    triggerWord: '@Andy',
-    hasOwnNumber: false,
-  },
   agents: {
     defaults: {
       model: 'github-copilot/claude-sonnet-4',
+      name: 'Andy',
+      triggerWord: '@Andy',
+      hasOwnNumber: false,
     },
   },
   channels: {
@@ -114,7 +110,7 @@ const DEFAULTS: NanoclawConfig = {
     timeout: 1800000,
     maxOutputSize: 10485760,
     maxConcurrent: 5,
-    idleTimeout: -1,
+    idleTimeout: 0,
   },
   chats: {},
   pairing: { mode: 'disabled' },

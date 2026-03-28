@@ -19,7 +19,7 @@ describe('config-loader', () => {
 
   it('loadConfig returns defaults when no config file', () => {
     const config = loadConfig();
-    expect(config.assistant.name).toBe('Andy');
+    expect(config.agents.defaults.name).toBe('Andy');
     expect(config.sandbox.image).toBe('nanoclaw-agent:latest');
     expect(config.channels.telegram.enabled).toBe(false);
     expect(config.logLevel).toBe('info');
@@ -29,13 +29,13 @@ describe('config-loader', () => {
     fs.writeFileSync(
       path.join(tmpDir, 'nanoclaw.json'),
       JSON.stringify({
-        assistant: { name: 'Bob' },
+        agents: { defaults: { name: 'Bob' } },
         channels: { telegram: { enabled: true } },
       }),
     );
     const config = loadConfig();
-    expect(config.assistant.name).toBe('Bob');
-    expect(config.assistant.triggerWord).toBe('@Andy'); // default preserved
+    expect(config.agents.defaults.name).toBe('Bob');
+    expect(config.agents.defaults.triggerWord).toBe('@Andy'); // default preserved
     expect(config.channels.telegram.enabled).toBe(true);
   });
 

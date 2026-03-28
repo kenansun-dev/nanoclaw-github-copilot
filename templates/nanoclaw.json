@@ -1,10 +1,8 @@
 {
-  "assistant": {
-    "name": "Andy"
-  },
   "agents": {
     "defaults": {
-      "model": "github-copilot/claude-sonnet-4"
+      "model": "github-copilot/claude-sonnet-4",
+      "name": "Andy"
     }
   },
   "channels": {
@@ -30,7 +28,7 @@
     "image": "nanoclaw-agent:latest",
     "timeout": 1800000,
     "maxConcurrent": 5,
-    "idleTimeout": -1
+    "idleTimeout": 0
   },
   "security": {
     "autoApproveChats": false

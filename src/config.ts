@@ -30,12 +30,12 @@ export const IPC_POLL_INTERVAL = 1000;
 
 // These are getters so they reflect config changes
 export function getAssistantName(): string {
-  return _config.assistant.name;
+  return _config.agents.defaults.name;
 }
 
 // Keep backward compat as constants (evaluated at import time)
-export const ASSISTANT_NAME = _config.assistant.name;
-export const ASSISTANT_HAS_OWN_NUMBER = _config.assistant.hasOwnNumber;
+export const ASSISTANT_NAME = _config.agents.defaults.name;
+export const ASSISTANT_HAS_OWN_NUMBER = _config.agents.defaults.hasOwnNumber;
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

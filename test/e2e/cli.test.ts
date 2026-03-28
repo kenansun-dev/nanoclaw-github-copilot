@@ -30,14 +30,14 @@ describe('E2E: nanoclaw CLI', () => {
     const config = JSON.parse(
       fs.readFileSync(path.join(tmpWorkspace, 'nanoclaw.json'), 'utf-8'),
     );
-    expect(config.assistant).toBeDefined();
+    expect(config.agents).toBeDefined();
     expect(config.channels).toBeDefined();
     expect(config.sandbox).toBeDefined();
   });
 
   it('config get works', () => {
     const output = runCli('config get');
-    expect(output).toContain('assistant');
+    expect(output).toContain('agents');
   });
 
   it('doctor runs without crashing', () => {

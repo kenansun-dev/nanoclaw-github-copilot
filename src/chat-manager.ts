@@ -31,7 +31,7 @@ export function syncChatsFromConfig(config: NanoclawConfig): void {
       setRegisteredGroup(jid, {
         name: chatConfig.name,
         folder,
-        trigger: config.assistant.triggerWord,
+        trigger: config.agents.defaults.triggerWord,
         added_at: new Date().toISOString(),
         requiresTrigger: chatConfig.requiresTrigger ?? false,
         isMain: chatConfig.isMain ?? false,
@@ -63,7 +63,7 @@ export function addChat(
   setRegisteredGroup(jid, {
     name,
     folder,
-    trigger: config.assistant.triggerWord,
+    trigger: config.agents.defaults.triggerWord,
     added_at: new Date().toISOString(),
     requiresTrigger: options.requiresTrigger ?? false,
     isMain: options.isMain ?? false,
