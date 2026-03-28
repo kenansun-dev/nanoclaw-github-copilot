@@ -18,9 +18,14 @@ vi.mock('./config-extensions.js', () => ({
 
 vi.mock('./config.js', () => ({
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
+  ONECLI_URL: 'http://localhost:10254',
+  CONTAINER_HOST_GATEWAY: 'host.docker.internal',
+  CREDENTIAL_PROXY_PORT: 3001,
+  DEFAULT_TRIGGER: '@Andy',
+  getTriggerPattern: () => /^@Andy/i,
+  TRIGGER_PATTERN: /^@Andy/i,
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
   CONTAINER_TIMEOUT: 1800000, // 30min
-  CREDENTIAL_PROXY_PORT: 3001,
   DATA_DIR: '/tmp/nanoclaw-test-data',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
@@ -70,6 +75,25 @@ vi.mock('fs', async () => {
 // Mock mount-security
 vi.mock('./mount-security.js', () => ({
   validateAdditionalMounts: vi.fn(() => []),
+}));
+
+// Mock container-runtime
+vi.mock('./container-runtime.js', () => ({
+  CONTAINER_RUNTIME_BIN: 'docker',
+  hostGatewayArgs: () => [],
+  readonlyMountArgs: (h: string, c: string) => ['-v', `${h}:${c}:ro`],
+  stopContainer: vi.fn(),
+}));
+
+// Mock OneCLI SDK
+vi.mock('@onecli-sh/sdk', () => ({
+  OneCLI: class {
+    applyContainerConfig = vi.fn().mockResolvedValue(true);
+    createAgent = vi.fn().mockResolvedValue({ id: 'test' });
+    ensureAgent = vi
+      .fn()
+      .mockResolvedValue({ name: 'test', identifier: 'test', created: true });
+  },
 }));
 
 // Create a controllable fake ChildProcess
