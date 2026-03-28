@@ -41,10 +41,9 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-export const TRIGGER_PATTERN = new RegExp(
-  `^@${escapeRegex(ASSISTANT_NAME)}\\b`,
-  'i',
-);
+export function buildTriggerPattern(trigger: string): RegExp {
+  return new RegExp(`^${escapeRegex(trigger.trim())}\\b`, 'i');
+}
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
 
@@ -81,3 +80,20 @@ export const CREDENTIAL_PROXY_PORT = _config.credentialProxy.port;
 
 export const TIMEZONE = _config.timezone;
 
+
+// --- Upstream compat exports ---
+export const ONECLI_URL = process.env.ONECLI_URL || 'http://localhost:10254';
+
+export const MAX_MESSAGES_PER_PROMPT = Math.max(
+  parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10, 1,
+);
+export const DEFAULT_TRIGGER = `@${ASSISTANT_NAME}`;
+
+
+export function getTriggerPattern(trigger?: string): RegExp {
+  const normalizedTrigger = trigger?.trim();
+  return buildTriggerPattern(normalizedTrigger || DEFAULT_TRIGGER);
+}
+
+export const CONTAINER_HOST_GATEWAY = 'host.docker.internal';
+export const TRIGGER_PATTERN = buildTriggerPattern(DEFAULT_TRIGGER);
