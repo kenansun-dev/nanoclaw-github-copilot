@@ -166,7 +166,9 @@ function buildVolumeMounts(
   }
   mounts.push({
     hostPath: groupSessionsDir,
-    containerPath: IS_GHC_PROVIDER ? '/home/node/.copilot' : '/home/node/.claude',
+    containerPath: IS_GHC_PROVIDER
+      ? '/home/node/.copilot'
+      : '/home/node/.claude',
     readonly: false,
   });
 
@@ -254,10 +256,31 @@ function buildContainerArgs(
   if (IS_GHC_PROVIDER) {
     // GHC mode: pass GitHub token directly to container
     // GHC CLI handles its own auth — credential proxy not needed
-    const ghToken =
+    let ghToken =
       process.env.COPILOT_GITHUB_TOKEN ||
       process.env.GH_TOKEN ||
       process.env.GITHUB_TOKEN;
+    if (!ghToken) {
+      // Try OpenClaw auth profile
+      try {
+        const profilePath = path.join(
+          process.env.HOME || '/root',
+          '.openclaw/agents/main/agent/auth-profiles.json',
+        );
+        if (fs.existsSync(profilePath)) {
+          const profiles = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
+          for (const [, profile] of Object.entries(profiles.profiles || {})) {
+            const p = profile as { provider?: string; token?: string };
+            if (p.provider === 'github-copilot' && p.token) {
+              ghToken = p.token;
+              break;
+            }
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     if (ghToken) {
       args.push('-e', `COPILOT_GITHUB_TOKEN=${ghToken}`);
     }
@@ -449,7 +472,10 @@ export async function runContainerAgent(
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
     // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
     // graceful _close sentinel has time to trigger before the hard kill fires.
-    const timeoutMs = IDLE_TIMEOUT <= 0 ? configTimeout : Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
+    const timeoutMs =
+      IDLE_TIMEOUT <= 0
+        ? configTimeout
+        : Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
     const killOnTimeout = () => {
       timedOut = true;

@@ -75,7 +75,9 @@ export function getModelName(): string {
 }
 const _provider = getProvider();
 export const IS_GHC_PROVIDER = _provider === 'github-copilot';
-export const CONTAINER_IMAGE = IS_GHC_PROVIDER ? 'nanoclaw-agent-ghc:latest' : _config.sandbox.image;
+export const CONTAINER_IMAGE = IS_GHC_PROVIDER
+  ? 'nanoclaw-agent-ghc:latest'
+  : _config.sandbox.image;
 export const PROVIDER_SESSION_DIR = IS_GHC_PROVIDER ? '.copilot' : '.claude';
 
 export const CONTAINER_TIMEOUT = _config.sandbox.timeout;
