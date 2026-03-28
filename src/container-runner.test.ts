@@ -7,6 +7,15 @@ const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
 // Mock config
+vi.mock('./config-extensions.js', () => ({
+  resolveAgentForChat: () => ({ mode: 'sandbox', model: 'anthropic/claude-sonnet-4', name: 'Andy', triggerWord: '@Andy', hasOwnNumber: false, sandboxBackend: 'docker' }),
+  isAgentGHC: () => false,
+  getAgentSessionDir: () => '.claude',
+  getAgentImage: () => 'nanoclaw-agent:latest',
+  getAgentModelName: () => 'claude-sonnet-4',
+  resolveGithubToken: () => undefined,
+}));
+
 vi.mock('./config.js', () => ({
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,

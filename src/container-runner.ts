@@ -22,10 +22,11 @@ import {
   isAgentGHC,
   getAgentSessionDir,
   getAgentImage,
-  IS_GHC_PROVIDER,
-  PROVIDER_SESSION_DIR,
+
   GHC_CONTAINER_IMAGE,
   getModelName,
+  IS_GHC_PROVIDER,
+  PROVIDER_SESSION_DIR,
 } from './config-extensions.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';

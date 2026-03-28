@@ -62,23 +62,8 @@ export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 
 // ─── Container / Sandbox ─────────────────────────────────────────────────────
 
-// Derive provider from model string: "github-copilot/claude-sonnet-4" -> "github-copilot"
-export function getProvider(): string {
-  const model = _config.agents?.defaults?.model || '';
-  const slash = model.indexOf('/');
-  return slash > 0 ? model.substring(0, slash) : 'anthropic';
-}
-export function getModelName(): string {
-  const model = _config.agents?.defaults?.model || '';
-  const slash = model.indexOf('/');
-  return slash > 0 ? model.substring(slash + 1) : model;
-}
-const _provider = getProvider();
-export const IS_GHC_PROVIDER = _provider === 'github-copilot';
-export const CONTAINER_IMAGE = IS_GHC_PROVIDER
-  ? 'nanoclaw-agent-ghc:latest'
-  : _config.sandbox.image;
-export const PROVIDER_SESSION_DIR = IS_GHC_PROVIDER ? '.copilot' : '.claude';
+// Container image — extensions may override via config-extensions.ts
+export const CONTAINER_IMAGE = _config.sandbox.image;
 
 export const CONTAINER_TIMEOUT = _config.sandbox.timeout;
 export const CONTAINER_MAX_OUTPUT_SIZE = _config.sandbox.maxOutputSize;
