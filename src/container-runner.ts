@@ -19,6 +19,10 @@ import {
   PROVIDER_SESSION_DIR,
   TIMEZONE,
   getConfig,
+  resolveAgentForChat,
+  isAgentGHC,
+  getAgentSessionDir,
+  getAgentImage,
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
@@ -65,8 +69,13 @@ interface VolumeMount {
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
+  chatJid?: string,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
+  // Resolve agent for this chat to determine session dir and mounts
+  const agent = chatJid ? resolveAgentForChat(chatJid) : undefined;
+  const sessionDir = agent ? getAgentSessionDir(agent) : PROVIDER_SESSION_DIR;
+  const agentIsGHC = agent ? isAgentGHC(agent) : IS_GHC_PROVIDER;
   const projectRoot = process.cwd();
   const groupDir = resolveGroupFolderPath(group.folder);
 
@@ -126,7 +135,7 @@ function buildVolumeMounts(
     DATA_DIR,
     'sessions',
     group.folder,
-    PROVIDER_SESSION_DIR,
+    sessionDir,
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
   const settingsFile = path.join(groupSessionsDir, 'settings.json');

@@ -9,6 +9,8 @@ import {
   TIMEZONE,
   TRIGGER_PATTERN,
   getConfig,
+  resolveAgentForChat,
+  getAgentModelName,
 } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
@@ -22,6 +24,7 @@ import {
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './container-runner.js';
+import { runHostAgent } from './host-runner.js';
 import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
@@ -313,7 +316,12 @@ async function runAgent(
     : undefined;
 
   try {
-    const output = await runContainerAgent(
+    // Resolve agent config for this chat
+    const agent = resolveAgentForChat(chatJid);
+    // Route to host or container runner based on agent mode
+    const agentConfig = resolveAgentForChat(chatJid);
+    const runnerFn = agentConfig.mode === 'host' ? runHostAgent : runContainerAgent;
+    const output = await runnerFn(
       group,
       {
         prompt,
@@ -321,8 +329,8 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
-        assistantName: ASSISTANT_NAME,
-        model: getConfig().agents?.defaults?.model,
+        assistantName: agent.name || ASSISTANT_NAME,
+        model: agent.model,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
