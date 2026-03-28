@@ -16,11 +16,7 @@ import {
   TIMEZONE,
   getConfig,
 } from './config.js';
-import {
-  resolveAgentForChat,
-  getAgentModelName,
-  isAgentGHC,
-} from './config.js';
+import { resolveAgentForChat, getAgentModelName, isAgentGHC, resolveGithubToken } from './config-extensions.js';
 import type { AgentConfig } from './config-loader.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
@@ -30,38 +26,6 @@ import { paths as wsPaths } from './workspace.js';
 const OUTPUT_START = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END = '---NANOCLAW_OUTPUT_END---';
 
-/**
- * Resolve the GitHub Copilot token from env or OpenClaw auth profile.
- */
-function resolveGithubToken(): string | undefined {
-  // 1. Environment variables
-  const envToken =
-    process.env.COPILOT_GITHUB_TOKEN ||
-    process.env.GH_TOKEN ||
-    process.env.GITHUB_TOKEN;
-  if (envToken) return envToken;
-
-  // 2. OpenClaw auth profile
-  try {
-    const profilePath = path.join(
-      process.env.HOME || '/root',
-      '.openclaw/agents/main/agent/auth-profiles.json',
-    );
-    if (fs.existsSync(profilePath)) {
-      const profiles = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
-      for (const profile of Object.values(profiles.profiles || {})) {
-        const p = profile as { provider?: string; token?: string };
-        if (p.provider === 'github-copilot' && p.token) {
-          return p.token;
-        }
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-
-  return undefined;
-}
 
 /**
  * Resolve the path to the agent-runner entry point.

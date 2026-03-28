@@ -9,9 +9,8 @@ import {
   TIMEZONE,
   TRIGGER_PATTERN,
   getConfig,
-  resolveAgentForChat,
-  getAgentModelName,
 } from './config.js';
+import { resolveAgentForChat } from './config-extensions.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
 import {

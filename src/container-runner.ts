@@ -14,16 +14,19 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
-  IS_GHC_PROVIDER,
-  getModelName,
-  PROVIDER_SESSION_DIR,
   TIMEZONE,
   getConfig,
+} from './config.js';
+import {
   resolveAgentForChat,
   isAgentGHC,
   getAgentSessionDir,
   getAgentImage,
-} from './config.js';
+  IS_GHC_PROVIDER,
+  PROVIDER_SESSION_DIR,
+  GHC_CONTAINER_IMAGE,
+  getModelName,
+} from './config-extensions.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { resolveWorkspace } from './workspace.js';
