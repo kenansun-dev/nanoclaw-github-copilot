@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     curl \
     git \
+    sudo \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Chromium path for agent-browser
@@ -64,7 +65,10 @@ RUN printf '#!/bin/bash\nset -e\ncat > /tmp/input.json\ncd /app && tsx src/index
 # Set ownership to node user (non-root) for writable directories
 RUN chown -R node:node /workspace && chmod 777 /home/node
 
-# Switch to non-root user
+# Give node user passwordless sudo
+RUN echo "node ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Switch to non-root user (with sudo access)
 USER node
 
 # Set working directory to group workspace

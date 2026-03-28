@@ -193,13 +193,46 @@ async function main(): Promise<void> {
     prompt += '\n' + pending.join('\n');
   }
 
+  // Build dynamic runtime info (similar to OpenClaw's Runtime injection)
+  function detectRuntime(): string {
+    const os = require('os');
+    const { execSync } = require('child_process');
+    const lines: string[] = ['## Runtime'];
+    lines.push(`- **OS**: ${os.type()} ${os.release()} (${os.arch()})`);
+    lines.push(`- **Node**: ${process.version}`);
+    lines.push(`- **User**: ${os.userInfo().username}`);
+    lines.push(`- **Shell**: ${process.env.SHELL || '/bin/bash'}`);
+    lines.push(`- **Working directory**: ${process.cwd()}`);
+    lines.push(`- **Home**: ${os.homedir()}`);
+    // Check sudo
+    try { execSync('sudo -n true 2>/dev/null', { timeout: 2000 }); lines.push('- **Sudo**: ✅ available (passwordless)'); } catch { lines.push('- **Sudo**: ❌ not available'); }
+    // Check common tools
+    const tools: string[] = [];
+    for (const cmd of ['curl', 'git', 'chromium', 'python3', 'pip3', 'jq', 'sqlite3', 'wget']) {
+      try { execSync(`which ${cmd} 2>/dev/null`, { timeout: 1000 }); tools.push(cmd); } catch {}
+    }
+    if (tools.length > 0) lines.push(`- **Available tools**: ${tools.join(', ')}`);
+    // Memory
+    const totalMem = Math.round(os.totalmem() / 1024 / 1024);
+    const freeMem = Math.round(os.freemem() / 1024 / 1024);
+    lines.push(`- **Memory**: ${freeMem}MB free / ${totalMem}MB total`);
+    lines.push(`- **Model**: ${containerInput.model || process.env.COPILOT_MODEL || 'default'}`);
+    return lines.join('\n');
+  }
+
   // Load global CLAUDE.md as additional system context
+  const runtimeInfo = detectRuntime();
   let systemMessage: { mode: 'append'; content: string } | undefined;
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
   if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
     systemMessage = {
       mode: 'append',
-      content: fs.readFileSync(globalClaudeMdPath, 'utf-8'),
+      content: fs.readFileSync(globalClaudeMdPath, 'utf-8') + '\n\n' + runtimeInfo,
+    };
+  } else {
+    systemMessage = {
+      mode: 'append',
+      content: runtimeInfo,
     };
   }
 
