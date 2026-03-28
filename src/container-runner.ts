@@ -175,14 +175,12 @@ function buildVolumeMounts(
   }
   mounts.push({
     hostPath: groupSessionsDir,
-    containerPath: IS_GHC_PROVIDER
-      ? '/home/node/.copilot'
-      : '/home/node/.claude',
+    containerPath: agentIsGHC ? '/home/node/.copilot' : '/home/node/.claude',
     readonly: false,
   });
 
   // GHC-specific mounts: skills directory and MCP config
-  if (IS_GHC_PROVIDER) {
+  if (agentIsGHC) {
     const ws = resolveWorkspace();
     // Mount user skills directory (read-only)
     const skillsDir = path.join(ws, 'skills');
@@ -256,13 +254,17 @@ function buildVolumeMounts(
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  chatJid?: string,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+  const agent = chatJid ? resolveAgentForChat(chatJid) : undefined;
+  const agentIsGHC = agent ? isAgentGHC(agent) : IS_GHC_PROVIDER;
+  const containerImage = agent ? getAgentImage(agent) : CONTAINER_IMAGE;
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  if (IS_GHC_PROVIDER) {
+  if (agentIsGHC) {
     // GHC mode: pass GitHub token directly to container
     // GHC CLI handles its own auth — credential proxy not needed
     let ghToken =
@@ -335,7 +337,7 @@ function buildContainerArgs(
     }
   }
 
-  args.push(CONTAINER_IMAGE);
+  args.push(containerImage);
 
   return args;
 }
@@ -351,10 +353,14 @@ export async function runContainerAgent(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(group, input.isMain);
+  const mounts = buildVolumeMounts(group, input.isMain, input.chatJid);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(
+    mounts,
+    containerName,
+    input.chatJid,
+  );
 
   logger.debug(
     {

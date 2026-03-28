@@ -19,6 +19,15 @@ vi.mock('./config.js', () => ({
   PROVIDER_SESSION_DIR: '.claude',
   TIMEZONE: 'America/Los_Angeles',
   getConfig: () => ({ providers: {} }),
+  resolveAgentForChat: () => ({
+    model: 'github-copilot/claude-sonnet-4',
+    name: 'Andy',
+    mode: 'sandbox',
+    sandboxBackend: 'docker',
+  }),
+  isAgentGHC: () => false,
+  getAgentSessionDir: () => '.claude',
+  getAgentImage: () => 'nanoclaw-agent:latest',
 }));
 
 // Mock logger

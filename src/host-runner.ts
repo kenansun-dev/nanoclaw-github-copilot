@@ -16,7 +16,11 @@ import {
   TIMEZONE,
   getConfig,
 } from './config.js';
-import { resolveAgentForChat, getAgentModelName, isAgentGHC } from './config.js';
+import {
+  resolveAgentForChat,
+  getAgentModelName,
+  isAgentGHC,
+} from './config.js';
 import type { AgentConfig } from './config-loader.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
@@ -88,7 +92,12 @@ function resolveAgentRunnerPath(agent: AgentConfig): string {
  * Same interface as runContainerAgent for drop-in replacement.
  */
 export async function runHostAgent(
-  group: { name: string; folder: string; isMain?: boolean; containerConfig?: { timeout?: number } },
+  group: {
+    name: string;
+    folder: string;
+    isMain?: boolean;
+    containerConfig?: { timeout?: number };
+  },
   input: ContainerInput,
   onProcess: (proc: ChildProcess, name: string) => void,
   onOutput?: (output: ContainerOutput) => Promise<void>,
@@ -122,7 +131,7 @@ export async function runHostAgent(
 
   // Build environment
   const env: Record<string, string> = {
-    ...process.env as Record<string, string>,
+    ...(process.env as Record<string, string>),
     TZ: TIMEZONE,
     // Override paths that agent-runner expects (container paths → host paths)
     NANOCLAW_HOST_MODE: '1',
@@ -220,10 +229,9 @@ export async function runHostAgent(
         const endIdx = stdout.indexOf(OUTPUT_END, startIdx);
         if (endIdx === -1) break;
 
-        const jsonStr = stdout.substring(
-          startIdx + OUTPUT_START.length,
-          endIdx,
-        ).trim();
+        const jsonStr = stdout
+          .substring(startIdx + OUTPUT_START.length, endIdx)
+          .trim();
         stdout =
           stdout.substring(0, startIdx) +
           stdout.substring(endIdx + OUTPUT_END.length);
@@ -316,7 +324,13 @@ export async function runHostAgent(
         : `Host agent exited with code ${code}`;
 
       logger.error(
-        { group: group.name, processName, code, duration, stderr: stderr.slice(-500) },
+        {
+          group: group.name,
+          processName,
+          code,
+          duration,
+          stderr: stderr.slice(-500),
+        },
         'Host agent error',
       );
 

@@ -319,8 +319,7 @@ async function runAgent(
     // Resolve agent config for this chat
     const agent = resolveAgentForChat(chatJid);
     // Route to host or container runner based on agent mode
-    const agentConfig = resolveAgentForChat(chatJid);
-    const runnerFn = agentConfig.mode === 'host' ? runHostAgent : runContainerAgent;
+    const runnerFn = agent.mode === 'host' ? runHostAgent : runContainerAgent;
     const output = await runnerFn(
       group,
       {
