@@ -2,7 +2,9 @@
   "agents": {
     "defaults": {
       "model": "github-copilot/claude-sonnet-4",
-      "name": "Andy"
+      "name": "Andy",
+      "mode": "sandbox",
+      "sandboxBackend": "docker"
     }
   },
   "channels": {

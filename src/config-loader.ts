@@ -9,14 +9,21 @@ import { paths, workspacePath } from './workspace.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+export interface AgentConfig {
+  id?: string;
+  default?: boolean;
+  model: string; // "provider/model" format, e.g. "github-copilot/claude-sonnet-4"
+  name: string;
+  triggerWord: string;
+  hasOwnNumber: boolean;
+  mode: 'host' | 'sandbox';
+  sandboxBackend: 'docker' | 'ssh';
+}
+
 export interface NanoclawConfig {
   agents: {
-    defaults: {
-      model: string; // "provider/model" format, e.g. "github-copilot/claude-sonnet-4"
-      name: string;
-      triggerWord: string;
-      hasOwnNumber: boolean;
-    };
+    defaults: AgentConfig;
+    list?: AgentConfig[];
   };
   channels: {
     telegram: {
@@ -67,6 +74,7 @@ export interface NanoclawConfig {
       name: string;
       isMain?: boolean;
       requiresTrigger?: boolean;
+      agentId?: string;
     }
   >;
   pairing: {
@@ -89,6 +97,8 @@ const DEFAULTS: NanoclawConfig = {
       name: 'Andy',
       triggerWord: '@Andy',
       hasOwnNumber: false,
+      mode: 'sandbox',
+      sandboxBackend: 'docker',
     },
   },
   channels: {
@@ -274,4 +284,39 @@ export function saveConfig(config: NanoclawConfig): void {
   }
 
   fs.writeFileSync(paths.config, JSON.stringify(toSave, null, 2) + '\n');
+}
+
+// ─── Agent Resolution ────────────────────────────────────────────────────────
+
+/**
+ * Resolve agent config for a given agentId.
+ * If agentId is provided, looks in agents.list[]. Falls back to agents.defaults.
+ * List entries inherit missing fields from defaults.
+ */
+export function resolveAgent(
+  config: NanoclawConfig,
+  agentId?: string,
+): AgentConfig {
+  const defaults = config.agents.defaults;
+  if (!agentId || !config.agents.list?.length) {
+    return defaults;
+  }
+  const found = config.agents.list.find((a) => a.id === agentId);
+  if (!found) {
+    return defaults;
+  }
+  // Merge: agent-specific overrides defaults
+  return { ...defaults, ...found };
+}
+
+/**
+ * Get the default agent (first with default: true, or first in list, or defaults).
+ */
+export function getDefaultAgent(config: NanoclawConfig): AgentConfig {
+  const list = config.agents.list;
+  if (!list?.length) return config.agents.defaults;
+  const defaultAgent = list.find((a) => a.default);
+  return defaultAgent
+    ? { ...config.agents.defaults, ...defaultAgent }
+    : { ...config.agents.defaults, ...list[0] };
 }

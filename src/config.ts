@@ -95,3 +95,38 @@ export const CREDENTIAL_PROXY_PORT = _config.credentialProxy.port;
 // ─── Timezone ────────────────────────────────────────────────────────────────
 
 export const TIMEZONE = _config.timezone;
+
+// ─── Agent-aware helpers ─────────────────────────────────────────────────────
+
+import { resolveAgent, getDefaultAgent, AgentConfig } from './config-loader.js';
+
+export function resolveAgentForChat(chatJid: string): AgentConfig {
+  const config = getConfig();
+  const chat = config.chats[chatJid];
+  return resolveAgent(config, chat?.agentId);
+}
+
+export function getAgentProvider(agent: AgentConfig): string {
+  const model = agent.model || '';
+  const slash = model.indexOf('/');
+  return slash > 0 ? model.substring(0, slash) : 'anthropic';
+}
+
+export function getAgentModelName(agent: AgentConfig): string {
+  const model = agent.model || '';
+  const slash = model.indexOf('/');
+  return slash > 0 ? model.substring(slash + 1) : model;
+}
+
+export function isAgentGHC(agent: AgentConfig): boolean {
+  return getAgentProvider(agent) === 'github-copilot';
+}
+
+export function getAgentSessionDir(agent: AgentConfig): string {
+  return isAgentGHC(agent) ? '.copilot' : '.claude';
+}
+
+export function getAgentImage(agent: AgentConfig): string {
+  if (isAgentGHC(agent)) return 'nanoclaw-agent-ghc:latest';
+  return _config.sandbox.image;
+}
