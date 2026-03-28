@@ -26,6 +26,10 @@ export interface NanoclawConfig {
     list?: AgentConfig[];
   };
   channels: {
+    discord: {
+      enabled: boolean;
+      botToken?: string;
+    };
     telegram: {
       enabled: boolean;
       botToken?: string;
@@ -102,6 +106,7 @@ const DEFAULTS: NanoclawConfig = {
     },
   },
   channels: {
+    discord: { enabled: false },
     telegram: { enabled: false },
     teams: {
       enabled: false,
