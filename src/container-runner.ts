@@ -15,6 +15,7 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   IS_GHC_PROVIDER,
+  getModelName,
   PROVIDER_SESSION_DIR,
   TIMEZONE,
   getConfig,
@@ -261,9 +262,7 @@ function buildContainerArgs(
       args.push('-e', `COPILOT_GITHUB_TOKEN=${ghToken}`);
     }
     // Pass model config
-    const model = getConfig().providers['github-copilot']?.model as
-      | string
-      | undefined;
+    const model = getModelName() || undefined;
     if (model) {
       args.push('-e', `COPILOT_MODEL=${model}`);
     }

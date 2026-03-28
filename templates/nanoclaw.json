@@ -2,10 +2,9 @@
   "assistant": {
     "name": "Andy"
   },
-  "providers": {
-    "github-copilot": {
-      "model": "gpt-4o-mini",
-      "auth": "sso"
+  "agents": {
+    "defaults": {
+      "model": "github-copilot/claude-sonnet-4"
     }
   },
   "channels": {

@@ -107,18 +107,20 @@ describe('config model passthrough', () => {
     fs.writeFileSync(
       path.join(tmpDir, 'nanoclaw.json'),
       JSON.stringify({
-        providers: {
-          'github-copilot': { enabled: true, model: 'claude-sonnet-4.6' },
+        agents: {
+          defaults: {
+            model: 'github-copilot/claude-sonnet-4.6',
+          },
         },
       }),
     );
     const config = loadConfig();
-    const model = config.providers['github-copilot']?.model;
-    expect(model).toBe('claude-sonnet-4.6');
+    const model = config.agents?.defaults?.model;
+    expect(model).toBe('github-copilot/claude-sonnet-4.6');
   });
 
   it('model defaults to claude-sonnet-4 when not specified', () => {
     const config = loadConfig();
-    expect(config.providers['github-copilot'].model).toBe('claude-sonnet-4');
+    expect(config.agents.defaults.model).toBe('github-copilot/claude-sonnet-4');
   });
 });

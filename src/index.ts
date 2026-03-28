@@ -321,9 +321,7 @@ async function runAgent(
         chatJid,
         isMain,
         assistantName: ASSISTANT_NAME,
-        model: getConfig().providers['github-copilot']?.model as
-          | string
-          | undefined,
+        model: getConfig().agents?.defaults?.model,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),

@@ -15,13 +15,10 @@ export interface NanoclawConfig {
     triggerWord: string;
     hasOwnNumber: boolean;
   };
-  providers: {
-    'github-copilot': {
-      enabled: boolean;
-      model: string;
-      auth: 'openclaw-profile' | 'env' | 'cli';
+  agents: {
+    defaults: {
+      model: string; // "provider/model" format, e.g. "github-copilot/claude-sonnet-4"
     };
-    [key: string]: { enabled: boolean; [k: string]: unknown };
   };
   channels: {
     telegram: {
@@ -61,7 +58,6 @@ export interface NanoclawConfig {
   sandbox: {
     runtime: 'docker' | 'apple-container';
     image: string;
-    ghcImage: string;
     timeout: number;
     maxOutputSize: number;
     maxConcurrent: number;
@@ -94,11 +90,9 @@ const DEFAULTS: NanoclawConfig = {
     triggerWord: '@Andy',
     hasOwnNumber: false,
   },
-  providers: {
-    'github-copilot': {
-      enabled: true,
-      model: 'claude-sonnet-4',
-      auth: 'openclaw-profile',
+  agents: {
+    defaults: {
+      model: 'github-copilot/claude-sonnet-4',
     },
   },
   channels: {
@@ -117,7 +111,6 @@ const DEFAULTS: NanoclawConfig = {
   sandbox: {
     runtime: 'docker',
     image: 'nanoclaw-agent:latest',
-    ghcImage: 'nanoclaw-agent-ghc:latest',
     timeout: 1800000,
     maxOutputSize: 10485760,
     maxConcurrent: 5,
