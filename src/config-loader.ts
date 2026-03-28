@@ -61,6 +61,7 @@ export interface NanoclawConfig {
   sandbox: {
     runtime: 'docker' | 'apple-container';
     image: string;
+    ghcImage: string;
     timeout: number;
     maxOutputSize: number;
     maxConcurrent: number;
@@ -116,6 +117,7 @@ const DEFAULTS: NanoclawConfig = {
   sandbox: {
     runtime: 'docker',
     image: 'nanoclaw-agent:latest',
+    ghcImage: 'nanoclaw-agent-ghc:latest',
     timeout: 1800000,
     maxOutputSize: 10485760,
     maxConcurrent: 5,

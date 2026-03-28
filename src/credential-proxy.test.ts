@@ -97,32 +97,35 @@ describe('credential-proxy', () => {
     expect(lastUpstreamHeaders['x-api-key']).toBe('sk-ant-real-key');
   });
 
-  it('GitHub auth mode returns 200 with info message', async () => {
-    // When no BYOK keys are set, proxy enters 'github' mode
-    // and returns a JSON message instead of proxying upstream
-    proxyPort = await startProxy({});
+  it('OAuth mode replaces Authorization when container sends one', async () => {
+    proxyPort = await startProxy({
+      CLAUDE_CODE_OAUTH_TOKEN: 'real-oauth-token',
+    });
 
-    const res = await makeRequest(
+    await makeRequest(
       proxyPort,
       {
         method: 'POST',
-        path: '/v1/messages',
+        path: '/api/oauth/claude_cli/create_api_key',
         headers: {
           'content-type': 'application/json',
+          authorization: 'Bearer placeholder',
         },
       },
       '{}',
     );
 
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body);
-    expect(body.message).toContain('GitHub auth mode');
+    expect(lastUpstreamHeaders['authorization']).toBe(
+      'Bearer real-oauth-token',
+    );
   });
 
-  it('GitHub auth mode does not proxy to upstream', async () => {
-    // In github mode, requests should NOT reach the upstream server
-    proxyPort = await startProxy({});
+  it('OAuth mode does not inject Authorization when container omits it', async () => {
+    proxyPort = await startProxy({
+      CLAUDE_CODE_OAUTH_TOKEN: 'real-oauth-token',
+    });
 
+    // Post-exchange: container uses x-api-key only, no Authorization header
     await makeRequest(
       proxyPort,
       {
@@ -130,14 +133,14 @@ describe('credential-proxy', () => {
         path: '/v1/messages',
         headers: {
           'content-type': 'application/json',
-          authorization: 'Bearer some-token',
+          'x-api-key': 'temp-key-from-exchange',
         },
       },
       '{}',
     );
 
-    // lastUpstreamHeaders should be empty — upstream was never contacted
-    expect(Object.keys(lastUpstreamHeaders).length).toBe(0);
+    expect(lastUpstreamHeaders['x-api-key']).toBe('temp-key-from-exchange');
+    expect(lastUpstreamHeaders['authorization']).toBeUndefined();
   });
 
   it('strips hop-by-hop headers', async () => {

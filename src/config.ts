@@ -62,7 +62,14 @@ export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 
 // ─── Container / Sandbox ─────────────────────────────────────────────────────
 
-export const CONTAINER_IMAGE = _config.sandbox.image;
+// Provider-aware image selection: GHC uses separate image
+const isGHCProvider = _config.providers['github-copilot']?.enabled ?? false;
+export const CONTAINER_IMAGE = isGHCProvider
+  ? _config.sandbox.ghcImage
+  : _config.sandbox.image;
+export const PROVIDER_SESSION_DIR = isGHCProvider ? '.copilot' : '.claude';
+export const IS_GHC_PROVIDER = isGHCProvider;
+
 export const CONTAINER_TIMEOUT = _config.sandbox.timeout;
 export const CONTAINER_MAX_OUTPUT_SIZE = _config.sandbox.maxOutputSize;
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
