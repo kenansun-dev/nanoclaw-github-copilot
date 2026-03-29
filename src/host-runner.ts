@@ -91,7 +91,8 @@ export async function runHostAgent(
 
   // Resolve runner path
   const runnerPath = resolveAgentRunnerPath(agent);
-  const useTsx = runnerPath.endsWith('.ts');
+  // Always use tsx for host mode — handles ESM resolution (vscode-jsonrpc/node etc)
+  const useTsx = true;
 
   // Build environment
   const env: Record<string, string> = {
