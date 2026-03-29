@@ -142,10 +142,19 @@ export class TelegramChannel implements Channel {
       // Only deliver full message for registered groups
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) {
-        logger.debug(
+        logger.info(
           { chatJid, chatName },
-          'Message from unregistered Telegram chat',
+          'Message from unregistered Telegram chat — sending pair instructions',
         );
+        // Send pair instructions to the user
+        try {
+          await ctx.reply(
+            `👋 This chat isn't paired yet.\n\nTo pair, run on your server:\n\`\`\`\nnanoclaw pair ${chatJid} --name "${chatName}"\nnanoclaw restart\n\`\`\``,
+            { parse_mode: 'Markdown' },
+          );
+        } catch (err) {
+          logger.debug({ err }, 'Failed to send pair instructions');
+        }
         return;
       }
 

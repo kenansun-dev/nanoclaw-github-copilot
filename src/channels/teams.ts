@@ -293,8 +293,15 @@ export class TeamsChannel implements Channel {
     if (!group) {
       logger.info(
         { chatJid, chatName },
-        'Message from unregistered Teams chat (needs registration)',
+        'Message from unregistered Teams chat — sending pair instructions',
       );
+      try {
+        await this.sendMessage(chatJid,
+          `👋 This chat isn't paired yet.\n\nTo pair, run on your server:\n\`\`\`\nnanoclaw pair ${chatJid} --name "${chatName}"\nnanoclaw restart\n\`\`\``
+        );
+      } catch (err) {
+        logger.debug({ err }, 'Failed to send pair instructions');
+      }
       return;
     }
 
@@ -392,10 +399,17 @@ export class TeamsChannel implements Channel {
     // Only deliver to registered groups
     const group = this.opts.registeredGroups()[chatJid];
     if (!group) {
-      logger.debug(
+      logger.info(
         { chatJid, chatName },
-        'Message from unregistered Teams chat',
+        'Message from unregistered Teams chat — sending pair instructions',
       );
+      try {
+        await this.sendMessage(chatJid,
+          `👋 This chat isn't paired yet.\n\nTo pair, run on your server:\n\`\`\`\nnanoclaw pair ${chatJid} --name "${chatName}"\nnanoclaw restart\n\`\`\``
+        );
+      } catch (err) {
+        logger.debug({ err }, 'Failed to send pair instructions');
+      }
       return;
     }
 
