@@ -3,8 +3,7 @@
     "defaults": {
       "model": "github-copilot/claude-sonnet-4",
       "name": "Andy",
-      "mode": "sandbox",
-      "sandboxBackend": "docker"
+      "mode": "sandbox"
     }
   },
   "channels": {

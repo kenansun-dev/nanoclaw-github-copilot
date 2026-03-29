@@ -17,7 +17,6 @@ export interface AgentConfig {
   triggerWord: string;
   hasOwnNumber: boolean;
   mode: 'host' | 'sandbox';
-  sandboxBackend: 'docker' | 'ssh';
 }
 
 // New chats format: grouped by channel
@@ -124,7 +123,6 @@ const DEFAULTS: NanoclawConfig = {
       triggerWord: '@Andy',
       hasOwnNumber: false,
       mode: 'sandbox',
-      sandboxBackend: 'docker',
     },
   },
   channels: {

@@ -98,7 +98,6 @@ const DEFAULT_CONFIG = {
       triggerWord: '@Andy',
       hasOwnNumber: false,
       mode: 'sandbox' as const,
-      sandboxBackend: 'docker' as const,
     },
   },
   channels: {
