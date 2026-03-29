@@ -71,7 +71,8 @@ Next steps:
   1. Edit nanoclaw.json — set assistant name, enable channels
   2. Edit .env — add bot tokens / credentials
   3. Run: nanoclaw doctor — check everything is ready
-  4. Run: nanoclaw sandbox build — build agent container
+  4. Run: nanoclaw sandbox build — build agent container (sandbox mode)
+     Or set "mode": "host" in nanoclaw.json to skip Docker
   5. Run: nanoclaw start — start the service
 `);
 }
@@ -90,13 +91,14 @@ function copyDirSync(src: string, dst: string) {
 }
 
 const DEFAULT_CONFIG = {
-  assistant: {
-    name: 'Andy',
-  },
-  providers: {
-    'github-copilot': {
-      model: 'gpt-4o-mini',
-      auth: 'sso',
+  agents: {
+    defaults: {
+      model: 'github-copilot/claude-sonnet-4',
+      name: 'Andy',
+      triggerWord: '@Andy',
+      hasOwnNumber: false,
+      mode: 'sandbox' as const,
+      sandboxBackend: 'docker' as const,
     },
   },
   channels: {
@@ -113,10 +115,9 @@ const DEFAULT_CONFIG = {
     runtime: 'docker',
     image: 'nanoclaw-agent:latest',
     timeout: 1800000,
+    maxOutputSize: 10485760,
     maxConcurrent: 5,
-  },
-  security: {
-    autoApproveChats: false,
+    idleTimeout: 0,
   },
   credentialProxy: { port: 3001 },
   logLevel: 'info',

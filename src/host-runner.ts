@@ -48,7 +48,8 @@ function resolveAgentRunnerPath(agent: AgentConfig): string {
     'src',
     'index.ts',
   );
-  return fs.existsSync(distPath) ? distPath : srcPath;
+  // Always use source — dist may be stale and miss env var support
+  return srcPath;
 }
 
 /**
