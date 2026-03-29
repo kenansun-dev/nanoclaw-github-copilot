@@ -114,9 +114,12 @@ export async function runHostAgent(
     }
   }
 
-  // Skills directory
-  if (fs.existsSync(wsPaths.skills)) {
+  // Skills directory — prefer workspace skills, fall back to container/skills
+  const containerSkills = path.join(process.cwd(), 'container', 'skills');
+  if (fs.existsSync(wsPaths.skills) && fs.readdirSync(wsPaths.skills).length > 0) {
     env.NANOCLAW_SKILLS_DIR = wsPaths.skills;
+  } else if (fs.existsSync(containerSkills)) {
+    env.NANOCLAW_SKILLS_DIR = containerSkills;
   }
 
   // MCP config
