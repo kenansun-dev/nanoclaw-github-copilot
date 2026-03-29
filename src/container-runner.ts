@@ -232,7 +232,7 @@ function buildVolumeMounts(
   const agentRunnerSrc = path.join(
     projectRoot,
     'container',
-    'agent-runner',
+    agentIsGHC ? 'agent-runner-ghc' : 'agent-runner',
     'src',
   );
   const groupAgentRunnerDir = path.join(
@@ -280,7 +280,7 @@ function buildContainerArgs(
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
   const agent = chatJid ? resolveAgentForChat(chatJid) : undefined;
   const agentIsGHC = agent ? isAgentGHC(agent) : IS_GHC_PROVIDER;
-  const containerImage = agent ? getAgentImage(agent) : CONTAINER_IMAGE;
+  const containerImage = agent ? getAgentImage(agent) : GHC_CONTAINER_IMAGE;
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
@@ -358,6 +358,7 @@ function buildContainerArgs(
     }
   }
 
+  console.error("[container-runner] Using image:", containerImage);
   args.push(containerImage);
 
   return args;
