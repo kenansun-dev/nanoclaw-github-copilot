@@ -7,6 +7,7 @@ import {
   ASSISTANT_NAME,
   DEFAULT_TRIGGER,
   getTriggerPattern,
+  DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   MAX_MESSAGES_PER_PROMPT,
@@ -16,7 +17,11 @@ import {
   TRIGGER_PATTERN,
   getConfig,
 } from './config.js';
-import { resolveAgentForChat, runAgentForChat, IS_GHC_PROVIDER } from './config-extensions.js';
+import {
+  resolveAgentForChat,
+  runAgentForChat,
+  IS_GHC_PROVIDER,
+} from './config-extensions.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -47,6 +52,7 @@ import {
   setRegisteredGroup,
   setRouterState,
   setSession,
+  deleteSession,
   storeChatMetadata,
   storeMessage,
 } from './db.js';
@@ -169,7 +175,8 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   const groupMdFile = path.join(groupDir, 'CLAUDE.md');
   if (!fs.existsSync(groupMdFile)) {
     const templateFile = path.join(
-      GROUPS_DIR,
+      DATA_DIR,
+  GROUPS_DIR,
       group.isMain ? 'main' : 'global',
       'CLAUDE.md',
     );
@@ -253,6 +260,28 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
     );
     if (!hasTrigger) return true;
+  }
+
+  // Handle slash commands (/new, /reset — start a new session)
+  const lastMsg = missedMessages[missedMessages.length - 1];
+  const slashCmd = lastMsg.content.trim().toLowerCase().replace(/^@\S+\s*/, '');
+  if (slashCmd === '/new' || slashCmd === '/reset') {
+    // Clear session for this group
+    delete sessions[group.folder];
+    deleteSession(group.folder);
+    // Also clear .copilot session data
+    const sessionDir = path.join(DATA_DIR, 'sessions', group.folder, '.copilot');
+    if (fs.existsSync(sessionDir)) {
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+    const channel = findChannel(channels, chatJid);
+    if (channel) {
+      await channel.sendMessage(chatJid, '🔄 Session reset. Next message starts a fresh conversation.');
+    }
+    // Advance cursor past the command
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    return true;
   }
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
@@ -428,12 +457,24 @@ async function runAgent(
             ' Docker is not running or not installed. Run "nanoclaw doctor" to check.';
         } else if (errMsg.includes('timeout')) {
           userMessage += ' The agent timed out processing your request.';
-        } else if (errMsg.includes('ERR_MODULE_NOT_FOUND') || errMsg.includes('Cannot find package')) {
-          userMessage += ' Container image may be outdated or wrong provider. Run "nanoclaw sandbox build" to rebuild.';
-        } else if (errMsg.includes('No authentication info') || errMsg.includes('not created with authentication')) {
-          userMessage += ' Authentication failed. Check your GitHub token or API key configuration.';
-        } else if (errMsg.includes('No such image') || errMsg.includes('image not found')) {
-          userMessage += ' Container image not found. Run "nanoclaw sandbox build" to build it.';
+        } else if (
+          errMsg.includes('ERR_MODULE_NOT_FOUND') ||
+          errMsg.includes('Cannot find package')
+        ) {
+          userMessage +=
+            ' Container image may be outdated or wrong provider. Run "nanoclaw sandbox build" to rebuild.';
+        } else if (
+          errMsg.includes('No authentication info') ||
+          errMsg.includes('not created with authentication')
+        ) {
+          userMessage +=
+            ' Authentication failed. Check your GitHub token or API key configuration.';
+        } else if (
+          errMsg.includes('No such image') ||
+          errMsg.includes('image not found')
+        ) {
+          userMessage +=
+            ' Container image not found. Run "nanoclaw sandbox build" to build it.';
         } else {
           userMessage += ' Error: ' + errMsg.slice(0, 200);
         }
@@ -463,12 +504,24 @@ async function runAgent(
           ' Docker may not be running or installed. Run "nanoclaw doctor" to check.';
       } else if (errMsg.includes('timeout')) {
         userMessage += ' The agent timed out processing your request.';
-      } else if (errMsg.includes('ERR_MODULE_NOT_FOUND') || errMsg.includes('Cannot find package')) {
-        userMessage += ' Container image may be outdated or wrong provider. Run "nanoclaw sandbox build" to rebuild.';
-      } else if (errMsg.includes('No authentication info') || errMsg.includes('not created with authentication')) {
-        userMessage += ' Authentication failed. Check your GitHub token or API key configuration.';
-      } else if (errMsg.includes('No such image') || errMsg.includes('image not found')) {
-        userMessage += ' Container image not found. Run "nanoclaw sandbox build" to build it.';
+      } else if (
+        errMsg.includes('ERR_MODULE_NOT_FOUND') ||
+        errMsg.includes('Cannot find package')
+      ) {
+        userMessage +=
+          ' Container image may be outdated or wrong provider. Run "nanoclaw sandbox build" to rebuild.';
+      } else if (
+        errMsg.includes('No authentication info') ||
+        errMsg.includes('not created with authentication')
+      ) {
+        userMessage +=
+          ' Authentication failed. Check your GitHub token or API key configuration.';
+      } else if (
+        errMsg.includes('No such image') ||
+        errMsg.includes('image not found')
+      ) {
+        userMessage +=
+          ' Container image not found. Run "nanoclaw sandbox build" to build it.';
       } else {
         userMessage += ` Error: ${errMsg.slice(0, 200)}`;
       }
@@ -729,9 +782,17 @@ async function main(): Promise<void> {
         const pairChannel = findChannel(channels, chatJid);
         if (pairChannel) {
           const chatName = chatJid.replace(/[^a-zA-Z0-9]/g, '-');
-          pairChannel.sendMessage(chatJid,
-            `👋 This chat isn't paired yet.\n\nTo pair, run on your server:\nnanoclaw pair ${chatJid} --name "${chatName}"\nnanoclaw restart`
-          ).catch((err: any) => logger.debug({ err, chatJid }, 'Failed to send pair instructions'));
+          pairChannel
+            .sendMessage(
+              chatJid,
+              `👋 This chat isn't paired yet.\n\nTo pair, run on your server:\nnanoclaw pair ${chatJid} --name "${chatName}"\nnanoclaw restart`,
+            )
+            .catch((err: any) =>
+              logger.debug(
+                { err, chatJid },
+                'Failed to send pair instructions',
+              ),
+            );
         }
         return;
       }
