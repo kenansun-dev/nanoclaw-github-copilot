@@ -149,8 +149,10 @@ export async function runHostAgent(
   }
 
   // Spawn command
-  const cmd = useTsx ? 'npx' : 'node';
-  const args = useTsx ? ['tsx', runnerPath] : [runnerPath];
+  // Use tsx binary directly (not via npx) to avoid orphan process chains
+  const tsxBin = path.join(process.cwd(), 'node_modules', '.bin', 'tsx');
+  const cmd = useTsx ? tsxBin : 'node';
+  const args = [runnerPath];
 
   const processName = `nanoclaw-host-${group.folder.replace(/[^a-zA-Z0-9-]/g, '-')}-${Date.now()}`;
 
@@ -168,6 +170,7 @@ export async function runHostAgent(
     env,
     cwd: groupDir,
     stdio: ['pipe', 'pipe', 'pipe'],
+    detached: true,
   });
 
   onProcess(child, processName);
@@ -190,9 +193,10 @@ export async function runHostAgent(
         { group: group.name, processName },
         'Host agent timeout, killing',
       );
-      child.kill('SIGTERM');
+      // Kill the entire process group to avoid orphans
+      try { process.kill(-child.pid!, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
       setTimeout(() => {
-        if (!child.killed) child.kill('SIGKILL');
+        try { process.kill(-child.pid!, 'SIGKILL'); } catch { if (!child.killed) child.kill('SIGKILL'); }
       }, 10_000);
     };
 
