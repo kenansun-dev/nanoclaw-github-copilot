@@ -289,14 +289,7 @@ export class TeamsChannel implements Channel {
 
     this.opts.onChatMetadata(chatJid, timestamp, chatName, 'teams', isGroup);
 
-    const group = this.opts.registeredGroups()[chatJid];
-    if (!group) {
-      logger.info(
-        { chatJid, chatName },
-        'Message from unregistered Teams chat',
-      );
-      return;
-    }
+    // Note: unregistered chats are handled by index.ts (pair instructions)
 
     this.opts.onMessage(chatJid, {
       id: msgId,
@@ -390,14 +383,7 @@ export class TeamsChannel implements Channel {
     this.opts.onChatMetadata(chatJid, timestamp, chatName, 'teams', isGroup);
 
     // Only deliver to registered groups
-    const group = this.opts.registeredGroups()[chatJid];
-    if (!group) {
-      logger.info(
-        { chatJid, chatName },
-        'Message from unregistered Teams chat',
-      );
-      return;
-    }
+    // Note: unregistered chats are handled by index.ts (pair instructions)
 
     // Deliver message
     this.opts.onMessage(chatJid, {

@@ -277,7 +277,7 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('only emits metadata for unregistered chats', async () => {
+    it('passes messages from unregistered chats to onMessage (pair handled by index.ts)', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
@@ -292,7 +292,7 @@ describe('TelegramChannel', () => {
         'telegram',
         true,
       );
-      expect(opts.onMessage).not.toHaveBeenCalled();
+      expect(opts.onMessage).toHaveBeenCalled();
     });
 
     it('skips bot commands (/chatid, /ping) but passes other / messages through', async () => {

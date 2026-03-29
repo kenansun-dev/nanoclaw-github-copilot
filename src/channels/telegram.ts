@@ -139,15 +139,7 @@ export class TelegramChannel implements Channel {
         isGroup,
       );
 
-      // Only deliver full message for registered groups
-      const group = this.opts.registeredGroups()[chatJid];
-      if (!group) {
-        logger.info(
-          { chatJid, chatName },
-          'Message from unregistered Telegram chat',
-        );
-        return;
-      }
+      // Note: unregistered chats are handled by index.ts (pair instructions)
 
       // Deliver message — startMessageLoop() will pick it up
       this.opts.onMessage(chatJid, {
