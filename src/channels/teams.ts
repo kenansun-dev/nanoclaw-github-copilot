@@ -215,10 +215,33 @@ export class TeamsChannel implements Channel {
    * WARNING: This bypasses JWT validation. Use only during development.
    */
   private async handleIncomingRaw(activity: any, req: any): Promise<void> {
-    if (activity.type !== 'message' || !activity.text) return;
-
     const conversationId = activity.conversation?.id || '';
     const chatJid = `teams:${conversationId}`;
+
+    // Handle reaction events
+    if (activity.type === 'messageReaction') {
+      const reactionsAdded = activity.reactionsAdded || [];
+      const sender = activity.from?.name || activity.from?.id || 'unknown';
+      for (const reaction of reactionsAdded) {
+        const emoji = reaction.type || '';
+        const targetMsgId = activity.replyToId || '';
+        logger.info({ chatJid, sender, emoji, targetMsgId }, 'Teams reaction received');
+        // Store as a non-text message so agent sees it in context
+        const timestamp = activity.timestamp || new Date().toISOString();
+        this.opts.onMessage(chatJid, {
+          id: `reaction-${Date.now()}`,
+          chat_jid: chatJid,
+          content: `[${sender} reacted with ${emoji}]`,
+          sender: activity.from?.aadObjectId || activity.from?.id || '',
+          sender_name: sender,
+          timestamp,
+          is_from_me: false,
+        });
+      }
+      return;
+    }
+
+    if (activity.type !== 'message' || !activity.text) return;
 
     // Store a minimal conversation reference for replies
     const ref = {
@@ -293,14 +316,35 @@ export class TeamsChannel implements Channel {
 
   private async handleIncoming(context: TurnContext): Promise<void> {
     const activity = context.activity;
+    const conversationId = activity.conversation?.id || '';
+    const chatJid = `teams:${conversationId}`;
+
+    // Handle reaction events
+    if (activity.type === 'messageReaction') {
+      const reactionsAdded = (activity as any).reactionsAdded || [];
+      const sender = activity.from?.name || activity.from?.id || 'unknown';
+      for (const reaction of reactionsAdded) {
+        const emoji = reaction.type || '';
+        logger.info({ chatJid, sender, emoji }, 'Teams reaction received');
+        const timestamp = activity.timestamp?.toISOString?.() || new Date().toISOString();
+        this.opts.onMessage(chatJid, {
+          id: `reaction-${Date.now()}`,
+          chat_jid: chatJid,
+          content: `[${sender} reacted with ${emoji}]`,
+          sender: activity.from?.aadObjectId || activity.from?.id || '',
+          sender_name: sender,
+          timestamp,
+          is_from_me: false,
+        });
+      }
+      return;
+    }
 
     // Only handle message activities
     if (activity.type !== 'message' || !activity.text) return;
 
     // Store conversation reference for proactive messaging later
     const ref = TurnContext.getConversationReference(activity);
-    const conversationId = activity.conversation?.id || '';
-    const chatJid = `teams:${conversationId}`;
     this.conversationRefs.set(chatJid, ref);
 
     let content = activity.text;
