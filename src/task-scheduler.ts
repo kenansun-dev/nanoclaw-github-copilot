@@ -3,6 +3,7 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { runAgentForChat, resolveAgentForChat } from './config-extensions.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -170,7 +171,9 @@ async function runTask(
   };
 
   try {
-    const output = await runContainerAgent(
+    const agent = resolveAgentForChat(task.chat_jid);
+    const output = await runAgentForChat(
+      task.chat_jid,
       group,
       {
         prompt: task.prompt,
@@ -179,7 +182,7 @@ async function runTask(
         chatJid: task.chat_jid,
         isMain,
         isScheduledTask: true,
-        assistantName: ASSISTANT_NAME,
+        assistantName: agent.name || ASSISTANT_NAME,
         script: task.script || undefined,
       },
       (proc, containerName) =>

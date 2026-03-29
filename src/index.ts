@@ -16,7 +16,7 @@ import {
   TRIGGER_PATTERN,
   getConfig,
 } from './config.js';
-import { resolveAgentForChat } from './config-extensions.js';
+import { resolveAgentForChat, runAgentForChat } from './config-extensions.js';
 import './channels/index.js';
 import {
   getChannelFactory,

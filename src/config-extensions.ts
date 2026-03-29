@@ -94,3 +94,39 @@ export function resolveGithubToken(): string | undefined {
 
   return undefined;
 }
+
+
+// --- Runner selection (host vs container) ---
+// Re-export a unified runner function so callers (index.ts, task-scheduler.ts)
+// don't need to import both runners and duplicate the mode check.
+
+import type { ChildProcess } from 'child_process';
+import type { ContainerOutput, ContainerInput } from './container-runner.js';
+import { runContainerAgent } from './container-runner.js';
+
+let _hostRunnerModule: typeof import('./host-runner.js') | null = null;
+async function getHostRunner() {
+  if (!_hostRunnerModule) {
+    _hostRunnerModule = await import('./host-runner.js');
+  }
+  return _hostRunnerModule;
+}
+
+type RunnerGroup = Parameters<typeof runContainerAgent>[0];
+type OnProcess = (proc: ChildProcess, name: string) => void;
+type OnOutput = (output: ContainerOutput) => Promise<void>;
+
+export async function runAgentForChat(
+  chatJid: string,
+  group: RunnerGroup,
+  input: ContainerInput,
+  onProcess: OnProcess,
+  onOutput?: OnOutput,
+): Promise<ContainerOutput> {
+  const agent = resolveAgentForChat(chatJid);
+  if (agent.mode === 'host') {
+    const { runHostAgent } = await getHostRunner();
+    return runHostAgent(group, input, onProcess, onOutput);
+  }
+  return runContainerAgent(group, input, onProcess, onOutput);
+}
