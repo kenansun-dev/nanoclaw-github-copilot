@@ -427,6 +427,12 @@ async function runAgent(
             ' Docker is not running or not installed. Run "nanoclaw doctor" to check.';
         } else if (errMsg.includes('timeout')) {
           userMessage += ' The agent timed out processing your request.';
+        } else if (errMsg.includes('ERR_MODULE_NOT_FOUND') || errMsg.includes('Cannot find package')) {
+          userMessage += ' Container image may be outdated or wrong provider. Run "nanoclaw sandbox build" to rebuild.';
+        } else if (errMsg.includes('No authentication info') || errMsg.includes('not created with authentication')) {
+          userMessage += ' Authentication failed. Check your GitHub token or API key configuration.';
+        } else if (errMsg.includes('No such image') || errMsg.includes('image not found')) {
+          userMessage += ' Container image not found. Run "nanoclaw sandbox build" to build it.';
         } else {
           userMessage += ' Error: ' + errMsg.slice(0, 200);
         }
@@ -456,6 +462,12 @@ async function runAgent(
           ' Docker may not be running or installed. Run "nanoclaw doctor" to check.';
       } else if (errMsg.includes('timeout')) {
         userMessage += ' The agent timed out processing your request.';
+      } else if (errMsg.includes('ERR_MODULE_NOT_FOUND') || errMsg.includes('Cannot find package')) {
+        userMessage += ' Container image may be outdated or wrong provider. Run "nanoclaw sandbox build" to rebuild.';
+      } else if (errMsg.includes('No authentication info') || errMsg.includes('not created with authentication')) {
+        userMessage += ' Authentication failed. Check your GitHub token or API key configuration.';
+      } else if (errMsg.includes('No such image') || errMsg.includes('image not found')) {
+        userMessage += ' Container image not found. Run "nanoclaw sandbox build" to build it.';
       } else {
         userMessage += ` Error: ${errMsg.slice(0, 200)}`;
       }
