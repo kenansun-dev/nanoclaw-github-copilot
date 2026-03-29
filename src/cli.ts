@@ -104,6 +104,11 @@ try {
     case 'chat':
       await runChat(commandArgs);
       break;
+    case 'pair': {
+      const { runPair } = await import('./cli/pair.js');
+      await runPair(commandArgs);
+      break;
+    }
     case 'mcp':
       await runMcp(commandArgs);
       break;
@@ -497,6 +502,7 @@ Channels
   channel test <name>               Test a channel connection
 
 Chats
+  pair [<jid>] [--name <n>] [--main] Pair a new chat
   chat list                         List registered chats
   chat pending                      Show unregistered chats
   chat add <jid> --name <name>      Register a chat
