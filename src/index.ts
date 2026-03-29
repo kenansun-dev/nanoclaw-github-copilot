@@ -869,6 +869,14 @@ async function main(): Promise<void> {
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       return channel.sendMessage(jid, text);
     },
+    reactToMessage: async (jid, emoji, messageId) => {
+      const channel = findChannel(channels, jid);
+      if (channel?.reactToMessage) {
+        await channel.reactToMessage(jid, emoji, messageId);
+      } else {
+        logger.debug({ jid, emoji }, 'Channel does not support reactions');
+      }
+    },
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroups: async (force: boolean) => {

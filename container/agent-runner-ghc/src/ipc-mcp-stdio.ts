@@ -334,5 +334,28 @@ Use available_groups.json to find the JID for a group. The folder name must be c
 );
 
 // Start the stdio transport
+// React to a message with an emoji
+server.tool(
+  'react',
+  'React to a message with an emoji. Use this to acknowledge messages, show appreciation, or express emotions without a full text reply. Teams supports: like, heart, laugh, surprised, sad, angry.',
+  {
+    emoji: z.string().describe('Emoji name or character (e.g. "like", "heart", "laugh", "👍", "❤️")'),
+    messageId: z.string().optional().describe('Message ID to react to (defaults to the last received message)'),
+  },
+  async (args) => {
+    const data = {
+      type: 'react',
+      chatJid,
+      emoji: args.emoji,
+      messageId: args.messageId,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(TASKS_DIR, data);
+    return {
+      content: [{ type: 'text' as const, text: `Reacted with ${args.emoji}` }],
+    };
+  },
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);

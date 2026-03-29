@@ -12,6 +12,7 @@ import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  reactToMessage?: (jid: string, emoji: string, messageId?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -91,6 +92,14 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC message attempt blocked',
                   );
+                }
+              }
+              // Handle react IPC
+              if (data.type === 'react' && data.chatJid && data.emoji && deps.reactToMessage) {
+                const targetGroup = registeredGroups[data.chatJid];
+                if (isMain || (targetGroup && targetGroup.folder === sourceGroup)) {
+                  await deps.reactToMessage(data.chatJid, data.emoji, data.messageId);
+                  logger.info({ chatJid: data.chatJid, emoji: data.emoji }, 'IPC reaction sent');
                 }
               }
               fs.unlinkSync(filePath);
