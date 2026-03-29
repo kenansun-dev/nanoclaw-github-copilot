@@ -16,7 +16,7 @@ import {
   TRIGGER_PATTERN,
   getConfig,
 } from './config.js';
-import { resolveAgentForChat, runAgentForChat } from './config-extensions.js';
+import { resolveAgentForChat, runAgentForChat, IS_GHC_PROVIDER } from './config-extensions.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -81,12 +81,13 @@ let messageLoopRunning = false;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
-const onecli = new OneCLI({ url: ONECLI_URL });
+// OneCLI is only used for CC (Anthropic) provider
+const onecli = IS_GHC_PROVIDER ? null : new OneCLI({ url: ONECLI_URL });
 
 function ensureOneCLIAgent(jid: string, group: RegisteredGroup): void {
-  if (group.isMain) return;
+  if (!onecli || group.isMain) return;
   const identifier = group.folder.toLowerCase().replace(/_/g, '-');
-  onecli.ensureAgent({ name: group.name, identifier }).then(
+  onecli!.ensureAgent({ name: group.name, identifier }).then(
     (res: any) => {
       logger.info(
         { jid, identifier, created: res.created },
@@ -609,6 +610,12 @@ function recoverPendingMessages(): void {
 let containerRuntimeAvailable = false;
 
 function ensureContainerSystemRunning(): void {
+  // Host mode doesn't need Docker
+  const config = getConfig();
+  if (config.agents?.defaults?.mode === 'host') {
+    logger.info('Host mode — skipping container runtime check');
+    return;
+  }
   try {
     ensureContainerRuntimeRunning();
     containerRuntimeAvailable = true;
