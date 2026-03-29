@@ -292,6 +292,9 @@ export function loadConfig(): NanoclawConfig {
   // Merge with defaults
   const config = deepMerge(DEFAULTS, userConfig) as NanoclawConfig;
 
+  // Normalize chats: convert grouped format to flat Record<jid, config>
+  config.chats = normalizeChats(config.chats) as any;
+
   // Merge MCP servers from mcp.json if it exists
   if (fs.existsSync(paths.mcpConfig)) {
     try {
