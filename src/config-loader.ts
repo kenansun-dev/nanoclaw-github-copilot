@@ -20,6 +20,22 @@ export interface AgentConfig {
   sandboxBackend: 'docker' | 'ssh';
 }
 
+// New chats format: grouped by channel
+export interface ChatEntry {
+  jid: string;
+  name: string;
+  isMain?: boolean;
+  requiresTrigger?: boolean;
+  agentId?: string;
+}
+
+export interface ChannelChats {
+  telegram?: ChatEntry[];
+  teams?: ChatEntry[];
+  discord?: ChatEntry[];
+  [channel: string]: ChatEntry[] | undefined;
+}
+
 export interface NanoclawConfig {
   agents: {
     defaults: AgentConfig;
@@ -197,6 +213,66 @@ export function readWorkspaceEnv(): Record<string, string> {
  * Load nanoclaw.json from workspace, merge with defaults.
  * Secrets from .env are merged into the appropriate config sections.
  */
+/**
+ * Convert channel-grouped chats format to flat Record<jid, config> format.
+ * Supports both old (flat) and new (grouped) formats.
+ */
+function normalizeChats(raw: any): Record<string, { name: string; isMain?: boolean; requiresTrigger?: boolean; agentId?: string }> {
+  if (!raw || typeof raw !== 'object') return {};
+
+  // Check if it's the new grouped format (has telegram/teams/discord arrays)
+  const channelKeys = ['telegram', 'teams', 'discord', 'slack', 'whatsapp'];
+  const isGrouped = Object.keys(raw).some(
+    (k) => channelKeys.includes(k) && Array.isArray(raw[k]),
+  );
+
+  if (isGrouped) {
+    const result: Record<string, any> = {};
+    for (const [, entries] of Object.entries(raw)) {
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        if (entry.jid && entry.name) {
+          result[entry.jid] = {
+            name: entry.name,
+            isMain: entry.isMain,
+            requiresTrigger: entry.requiresTrigger,
+            agentId: entry.agentId,
+          };
+        }
+      }
+    }
+    return result;
+  }
+
+  // Old flat format — return as-is
+  return raw;
+}
+
+/**
+ * Convert flat Record<jid, config> back to channel-grouped format for saving.
+ */
+function denormalizeChats(flat: Record<string, any>): ChannelChats {
+  const grouped: ChannelChats = {};
+  for (const [jid, config] of Object.entries(flat)) {
+    let channel = 'other';
+    if (jid.startsWith('tg:')) channel = 'telegram';
+    else if (jid.startsWith('teams:')) channel = 'teams';
+    else if (jid.startsWith('dc:')) channel = 'discord';
+    else if (jid.startsWith('wa:')) channel = 'whatsapp';
+    else if (jid.startsWith('slack:')) channel = 'slack';
+
+    if (!grouped[channel]) grouped[channel] = [];
+    grouped[channel]!.push({
+      jid,
+      name: config.name,
+      isMain: config.isMain,
+      requiresTrigger: config.requiresTrigger,
+      agentId: config.agentId,
+    });
+  }
+  return grouped;
+}
+
 export function loadConfig(): NanoclawConfig {
   let userConfig: Partial<NanoclawConfig> = {};
 
@@ -294,6 +370,8 @@ export function saveConfig(config: NanoclawConfig): void {
     delete toSave.channels.teams.certPrivateKeyPath;
   }
 
+  // Save chats in grouped format
+  toSave.chats = denormalizeChats(toSave.chats || {});
   fs.writeFileSync(paths.config, JSON.stringify(toSave, null, 2) + '\n');
 }
 

@@ -15,7 +15,10 @@
       "enabled": false
     }
   },
-  "chats": {},
+  "chats": {
+    "telegram": [],
+    "teams": []
+  },
   "mcp": {
     "servers": {}
   },
