@@ -16,7 +16,8 @@ set -euo pipefail
 #   --bot-name NAME          Bot display name (default: nanoclaw-teams-bot)
 #   --resource-group RG      Azure resource group (default: nanoclaw-rg)
 #   --tenant-id TENANT       Azure AD tenant ID
-#   --multi-tenant           Use multi-tenant App Registration
+#   --app-multi-tenant       App Registration allows any Azure AD tenant
+#   --bot-type TYPE          Bot type: SingleTenant (default) or MultiTenant
 #   --location LOC           Azure region (default: eastus)
 #   --port PORT              Webhook port (default: 3978)
 # ============================================================
@@ -26,7 +27,8 @@ RESOURCE_GROUP="${RESOURCE_GROUP:-nanoclaw-rg}"
 LOCATION="${LOCATION:-eastus}"
 TENANT_ID=""
 WEBHOOK_PORT="${MSTEAMS_WEBHOOK_PORT:-3978}"
-MULTI_TENANT=false
+APP_MULTI_TENANT=false
+BOT_TYPE="SingleTenant"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 WORKSPACE_DIR="${NANOCLAW_WORKSPACE:-$HOME/.nanoclaw}"
@@ -38,7 +40,8 @@ while [[ $# -gt 0 ]]; do
     --bot-name) BOT_NAME="$2"; shift 2;;
     --resource-group) RESOURCE_GROUP="$2"; shift 2;;
     --tenant-id) TENANT_ID="$2"; shift 2;;
-    --multi-tenant) MULTI_TENANT=true; shift;;
+    --app-multi-tenant) APP_MULTI_TENANT=true; shift;;
+    --bot-type) BOT_TYPE="$2"; shift 2;;
     --location) LOCATION="$2"; shift 2;;
     --port) WEBHOOK_PORT="$2"; shift 2;;
     *) echo "Unknown option: $1"; exit 1;;
@@ -88,15 +91,17 @@ if [ -z "$TENANT_ID" ]; then
 fi
 
 # App type based on multi-tenant flag
-if [ "$MULTI_TENANT" = true ]; then
+# App Registration audience (who can get tokens)
+if [ "$APP_MULTI_TENANT" = true ]; then
   SIGN_IN_AUDIENCE="AzureADMultipleOrgs"
-  APP_TYPE="MultiTenant"
-  echo "   Mode: Multi-tenant"
+  echo "   App: Multi-tenant (any Azure AD user can auth)"
 else
   SIGN_IN_AUDIENCE="AzureADMyOrg"
-  APP_TYPE="SingleTenant"
-  echo "   Mode: Single-tenant"
+  echo "   App: Single-tenant (only this org)"
 fi
+
+# Bot type (how Bot Framework validates tokens) — typically SingleTenant
+echo "   Bot Type: $BOT_TYPE"
 echo ""
 
 # ─── Step 1: DevTunnel ───────────────────────────────────────────────────────
@@ -185,7 +190,7 @@ echo "🤖 Step 4: Creating Azure Bot..."
 az bot create \
   --name "$BOT_NAME" \
   --resource-group "$RESOURCE_GROUP" \
-  --app-type "$APP_TYPE" \
+  --app-type "$BOT_TYPE" \
   --appid "$APP_ID" \
   --password "$APP_PASSWORD" \
   --endpoint "$MESSAGING_ENDPOINT" \
@@ -279,6 +284,15 @@ mkdir -p "$WORKSPACE_DIR"
   echo "MSTEAMS_APP_PASSWORD=$APP_PASSWORD"
   echo "MSTEAMS_TENANT_ID=$TENANT_ID"
   echo "MSTEAMS_WEBHOOK_PORT=$WEBHOOK_PORT"
+  echo ""
+  echo "# === Teams Reference Info (not read by code, for your records) ==="
+  echo "MSTEAMS_BOT_NAME=$BOT_NAME"
+  echo "MSTEAMS_BOT_TYPE=$BOT_TYPE"
+  echo "MSTEAMS_APP_AUDIENCE=$SIGN_IN_AUDIENCE"
+  echo "MSTEAMS_BOT_ENDPOINT=$MESSAGING_ENDPOINT"
+  echo "MSTEAMS_TUNNEL_ID=$TUNNEL_ID"
+  echo "MSTEAMS_RESOURCE_GROUP=$RESOURCE_GROUP"
+  echo "MSTEAMS_PASSWORD_CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } >> "$ENV_FILE"
 echo "   ✅ Credentials written to $ENV_FILE"
 echo ""
@@ -320,7 +334,8 @@ echo ""
 echo "   App ID:     $APP_ID"
 echo "   Bot Name:   $BOT_NAME"
 echo "   Tenant:     $TENANT_ID"
-echo "   App Type:   $APP_TYPE"
+echo "   App Type:   $SIGN_IN_AUDIENCE"
+echo "   Bot Type:   $BOT_TYPE"
 echo "   Tunnel:     $TUNNEL_URL"
 echo "   Endpoint:   $MESSAGING_ENDPOINT"
 echo "   Manifest:   $PROJECT_DIR/teams-app.zip"
