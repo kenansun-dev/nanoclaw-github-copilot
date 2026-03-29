@@ -193,9 +193,29 @@ async function main(): Promise<void> {
     prompt += '\n' + pending.join('\n');
   }
 
-  // Build dynamic identity from config (so agent knows its name from nanoclaw.json)
+  // Build dynamic identity + runtime info
   const agentName = containerInput.assistantName || 'Andy';
-  const identityPrompt = `Your name is ${agentName}. When introducing yourself or referring to yourself, use this name.`;
+  const isHostMode = process.env.NANOCLAW_HOST_MODE === '1';
+  const os = await import('os');
+  const runtimeLines = [
+    `Your name is ${agentName}. When introducing yourself, use this name.`,
+    '',
+    '## Runtime',
+    `- **Mode**: ${isHostMode ? 'Host (running directly on the machine)' : 'Container (Docker sandbox)'}`,
+    `- **OS**: ${os.type()} ${os.release()} (${os.arch()})`,
+    `- **Node**: ${process.version}`,
+    `- **User**: ${os.userInfo().username}`,
+    `- **Working directory**: ${process.cwd()}`,
+    `- **Model**: ${containerInput.model || process.env.COPILOT_MODEL || 'default'}`,
+  ];
+  if (isHostMode) {
+    runtimeLines.push('- **Persistence**: Full — all files and installed software persist');
+    runtimeLines.push('- **Access**: Direct host filesystem access');
+  } else {
+    runtimeLines.push('- **Persistence**: Only /workspace/group persists across restarts');
+    runtimeLines.push('- **Sudo**: Available (passwordless)');
+  }
+  const identityPrompt = runtimeLines.join('\n');
 
   // Load global CLAUDE.md as additional system context
   let systemMessage: { mode: 'append'; content: string } | undefined;
