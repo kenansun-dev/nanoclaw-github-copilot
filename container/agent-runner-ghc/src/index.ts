@@ -193,13 +193,22 @@ async function main(): Promise<void> {
     prompt += '\n' + pending.join('\n');
   }
 
+  // Build dynamic identity from config (so agent knows its name from nanoclaw.json)
+  const agentName = containerInput.assistantName || 'Andy';
+  const identityPrompt = `Your name is ${agentName}. When introducing yourself or referring to yourself, use this name.`;
+
   // Load global CLAUDE.md as additional system context
   let systemMessage: { mode: 'append'; content: string } | undefined;
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
   if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
     systemMessage = {
       mode: 'append',
-      content: fs.readFileSync(globalClaudeMdPath, 'utf-8'),
+      content: identityPrompt + '\n\n' + fs.readFileSync(globalClaudeMdPath, 'utf-8'),
+    };
+  } else {
+    systemMessage = {
+      mode: 'append',
+      content: identityPrompt,
     };
   }
 
