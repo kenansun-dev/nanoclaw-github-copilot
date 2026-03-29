@@ -85,6 +85,12 @@ export interface NanoclawConfig {
     mode: 'open' | 'prompt' | 'allowlist' | 'disabled';
     notifyChat?: string;
   };
+  security?: {
+    allowedSenders?: {
+      default?: { allow: '*' | string[]; mode?: 'trigger' | 'drop' };
+      chats?: Record<string, { allow: '*' | string[]; mode?: 'trigger' | 'drop' }>;
+    };
+  };
   credentialProxy: {
     port: number;
   };

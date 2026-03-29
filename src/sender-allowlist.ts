@@ -1,6 +1,6 @@
 import fs from 'fs';
 
-import { SENDER_ALLOWLIST_PATH } from './config.js';
+import { SENDER_ALLOWLIST_PATH, getConfig } from './config.js';
 import { logger } from './logger.js';
 
 export interface ChatAllowlistEntry {
@@ -33,6 +33,27 @@ function isValidEntry(entry: unknown): entry is ChatAllowlistEntry {
 export function loadSenderAllowlist(
   pathOverride?: string,
 ): SenderAllowlistConfig {
+  // Check nanoclaw.json security.allowedSenders first (our extension)
+  try {
+    const config = getConfig();
+    const sec = config.security?.allowedSenders;
+    if (sec) {
+      const defaultEntry: ChatAllowlistEntry = sec.default
+        ? { allow: sec.default.allow ?? '*', mode: sec.default.mode ?? 'trigger' }
+        : DEFAULT_CONFIG.default;
+      const chats: Record<string, ChatAllowlistEntry> = {};
+      if (sec.chats) {
+        for (const [jid, entry] of Object.entries(sec.chats)) {
+          chats[jid] = { allow: entry.allow ?? '*', mode: entry.mode ?? 'trigger' };
+        }
+      }
+      return { default: defaultEntry, chats, logDenied: true };
+    }
+  } catch {
+    // Config not available, fall through to file
+  }
+
+  // Fallback: read from standalone sender-allowlist.json (upstream behavior)
   const filePath = pathOverride ?? SENDER_ALLOWLIST_PATH;
 
   let raw: string;
