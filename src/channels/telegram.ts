@@ -144,17 +144,8 @@ export class TelegramChannel implements Channel {
       if (!group) {
         logger.info(
           { chatJid, chatName },
-          'Message from unregistered Telegram chat — sending pair instructions',
+          'Message from unregistered Telegram chat',
         );
-        // Send pair instructions to the user
-        try {
-          await ctx.reply(
-            `👋 This chat isn't paired yet.\n\nTo pair, run on your server:\n\`\`\`\nnanoclaw pair ${chatJid} --name "${chatName}"\nnanoclaw restart\n\`\`\``,
-            { parse_mode: 'Markdown' },
-          );
-        } catch (err) {
-          logger.debug({ err }, 'Failed to send pair instructions');
-        }
         return;
       }
 
