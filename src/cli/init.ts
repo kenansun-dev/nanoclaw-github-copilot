@@ -48,6 +48,15 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
     copyDirSync(srcDocs, dstDocs);
   }
 
+  // Copy default skills to workspace
+  const skillsDst = path.join(ws, 'skills');
+  fs.mkdirSync(skillsDst, { recursive: true });
+  const containerSkills = path.join(projectRoot, 'container', 'skills');
+  if (fs.existsSync(containerSkills)) {
+    copyDirSync(containerSkills, skillsDst);
+    console.log(`  Copied default skills to ${skillsDst}`);
+  }
+
   console.log(`
 ✅ Workspace created at ${ws}
 

@@ -116,7 +116,9 @@ export async function runHostAgent(
   }
 
   // Skills directory — prefer workspace skills, fall back to container/skills
-  const containerSkills = path.join(process.cwd(), 'container', 'skills');
+  // Use package root (relative to this file) for npm-installed fallback
+  const pkgRoot = path.resolve(new URL('.', import.meta.url).pathname, '..');
+  const containerSkills = path.join(pkgRoot, 'container', 'skills');
   if (fs.existsSync(wsPaths.skills) && fs.readdirSync(wsPaths.skills).length > 0) {
     env.NANOCLAW_SKILLS_DIR = wsPaths.skills;
   } else if (fs.existsSync(containerSkills)) {
