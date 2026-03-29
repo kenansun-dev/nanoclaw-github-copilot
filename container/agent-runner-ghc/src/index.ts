@@ -196,11 +196,17 @@ async function main(): Promise<void> {
   // Build dynamic identity + runtime info
   const agentName = containerInput.assistantName || 'Andy';
   const isHostMode = process.env.NANOCLAW_HOST_MODE === '1';
+  const modelStr = containerInput.model || process.env.COPILOT_MODEL || 'default';
+  const provider = modelStr.includes('/') ? modelStr.split('/')[0] : 'unknown';
+  const providerLabel = provider === 'github-copilot' ? 'GitHub Copilot'
+    : provider === 'anthropic' ? 'Claude (Anthropic)'
+    : provider;
   const os = await import('os');
   const runtimeLines = [
-    `Your name is ${agentName}. When introducing yourself, use this name.`,
+    `Your name is ${agentName}. You are a personal AI assistant powered by ${providerLabel}. When introducing yourself, use your name and mention you are powered by ${providerLabel}.`,
     '',
     '## Runtime',
+    `- **Provider**: ${providerLabel}`,
     `- **Mode**: ${isHostMode ? 'Host (running directly on the machine)' : 'Container (Docker sandbox)'}`,
     `- **OS**: ${os.type()} ${os.release()} (${os.arch()})`,
     `- **Node**: ${process.version}`,
