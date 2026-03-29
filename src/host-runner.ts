@@ -124,6 +124,23 @@ export async function runHostAgent(
     env.NANOCLAW_MCP_CONFIG = wsPaths.mcpConfig;
   }
 
+  // IPC directory
+  env.NANOCLAW_IPC_DIR = path.join(ipcDir, 'input');
+
+  // Working directory (agent cwd)
+  env.NANOCLAW_WORK_DIR = groupDir;
+
+  // Global CLAUDE.md template
+  const globalClaudeMd = path.join(
+    process.cwd(),
+    'groups',
+    group.isMain ? 'main' : 'global',
+    'CLAUDE.md',
+  );
+  if (fs.existsSync(globalClaudeMd)) {
+    env.NANOCLAW_GLOBAL_CLAUDE_MD = globalClaudeMd;
+  }
+
   // Spawn command
   const cmd = useTsx ? 'npx' : 'node';
   const args = useTsx ? ['tsx', runnerPath] : [runnerPath];

@@ -35,7 +35,7 @@ interface ContainerOutput {
   error?: string;
 }
 
-const IPC_INPUT_DIR = '/workspace/ipc/input';
+const IPC_INPUT_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 
@@ -126,7 +126,7 @@ function archiveConversation(
   try {
     if (messages.length === 0) return;
 
-    const conversationsDir = '/workspace/group/conversations';
+    const conversationsDir = path.join(process.env.NANOCLAW_WORK_DIR || '/workspace/group', 'conversations');
     fs.mkdirSync(conversationsDir, { recursive: true });
 
     const date = new Date().toISOString().split('T')[0];
@@ -199,7 +199,7 @@ async function main(): Promise<void> {
 
   // Load global CLAUDE.md as additional system context
   let systemMessage: { mode: 'append'; content: string } | undefined;
-  const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
+  const globalClaudeMdPath = process.env.NANOCLAW_GLOBAL_CLAUDE_MD || '/workspace/global/CLAUDE.md';
   if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
     systemMessage = {
       mode: 'append',
@@ -214,7 +214,7 @@ async function main(): Promise<void> {
 
   // Discover additional directories and skill directories
   const extraDirs: string[] = [];
-  const extraBase = '/workspace/extra';
+  const extraBase = process.env.NANOCLAW_EXTRA_DIR || '/workspace/extra';
   if (fs.existsSync(extraBase)) {
     for (const entry of fs.readdirSync(extraBase)) {
       const fullPath = path.join(extraBase, entry);
@@ -226,7 +226,7 @@ async function main(): Promise<void> {
 
   // Default skill directory: ~/.nanoclaw/skills (mounted from host)
   // Each subdirectory is a skill containing SKILL.md
-  const skillsDir = '/workspace/skills';
+  const skillsDir = process.env.NANOCLAW_SKILLS_DIR || '/workspace/skills';
   if (fs.existsSync(skillsDir)) {
     // Add the skills directory itself (GHC CLI scans subdirs for SKILL.md)
     extraDirs.push(skillsDir);
@@ -297,7 +297,7 @@ async function main(): Promise<void> {
       const sessionConfig = {
         model,
         systemMessage,
-        workingDirectory: '/workspace/group',
+        workingDirectory: process.env.NANOCLAW_WORK_DIR || '/workspace/group',
         onPermissionRequest: approveAll,
         streaming: true,
         // Catch all session events for MCP OAuth and debugging
@@ -334,7 +334,7 @@ async function main(): Promise<void> {
           },
           // Load additional MCP servers from /workspace/mcp.json (mounted from ~/.nanoclaw/mcp.json)
           ...(() => {
-            const mcpConfigPath = '/workspace/mcp.json';
+            const mcpConfigPath = process.env.NANOCLAW_MCP_CONFIG || '/workspace/mcp.json';
             if (fs.existsSync(mcpConfigPath)) {
               try {
                 const mcpConfig = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf-8'));
