@@ -225,7 +225,10 @@ export class TeamsChannel implements Channel {
       for (const reaction of reactionsAdded) {
         const emoji = reaction.type || '';
         const targetMsgId = activity.replyToId || '';
-        logger.info({ chatJid, sender, emoji, targetMsgId }, 'Teams reaction received');
+        logger.info(
+          { chatJid, sender, emoji, targetMsgId },
+          'Teams reaction received',
+        );
         // Store as a non-text message so agent sees it in context
         const timestamp = activity.timestamp || new Date().toISOString();
         this.opts.onMessage(chatJid, {
@@ -319,7 +322,8 @@ export class TeamsChannel implements Channel {
       for (const reaction of reactionsAdded) {
         const emoji = reaction.type || '';
         logger.info({ chatJid, sender, emoji }, 'Teams reaction received');
-        const timestamp = activity.timestamp?.toISOString?.() || new Date().toISOString();
+        const timestamp =
+          activity.timestamp?.toISOString?.() || new Date().toISOString();
         this.opts.onMessage(chatJid, {
           id: `reaction-${Date.now()}`,
           chat_jid: chatJid,

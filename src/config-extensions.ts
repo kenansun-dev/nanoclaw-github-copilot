@@ -7,7 +7,12 @@
 import path from 'path';
 import fs from 'fs';
 import { CONTAINER_IMAGE } from './config.js';
-import { loadConfig, resolveAgent, AgentConfig, NanoclawConfig } from './config-loader.js';
+import {
+  loadConfig,
+  resolveAgent,
+  AgentConfig,
+  NanoclawConfig,
+} from './config-loader.js';
 
 // ─── Provider detection ──────────────────────────────────────────────────────
 
@@ -90,11 +95,12 @@ export function resolveGithubToken(): string | undefined {
         if (p.provider === 'github-copilot' && p.token) return p.token;
       }
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   return undefined;
 }
-
 
 // --- Runner selection (host vs container) ---
 // Re-export a unified runner function so callers (index.ts, task-scheduler.ts)

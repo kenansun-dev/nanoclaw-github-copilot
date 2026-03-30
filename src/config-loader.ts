@@ -103,7 +103,10 @@ export interface NanoclawConfig {
   security?: {
     allowedSenders?: {
       default?: { allow: '*' | string[]; mode?: 'trigger' | 'drop' };
-      chats?: Record<string, { allow: '*' | string[]; mode?: 'trigger' | 'drop' }>;
+      chats?: Record<
+        string,
+        { allow: '*' | string[]; mode?: 'trigger' | 'drop' }
+      >;
     };
   };
   credentialProxy: {
@@ -215,7 +218,17 @@ export function readWorkspaceEnv(): Record<string, string> {
  * Convert channel-grouped chats format to flat Record<jid, config> format.
  * Supports both old (flat) and new (grouped) formats.
  */
-function normalizeChats(raw: any): Record<string, { name: string; isMain?: boolean; requiresTrigger?: boolean; agentId?: string }> {
+function normalizeChats(
+  raw: any,
+): Record<
+  string,
+  {
+    name: string;
+    isMain?: boolean;
+    requiresTrigger?: boolean;
+    agentId?: string;
+  }
+> {
   if (!raw || typeof raw !== 'object') return {};
 
   // Check if it's the new grouped format (has telegram/teams/discord arrays)

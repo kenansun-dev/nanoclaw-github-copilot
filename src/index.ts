@@ -176,7 +176,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   if (!fs.existsSync(groupMdFile)) {
     const templateFile = path.join(
       DATA_DIR,
-  GROUPS_DIR,
+      GROUPS_DIR,
       group.isMain ? 'main' : 'global',
       'CLAUDE.md',
     );
@@ -264,19 +264,30 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Handle slash commands (/new, /reset — start a new session)
   const lastMsg = missedMessages[missedMessages.length - 1];
-  const slashCmd = lastMsg.content.trim().toLowerCase().replace(/^@\S+\s*/, '');
+  const slashCmd = lastMsg.content
+    .trim()
+    .toLowerCase()
+    .replace(/^@\S+\s*/, '');
   if (slashCmd === '/new' || slashCmd === '/reset') {
     // Clear session for this group
     delete sessions[group.folder];
     deleteSession(group.folder);
     // Also clear .copilot session data
-    const sessionDir = path.join(DATA_DIR, 'sessions', group.folder, '.copilot');
+    const sessionDir = path.join(
+      DATA_DIR,
+      'sessions',
+      group.folder,
+      '.copilot',
+    );
     if (fs.existsSync(sessionDir)) {
       fs.rmSync(sessionDir, { recursive: true, force: true });
     }
     const channel = findChannel(channels, chatJid);
     if (channel) {
-      await channel.sendMessage(chatJid, '🔄 Session reset. Next message starts a fresh conversation.');
+      await channel.sendMessage(
+        chatJid,
+        '🔄 Session reset. Next message starts a fresh conversation.',
+      );
     }
     // Advance cursor past the command
     lastAgentTimestamp[chatJid] = lastMsg.timestamp;

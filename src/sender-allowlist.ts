@@ -39,12 +39,18 @@ export function loadSenderAllowlist(
     const sec = config.security?.allowedSenders;
     if (sec) {
       const defaultEntry: ChatAllowlistEntry = sec.default
-        ? { allow: sec.default.allow ?? '*', mode: sec.default.mode ?? 'trigger' }
+        ? {
+            allow: sec.default.allow ?? '*',
+            mode: sec.default.mode ?? 'trigger',
+          }
         : DEFAULT_CONFIG.default;
       const chats: Record<string, ChatAllowlistEntry> = {};
       if (sec.chats) {
         for (const [jid, entry] of Object.entries(sec.chats)) {
-          chats[jid] = { allow: entry.allow ?? '*', mode: entry.mode ?? 'trigger' };
+          chats[jid] = {
+            allow: entry.allow ?? '*',
+            mode: entry.mode ?? 'trigger',
+          };
         }
       }
       return { default: defaultEntry, chats, logDenied: true };

@@ -16,7 +16,12 @@ import {
   TIMEZONE,
   getConfig,
 } from './config.js';
-import { resolveAgentForChat, getAgentModelName, isAgentGHC, resolveGithubToken } from './config-extensions.js';
+import {
+  resolveAgentForChat,
+  getAgentModelName,
+  isAgentGHC,
+  resolveGithubToken,
+} from './config-extensions.js';
 import type { AgentConfig } from './config-loader.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
@@ -25,7 +30,6 @@ import { paths as wsPaths } from './workspace.js';
 
 const OUTPUT_START = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END = '---NANOCLAW_OUTPUT_END---';
-
 
 /**
  * Resolve the path to the agent-runner entry point.
@@ -120,7 +124,10 @@ export async function runHostAgent(
   // Use package root (relative to this file) for npm-installed fallback
   const pkgRoot = path.resolve(new URL('.', import.meta.url).pathname, '..');
   const containerSkills = path.join(pkgRoot, 'container', 'skills');
-  if (fs.existsSync(wsPaths.skills) && fs.readdirSync(wsPaths.skills).length > 0) {
+  if (
+    fs.existsSync(wsPaths.skills) &&
+    fs.readdirSync(wsPaths.skills).length > 0
+  ) {
     env.NANOCLAW_SKILLS_DIR = wsPaths.skills;
   } else if (fs.existsSync(containerSkills)) {
     env.NANOCLAW_SKILLS_DIR = containerSkills;
@@ -168,7 +175,8 @@ export async function runHostAgent(
 
   const child = spawn(cmd, args, {
     env,
-    cwd: groupDir,
+    // Use agent-runner dir as cwd so tsx resolves node_modules correctly
+    cwd: path.dirname(path.dirname(runnerPath)),
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: true,
   });
@@ -182,10 +190,12 @@ export async function runHostAgent(
     let hadStreamingOutput = false;
 
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
-    const timeoutMs =
-      IDLE_TIMEOUT <= 0
-        ? configTimeout
-        : Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
+    // Host mode with idleTimeout 0: no hard timeout (agent stays alive forever)
+    // Container mode or explicit timeout: use configTimeout or idleTimeout + grace
+    const neverTimeout = IDLE_TIMEOUT <= 0;
+    const timeoutMs = neverTimeout
+      ? 0  // 0 = no timeout
+      : Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
     const killOnTimeout = () => {
       timedOut = true;
@@ -194,16 +204,27 @@ export async function runHostAgent(
         'Host agent timeout, killing',
       );
       // Kill the entire process group to avoid orphans
-      try { process.kill(-child.pid!, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
+      try {
+        process.kill(-child.pid!, 'SIGTERM');
+      } catch {
+        child.kill('SIGTERM');
+      }
       setTimeout(() => {
-        try { process.kill(-child.pid!, 'SIGKILL'); } catch { if (!child.killed) child.kill('SIGKILL'); }
+        try {
+          process.kill(-child.pid!, 'SIGKILL');
+        } catch {
+          if (!child.killed) child.kill('SIGKILL');
+        }
       }, 10_000);
     };
 
-    let timeout = setTimeout(killOnTimeout, timeoutMs);
+    let timeout: ReturnType<typeof setTimeout> | null = neverTimeout
+      ? null
+      : setTimeout(killOnTimeout, timeoutMs);
 
     const resetTimeout = () => {
-      clearTimeout(timeout);
+      if (neverTimeout) return;
+      if (timeout) clearTimeout(timeout);
       timeout = setTimeout(killOnTimeout, timeoutMs);
     };
 
@@ -260,7 +281,7 @@ export async function runHostAgent(
     });
 
     child.on('close', (code) => {
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
       const duration = Date.now() - startTime;
 
       if (timedOut) {
@@ -334,7 +355,7 @@ export async function runHostAgent(
     });
 
     child.on('error', (err) => {
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
       logger.error(
         { group: group.name, processName, error: err },
         'Host agent spawn error',

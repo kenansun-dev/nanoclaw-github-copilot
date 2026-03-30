@@ -24,7 +24,6 @@ import {
   isAgentGHC,
   getAgentSessionDir,
   getAgentImage,
-
   GHC_CONTAINER_IMAGE,
   getModelName,
   IS_GHC_PROVIDER,
@@ -358,7 +357,7 @@ function buildContainerArgs(
     }
   }
 
-  console.error("[container-runner] Using image:", containerImage);
+  console.error('[container-runner] Using image:', containerImage);
   args.push(containerImage);
 
   return args;
