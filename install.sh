@@ -6,6 +6,8 @@ set -euo pipefail
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/install.sh | bash
+#   # Or with local package:
+#   ./install.sh --package /path/to/nanoclaw-github-copilot-1.2.19.tgz
 #
 # What it does:
 #   1. Detects OS and architecture
@@ -16,8 +18,17 @@ set -euo pipefail
 # ============================================================
 
 PACKAGE_NAME="nanoclaw-github-copilot"
+LOCAL_PACKAGE=""
 MIN_NODE_VERSION=20
 REPO_URL="https://github.com/kenans/nanoclaw-github-copilot"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --package) LOCAL_PACKAGE="$2"; shift 2;;
+    *) shift;;
+  esac
+done
 
 # Colors
 RED='\033[0;31m'
@@ -142,7 +153,15 @@ install_nanoclaw() {
   if command -v nanoclaw &>/dev/null; then
     CURRENT_VERSION=$(nanoclaw --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
     warn "nanoclaw already installed (v${CURRENT_VERSION}). Upgrading..."
-    npm install -g "${PACKAGE_NAME}@latest"
+    if [ -n "$LOCAL_PACKAGE" ]; then
+      npm install -g "$LOCAL_PACKAGE"
+    else
+      if [ -n "$LOCAL_PACKAGE" ]; then
+      npm install -g "$LOCAL_PACKAGE"
+    else
+      npm install -g "${PACKAGE_NAME}@latest"
+    fi
+    fi
   else
     npm install -g "${PACKAGE_NAME}@latest"
   fi

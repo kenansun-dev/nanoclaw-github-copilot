@@ -471,7 +471,11 @@ async function runSandbox(args: string[]) {
 
       const config = loadConfig();
       const isGHC = isGHCProvider();
-      const projectRoot = process.cwd();
+      // Find package root — works for both npm global install and local dev
+      const { fileURLToPath } = await import('url');
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = path.dirname(__filename);
+      const projectRoot = path.resolve(__dirname, '..');
 
       // Determine which Dockerfile and image to build
       const dockerfile = isGHC ? 'Dockerfile.ghc' : 'Dockerfile';
