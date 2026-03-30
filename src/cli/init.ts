@@ -59,16 +59,30 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
 
   // Host mode: install agent-runner dependencies
   const agentRunnerDir = path.join(projectRoot, 'container', 'agent-runner-ghc');
-  if (fs.existsSync(agentRunnerDir) && !fs.existsSync(path.join(agentRunnerDir, 'node_modules'))) {
-    console.log('Installing agent-runner dependencies (host mode)...');
-    try {
-      const { execSync } = await import('child_process');
-      execSync('npm install', { cwd: agentRunnerDir, stdio: 'inherit', timeout: 120000 });
-      console.log('  Agent-runner dependencies installed');
-    } catch (err) {
-      console.warn('  Warning: Failed to install agent-runner deps. Run manually:');
-      console.warn(`    cd ${agentRunnerDir} && npm install`);
+  // Check agent-runner source exists
+  const runnerSrc = path.join(agentRunnerDir, 'src', 'index.ts');
+  if (fs.existsSync(agentRunnerDir)) {
+    if (!fs.existsSync(runnerSrc)) {
+      console.warn('  Warning: agent-runner-ghc source not found. Package may be incomplete.');
     }
+    // Check if critical dependency exists (fs check, not npm ls)
+    const sdkDir = path.join(agentRunnerDir, 'node_modules', '@github', 'copilot-sdk');
+    if (!fs.existsSync(sdkDir)) {
+      console.log('Installing agent-runner dependencies (host mode)...');
+      try {
+        const { execSync } = await import('child_process');
+        execSync('npm install', { cwd: agentRunnerDir, stdio: 'inherit', timeout: 120000 });
+        console.log('  Agent-runner dependencies installed');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`  Warning: Failed to install agent-runner deps: ${msg}`);
+        console.warn(`  Run manually: cd ${agentRunnerDir} && npm install`);
+      }
+    } else {
+      console.log('  Agent-runner dependencies already installed');
+    }
+  } else {
+    console.log(`  Agent-runner directory not found at ${agentRunnerDir}`);
   }
 
   // Interactive onboard: auth + channel setup
