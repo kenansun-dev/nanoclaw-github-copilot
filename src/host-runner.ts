@@ -157,7 +157,8 @@ export async function runHostAgent(
 
   // Spawn command
   // Use tsx binary directly (not via npx) to avoid orphan process chains
-  const tsxBin = path.join(process.cwd(), 'node_modules', '.bin', 'tsx');
+  const tsxExt = process.platform === 'win32' ? 'tsx.cmd' : 'tsx';
+  const tsxBin = path.join(process.cwd(), 'node_modules', '.bin', tsxExt);
   const cmd = useTsx ? tsxBin : 'node';
   const args = [runnerPath];
 

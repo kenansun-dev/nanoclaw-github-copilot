@@ -58,7 +58,9 @@ export function ensureWorkspace(): boolean {
 
   // Ensure credentials dir has restricted permissions
   try {
-    fs.chmodSync(path.join(ws, 'credentials'), 0o700);
+    if (process.platform !== 'win32') {
+      fs.chmodSync(path.join(ws, 'credentials'), 0o700);
+    }
   } catch {
     // ignore on Windows
   }

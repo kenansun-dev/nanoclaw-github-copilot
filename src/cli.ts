@@ -144,6 +144,16 @@ async function runDoctor(_args: string[]) {
 async function runService(action: string) {
   const { resolveWorkspace } = await import('./workspace.js');
   const ws = resolveWorkspace();
+  // Windows-compatible process kill
+  const killProcess = (pid: number, signal: string | number = 'SIGTERM') => {
+    if (process.platform === 'win32') {
+      const { execSync } = require('child_process');
+      try { execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe' }); } catch { /* ignore */ }
+    } else {
+      process.kill(pid, signal as NodeJS.Signals);
+    }
+  };
+
   const pidFile = join(ws, 'state', 'nanoclaw.pid');
   const logFile = join(ws, 'logs', 'nanoclaw.log');
   const { execSync, spawn } = await import('child_process');
@@ -212,7 +222,7 @@ async function runService(action: string) {
       }
       const pid = fs.readFileSync(pidFile, 'utf-8').trim();
       try {
-        process.kill(parseInt(pid), 'SIGTERM');
+        killProcess(parseInt(pid));
         fs.unlinkSync(pidFile);
         console.log(`Stopped (pid: ${pid})`);
       } catch {
