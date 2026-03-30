@@ -463,12 +463,71 @@ async function runChat(args: string[]) {
 async function runSandbox(args: string[]) {
   const sub = args[0];
   switch (sub) {
-    case 'build':
-      console.log('sandbox build: not yet implemented');
+    case 'build': {
+      const { loadConfig } = await import('./config-loader.js');
+      const { isGHCProvider } = await import('./config-extensions.js');
+      const { execSync } = await import('child_process');
+      const path = await import('path');
+
+      const config = loadConfig();
+      const isGHC = isGHCProvider();
+      const projectRoot = process.cwd();
+
+      // Determine which Dockerfile and image to build
+      const dockerfile = isGHC ? 'Dockerfile.ghc' : 'Dockerfile';
+      const imageName = isGHC ? 'nanoclaw-agent-ghc:latest' : (config.sandbox?.image || 'nanoclaw-agent:latest');
+      const contextDir = path.join(projectRoot, 'container');
+      const dockerfilePath = path.join(contextDir, dockerfile);
+
+      const fs = await import('fs');
+      if (!fs.existsSync(dockerfilePath)) {
+        console.error(`❌ Dockerfile not found: ${dockerfilePath}`);
+        console.error(`   Are you in the nanoclaw project directory?`);
+        process.exit(1);
+      }
+
+      console.log(`Building ${isGHC ? 'GHC' : 'CC'} agent image...`);
+      console.log(`  Dockerfile: ${dockerfile}`);
+      console.log(`  Image: ${imageName}`);
+      console.log(`  Context: ${contextDir}`);
+      console.log('');
+
+      try {
+        execSync(
+          `docker build -t ${imageName} -f ${dockerfilePath} ${contextDir}`,
+          { stdio: 'inherit', timeout: 600_000 },
+        );
+        console.log(`\n✅ Image built: ${imageName}`);
+      } catch (err: any) {
+        console.error(`\n❌ Build failed. Is Docker running?`);
+        console.error(`   Run: docker info`);
+        process.exit(1);
+      }
       break;
-    case 'status':
-      console.log('sandbox status: not yet implemented');
+    }
+    case 'status': {
+      const { execSync } = await import('child_process');
+      try {
+        const images = execSync('docker images nanoclaw-agent* --format "{{.Repository}}:{{.Tag}} {{.Size}} {{.CreatedAt}}"', { encoding: 'utf-8' }).trim();
+        if (images) {
+          console.log('Agent images:');
+          console.log(images);
+        } else {
+          console.log('No agent images found. Run: nanoclaw sandbox build');
+        }
+        console.log('');
+        const containers = execSync('docker ps --filter "name=nanoclaw-" --format "{{.Names}} {{.Image}} {{.Status}}"', { encoding: 'utf-8' }).trim();
+        if (containers) {
+          console.log('Running containers:');
+          console.log(containers);
+        } else {
+          console.log('No running containers.');
+        }
+      } catch {
+        console.error('Docker not available. Run: docker info');
+      }
       break;
+    }
     default:
       console.log('Usage: nanoclaw sandbox <build|status>');
   }
