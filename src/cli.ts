@@ -112,6 +112,11 @@ try {
     case 'mcp':
       await runMcp(commandArgs);
       break;
+    case 'service': {
+      const { runServiceCommand } = await import('./cli/service.js');
+      await runServiceCommand(args);
+      break;
+    }
     case 'sandbox':
       await runSandbox(commandArgs);
       break;
