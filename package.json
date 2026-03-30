@@ -1,6 +1,6 @@
 {
   "name": "nanoclaw-github-copilot",
-  "version": "1.2.19",
+  "version": "0.0.1-alpha",
   "description": "AI assistant that runs agents in secure containers, powered by GitHub Copilot SDK",
   "type": "module",
   "main": "dist/index.js",
