@@ -113,6 +113,27 @@ Write-Host "  1. Edit config:    notepad $workspace\nanoclaw.json"
 Write-Host "  2. Add credentials: notepad $workspace\.env"
 Write-Host "  3. Check setup:    nanoclaw doctor"
 Write-Host ""
+Write-Host "# ─── Build container (sandbox mode) ────────────────────────────────────────────
+
+if (Get-Command docker -ErrorAction SilentlyContinue) {
+    try {
+        docker info 2>$null | Out-Null
+        Write-Host "🐳 Building agent container..." -ForegroundColor Yellow
+        nanoclaw sandbox build
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "✅ Container built" -ForegroundColor Green
+        } else {
+            Write-Host "⚠️  Container build failed — you can retry with: nanoclaw sandbox build" -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "⚠️  Docker not running — skip container build" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "ℹ️  Docker not found — using host mode (no container)" -ForegroundColor Cyan
+}
+
+Write-Host ""
+
 Write-Host "  For sandbox mode (Docker):"
 Write-Host "    nanoclaw sandbox build"
 Write-Host "    nanoclaw start"
