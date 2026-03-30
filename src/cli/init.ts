@@ -57,10 +57,28 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
     console.log(`  Copied default skills to ${skillsDst}`);
   }
 
+  // Host mode: install agent-runner dependencies
+  const agentRunnerDir = path.join(projectRoot, 'container', 'agent-runner-ghc');
+  if (fs.existsSync(agentRunnerDir) && !fs.existsSync(path.join(agentRunnerDir, 'node_modules'))) {
+    console.log('Installing agent-runner dependencies (host mode)...');
+    try {
+      const { execSync } = await import('child_process');
+      execSync('npm install', { cwd: agentRunnerDir, stdio: 'inherit', timeout: 120000 });
+      console.log('  Agent-runner dependencies installed');
+    } catch (err) {
+      console.warn('  Warning: Failed to install agent-runner deps. Run manually:');
+      console.warn(`    cd ${agentRunnerDir} && npm install`);
+    }
+  }
+
   // Interactive onboard: auth + channel setup
   const readline = await import('readline');
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const ask = (q: string): Promise<string> => new Promise(resolve => rl.question(q, resolve));
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  const ask = (q: string): Promise<string> =>
+    new Promise((resolve) => rl.question(q, resolve));
 
   console.log('\n--- Quick Setup ---\n');
 
@@ -70,7 +88,9 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
     console.log('GitHub Copilot auth not found.');
     console.log('  Option 1: Set COPILOT_GITHUB_TOKEN in .env');
     console.log('  Option 2: Run: copilot login');
-    console.log('  Option 3: If OpenClaw is installed, auth is shared automatically');
+    console.log(
+      '  Option 3: If OpenClaw is installed, auth is shared automatically',
+    );
     console.log('');
   }
 
@@ -85,17 +105,24 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
       env = env.replace('# TELEGRAM_BOT_TOKEN=', `TELEGRAM_BOT_TOKEN=${token}`);
       fs2.writeFileSync(envPath, env);
       // Enable in config
-      const config = JSON.parse(fs2.readFileSync(path.join(ws, 'nanoclaw.json'), 'utf-8'));
+      const config = JSON.parse(
+        fs2.readFileSync(path.join(ws, 'nanoclaw.json'), 'utf-8'),
+      );
       config.channels = config.channels || {};
       config.channels.telegram = { enabled: true };
-      fs2.writeFileSync(path.join(ws, 'nanoclaw.json'), JSON.stringify(config, null, 2) + '\n');
+      fs2.writeFileSync(
+        path.join(ws, 'nanoclaw.json'),
+        JSON.stringify(config, null, 2) + '\n',
+      );
       console.log('✅ Telegram configured');
     }
   }
 
   const enableTeams = await ask('Enable Teams? (y/N): ');
   if (enableTeams.toLowerCase() === 'y') {
-    console.log('  Run: scripts/setup-teams.sh (Linux) or scripts/setup-teams.ps1 (Windows)');
+    console.log(
+      '  Run: scripts/setup-teams.sh (Linux) or scripts/setup-teams.ps1 (Windows)',
+    );
   }
 
   rl.close();
