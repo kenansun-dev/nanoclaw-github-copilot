@@ -68,7 +68,12 @@ export function runDoctor(): CheckResult[] {
     check('Container image', () => {
       try {
         const config = loadConfig();
-        const image = config.sandbox.image;
+        // Check provider-specific image
+        const { isGHCProvider } = require('./config-extensions.js') as any;
+        let image = config.sandbox.image;
+        try {
+          if (isGHCProvider()) image = 'nanoclaw-agent-ghc:latest';
+        } catch { /* fallback to default */ }
         const output = execSync(
           `docker images ${image} --format "{{.Repository}}:{{.Tag}}"`,
           { stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 },
@@ -77,7 +82,7 @@ export function runDoctor(): CheckResult[] {
           .trim();
         return {
           ok: !!output,
-          msg: output || `${image} not found — run: docker build`,
+          msg: output || `${image} not found — run: nanoclaw sandbox build`,
         };
       } catch {
         return { ok: false, msg: 'could not check' };

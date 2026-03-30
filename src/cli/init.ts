@@ -57,6 +57,49 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
     console.log(`  Copied default skills to ${skillsDst}`);
   }
 
+  // Interactive onboard: auth + channel setup
+  const readline = await import('readline');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q: string): Promise<string> => new Promise(resolve => rl.question(q, resolve));
+
+  console.log('\n--- Quick Setup ---\n');
+
+  // Auth
+  const hasToken = process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN;
+  if (!hasToken) {
+    console.log('GitHub Copilot auth not found.');
+    console.log('  Option 1: Set COPILOT_GITHUB_TOKEN in .env');
+    console.log('  Option 2: Run: copilot login');
+    console.log('  Option 3: If OpenClaw is installed, auth is shared automatically');
+    console.log('');
+  }
+
+  // Channel
+  const enableTg = await ask('Enable Telegram? (y/N): ');
+  if (enableTg.toLowerCase() === 'y') {
+    const token = await ask('Telegram bot token: ');
+    if (token) {
+      const envPath = path.join(ws, '.env');
+      const fs2 = await import('fs');
+      let env = fs2.readFileSync(envPath, 'utf-8');
+      env = env.replace('# TELEGRAM_BOT_TOKEN=', `TELEGRAM_BOT_TOKEN=${token}`);
+      fs2.writeFileSync(envPath, env);
+      // Enable in config
+      const config = JSON.parse(fs2.readFileSync(path.join(ws, 'nanoclaw.json'), 'utf-8'));
+      config.channels = config.channels || {};
+      config.channels.telegram = { enabled: true };
+      fs2.writeFileSync(path.join(ws, 'nanoclaw.json'), JSON.stringify(config, null, 2) + '\n');
+      console.log('✅ Telegram configured');
+    }
+  }
+
+  const enableTeams = await ask('Enable Teams? (y/N): ');
+  if (enableTeams.toLowerCase() === 'y') {
+    console.log('  Run: scripts/setup-teams.sh (Linux) or scripts/setup-teams.ps1 (Windows)');
+  }
+
+  rl.close();
+
   console.log(`
 ✅ Workspace created at ${ws}
 
