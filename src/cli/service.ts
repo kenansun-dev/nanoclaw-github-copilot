@@ -6,6 +6,7 @@
  * Windows: Scheduled Task (user-level)
  */
 import fs from 'fs';
+import { fileURLToPath } from 'url';
 import path from 'path';
 import { execSync } from 'child_process';
 import os from 'os';
@@ -18,13 +19,14 @@ function getNodePath(): string {
   return process.execPath;
 }
 
-function getNanoclawBin(): string {
-  // Find the nanoclaw CLI entry point
+function resolveNanoclawBin(): string {
+  // Resolve from package installation path (works in service context where PATH may be limited)
+  const pkgBin = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), 'bin', 'nanoclaw.js');
+  if (fs.existsSync(pkgBin)) return `${getNodePath()} ${pkgBin}`;
+  // Fallback to PATH
   try {
-    return execSync('which nanoclaw 2>/dev/null || where nanoclaw 2>nul', {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim().split('\n')[0];
+    const cmd = process.platform === 'win32' ? 'where nanoclaw' : 'which nanoclaw';
+    return execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim().split('\n')[0];
   } catch {
     return 'nanoclaw';
   }
@@ -51,15 +53,15 @@ WantedBy=default.target
 `;
 }
 
-function installSystemd(ws: string, tunnelId?: string): void {
+async function installSystemd(ws: string, tunnelId?: string): Promise<void> {
   const serviceDir = path.join(os.homedir(), '.config', 'systemd', 'user');
   fs.mkdirSync(serviceDir, { recursive: true });
 
   // NanoClaw service
-  const nanoclawEntry = getNanoclawBin();
+  const nanoclawEntry = resolveNanoclawBin();
   const nanoclawService = systemdServiceContent(
     'NanoClaw AI Assistant',
-    `${getNodePath()} ${nanoclawEntry} start --foreground`,
+    `${nanoclawEntry} dev`,
     ws,
   );
   const nanoclawPath = path.join(serviceDir, `${SERVICE_NAME}.service`);
@@ -83,7 +85,14 @@ function installSystemd(ws: string, tunnelId?: string): void {
   execSync('systemctl --user daemon-reload', { stdio: 'pipe' });
   execSync(`systemctl --user enable ${SERVICE_NAME}`, { stdio: 'pipe' });
   execSync(`systemctl --user start ${SERVICE_NAME}`, { stdio: 'pipe' });
-  console.log(`  ✅ ${SERVICE_NAME} enabled + started`);
+  // Health check
+  await new Promise(r => setTimeout(r, 5000));
+  try {
+    const status = execSync(`systemctl --user is-active ${SERVICE_NAME}`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    console.log(`  ✅ ${SERVICE_NAME}: ${status}`);
+  } catch {
+    console.log('  ⚠️  Service started but may not be healthy. Check: nanoclaw service status');
+  }
 
   if (tunnelId) {
     execSync(`systemctl --user enable ${DEVTUNNEL_SERVICE_NAME}`, { stdio: 'pipe' });
@@ -130,12 +139,12 @@ function statusSystemd(): void {
 // ─── Windows: Scheduled Task ────────────────────────────────────────────────
 
 function installWindows(ws: string, tunnelId?: string): void {
-  const nanoclawBin = getNanoclawBin();
+  const nanoclawBin = resolveNanoclawBin();
 
   // NanoClaw task — runs at logon
   try {
     execSync(
-      `schtasks /Create /TN "${SERVICE_NAME}" /TR "${getNodePath()} ${nanoclawBin} start --foreground" /SC ONLOGON /RL HIGHEST /F`,
+      `schtasks /Create /TN "${SERVICE_NAME}" /TR "${getNodePath()} ${nanoclawBin} start --foreground" /SC ONLOGON /RL LIMITED /F`,
       { stdio: 'pipe' },
     );
     console.log(`  ✅ ${SERVICE_NAME} scheduled task created (runs at logon)`);
@@ -154,7 +163,7 @@ function installWindows(ws: string, tunnelId?: string): void {
     try {
       const devtunnelBin = execSync('where devtunnel', { encoding: 'utf-8' }).trim().split('\n')[0];
       execSync(
-        `schtasks /Create /TN "${DEVTUNNEL_SERVICE_NAME}" /TR "${devtunnelBin} host ${tunnelId} --allow-anonymous" /SC ONLOGON /RL HIGHEST /F`,
+        `schtasks /Create /TN "${DEVTUNNEL_SERVICE_NAME}" /TR "${devtunnelBin} host ${tunnelId} --allow-anonymous" /SC ONLOGON /RL LIMITED /F`,
         { stdio: 'pipe' },
       );
       console.log(`  ✅ ${DEVTUNNEL_SERVICE_NAME} scheduled task created`);
