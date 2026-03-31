@@ -59,12 +59,36 @@ export async function runUpdate(args: string[]): Promise<void> {
       console.log('  ⚠️  Workspace sync had issues. Run: nanoclaw init');
     }
 
+    // Rebuild sandbox image if in sandbox mode
+    console.log('  Checking sandbox image...');
+    try {
+      const { loadConfig } = await import('../config-loader.js');
+      const config = loadConfig();
+      if (config.agents?.defaults?.mode !== 'host') {
+        console.log('  Rebuilding container image...');
+        execSync('nanoclaw sandbox build', {
+          stdio: 'inherit',
+          timeout: 600000,
+        });
+      } else {
+        console.log('  Host mode — skip image rebuild');
+      }
+    } catch {
+      console.log('  ⚠️  Image rebuild skipped. Run: nanoclaw sandbox build');
+    }
+
+    // Restart service
+    console.log('');
+    console.log('  Restarting NanoClaw...');
+    try {
+      execSync('nanoclaw start', { stdio: 'pipe', timeout: 10000 });
+      console.log('  ✅ NanoClaw restarted');
+    } catch {
+      console.log('  ⚠️  Could not auto-restart. Run: nanoclaw start');
+    }
+
     console.log('');
     console.log('✅ Update complete!');
-    console.log('');
-    console.log('Next steps:');
-    console.log('  nanoclaw doctor    — check everything is ready');
-    console.log('  nanoclaw start     — start the service');
   } catch (err: any) {
     console.error('❌ Update failed:', err.message || err);
     process.exit(1);

@@ -6,6 +6,8 @@ set -euo pipefail
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/install.sh | bash
+#   # With local package:
+#   bash <(curl -fsSL https://raw.githubusercontent.com/.../install.sh) --package ./file.tgz
 #   # Or with local package:
 #   ./install.sh --package /path/to/nanoclaw-github-copilot-1.2.19.tgz
 #

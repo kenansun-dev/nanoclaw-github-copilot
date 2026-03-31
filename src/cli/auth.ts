@@ -117,10 +117,47 @@ export async function runAuth(args: string[]): Promise<void> {
 
       const cli = findCopilotCli();
       if (!cli) {
-        console.error('❌ GitHub Copilot CLI not found.');
-        console.error('   Install: npm install -g @github/copilot');
-        console.error('   Or set COPILOT_GITHUB_TOKEN in ~/.nanoclaw/.env');
-        process.exit(1);
+        console.log('GitHub Copilot CLI not found.');
+        const readline = await import('readline');
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        const answer = await new Promise<string>((resolve) =>
+          rl.question('  Install it now? (Y/n): ', resolve),
+        );
+        rl.close();
+        if (answer.toLowerCase() !== 'n') {
+          console.log('  Installing @github/copilot...');
+          const { execSync } = await import('child_process');
+          try {
+            execSync('npm install -g @github/copilot', {
+              stdio: 'inherit',
+              timeout: 120000,
+            });
+            // Retry finding CLI
+            const retryCli = findCopilotCli();
+            if (retryCli) {
+              console.log('  Copilot CLI installed. Continuing auth...');
+              // Fall through to auth flow below
+              const result2 = spawnSync(retryCli, ['login'], {
+                stdio: 'inherit',
+              });
+              if (result2.status === 0) {
+                console.log('\n✅ Authentication successful!');
+              } else {
+                console.error(
+                  '\n❌ Auth failed. Set COPILOT_GITHUB_TOKEN in ~/.nanoclaw/.env',
+                );
+              }
+              return;
+            }
+          } catch {
+            console.error('  Install failed.');
+          }
+        }
+        console.log('  Set COPILOT_GITHUB_TOKEN=ghu_xxx in ~/.nanoclaw/.env');
+        return;
       }
 
       console.log('🔑 Starting GitHub Copilot authentication...');
@@ -128,7 +165,7 @@ export async function runAuth(args: string[]): Promise<void> {
       console.log('');
 
       // Run copilot auth login — this handles the device code flow
-      const result = spawnSync(cli, ['auth', 'login'], {
+      const result = spawnSync(cli, ['login'], {
         stdio: 'inherit',
         env: { ...process.env },
       });
@@ -151,7 +188,7 @@ export async function runAuth(args: string[]): Promise<void> {
     case 'logout': {
       const cli = findCopilotCli();
       if (cli) {
-        spawnSync(cli, ['auth', 'logout'], { stdio: 'inherit' });
+        spawnSync(cli, ['logout'], { stdio: 'inherit' });
       }
       console.log('Logged out.');
       break;
