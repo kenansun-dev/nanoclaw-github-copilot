@@ -152,18 +152,18 @@ install_nanoclaw() {
   # Check if already installed
   if command -v nanoclaw &>/dev/null; then
     CURRENT_VERSION=$(nanoclaw --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
-    warn "nanoclaw already installed (v${CURRENT_VERSION}). Upgrading..."
+    info "nanoclaw already installed (v${CURRENT_VERSION}). Upgrading..."
     if [ -n "$LOCAL_PACKAGE" ]; then
       npm install -g "$LOCAL_PACKAGE"
     else
       if [ -n "$LOCAL_PACKAGE" ]; then
       npm install -g "$LOCAL_PACKAGE"
     else
-      npm install -g "${PACKAGE_NAME}@latest"
+      npm install -g "${PACKAGE_NAME}@latest" 2>/dev/null || npm install -g "${PACKAGE_NAME}"
     fi
     fi
   else
-    npm install -g "${PACKAGE_NAME}@latest"
+    npm install -g "${PACKAGE_NAME}@latest" 2>/dev/null || npm install -g "${PACKAGE_NAME}"
   fi
 
   # Verify installation

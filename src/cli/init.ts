@@ -9,13 +9,12 @@ import { resolveWorkspace, ensureWorkspace } from '../workspace.js';
 export async function initWorkspace(projectRoot: string): Promise<void> {
   const ws = resolveWorkspace();
 
-  if (fs.existsSync(path.join(ws, 'nanoclaw.json'))) {
-    console.log(`Workspace already exists at ${ws}`);
-    console.log('Use --force to reinitialize (not implemented yet)');
-    return;
+  const isUpdate = fs.existsSync(path.join(ws, 'nanoclaw.json'));
+  if (isUpdate) {
+    console.log(`Workspace exists at ${ws} — updating missing files...`);
+  } else {
+    console.log(`Initializing workspace at ${ws}...`);
   }
-
-  console.log(`Initializing workspace at ${ws}...`);
 
   // Create directory structure
   ensureWorkspace();
@@ -27,25 +26,36 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
   const configTemplate = fs.existsSync(path.join(templatesDir, 'nanoclaw.json'))
     ? fs.readFileSync(path.join(templatesDir, 'nanoclaw.json'), 'utf-8')
     : JSON.stringify(DEFAULT_CONFIG, null, 2);
-  fs.writeFileSync(path.join(ws, 'nanoclaw.json'), configTemplate);
+  if (!isUpdate)
+    fs.writeFileSync(path.join(ws, 'nanoclaw.json'), configTemplate);
 
   // .env
   const envTemplate = fs.existsSync(path.join(templatesDir, '.env.template'))
     ? fs.readFileSync(path.join(templatesDir, '.env.template'), 'utf-8')
     : DEFAULT_ENV;
-  fs.writeFileSync(path.join(ws, '.env'), envTemplate, { mode: 0o600 });
+  if (!fs.existsSync(path.join(ws, '.env'))) {
+    fs.writeFileSync(path.join(ws, '.env'), envTemplate, { mode: 0o600 });
+    console.log('  Created .env');
+  } else {
+    console.log('  .env already exists — skipping');
+  }
 
   // AGENT.md
   const agentMd = fs.existsSync(path.join(templatesDir, 'AGENT.md'))
     ? fs.readFileSync(path.join(templatesDir, 'AGENT.md'), 'utf-8')
     : DEFAULT_AGENT_MD;
-  fs.writeFileSync(path.join(ws, 'AGENT.md'), agentMd);
+  if (!fs.existsSync(path.join(ws, 'AGENT.md'))) {
+    fs.writeFileSync(path.join(ws, 'AGENT.md'), agentMd);
+    console.log('  Created AGENT.md');
+  } else {
+    console.log('  AGENT.md already exists — skipping');
+  }
 
   // Copy docs
   const srcDocs = path.join(projectRoot, 'docs');
   const dstDocs = path.join(ws, 'docs');
   if (fs.existsSync(srcDocs)) {
-    copyDirSync(srcDocs, dstDocs);
+    copyDirSync(srcDocs, dstDocs, isUpdate);
   }
 
   // Copy default skills to workspace
@@ -53,25 +63,40 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
   fs.mkdirSync(skillsDst, { recursive: true });
   const containerSkills = path.join(projectRoot, 'container', 'skills');
   if (fs.existsSync(containerSkills)) {
-    copyDirSync(containerSkills, skillsDst);
-    console.log(`  Copied default skills to ${skillsDst}`);
+    copyDirSync(containerSkills, skillsDst, isUpdate);
+    console.log(`  Synced skills to ${skillsDst}`);
   }
 
   // Host mode: install agent-runner dependencies
-  const agentRunnerDir = path.join(projectRoot, 'container', 'agent-runner-ghc');
+  const agentRunnerDir = path.join(
+    projectRoot,
+    'container',
+    'agent-runner-ghc',
+  );
   // Check agent-runner source exists
   const runnerSrc = path.join(agentRunnerDir, 'src', 'index.ts');
   if (fs.existsSync(agentRunnerDir)) {
     if (!fs.existsSync(runnerSrc)) {
-      console.warn('  Warning: agent-runner-ghc source not found. Package may be incomplete.');
+      console.warn(
+        '  Warning: agent-runner-ghc source not found. Package may be incomplete.',
+      );
     }
     // Check if critical dependency exists (fs check, not npm ls)
-    const sdkDir = path.join(agentRunnerDir, 'node_modules', '@github', 'copilot-sdk');
+    const sdkDir = path.join(
+      agentRunnerDir,
+      'node_modules',
+      '@github',
+      'copilot-sdk',
+    );
     if (!fs.existsSync(sdkDir)) {
       console.log('Installing agent-runner dependencies (host mode)...');
       try {
         const { execSync } = await import('child_process');
-        execSync('npm install', { cwd: agentRunnerDir, stdio: 'inherit', timeout: 120000 });
+        execSync('npm install', {
+          cwd: agentRunnerDir,
+          stdio: 'inherit',
+          timeout: 120000,
+        });
         console.log('  Agent-runner dependencies installed');
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -161,14 +186,15 @@ Next steps:
 `);
 }
 
-function copyDirSync(src: string, dst: string) {
+function copyDirSync(src: string, dst: string, skipExisting = false) {
   fs.mkdirSync(dst, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
     const srcPath = path.join(src, entry.name);
     const dstPath = path.join(dst, entry.name);
     if (entry.isDirectory()) {
-      copyDirSync(srcPath, dstPath);
+      copyDirSync(srcPath, dstPath, skipExisting);
     } else {
+      if (skipExisting && fs.existsSync(dstPath)) continue;
       fs.copyFileSync(srcPath, dstPath);
     }
   }
