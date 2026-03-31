@@ -348,8 +348,19 @@ echo "   Endpoint:   $MESSAGING_ENDPOINT"
 echo "   Manifest:   $PROJECT_DIR/teams-app.zip"
 echo ""
 echo "Next steps:"
-echo "  1. Start the tunnel:"
-echo "     devtunnel host $TUNNEL_ID --allow-anonymous"
+# Auto-register as service
+echo ""
+echo "🚀 Registering services..."
+if nanoclaw service install --devtunnel "$TUNNEL_ID" 2>/dev/null; then
+  echo "  ✅ NanoClaw + DevTunnel registered as services"
+else
+  echo "  ⚠️  Service registration failed. Manual start:"
+  echo "     devtunnel host $TUNNEL_ID --allow-anonymous"
+  echo "     nanoclaw start"
+fi
+
+echo ""
+echo "  1. Services registered (auto-start on login/boot)"
 echo ""
 echo "  2. Upload teams-app.zip to Teams:"
 echo "     Teams → Apps → Manage your apps → Upload a custom app"

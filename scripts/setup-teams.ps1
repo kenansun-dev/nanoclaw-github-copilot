@@ -251,7 +251,19 @@ Write-Host "   Bot Type:   $BotType"
 Write-Host "   Endpoint:   $MessagingEndpoint"
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Yellow
-Write-Host "  1. Start tunnel: devtunnel host $TunnelId --allow-anonymous"
+# Auto-register as service
+Write-Host "[*] Registering services..." -ForegroundColor Yellow
+try {
+    nanoclaw service install --devtunnel $TunnelId
+    Write-Host "[OK] NanoClaw + DevTunnel registered as services" -ForegroundColor Green
+} catch {
+    Write-Host "[WARN] Service registration failed. Manual start:" -ForegroundColor Yellow
+    Write-Host "  devtunnel host $TunnelId --allow-anonymous" -ForegroundColor White
+    Write-Host "  nanoclaw start" -ForegroundColor White
+}
+
+Write-Host ""
+Write-Host "  1. Services registered (auto-start on login)"
 Write-Host "  2. Upload teams-app.zip: Teams → Apps → Upload a custom app"
 Write-Host "  3. Start NanoClaw: nanoclaw start"
 Write-Host "============================================" -ForegroundColor Cyan
