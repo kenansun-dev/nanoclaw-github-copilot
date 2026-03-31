@@ -218,9 +218,7 @@ export function readWorkspaceEnv(): Record<string, string> {
  * Convert channel-grouped chats format to flat Record<jid, config> format.
  * Supports both old (flat) and new (grouped) formats.
  */
-function normalizeChats(
-  raw: any,
-): Record<
+function normalizeChats(raw: any): Record<
   string,
   {
     name: string;

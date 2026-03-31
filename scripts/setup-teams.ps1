@@ -89,14 +89,23 @@ Write-Host "🔗 Step 1: Creating DevTunnel..." -ForegroundColor Yellow
 $TunnelId = ""
 try {
     $tunnels = devtunnel list --output json 2>$null | ConvertFrom-Json
-    if ($tunnels.Count -gt 0) {
+    # Look for existing nanoclaw-tagged tunnel
+    foreach ($t in $tunnels) {
+        if ($t.description -eq "nanoclaw" -or $t.labels -contains "nanoclaw") {
+            $TunnelId = $t.tunnelId
+            Write-Host "   Found existing nanoclaw tunnel: $TunnelId"
+            break
+        }
+    }
+    # Fallback: use first tunnel if no tagged one found
+    if (-not $TunnelId -and $tunnels.Count -gt 0) {
         $TunnelId = $tunnels[0].tunnelId
         Write-Host "   Using existing tunnel: $TunnelId"
     }
 } catch {}
 
 if (-not $TunnelId) {
-    $result = devtunnel create --output json 2>$null | ConvertFrom-Json
+    $result = devtunnel create --description "nanoclaw" --output json 2>$null | ConvertFrom-Json
     $TunnelId = $result.tunnelId
     Write-Host "   Created tunnel: $TunnelId"
 }

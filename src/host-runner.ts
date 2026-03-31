@@ -195,7 +195,7 @@ export async function runHostAgent(
     // Container mode or explicit timeout: use configTimeout or idleTimeout + grace
     const neverTimeout = IDLE_TIMEOUT <= 0;
     const timeoutMs = neverTimeout
-      ? 0  // 0 = no timeout
+      ? 0 // 0 = no timeout
       : Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
     const killOnTimeout = () => {

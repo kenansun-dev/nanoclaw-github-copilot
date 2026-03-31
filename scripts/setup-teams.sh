@@ -109,13 +109,20 @@ echo ""
 echo "🔗 Step 1: Creating DevTunnel..."
 
 # Check if a tunnel already exists for this port
+# Check for existing nanoclaw-tagged tunnel
 EXISTING_TUNNEL=$(devtunnel list --output json 2>/dev/null | python3 -c "
 import sys, json
 try:
     tunnels = json.load(sys.stdin)
+    # Look for nanoclaw-tagged tunnel first
     for t in tunnels:
-        print(t.get('tunnelId', ''))
-        break
+        if t.get('description', '') == 'nanoclaw':
+            print(t.get('tunnelId', ''))
+            break
+    else:
+        # Fallback to first tunnel
+        if tunnels:
+            print(tunnels[0].get('tunnelId', ''))
 except: pass
 " 2>/dev/null || echo "")
 
@@ -123,7 +130,7 @@ if [ -n "$EXISTING_TUNNEL" ]; then
   TUNNEL_ID="$EXISTING_TUNNEL"
   echo "   Using existing tunnel: $TUNNEL_ID"
 else
-  TUNNEL_ID=$(devtunnel create --output json 2>/dev/null | python3 -c "
+  TUNNEL_ID=$(devtunnel create --description "nanoclaw" --output json 2>/dev/null | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 print(data.get('tunnelId', ''))
@@ -347,6 +354,9 @@ echo ""
 echo "  2. Upload teams-app.zip to Teams:"
 echo "     Teams → Apps → Manage your apps → Upload a custom app"
 echo ""
-echo "  3. Start NanoClaw:"
+echo "  3. Register as service (auto-start):"
+echo "     nanoclaw service install --devtunnel $TUNNEL_ID"
+echo ""
+echo "  4. Or start manually:"
 echo "     nanoclaw start"
 echo "============================================"

@@ -153,7 +153,11 @@ async function runService(action: string) {
   const killProcess = (pid: number, signal: string | number = 'SIGTERM') => {
     if (process.platform === 'win32') {
       const { execSync } = require('child_process');
-      try { execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe' }); } catch { /* ignore */ }
+      try {
+        execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe' });
+      } catch {
+        /* ignore */
+      }
     } else {
       process.kill(pid, signal as NodeJS.Signals);
     }
@@ -484,7 +488,9 @@ async function runSandbox(args: string[]) {
 
       // Determine which Dockerfile and image to build
       const dockerfile = isGHC ? 'Dockerfile.ghc' : 'Dockerfile';
-      const imageName = isGHC ? 'nanoclaw-agent-ghc:latest' : (config.sandbox?.image || 'nanoclaw-agent:latest');
+      const imageName = isGHC
+        ? 'nanoclaw-agent-ghc:latest'
+        : config.sandbox?.image || 'nanoclaw-agent:latest';
       const contextDir = path.join(projectRoot, 'container');
       const dockerfilePath = path.join(contextDir, dockerfile);
 
@@ -517,7 +523,10 @@ async function runSandbox(args: string[]) {
     case 'status': {
       const { execSync } = await import('child_process');
       try {
-        const images = execSync('docker images nanoclaw-agent* --format "{{.Repository}}:{{.Tag}} {{.Size}} {{.CreatedAt}}"', { encoding: 'utf-8' }).trim();
+        const images = execSync(
+          'docker images nanoclaw-agent* --format "{{.Repository}}:{{.Tag}} {{.Size}} {{.CreatedAt}}"',
+          { encoding: 'utf-8' },
+        ).trim();
         if (images) {
           console.log('Agent images:');
           console.log(images);
@@ -525,7 +534,10 @@ async function runSandbox(args: string[]) {
           console.log('No agent images found. Run: nanoclaw sandbox build');
         }
         console.log('');
-        const containers = execSync('docker ps --filter "name=nanoclaw-" --format "{{.Names}} {{.Image}} {{.Status}}"', { encoding: 'utf-8' }).trim();
+        const containers = execSync(
+          'docker ps --filter "name=nanoclaw-" --format "{{.Names}} {{.Image}} {{.Status}}"',
+          { encoding: 'utf-8' },
+        ).trim();
         if (containers) {
           console.log('Running containers:');
           console.log(containers);

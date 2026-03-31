@@ -21,12 +21,19 @@ function getNodePath(): string {
 
 function resolveNanoclawBin(): string {
   // Resolve from package installation path (works in service context where PATH may be limited)
-  const pkgBin = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), 'bin', 'nanoclaw.js');
+  const pkgBin = path.join(
+    path.dirname(path.dirname(fileURLToPath(import.meta.url))),
+    'bin',
+    'nanoclaw.js',
+  );
   if (fs.existsSync(pkgBin)) return `${getNodePath()} ${pkgBin}`;
   // Fallback to PATH
   try {
-    const cmd = process.platform === 'win32' ? 'where nanoclaw' : 'which nanoclaw';
-    return execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim().split('\n')[0];
+    const cmd =
+      process.platform === 'win32' ? 'where nanoclaw' : 'which nanoclaw';
+    return execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] })
+      .trim()
+      .split('\n')[0];
   } catch {
     return 'nanoclaw';
   }
@@ -34,7 +41,11 @@ function resolveNanoclawBin(): string {
 
 // ─── Linux: systemd user service ─────────────────────────────────────────────
 
-function systemdServiceContent(description: string, execStart: string, ws: string): string {
+function systemdServiceContent(
+  description: string,
+  execStart: string,
+  ws: string,
+): string {
   return `[Unit]
 Description=${description}
 After=network-online.target
@@ -70,13 +81,18 @@ async function installSystemd(ws: string, tunnelId?: string): Promise<void> {
 
   // DevTunnel service (optional)
   if (tunnelId) {
-    const devtunnelBin = execSync('which devtunnel', { encoding: 'utf-8' }).trim();
+    const devtunnelBin = execSync('which devtunnel', {
+      encoding: 'utf-8',
+    }).trim();
     const devtunnelService = systemdServiceContent(
       'NanoClaw DevTunnel',
       `${devtunnelBin} host ${tunnelId} --allow-anonymous`,
       ws,
     );
-    const devtunnelPath = path.join(serviceDir, `${DEVTUNNEL_SERVICE_NAME}.service`);
+    const devtunnelPath = path.join(
+      serviceDir,
+      `${DEVTUNNEL_SERVICE_NAME}.service`,
+    );
     fs.writeFileSync(devtunnelPath, devtunnelService);
     console.log(`  Created: ${devtunnelPath}`);
   }
@@ -86,17 +102,26 @@ async function installSystemd(ws: string, tunnelId?: string): Promise<void> {
   execSync(`systemctl --user enable ${SERVICE_NAME}`, { stdio: 'pipe' });
   execSync(`systemctl --user start ${SERVICE_NAME}`, { stdio: 'pipe' });
   // Health check
-  await new Promise(r => setTimeout(r, 5000));
+  await new Promise((r) => setTimeout(r, 5000));
   try {
-    const status = execSync(`systemctl --user is-active ${SERVICE_NAME}`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    const status = execSync(`systemctl --user is-active ${SERVICE_NAME}`, {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
     console.log(`  ✅ ${SERVICE_NAME}: ${status}`);
   } catch {
-    console.log('  ⚠️  Service started but may not be healthy. Check: nanoclaw service status');
+    console.log(
+      '  ⚠️  Service started but may not be healthy. Check: nanoclaw service status',
+    );
   }
 
   if (tunnelId) {
-    execSync(`systemctl --user enable ${DEVTUNNEL_SERVICE_NAME}`, { stdio: 'pipe' });
-    execSync(`systemctl --user start ${DEVTUNNEL_SERVICE_NAME}`, { stdio: 'pipe' });
+    execSync(`systemctl --user enable ${DEVTUNNEL_SERVICE_NAME}`, {
+      stdio: 'pipe',
+    });
+    execSync(`systemctl --user start ${DEVTUNNEL_SERVICE_NAME}`, {
+      stdio: 'pipe',
+    });
     console.log(`  ✅ ${DEVTUNNEL_SERVICE_NAME} enabled + started`);
   }
 
@@ -111,15 +136,38 @@ async function installSystemd(ws: string, tunnelId?: string): Promise<void> {
 }
 
 function uninstallSystemd(): void {
-  try { execSync(`systemctl --user stop ${SERVICE_NAME}`, { stdio: 'pipe' }); } catch { /* */ }
-  try { execSync(`systemctl --user disable ${SERVICE_NAME}`, { stdio: 'pipe' }); } catch { /* */ }
-  try { execSync(`systemctl --user stop ${DEVTUNNEL_SERVICE_NAME}`, { stdio: 'pipe' }); } catch { /* */ }
-  try { execSync(`systemctl --user disable ${DEVTUNNEL_SERVICE_NAME}`, { stdio: 'pipe' }); } catch { /* */ }
+  try {
+    execSync(`systemctl --user stop ${SERVICE_NAME}`, { stdio: 'pipe' });
+  } catch {
+    /* */
+  }
+  try {
+    execSync(`systemctl --user disable ${SERVICE_NAME}`, { stdio: 'pipe' });
+  } catch {
+    /* */
+  }
+  try {
+    execSync(`systemctl --user stop ${DEVTUNNEL_SERVICE_NAME}`, {
+      stdio: 'pipe',
+    });
+  } catch {
+    /* */
+  }
+  try {
+    execSync(`systemctl --user disable ${DEVTUNNEL_SERVICE_NAME}`, {
+      stdio: 'pipe',
+    });
+  } catch {
+    /* */
+  }
 
   const serviceDir = path.join(os.homedir(), '.config', 'systemd', 'user');
   for (const name of [SERVICE_NAME, DEVTUNNEL_SERVICE_NAME]) {
     const p = path.join(serviceDir, `${name}.service`);
-    if (fs.existsSync(p)) { fs.unlinkSync(p); console.log(`  Removed: ${p}`); }
+    if (fs.existsSync(p)) {
+      fs.unlinkSync(p);
+      console.log(`  Removed: ${p}`);
+    }
   }
   execSync('systemctl --user daemon-reload', { stdio: 'pipe' });
   console.log('  ✅ Services uninstalled');
@@ -128,7 +176,10 @@ function uninstallSystemd(): void {
 function statusSystemd(): void {
   for (const name of [SERVICE_NAME, DEVTUNNEL_SERVICE_NAME]) {
     try {
-      const output = execSync(`systemctl --user is-active ${name}`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+      const output = execSync(`systemctl --user is-active ${name}`, {
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
       console.log(`  ${name}: ${output}`);
     } catch {
       console.log(`  ${name}: not installed`);
@@ -151,17 +202,31 @@ function installWindows(ws: string, tunnelId?: string): void {
   } catch (err) {
     // Fallback: Startup folder
     console.log('  ⚠️  Scheduled Task creation failed, using Startup folder');
-    const startupDir = path.join(os.homedir(), 'AppData', 'Roaming', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup');
+    const startupDir = path.join(
+      os.homedir(),
+      'AppData',
+      'Roaming',
+      'Microsoft',
+      'Windows',
+      'Start Menu',
+      'Programs',
+      'Startup',
+    );
     fs.mkdirSync(startupDir, { recursive: true });
     const batFile = path.join(startupDir, `${SERVICE_NAME}.bat`);
-    fs.writeFileSync(batFile, `@echo off\ncd /d "${ws}"\n"${getNodePath()}" "${nanoclawBin}" start --foreground\n`);
+    fs.writeFileSync(
+      batFile,
+      `@echo off\ncd /d "${ws}"\n"${getNodePath()}" "${nanoclawBin}" start --foreground\n`,
+    );
     console.log(`  ✅ Created startup script: ${batFile}`);
   }
 
   // DevTunnel task
   if (tunnelId) {
     try {
-      const devtunnelBin = execSync('where devtunnel', { encoding: 'utf-8' }).trim().split('\n')[0];
+      const devtunnelBin = execSync('where devtunnel', { encoding: 'utf-8' })
+        .trim()
+        .split('\n')[0];
       execSync(
         `schtasks /Create /TN "${DEVTUNNEL_SERVICE_NAME}" /TR "${devtunnelBin} host ${tunnelId} --allow-anonymous" /SC ONLOGON /RL LIMITED /F`,
         { stdio: 'pipe' },
@@ -178,21 +243,42 @@ function uninstallWindows(): void {
     try {
       execSync(`schtasks /Delete /TN "${name}" /F`, { stdio: 'pipe' });
       console.log(`  Removed scheduled task: ${name}`);
-    } catch { /* */ }
+    } catch {
+      /* */
+    }
   }
 
   // Also check Startup folder
-  const startupDir = path.join(os.homedir(), 'AppData', 'Roaming', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup');
+  const startupDir = path.join(
+    os.homedir(),
+    'AppData',
+    'Roaming',
+    'Microsoft',
+    'Windows',
+    'Start Menu',
+    'Programs',
+    'Startup',
+  );
   const batFile = path.join(startupDir, `${SERVICE_NAME}.bat`);
-  if (fs.existsSync(batFile)) { fs.unlinkSync(batFile); console.log(`  Removed: ${batFile}`); }
+  if (fs.existsSync(batFile)) {
+    fs.unlinkSync(batFile);
+    console.log(`  Removed: ${batFile}`);
+  }
   console.log('  ✅ Services uninstalled');
 }
 
 function statusWindows(): void {
   for (const name of [SERVICE_NAME, DEVTUNNEL_SERVICE_NAME]) {
     try {
-      const output = execSync(`schtasks /Query /TN "${name}" /FO CSV /NH`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-      const status = output.includes('Running') ? 'running' : output.includes('Ready') ? 'ready' : 'unknown';
+      const output = execSync(`schtasks /Query /TN "${name}" /FO CSV /NH`, {
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+      const status = output.includes('Running')
+        ? 'running'
+        : output.includes('Ready')
+          ? 'ready'
+          : 'unknown';
       console.log(`  ${name}: ${status}`);
     } catch {
       console.log(`  ${name}: not installed`);
@@ -232,17 +318,25 @@ export async function runServiceCommand(args: string[]): Promise<void> {
     }
     case 'uninstall': {
       console.log('Uninstalling NanoClaw service...');
-      if (platform === 'win32') { uninstallWindows(); }
-      else if (platform === 'linux') { uninstallSystemd(); }
-      else { console.log(`  Unsupported platform: ${platform}`); }
+      if (platform === 'win32') {
+        uninstallWindows();
+      } else if (platform === 'linux') {
+        uninstallSystemd();
+      } else {
+        console.log(`  Unsupported platform: ${platform}`);
+      }
       break;
     }
     case 'status':
     default: {
       console.log('Service status:');
-      if (platform === 'win32') { statusWindows(); }
-      else if (platform === 'linux') { statusSystemd(); }
-      else { console.log(`  Unsupported platform: ${platform}`); }
+      if (platform === 'win32') {
+        statusWindows();
+      } else if (platform === 'linux') {
+        statusSystemd();
+      } else {
+        console.log(`  Unsupported platform: ${platform}`);
+      }
       break;
     }
   }

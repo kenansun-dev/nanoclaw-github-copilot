@@ -73,7 +73,9 @@ export function runDoctor(): CheckResult[] {
         let image = config.sandbox.image;
         try {
           if (isGHCProvider()) image = 'nanoclaw-agent-ghc:latest';
-        } catch { /* fallback to default */ }
+        } catch {
+          /* fallback to default */
+        }
         const output = execSync(
           `docker images ${image} --format "{{.Repository}}:{{.Tag}}"`,
           { stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 },

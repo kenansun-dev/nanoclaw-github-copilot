@@ -37,10 +37,16 @@ export async function runUpdate(args: string[]): Promise<void> {
     if (packagePath) {
       const resolved = path.resolve(packagePath);
       console.log(`  Installing from: ${resolved}`);
-      execSync(`npm install -g "${resolved}"`, { stdio: 'inherit', timeout: 120000 });
+      execSync(`npm install -g "${resolved}"`, {
+        stdio: 'inherit',
+        timeout: 120000,
+      });
     } else {
       console.log(`  Installing latest from npm...`);
-      execSync(`npm install -g ${PACKAGE_NAME}@latest`, { stdio: 'inherit', timeout: 120000 });
+      execSync(`npm install -g ${PACKAGE_NAME}@latest`, {
+        stdio: 'inherit',
+        timeout: 120000,
+      });
     }
 
     console.log('');
