@@ -133,6 +133,32 @@ if (Get-Command docker -ErrorAction SilentlyContinue) {
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
+# --- Auth check ---
+Write-Host ""
+Write-Host "[*] Checking authentication..." -ForegroundColor Yellow
+$authResult = nanoclaw auth status 2>&1
+if ($authResult -match "Not authenticated") {
+    Write-Host "[!] GitHub Copilot not authenticated." -ForegroundColor Yellow
+    Write-Host "    Running: nanoclaw auth login" -ForegroundColor Yellow
+    nanoclaw auth login
+} else {
+    Write-Host "[OK] Authenticated" -ForegroundColor Green
+}
+
+# --- Channel check ---
+Write-Host ""
+$config = Get-Content "$workspace\nanoclaw.json" -Raw | ConvertFrom-Json -ErrorAction SilentlyContinue
+$hasChannel = $false
+if ($config.channels) {
+    if ($config.channels.telegram.enabled -or $config.channels.teams.enabled) { $hasChannel = $true }
+}
+if (-not $hasChannel) {
+    Write-Host "[!] No channels configured." -ForegroundColor Yellow
+    Write-Host "    Edit: notepad $workspace\nanoclaw.json" -ForegroundColor Yellow
+    Write-Host "    Enable telegram or teams, then add bot token to .env" -ForegroundColor Yellow
+}
+
+Write-Host ""
 Write-Host "  Installation complete!" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Next steps:" -ForegroundColor Yellow
