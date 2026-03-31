@@ -544,7 +544,7 @@ async function runSandbox(args: string[]) {
 
 async function runUpdateCmd() {
   const { runUpdate } = await import('./cli/update.js');
-  await runUpdate();
+  await runUpdate([]);
 }
 
 function printHelp() {

@@ -1,89 +1,66 @@
 /**
- * nanoclaw update — self-update to latest version
+ * nanoclaw update — update nanoclaw to latest version
+ *
+ * Supports:
+ *   nanoclaw update                    — from npm registry
+ *   nanoclaw update --package <tgz>   — from local tgz file
  */
-
 import { execSync } from 'child_process';
-import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
+import path from 'path';
 import { fileURLToPath } from 'url';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const PACKAGE_NAME = 'nanoclaw-github-copilot';
 
-interface UpdateResult {
-  currentVersion: string;
-  latestVersion: string;
-  updated: boolean;
-  message: string;
-}
-
-export async function checkForUpdate(): Promise<UpdateResult> {
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const pkgPath = resolve(__dirname, '..', '..', 'package.json');
-
-  let currentVersion = 'unknown';
-  try {
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-    currentVersion = pkg.version;
-  } catch {
-    // fallback
+export async function runUpdate(args: string[]): Promise<void> {
+  // Parse --package flag
+  let packagePath: string | null = null;
+  const pkgIdx = args.indexOf('--package');
+  if (pkgIdx !== -1 && args[pkgIdx + 1]) {
+    packagePath = args[pkgIdx + 1];
   }
 
-  let latestVersion = 'unknown';
-  try {
-    latestVersion = execSync(`npm view ${PACKAGE_NAME} version 2>/dev/null`, {
-      encoding: 'utf-8',
-      timeout: 10000,
-    }).trim();
-  } catch {
-    return {
-      currentVersion,
-      latestVersion: 'unknown',
-      updated: false,
-      message:
-        'Could not check for updates. Are you connected to the internet?',
-    };
-  }
-
-  if (currentVersion === latestVersion) {
-    return {
-      currentVersion,
-      latestVersion,
-      updated: false,
-      message: `Already up to date (v${currentVersion}).`,
-    };
-  }
-
-  return {
-    currentVersion,
-    latestVersion,
-    updated: false,
-    message: `Update available: v${currentVersion} → v${latestVersion}`,
-  };
-}
-
-export async function runUpdate(): Promise<void> {
-  const check = await checkForUpdate();
-  console.log(check.message);
-
-  if (check.latestVersion === 'unknown') {
-    return;
-  }
-
-  if (check.currentVersion === check.latestVersion) {
-    return;
-  }
-
-  console.log(`Updating ${PACKAGE_NAME}...`);
+  console.log('🔄 Updating NanoClaw...');
+  console.log('');
 
   try {
-    execSync(`npm install -g ${PACKAGE_NAME}@latest`, {
-      stdio: 'inherit',
-      timeout: 120000,
-    });
-    console.log(`\n✅ Updated to v${check.latestVersion}`);
-    console.log('Run "nanoclaw restart" to apply the update.');
+    // Stop service if running
+    try {
+      execSync('nanoclaw stop', { stdio: 'pipe', timeout: 10000 });
+      console.log('  Stopped running instance');
+    } catch {
+      // Not running, fine
+    }
+
+    // Install
+    if (packagePath) {
+      const resolved = path.resolve(packagePath);
+      console.log(`  Installing from: ${resolved}`);
+      execSync(`npm install -g "${resolved}"`, { stdio: 'inherit', timeout: 120000 });
+    } else {
+      console.log(`  Installing latest from npm...`);
+      execSync(`npm install -g ${PACKAGE_NAME}@latest`, { stdio: 'inherit', timeout: 120000 });
+    }
+
+    console.log('');
+
+    // Re-run init to sync workspace (idempotent — won't overwrite config)
+    console.log('  Syncing workspace...');
+    try {
+      execSync('nanoclaw init', { stdio: 'inherit', timeout: 30000 });
+    } catch {
+      console.log('  ⚠️  Workspace sync had issues. Run: nanoclaw init');
+    }
+
+    console.log('');
+    console.log('✅ Update complete!');
+    console.log('');
+    console.log('Next steps:');
+    console.log('  nanoclaw doctor    — check everything is ready');
+    console.log('  nanoclaw start     — start the service');
   } catch (err: any) {
-    console.error(`\n❌ Update failed: ${err.message}`);
-    console.error(`Try manually: npm install -g ${PACKAGE_NAME}@latest`);
+    console.error('❌ Update failed:', err.message || err);
+    process.exit(1);
   }
 }
