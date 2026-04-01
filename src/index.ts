@@ -778,6 +778,8 @@ async function main(): Promise<void> {
     const { syncChatsFromConfig } = await import('./chat-manager.js');
     const config = loadConfig();
     syncChatsFromConfig(config);
+    // Refresh in-memory groups after sync
+    registeredGroups = getAllRegisteredGroups();
   } catch (err: any) {
     logger.debug({ err }, 'Chat sync from config skipped');
   }
