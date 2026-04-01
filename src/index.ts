@@ -251,24 +251,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (missedMessages.length === 0) return true;
 
-  // For non-main groups, check if trigger is required and present
-  if (!isMainGroup && group.requiresTrigger !== false) {
-    const triggerPattern = getTriggerPattern(group.trigger);
-    const allowlistCfg = loadSenderAllowlist();
-    const hasTrigger = missedMessages.some(
-      (m) =>
-        triggerPattern.test(m.content.trim()) &&
-        (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
-    );
-    if (!hasTrigger) return true;
-  }
-
-  // Handle slash commands (/new, /reset — start a new session)
+  // Handle slash commands BEFORE trigger check — commands work without @mention
   const lastMsg = missedMessages[missedMessages.length - 1];
   const slashCmd = lastMsg.content
     .trim()
     .toLowerCase()
-    .replace(/^@\S+\s*/, '');
+    .replace(/^@\S+\s*/, '') // strip leading @mention
+    .replace(/@\S+$/, ''); // strip trailing @botname (Telegram adds @bot_username)
   if (slashCmd === '/new' || slashCmd === '/reset') {
     // Clear session for this group
     delete sessions[group.folder];
@@ -361,6 +350,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     lastAgentTimestamp[chatJid] = lastMsg.timestamp;
     saveState();
     return true;
+  }
+
+  // For non-main groups, check if trigger is required and present
+  // (after slash commands, so /think etc. work without @mention)
+  if (!isMainGroup && group.requiresTrigger !== false) {
+    const triggerPattern = getTriggerPattern(group.trigger);
+    const allowlistCfg = loadSenderAllowlist();
+    const hasTrigger = missedMessages.some(
+      (m) =>
+        triggerPattern.test(m.content.trim()) &&
+        (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
+    );
+    if (!hasTrigger) return true;
   }
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
