@@ -26,7 +26,7 @@ import type { AgentConfig } from './config-loader.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { ContainerInput, ContainerOutput } from './container-runner.js';
-import { paths as wsPaths } from './workspace.js';
+import { resolveWorkspace, paths as wsPaths } from './workspace.js';
 
 const OUTPUT_START = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END = '---NANOCLAW_OUTPUT_END---';
@@ -37,16 +37,17 @@ const OUTPUT_END = '---NANOCLAW_OUTPUT_END---';
 function resolveAgentRunnerPath(agent: AgentConfig): string {
   const isGHC = isAgentGHC(agent);
   const runnerDir = isGHC ? 'agent-runner-ghc' : 'agent-runner';
-  // Try compiled JS first, fall back to TypeScript via tsx
+  // Resolve relative to this file (not process.cwd()) — works for both dev and global install
+  const pkgRoot = path.resolve(new URL('.', import.meta.url).pathname, '..');
   const distPath = path.join(
-    process.cwd(),
+    pkgRoot,
     'container',
     runnerDir,
     'dist',
     'index.js',
   );
   const srcPath = path.join(
-    process.cwd(),
+    pkgRoot,
     'container',
     runnerDir,
     'src',
@@ -80,8 +81,9 @@ export async function runHostAgent(
 
   // Prepare session directory
   const sessionDirName = isAgentGHC(agent) ? '.copilot' : '.claude';
+  const ws = resolveWorkspace();
   const sessionDir = path.join(
-    process.cwd(),
+    ws,
     'data',
     'sessions',
     group.folder,
@@ -149,7 +151,7 @@ export async function runHostAgent(
 
   // Global CLAUDE.md template
   const globalClaudeMd = path.join(
-    process.cwd(),
+    pkgRoot,
     'groups',
     group.isMain ? 'main' : 'global',
     'CLAUDE.md',

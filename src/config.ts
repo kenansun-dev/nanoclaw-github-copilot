@@ -54,10 +54,10 @@ const HOME_DIR = process.env.HOME || os.homedir();
 export const MOUNT_ALLOWLIST_PATH = workspacePath('mount-allowlist.json');
 export const SENDER_ALLOWLIST_PATH = workspacePath('sender-allowlist.json');
 
-// Data directories — in project root (for now)
-export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
-export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
-export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
+// Data directories — use workspace (set NANOCLAW_WORKSPACE env to override)
+export const STORE_DIR = path.resolve(resolveWorkspace(), 'store');
+export const GROUPS_DIR = path.resolve(resolveWorkspace(), 'groups');
+export const DATA_DIR = path.resolve(resolveWorkspace(), 'data');
 
 // ─── Container / Sandbox ─────────────────────────────────────────────────────
 
