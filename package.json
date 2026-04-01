@@ -6,6 +6,9 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
+    "build:runners": "cd container/agent-runner-ghc && npm install --omit=dev && npx tsc && cd ../agent-runner && npm install --omit=dev 2>/dev/null; true",
+    "prepack": "npm run build && npm run build:runners",
+    "postinstall": "node scripts/postinstall.mjs",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
@@ -86,7 +89,8 @@
     "docs/*.md",
     "install.ps1",
     "install.sh",
-    "scripts/setup-teams.ps1",
+    "scripts/postinstall.mjs",
+  "scripts/setup-teams.ps1",
     "scripts/setup-teams.sh",
     "templates/"
   ]
