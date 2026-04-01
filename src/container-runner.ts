@@ -320,6 +320,11 @@ function buildContainerArgs(
     if (model) {
       args.push('-e', `COPILOT_MODEL=${model}`);
     }
+    // Pass think level (getConfig() returns reloaded value after /think command)
+    const thinkLevel = getConfig().agents?.defaults?.thinkLevel;
+    if (thinkLevel) {
+      args.push('-e', `COPILOT_THINK_LEVEL=${thinkLevel}`);
+    }
   } else {
     // CC mode: Route API traffic through the credential proxy
     args.push(

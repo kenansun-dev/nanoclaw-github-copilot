@@ -17,6 +17,7 @@ export interface AgentConfig {
   triggerWord: string;
   hasOwnNumber: boolean;
   mode: 'host' | 'sandbox';
+  thinkLevel?: 'low' | 'medium' | 'high' | 'xhigh'; // GHC: --effort flag; CC: --thinking flag
 }
 
 // New chats format: grouped by channel

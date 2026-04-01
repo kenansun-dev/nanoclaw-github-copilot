@@ -184,6 +184,31 @@ Next steps:
      Or set "mode": "host" in nanoclaw.json to skip Docker
   5. Run: nanoclaw start — start the service
 `);
+
+  // Write version file for tracking
+  try {
+    const pkgJsonPath = path.join(
+      path.dirname(new URL(import.meta.url).pathname),
+      '..',
+      '..',
+      'package.json',
+    );
+    if (fs.existsSync(pkgJsonPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf-8'));
+      const versionInfo = JSON.stringify(
+        {
+          version: pkg.version || 'unknown',
+          updatedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      );
+      fs.writeFileSync(path.join(ws, '.version.json'), versionInfo);
+      console.log(`  Version: ${pkg.version}`);
+    }
+  } catch {
+    /* best effort */
+  }
 }
 
 function copyDirSync(src: string, dst: string, skipExisting = false) {

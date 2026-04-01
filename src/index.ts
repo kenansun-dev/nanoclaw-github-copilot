@@ -16,6 +16,7 @@ import {
   TIMEZONE,
   TRIGGER_PATTERN,
   getConfig,
+  reloadConfig,
 } from './config.js';
 import {
   resolveAgentForChat,
@@ -290,6 +291,50 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
     }
     // Advance cursor past the command
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    return true;
+  }
+
+  // Handle /think command — set reasoning effort level
+  const thinkMatch = slashCmd.match(
+    /^\/think(?:\s+(off|low|medium|high|xhigh))?$/,
+  );
+  if (thinkMatch) {
+    const level = thinkMatch[1] as string | undefined;
+    const channel = findChannel(channels, chatJid);
+
+    if (!level) {
+      // Show current think level
+      const currentLevel = getConfig().agents?.defaults?.thinkLevel || 'off';
+      if (channel) {
+        await channel.sendMessage(
+          chatJid,
+          `🧠 Think level: **${currentLevel}**\nUsage: /think off|low|medium|high|xhigh`,
+        );
+      }
+    } else {
+      // Update config in memory and persist to file
+      const { loadConfig, saveConfig } = await import('./config-loader.js');
+      const config = loadConfig();
+      if (level === 'off') {
+        delete config.agents.defaults.thinkLevel;
+      } else {
+        config.agents.defaults.thinkLevel = level as
+          | 'low'
+          | 'medium'
+          | 'high'
+          | 'xhigh';
+      }
+      saveConfig(config);
+      reloadConfig();
+      if (channel) {
+        await channel.sendMessage(
+          chatJid,
+          `🧠 Think level set to **${level}**. Takes effect on next message.`,
+        );
+      }
+    }
     lastAgentTimestamp[chatJid] = lastMsg.timestamp;
     saveState();
     return true;

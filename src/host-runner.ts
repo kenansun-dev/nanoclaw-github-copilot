@@ -118,6 +118,9 @@ export async function runHostAgent(
     if (modelName) {
       env.COPILOT_MODEL = modelName;
     }
+    if (agent.thinkLevel) {
+      env.COPILOT_THINK_LEVEL = agent.thinkLevel;
+    }
   }
 
   // Skills directory — prefer workspace skills, fall back to container/skills

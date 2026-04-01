@@ -311,6 +311,7 @@ async function main(): Promise<void> {
 
   // Determine model: use container input model, env var, or default
   const model = containerInput.model || process.env.COPILOT_MODEL || 'claude-sonnet-4';
+  const thinkLevel = process.env.COPILOT_THINK_LEVEL || undefined; // low|medium|high|xhigh
 
   let sessionId = containerInput.sessionId;
 
@@ -322,6 +323,7 @@ async function main(): Promise<void> {
       let session;
       const sessionConfig = {
         model,
+        ...(thinkLevel ? { reasoningEffort: thinkLevel as any } : {}),
         systemMessage,
         workingDirectory: process.env.NANOCLAW_WORK_DIR || '/workspace/group',
         onPermissionRequest: approveAll,
