@@ -40,3 +40,4 @@ agents-sdk-docs
 # Teams app (user-specific, contains personal App ID)
 teams-app/
 teams-app.zip
+*.tgz

@@ -244,9 +244,37 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
     env.NANOCLAW_MCP_CONFIG = wsPaths.mcpConfig;
   }
 
-  // tsx
+  // Resolve runner command: prefer tsx (dev), fall back to node + compiled JS (global install)
   const tsxExt = process.platform === 'win32' ? 'tsx.cmd' : 'tsx';
   const tsxBin = path.join(PROJECT_ROOT, 'node_modules', '.bin', tsxExt);
+  const hasTsx = fs.existsSync(tsxBin);
+
+  let cmd: string;
+  let cmdArgs: string[];
+  let cmdCwd: string;
+
+  if (hasTsx) {
+    // Dev mode: use tsx with TypeScript source
+    cmd = tsxBin;
+    cmdArgs = [runnerPath];
+    cmdCwd = path.dirname(path.dirname(runnerPath));
+  } else {
+    // Global install: use node with compiled dist/
+    const distRunner = path.join(
+      PROJECT_ROOT,
+      'container',
+      isGHC ? 'agent-runner-ghc' : 'agent-runner',
+      'dist',
+      'index.js',
+    );
+    if (fs.existsSync(distRunner)) {
+      cmd = process.execPath; // node
+      cmdArgs = [distRunner];
+      cmdCwd = path.dirname(path.dirname(distRunner));
+    } else {
+      return { status: 'error', result: null, error: `Neither tsx nor compiled agent-runner found. Run from dev repo or rebuild package.` };
+    }
+  }
 
   const containerInput: ContainerInput = {
     prompt: opts.prompt,
@@ -259,9 +287,9 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
   };
 
   return new Promise<ContainerOutput>((resolve) => {
-    const child = spawn(tsxBin, [runnerPath], {
+    const child = spawn(cmd, cmdArgs, {
       env,
-      cwd: path.dirname(path.dirname(runnerPath)),
+      cwd: cmdCwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,
     });
