@@ -159,10 +159,24 @@ export async function runHostAgent(
   }
 
   // Spawn command
-  // Use tsx binary directly (not via npx) to avoid orphan process chains
+  // Resolve tsx: try local node_modules, then package node_modules, then global
   const tsxExt = process.platform === 'win32' ? 'tsx.cmd' : 'tsx';
-  const tsxBin = path.join(process.cwd(), 'node_modules', '.bin', tsxExt);
-  const cmd = useTsx ? tsxBin : 'node';
+  const tsxPkgRoot = path.resolve(new URL('.', import.meta.url).pathname, '..');
+  const localTsx = path.join(process.cwd(), 'node_modules', '.bin', tsxExt);
+  const pkgTsx = path.join(tsxPkgRoot, 'node_modules', '.bin', tsxExt);
+  let cmd: string;
+  if (useTsx) {
+    if (fs.existsSync(localTsx)) {
+      cmd = localTsx;
+    } else if (fs.existsSync(pkgTsx)) {
+      cmd = pkgTsx;
+    } else {
+      // Fall back to global tsx
+      cmd = tsxExt;
+    }
+  } else {
+    cmd = 'node';
+  }
   const args = [runnerPath];
 
   const processName = `nanoclaw-host-${group.folder.replace(/[^a-zA-Z0-9-]/g, '-')}-${Date.now()}`;
