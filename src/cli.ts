@@ -424,14 +424,53 @@ async function runLogs(args: string[]) {
   const { resolveWorkspace } = await import('./workspace.js');
   const logFile = join(resolveWorkspace(), 'logs', 'nanoclaw.log');
   const follow = args.includes('-f') || args.includes('--follow');
-  const { execSync, spawn } = await import('child_process');
+  const fs = await import('fs');
+
+  if (!fs.existsSync(logFile)) {
+    console.log('No logs found');
+    return;
+  }
+
   if (follow) {
-    spawn('tail', ['-f', logFile], { stdio: 'inherit' });
+    // Cross-platform tail -f using Node.js
+    const content = fs.readFileSync(logFile, 'utf-8');
+    const lines = content.split('\n');
+    for (const line of lines.slice(-20)) {
+      if (line) console.log(line);
+    }
+
+    let pos = fs.statSync(logFile).size;
+
+    const watcher = () => {
+      const stat = fs.statSync(logFile);
+      if (stat.size > pos) {
+        const stream = fs.createReadStream(logFile, {
+          start: pos,
+          encoding: 'utf-8',
+        });
+        stream.on('data', (chunk) => process.stdout.write(String(chunk)));
+        pos = stat.size;
+      } else if (stat.size < pos) {
+        pos = 0; // log rotated
+      }
+    };
+
+    fs.watchFile(logFile, { interval: 500 }, watcher);
+
+    const cleanup = () => {
+      fs.unwatchFile(logFile, watcher);
+      process.exit(0);
+    };
+
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
   } else {
-    try {
-      execSync(`tail -n 50 "${logFile}"`, { stdio: 'inherit' });
-    } catch {
-      console.log('No logs found');
+    // Show last 50 lines
+    const content = fs.readFileSync(logFile, 'utf-8');
+    const lines = content.split('\n');
+    const last50 = lines.slice(-51, -1); // -1 to skip trailing empty
+    for (const line of last50) {
+      console.log(line);
     }
   }
 }
@@ -774,13 +813,38 @@ async function runMcp(args: string[]) {
   const ws = resolveWorkspace();
   const mcporterConfig = join(ws, 'mcporter', 'mcporter.json');
   const { execSync, spawn: spawnChild } = await import('child_process');
-  const mcpBin = join(process.cwd(), 'node_modules', '.bin', 'mcporter');
+  const mcpBinExt = process.platform === 'win32' ? 'mcporter.cmd' : 'mcporter';
+  const localMcp = join(PROJECT_ROOT, 'node_modules', '.bin', mcpBinExt);
+  let mcpBin = '';
+  if (existsSync(localMcp)) {
+    mcpBin = localMcp;
+  } else {
+    // Try global
+    try {
+      const { execSync: es } = await import('child_process');
+      mcpBin = es(
+        process.platform === 'win32' ? 'where mcporter' : 'which mcporter',
+        {
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        },
+      )
+        .trim()
+        .split('\n')[0];
+    } catch {
+      mcpBin = 'mcporter'; // hope it's in PATH
+    }
+  }
 
   // Ensure mcporter config exists and is synced from nanoclaw.json
-  const { mkdirSync, existsSync, writeFileSync, readFileSync } =
-    await import('fs');
+  const {
+    mkdirSync,
+    existsSync: fsExists,
+    writeFileSync,
+    readFileSync,
+  } = await import('fs');
   mkdirSync(join(ws, 'mcporter'), { recursive: true });
-  if (!existsSync(mcporterConfig)) {
+  if (!fsExists(mcporterConfig)) {
     writeFileSync(mcporterConfig, JSON.stringify({ mcpServers: {} }, null, 2));
   }
   // Sync remote MCP servers from nanoclaw.json → mcporter config
