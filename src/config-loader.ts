@@ -115,6 +115,12 @@ export interface NanoclawConfig {
   };
   logLevel: string;
   timezone: string;
+  tui?: {
+    mode?: 'host' | 'sandbox';
+    model?: string;
+    thinkLevel?: 'low' | 'medium' | 'high' | 'xhigh';
+    name?: string;
+  };
 }
 
 // ─── Defaults ────────────────────────────────────────────────────────────────

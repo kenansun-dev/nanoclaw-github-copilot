@@ -41,6 +41,7 @@ const QUERY_TIMEOUT_MS = 5 * 60 * 1000; // 5 min per query
 export async function runTui(_args: string[]): Promise<void> {
   const config = loadConfig();
   const agent = config.agents.defaults;
+  const tuiCfg = config.tui || {};
 
   const ws = resolveWorkspace();
   const groupFolder = 'tui-session';
@@ -51,13 +52,15 @@ export async function runTui(_args: string[]): Promise<void> {
   const ipcDir = path.join(ws, 'ipc', groupFolder);
   fs.mkdirSync(path.join(ipcDir, 'input'), { recursive: true });
 
-  const assistantName = agent.name || 'Nanoclaw';
-  const model = agent.model || 'github-copilot/claude-sonnet-4';
-  const thinkLevel = agent.thinkLevel;
+  // TUI config overrides agent defaults
+  const assistantName = tuiCfg.name || agent.name || 'Nanoclaw';
+  const model = tuiCfg.model || agent.model || 'github-copilot/claude-sonnet-4';
+  const thinkLevel = tuiCfg.thinkLevel || agent.thinkLevel;
+  const mode = tuiCfg.mode || agent.mode || 'host';
 
   console.log(`\n  ${assistantName} — Terminal Chat`);
   console.log(
-    `  Model: ${model}${thinkLevel ? ` (think: ${thinkLevel})` : ''}`,
+    `  Model: ${model}${thinkLevel ? ` (think: ${thinkLevel})` : ''} [${mode}]`,
   );
   console.log(`  Commands: /new /think <level> /quit\n`);
 
@@ -156,6 +159,7 @@ export async function runTui(_args: string[]): Promise<void> {
       ipcDir,
       assistantName,
       model,
+      mode,
       onChild: (child) => {
         activeChild = child;
       },
@@ -185,10 +189,17 @@ interface QueryOptions {
   ipcDir: string;
   assistantName: string;
   model: string;
+  mode: 'host' | 'sandbox';
   onChild: (child: ChildProcess) => void;
 }
 
 async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
+  // Sandbox mode: use container-runner (Docker)
+  if (opts.mode === 'sandbox') {
+    return runSandboxQuery(opts);
+  }
+
+  // Host mode: spawn agent-runner directly
   const isGHC = isGHCProvider();
   const runnerDir = isGHC ? 'agent-runner-ghc' : 'agent-runner';
   const runnerPath = path.join(
@@ -418,4 +429,72 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
       });
     });
   });
+}
+
+/**
+ * Run query in sandbox (Docker container) mode.
+ * Uses container-runner for Docker-based execution.
+ */
+async function runSandboxQuery(
+  opts: QueryOptions,
+): Promise<ContainerOutput> {
+  try {
+    const { runContainerAgent } = await import('../container-runner.js');
+
+    const input = {
+      prompt: opts.prompt,
+      sessionId: opts.sessionId,
+      groupFolder: opts.groupFolder,
+      chatJid: 'tui-local',
+      isMain: true,
+      assistantName: opts.assistantName,
+      model: opts.model.includes('/') ? opts.model.split('/')[1] : opts.model,
+    };
+
+    const group = {
+      name: 'tui',
+      folder: opts.groupFolder,
+      isMain: true,
+      trigger: '',
+      added_at: new Date().toISOString(),
+    };
+
+    let lastOutput: ContainerOutput = {
+      status: 'success',
+      result: null,
+    };
+
+    // Spinner
+    const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let spinIdx = 0;
+    const spinTimer = setInterval(() => {
+      process.stdout.write(
+        `\r${spinner[spinIdx++ % spinner.length]} thinking...`,
+      );
+    }, 100);
+
+    const output = await runContainerAgent(
+      group,
+      input,
+      (proc, name) => {
+        opts.onChild(proc);
+      },
+      async (out) => {
+        lastOutput = out;
+      },
+    );
+
+    clearInterval(spinTimer);
+    process.stdout.write('\r\x1b[K');
+
+    return output.status === 'success' && output.result
+      ? output
+      : lastOutput;
+  } catch (err: any) {
+    return {
+      status: 'error',
+      result: null,
+      error: `Sandbox mode failed: ${err.message}. Is Docker running?`,
+    };
+  }
 }
