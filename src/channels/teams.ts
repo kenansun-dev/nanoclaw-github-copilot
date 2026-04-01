@@ -56,6 +56,20 @@ export class TeamsChannel implements Channel {
   // Store conversation references for proactive messaging
   private conversationRefs = new Map<string, Partial<ConversationReference>>();
 
+  /** Convert Adaptive Card submit (activity.value) to synthetic slash command text. */
+  private async resolveCardSubmit(activity: any): Promise<boolean> {
+    if (activity.type !== 'message' || activity.text || !activity.value) return false;
+    try {
+      const { parseTeamsCardSubmit } = await import('../slash-commands.js');
+      const syntheticCmd = parseTeamsCardSubmit(activity);
+      if (syntheticCmd) {
+        activity.text = syntheticCmd;
+        return true;
+      }
+    } catch { /* ignore */ }
+    return false;
+  }
+
   constructor(
     appId: string,
     appPassword: string | undefined,
@@ -244,6 +258,11 @@ export class TeamsChannel implements Channel {
       return;
     }
 
+    // Handle Adaptive Card submits (no text, activity.value contains form data)
+    if (activity.type === 'message' && !activity.text && activity.value) {
+      if (!(await this.resolveCardSubmit(activity))) return;
+    }
+
     if (activity.type !== 'message' || !activity.text) return;
 
     // Store a minimal conversation reference for replies
@@ -338,6 +357,10 @@ export class TeamsChannel implements Channel {
     }
 
     // Only handle message activities
+    // Handle Adaptive Card submits (no text, activity.value)
+    if (activity.type === 'message' && !activity.text && activity.value) {
+      if (!(await this.resolveCardSubmit(activity))) return;
+    }
     if (activity.type !== 'message' || !activity.text) return;
 
     // Store conversation reference for proactive messaging later
@@ -434,6 +457,44 @@ export class TeamsChannel implements Channel {
       logger.info({ jid, length: text.length }, 'Teams message sent');
     } catch (err: any) {
       logger.error({ jid, err }, 'Failed to send Teams message');
+    }
+  }
+
+  async sendCard(
+    jid: string,
+    card: object,
+    fallbackText: string,
+  ): Promise<void> {
+    const ref = this.conversationRefs.get(jid);
+    if (!ref) {
+      logger.warn(
+        { jid },
+        'No conversation reference for Teams card — falling back to text',
+      );
+      return this.sendMessage(jid, fallbackText);
+    }
+
+    try {
+      await this.adapter.continueConversation(
+        ref as ConversationReference,
+        async (context: TurnContext) => {
+          await context.sendActivity({
+            attachments: [
+              {
+                contentType: 'application/vnd.microsoft.card.adaptive',
+                content: card,
+              },
+            ],
+          } as Partial<Activity>);
+        },
+      );
+      logger.info({ jid }, 'Teams Adaptive Card sent');
+    } catch (err: any) {
+      logger.error(
+        { jid, err },
+        'Failed to send Teams card — falling back to text',
+      );
+      await this.sendMessage(jid, fallbackText);
     }
   }
 

@@ -305,13 +305,24 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const channel = findChannel(channels, chatJid);
 
     if (!level) {
-      // Show current think level
+      // Show current think level — use Adaptive Card on Teams
       const currentLevel = getConfig().agents?.defaults?.thinkLevel || 'off';
       if (channel) {
-        await channel.sendMessage(
-          chatJid,
-          `🧠 Think level: **${currentLevel}**\nUsage: /think off|low|medium|high|xhigh`,
-        );
+        if (chatJid.startsWith('teams:') && channel.sendCard) {
+          const { COMMANDS, buildTeamsAdaptiveCard } =
+            await import('./slash-commands.js');
+          const thinkCmd = COMMANDS.find((c) => c.name === 'think')!;
+          await channel.sendCard(
+            chatJid,
+            buildTeamsAdaptiveCard(thinkCmd, currentLevel),
+            `🧠 Think level: **${currentLevel}**\nUsage: /think off|low|medium|high|xhigh`,
+          );
+        } else {
+          await channel.sendMessage(
+            chatJid,
+            `🧠 Think level: **${currentLevel}**\nUsage: /think off|low|medium|high|xhigh`,
+          );
+        }
       }
     } else {
       // Update config in memory and persist to file
@@ -334,6 +345,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           `🧠 Think level set to **${level}**. Takes effect on next message.`,
         );
       }
+    }
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    return true;
+  }
+
+  // Handle /help command
+  if (slashCmd === '/help') {
+    const channel = findChannel(channels, chatJid);
+    if (channel) {
+      const { buildHelpText } = await import('./slash-commands.js');
+      await channel.sendMessage(chatJid, buildHelpText());
     }
     lastAgentTimestamp[chatJid] = lastMsg.timestamp;
     saveState();
@@ -896,6 +919,23 @@ async function main(): Promise<void> {
     }
     channels.push(channel);
     await channel.connect();
+
+    // Register slash commands with platform-native menus (non-invasive)
+    try {
+      const { registerTelegramCommands } = await import('./slash-commands.js');
+      if (channelName === 'telegram') {
+        const tgToken = getConfig().channels?.telegram?.botToken;
+        if (tgToken) {
+          await registerTelegramCommands(tgToken);
+          logger.info('Telegram slash command menu registered');
+        }
+      }
+    } catch (err) {
+      logger.debug(
+        { err, channel: channelName },
+        'Slash command registration skipped',
+      );
+    }
   }
   if (channels.length === 0) {
     logger.fatal('No channels connected');

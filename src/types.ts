@@ -84,6 +84,8 @@ export interface Channel {
   name: string;
   connect(): Promise<void>;
   sendMessage(jid: string, text: string): Promise<void>;
+  /** Send a rich card (Adaptive Card on Teams, falls back to text on others) */
+  sendCard?(jid: string, card: object, fallbackText: string): Promise<void>;
   reactToMessage?(
     jid: string,
     emoji: string,

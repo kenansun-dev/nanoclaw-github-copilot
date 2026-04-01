@@ -11,10 +11,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { fileURLToPath } from 'url';
 
 import { loadConfig, saveConfig } from '../config-loader.js';
-import {
-  resolveGithubToken,
-  isGHCProvider,
-} from '../config-extensions.js';
+import { resolveGithubToken, isGHCProvider } from '../config-extensions.js';
 import { resolveWorkspace, paths as wsPaths } from '../workspace.js';
 
 const OUTPUT_START = '---NANOCLAW_OUTPUT_START---';
@@ -59,7 +56,9 @@ export async function runTui(_args: string[]): Promise<void> {
   const thinkLevel = agent.thinkLevel;
 
   console.log(`\n  ${assistantName} — Terminal Chat`);
-  console.log(`  Model: ${model}${thinkLevel ? ` (think: ${thinkLevel})` : ''}`);
+  console.log(
+    `  Model: ${model}${thinkLevel ? ` (think: ${thinkLevel})` : ''}`,
+  );
   console.log(`  Commands: /new /think <level> /quit\n`);
 
   const rl = readline.createInterface({
@@ -74,7 +73,11 @@ export async function runTui(_args: string[]): Promise<void> {
   process.on('SIGINT', () => {
     if (activeChild && !activeChild.killed) {
       console.log('\n⏹ Cancelled.');
-      try { process.kill(-activeChild.pid!, 'SIGTERM'); } catch { activeChild.kill('SIGTERM'); }
+      try {
+        process.kill(-activeChild.pid!, 'SIGTERM');
+      } catch {
+        activeChild.kill('SIGTERM');
+      }
       activeChild = null;
     } else {
       console.log('\nBye 👋\n');
@@ -103,7 +106,13 @@ export async function runTui(_args: string[]): Promise<void> {
     if (trimmed === '/new' || trimmed === '/reset') {
       sessionId = undefined;
       // Clear copilot session data
-      const sessionDir = path.join(ws, 'data', 'sessions', groupFolder, '.copilot');
+      const sessionDir = path.join(
+        ws,
+        'data',
+        'sessions',
+        groupFolder,
+        '.copilot',
+      );
       if (fs.existsSync(sessionDir)) {
         fs.rmSync(sessionDir, { recursive: true, force: true });
       }
@@ -112,7 +121,9 @@ export async function runTui(_args: string[]): Promise<void> {
     }
 
     // /think command
-    const thinkMatch = trimmed.match(/^\/think(?:\s+(off|low|medium|high|xhigh))?$/i);
+    const thinkMatch = trimmed.match(
+      /^\/think(?:\s+(off|low|medium|high|xhigh))?$/i,
+    );
     if (thinkMatch) {
       const level = thinkMatch[1]?.toLowerCase();
       if (!level) {
@@ -124,7 +135,11 @@ export async function runTui(_args: string[]): Promise<void> {
         if (level === 'off') {
           delete cfg.agents.defaults.thinkLevel;
         } else {
-          cfg.agents.defaults.thinkLevel = level as 'low' | 'medium' | 'high' | 'xhigh';
+          cfg.agents.defaults.thinkLevel = level as
+            | 'low'
+            | 'medium'
+            | 'high'
+            | 'xhigh';
         }
         saveConfig(cfg);
         console.log(`🧠 Think level: ${level}\n`);
@@ -141,7 +156,9 @@ export async function runTui(_args: string[]): Promise<void> {
       ipcDir,
       assistantName,
       model,
-      onChild: (child) => { activeChild = child; },
+      onChild: (child) => {
+        activeChild = child;
+      },
     });
 
     activeChild = null;
@@ -174,10 +191,20 @@ interface QueryOptions {
 async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
   const isGHC = isGHCProvider();
   const runnerDir = isGHC ? 'agent-runner-ghc' : 'agent-runner';
-  const runnerPath = path.join(PROJECT_ROOT, 'container', runnerDir, 'src', 'index.ts');
+  const runnerPath = path.join(
+    PROJECT_ROOT,
+    'container',
+    runnerDir,
+    'src',
+    'index.ts',
+  );
 
   if (!fs.existsSync(runnerPath)) {
-    return { status: 'error', result: null, error: `Agent runner not found: ${runnerPath}` };
+    return {
+      status: 'error',
+      result: null,
+      error: `Agent runner not found: ${runnerPath}`,
+    };
   }
 
   // Build env
@@ -203,7 +230,10 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
 
   // Skills
   const containerSkills = path.join(PROJECT_ROOT, 'container', 'skills');
-  if (fs.existsSync(wsPaths.skills) && fs.readdirSync(wsPaths.skills).length > 0) {
+  if (
+    fs.existsSync(wsPaths.skills) &&
+    fs.readdirSync(wsPaths.skills).length > 0
+  ) {
     env.NANOCLAW_SKILLS_DIR = wsPaths.skills;
   } else if (fs.existsSync(containerSkills)) {
     env.NANOCLAW_SKILLS_DIR = containerSkills;
@@ -252,7 +282,9 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
     const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let spinIdx = 0;
     const spinTimer = setInterval(() => {
-      process.stdout.write(`\r${spinner[spinIdx++ % spinner.length]} thinking...`);
+      process.stdout.write(
+        `\r${spinner[spinIdx++ % spinner.length]} thinking...`,
+      );
     }, 100);
 
     // Timeout
@@ -260,9 +292,17 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
       if (!resolved) {
         clearInterval(spinTimer);
         process.stdout.write('\r\x1b[K');
-        try { process.kill(-child.pid!, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
+        try {
+          process.kill(-child.pid!, 'SIGTERM');
+        } catch {
+          child.kill('SIGTERM');
+        }
         resolved = true;
-        resolve({ status: 'error', result: null, error: 'Query timed out (5 min)' });
+        resolve({
+          status: 'error',
+          result: null,
+          error: 'Query timed out (5 min)',
+        });
       }
     }, QUERY_TIMEOUT_MS);
 
@@ -273,7 +313,11 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
       clearTimeout(timeout);
       process.stdout.write('\r\x1b[K');
       // Write close sentinel
-      try { fs.writeFileSync(closeSentinel, ''); } catch { /* ignore */ }
+      try {
+        fs.writeFileSync(closeSentinel, '');
+      } catch {
+        /* ignore */
+      }
       resolve(output);
     };
 
@@ -285,14 +329,20 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
         const endIdx = stdout.indexOf(OUTPUT_END, startIdx);
         if (endIdx === -1) break;
 
-        const jsonStr = stdout.substring(startIdx + OUTPUT_START.length, endIdx).trim();
-        stdout = stdout.substring(0, startIdx) + stdout.substring(endIdx + OUTPUT_END.length);
+        const jsonStr = stdout
+          .substring(startIdx + OUTPUT_START.length, endIdx)
+          .trim();
+        stdout =
+          stdout.substring(0, startIdx) +
+          stdout.substring(endIdx + OUTPUT_END.length);
 
         try {
           const output: ContainerOutput = JSON.parse(jsonStr);
           hadOutput = true;
           finish(output);
-        } catch { /* parse error, continue */ }
+        } catch {
+          /* parse error, continue */
+        }
       }
     });
 
@@ -301,15 +351,25 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
     });
 
     child.on('close', (code) => {
-      if (hadOutput) { finish({ status: 'success', result: null }); return; }
+      if (hadOutput) {
+        finish({ status: 'success', result: null });
+        return;
+      }
 
       // Try remaining stdout
       const lastStart = stdout.lastIndexOf(OUTPUT_START);
       if (lastStart !== -1) {
         const lastEnd = stdout.indexOf(OUTPUT_END, lastStart);
         if (lastEnd !== -1) {
-          const jsonStr = stdout.substring(lastStart + OUTPUT_START.length, lastEnd).trim();
-          try { finish(JSON.parse(jsonStr)); return; } catch { /* fall through */ }
+          const jsonStr = stdout
+            .substring(lastStart + OUTPUT_START.length, lastEnd)
+            .trim();
+          try {
+            finish(JSON.parse(jsonStr));
+            return;
+          } catch {
+            /* fall through */
+          }
         }
       }
 
@@ -323,7 +383,11 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
     });
 
     child.on('error', (err) => {
-      finish({ status: 'error', result: null, error: `Spawn failed: ${err.message}` });
+      finish({
+        status: 'error',
+        result: null,
+        error: `Spawn failed: ${err.message}`,
+      });
     });
   });
 }
