@@ -104,6 +104,11 @@ try {
     case 'chat':
       await runChat(commandArgs);
       break;
+    case 'tui': {
+      const { runTui } = await import('./cli/tui.js');
+      await runTui(commandArgs);
+      break;
+    }
     case 'pair': {
       const { runPair } = await import('./cli/pair.js');
       await runPair(commandArgs);
@@ -597,6 +602,9 @@ Chats
   chat pending                      Show unregistered chats
   chat add <jid> --name <name>      Register a chat
   chat remove <jid>                 Unregister a chat
+
+Interactive
+  tui                               Interactive terminal chat
 
 Sandbox
 
