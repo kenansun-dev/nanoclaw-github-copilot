@@ -154,118 +154,261 @@ async function runDoctor(_args: string[]) {
 async function runService(action: string) {
   const { resolveWorkspace } = await import('./workspace.js');
   const ws = resolveWorkspace();
-  // Windows-compatible process kill
-  const killProcess = (pid: number, signal: string | number = 'SIGTERM') => {
+  const os = await import('os');
+  const fs = await import('fs');
+  const { execSync, spawn } = await import('child_process');
+
+  const SERVICE_NAME = 'nanoclaw';
+  const pidFile = join(ws, 'state', 'nanoclaw.pid');
+  const logFile = join(ws, 'logs', 'nanoclaw.log');
+  const entryPoint = join(PROJECT_ROOT, 'dist', 'index.js');
+
+  // --- Detect service backend ---
+  const hasSystemd = (() => {
+    if (process.platform !== 'linux') return false;
+    const serviceFile = join(
+      os.homedir(),
+      '.config',
+      'systemd',
+      'user',
+      `${SERVICE_NAME}.service`,
+    );
+    return existsSync(serviceFile);
+  })();
+
+  const hasSchedTask = (() => {
+    if (process.platform !== 'win32') return false;
+    try {
+      execSync(`schtasks /Query /TN "${SERVICE_NAME}" /FO CSV /NH`, {
+        stdio: 'pipe',
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  const useSystemd = hasSystemd && action !== 'dev';
+
+  // --- Windows kill helper ---
+  const killProcess = (pid: number) => {
     if (process.platform === 'win32') {
-      const { execSync } = require('child_process');
       try {
         execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe' });
       } catch {
-        /* ignore */
+        /* */
       }
     } else {
-      process.kill(pid, signal as NodeJS.Signals);
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        /* */
+      }
     }
   };
 
-  const pidFile = join(ws, 'state', 'nanoclaw.pid');
-  const logFile = join(ws, 'logs', 'nanoclaw.log');
-  const { execSync, spawn } = await import('child_process');
-  const fs = await import('fs');
-
-  const entryPoint = join(PROJECT_ROOT, 'dist', 'index.js');
-
   switch (action) {
     case 'start': {
-      if (existsSync(pidFile)) {
-        const pid = fs.readFileSync(pidFile, 'utf-8').trim();
+      if (useSystemd) {
         try {
-          process.kill(parseInt(pid), 0);
-          console.log(`Already running (pid: ${pid})`);
+          execSync(`systemctl --user start ${SERVICE_NAME}`, { stdio: 'pipe' });
+          // Wait and check
+          await new Promise((r) => setTimeout(r, 2000));
+          const status = execSync(
+            `systemctl --user is-active ${SERVICE_NAME}`,
+            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+          ).trim();
+          console.log(`Started via systemd (${status})`);
+          console.log(`Logs: journalctl --user -u ${SERVICE_NAME} -f`);
+        } catch (err: any) {
+          console.error('systemd start failed. Falling back to direct start.');
+          await startDirect();
+        }
+        return;
+      }
+      if (hasSchedTask) {
+        try {
+          execSync(`schtasks /Run /TN "${SERVICE_NAME}"`, { stdio: 'pipe' });
+          console.log('Started via Scheduled Task');
           return;
         } catch {
-          // stale pid file
+          /* fall through to direct */
         }
       }
-      fs.mkdirSync(dirname(logFile), { recursive: true });
-      fs.mkdirSync(dirname(pidFile), { recursive: true });
-      const child = spawn('node', [entryPoint], {
-        detached: true,
-        stdio: ['ignore', fs.openSync(logFile, 'a'), fs.openSync(logFile, 'a')],
-        cwd: PROJECT_ROOT,
-        env: { ...process.env, NANOCLAW_WORKSPACE: ws },
-      });
-      fs.writeFileSync(pidFile, String(child.pid));
-      child.unref();
-      console.log(`Started (pid: ${child.pid})`);
-      console.log(`Logs: ${logFile}`);
-
-      // Wait briefly then check log for startup warnings/errors
-      await new Promise((r) => setTimeout(r, 3000));
-      try {
-        const recentLog = fs.readFileSync(logFile, 'utf-8');
-        const lines = recentLog.split('\n');
-        for (const line of lines) {
-          if (
-            line.includes('WARNING') ||
-            line.includes('warning') ||
-            line.includes('\u26a0')
-          ) {
-            console.log(line.replace(/\x1b\[[0-9;]*m/g, '').trim());
-          }
-          if (line.includes('FATAL') || line.includes('Failed to start')) {
-            console.error(line.replace(/\x1b\[[0-9;]*m/g, '').trim());
-          }
-        }
-        // Check if process is still alive
-        try {
-          process.kill(child.pid!, 0);
-        } catch {
-          console.error('\nProcess exited shortly after start. Check logs:');
-          console.error(`  nanoclaw logs`);
-        }
-      } catch {
-        // log file not ready yet, that's ok
-      }
+      await startDirect();
       break;
     }
     case 'stop': {
+      if (useSystemd) {
+        try {
+          execSync(`systemctl --user stop ${SERVICE_NAME}`, { stdio: 'pipe' });
+          console.log('Stopped via systemd');
+        } catch {
+          console.log('systemd stop failed');
+        }
+        return;
+      }
+      // PID fallback
       if (!existsSync(pidFile)) {
         console.log('Not running');
         return;
       }
       const pid = fs.readFileSync(pidFile, 'utf-8').trim();
+      killProcess(parseInt(pid));
       try {
-        killProcess(parseInt(pid));
         fs.unlinkSync(pidFile);
-        console.log(`Stopped (pid: ${pid})`);
       } catch {
-        fs.unlinkSync(pidFile);
-        console.log('Process not found, cleaned up pid file');
+        /* */
       }
+      console.log(`Stopped (pid: ${pid})`);
       break;
     }
     case 'restart': {
+      if (useSystemd) {
+        try {
+          execSync(`systemctl --user restart ${SERVICE_NAME}`, {
+            stdio: 'pipe',
+          });
+          await new Promise((r) => setTimeout(r, 2000));
+          const status = execSync(
+            `systemctl --user is-active ${SERVICE_NAME}`,
+            {
+              encoding: 'utf-8',
+              stdio: ['pipe', 'pipe', 'pipe'],
+            },
+          ).trim();
+          console.log(`Restarted via systemd (${status})`);
+        } catch {
+          console.error('systemd restart failed. Trying stop + start...');
+          await runService('stop');
+          await new Promise((r) => setTimeout(r, 1000));
+          await runService('start');
+        }
+        return;
+      }
       await runService('stop');
-      await new Promise((r) => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, 1000));
       await runService('start');
       break;
     }
     case 'status': {
-      if (!existsSync(pidFile)) {
-        console.log('Status: not running');
-      } else {
+      // Service backend info
+      if (hasSystemd) {
+        console.log('Service: systemd (user)');
+        try {
+          const active = execSync(
+            `systemctl --user is-active ${SERVICE_NAME}`,
+            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+          ).trim();
+          const pid = execSync(
+            `systemctl --user show ${SERVICE_NAME} --property=MainPID --value`,
+            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+          ).trim();
+          console.log(`Status: ${active} (pid: ${pid})`);
+        } catch {
+          console.log('Status: not running');
+        }
+      } else if (hasSchedTask) {
+        console.log('Service: Windows Scheduled Task');
+        try {
+          const out = execSync(
+            `schtasks /Query /TN "${SERVICE_NAME}" /FO CSV /NH`,
+            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+          ).trim();
+          const status = out.includes('Running') ? 'running' : 'ready';
+          console.log(`Status: ${status}`);
+        } catch {
+          console.log('Status: not installed');
+        }
+      } else if (existsSync(pidFile)) {
         const pid = fs.readFileSync(pidFile, 'utf-8').trim();
         try {
           process.kill(parseInt(pid), 0);
-          console.log(`Status: running (pid: ${pid})`);
+          console.log(`Status: running (pid: ${pid}, PID mode)`);
         } catch {
           console.log('Status: not running (stale pid file)');
         }
+      } else {
+        console.log('Status: not running');
+        console.log('Tip: run `nanoclaw service install` to enable auto-start');
       }
+
+      // Common info
       console.log(`Workspace: ${ws}`);
       console.log(`Config: ${join(ws, 'nanoclaw.json')}`);
+      console.log(`Logs: ${logFile}`);
+
+      // Show config summary
+      try {
+        const { loadConfig } = await import('./config-loader.js');
+        const config = loadConfig();
+        const agent = config.agents?.defaults;
+        console.log(
+          `Agent: ${agent?.name || 'Andy'} (${agent?.model || 'unknown'}, ${agent?.mode || 'sandbox'})`,
+        );
+        if (agent?.thinkLevel) console.log(`Think: ${agent.thinkLevel}`);
+        const channels = Object.entries(config.channels || {})
+          .filter(([, v]: [string, any]) => v?.enabled)
+          .map(([k]) => k);
+        console.log(
+          `Channels: ${channels.length > 0 ? channels.join(', ') : 'none enabled'}`,
+        );
+        const chatCount = Object.keys(config.chats || {}).length;
+        console.log(`Chats: ${chatCount} registered`);
+      } catch {
+        /* config not available */
+      }
       break;
+    }
+  }
+
+  // --- Direct start (PID mode fallback) ---
+  async function startDirect() {
+    if (existsSync(pidFile)) {
+      const pid = fs.readFileSync(pidFile, 'utf-8').trim();
+      try {
+        process.kill(parseInt(pid), 0);
+        console.log(`Already running (pid: ${pid})`);
+        return;
+      } catch {
+        /* stale */
+      }
+    }
+    fs.mkdirSync(dirname(logFile), { recursive: true });
+    fs.mkdirSync(dirname(pidFile), { recursive: true });
+
+    const child = spawn('node', [entryPoint], {
+      detached: true,
+      stdio: ['ignore', fs.openSync(logFile, 'a'), fs.openSync(logFile, 'a')],
+      cwd: ws, // workspace, not PROJECT_ROOT
+      env: { ...process.env, NANOCLAW_WORKSPACE: ws },
+    });
+    fs.writeFileSync(pidFile, String(child.pid));
+    child.unref();
+    console.log(`Started (pid: ${child.pid})`);
+    console.log(`Logs: ${logFile}`);
+
+    // Check only NEW log lines (after start time)
+    const startTime = Date.now();
+    await new Promise((r) => setTimeout(r, 3000));
+    try {
+      const content = fs.readFileSync(logFile, 'utf-8');
+      const lines = content.split('\n');
+      // Only check lines from the last few seconds
+      for (const line of lines.slice(-30)) {
+        // Parse pino timestamp if available
+        const tsMatch = line.match(/\["(\d{2}:\d{2}:\d{2})/);
+        if (line.includes('FATAL') || line.includes('Failed to start')) {
+          console.error(line.replace(/\x1b\[[0-9;]*m/g, '').trim());
+        }
+      }
+      try {
+        process.kill(child.pid!, 0);
+      } catch {
+        console.error('Process exited shortly after start. Run: nanoclaw logs');
+      }
+    } catch {
+      /* log not ready */
     }
   }
 }

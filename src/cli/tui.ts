@@ -283,7 +283,11 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
       cmdArgs = [distRunner];
       cmdCwd = path.dirname(path.dirname(distRunner));
     } else {
-      return { status: 'error', result: null, error: `Neither tsx nor compiled agent-runner found. Run from dev repo or rebuild package.` };
+      return {
+        status: 'error',
+        result: null,
+        error: `Neither tsx nor compiled agent-runner found. Run from dev repo or rebuild package.`,
+      };
     }
   }
 
@@ -435,9 +439,7 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
  * Run query in sandbox (Docker container) mode.
  * Uses container-runner for Docker-based execution.
  */
-async function runSandboxQuery(
-  opts: QueryOptions,
-): Promise<ContainerOutput> {
+async function runSandboxQuery(opts: QueryOptions): Promise<ContainerOutput> {
   try {
     const { runContainerAgent } = await import('../container-runner.js');
 
@@ -487,9 +489,7 @@ async function runSandboxQuery(
     clearInterval(spinTimer);
     process.stdout.write('\r\x1b[K');
 
-    return output.status === 'success' && output.result
-      ? output
-      : lastOutput;
+    return output.status === 'success' && output.result ? output : lastOutput;
   } catch (err: any) {
     return {
       status: 'error',

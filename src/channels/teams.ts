@@ -58,7 +58,8 @@ export class TeamsChannel implements Channel {
 
   /** Convert Adaptive Card submit (activity.value) to synthetic slash command text. */
   private async resolveCardSubmit(activity: any): Promise<boolean> {
-    if (activity.type !== 'message' || activity.text || !activity.value) return false;
+    if (activity.type !== 'message' || activity.text || !activity.value)
+      return false;
     try {
       const { parseTeamsCardSubmit } = await import('../slash-commands.js');
       const syntheticCmd = parseTeamsCardSubmit(activity);
@@ -66,7 +67,9 @@ export class TeamsChannel implements Channel {
         activity.text = syntheticCmd;
         return true;
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return false;
   }
 
