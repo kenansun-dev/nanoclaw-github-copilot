@@ -616,6 +616,26 @@ async function startMessageLoop(): Promise<void> {
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
+
+          // Check if the last message is a slash command — intercept before IPC
+          const lastIpcMsg = messagesToSend[messagesToSend.length - 1];
+          if (lastIpcMsg) {
+            const { normalizeSlashInput, handleSlashCommand } =
+              await import('./slash-commands.js');
+            const slashInput = normalizeSlashInput(lastIpcMsg.content);
+            const slashResult = await handleSlashCommand(slashInput, {
+              chatJid,
+              groupFolder: group.folder,
+              channel: findChannel(channels, chatJid),
+              clearSession: (folder) => delete sessions[folder],
+            });
+            if (slashResult.handled) {
+              lastAgentTimestamp[chatJid] = lastIpcMsg.timestamp;
+              saveState();
+              continue;
+            }
+          }
+
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           if (queue.sendMessage(chatJid, formatted)) {
