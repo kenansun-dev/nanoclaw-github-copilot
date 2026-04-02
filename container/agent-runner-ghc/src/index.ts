@@ -362,6 +362,21 @@ async function main(): Promise<void> {
             },
             tools: ['*'],
           },
+          // GitHub MCP server (web_search, issues, PRs, code search, etc.)
+          // Enabled via NANOCLAW_GITHUB_MCP=1 env var (set by host-runner/container-runner)
+          ...(process.env.NANOCLAW_GITHUB_MCP === '1' && githubToken ? {
+            'github-mcp-server': {
+              type: 'http' as const,
+              url: 'https://api.githubcopilot.com/mcp',
+              headers: {
+                'Authorization': `Bearer ${githubToken}`,
+                'X-MCP-Toolsets': 'repos,issues,users,pull_requests,code_security,secret_protection,actions,web_search',
+                'X-MCP-Host': 'copilot-cli',
+                'X-Initiator': 'agent',
+              },
+              tools: ['*'],
+            },
+          } : {}),
           // Load additional MCP servers from /workspace/mcp.json (mounted from ~/.nanoclaw/mcp.json)
           ...(() => {
             const mcpConfigPath = process.env.NANOCLAW_MCP_CONFIG || '/workspace/mcp.json';

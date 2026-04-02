@@ -141,6 +141,10 @@ export async function runHostAgent(
     }
     // Point GHC CLI to nanoclaw-managed config directory
     env.COPILOT_HOME = sessionDir;
+    // Enable GitHub MCP server (web_search, issues, PRs, etc.) — default true for GHC
+    if (agent.githubMcp !== false) {
+      env.NANOCLAW_GITHUB_MCP = '1';
+    }
   }
 
   // Skills directory — prefer workspace skills, fall back to container/skills

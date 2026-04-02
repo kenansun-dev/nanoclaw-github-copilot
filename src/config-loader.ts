@@ -18,6 +18,7 @@ export interface AgentConfig {
   hasOwnNumber: boolean;
   mode: 'host' | 'sandbox';
   thinkLevel?: 'low' | 'medium' | 'high' | 'xhigh'; // GHC: --effort flag; CC: --thinking flag
+  githubMcp?: boolean; // GHC: register GitHub MCP server (web_search, issues, PRs, etc.)
 }
 
 // New chats format: grouped by channel

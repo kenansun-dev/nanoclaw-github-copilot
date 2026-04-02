@@ -134,6 +134,11 @@ export function buildProviderEnvArgs(
     if (thinkLevel) {
       args.push('-e', `COPILOT_THINK_LEVEL=${thinkLevel}`);
     }
+    // Enable GitHub MCP server (web_search, issues, PRs) — default true for GHC
+    const agentConfig = agent || config.agents?.defaults;
+    if (agentConfig?.githubMcp !== false) {
+      args.push('-e', 'NANOCLAW_GITHUB_MCP=1');
+    }
   } else {
     // CC mode: credential proxy
     const gateway = opts?.hostGateway || 'host-gateway';
