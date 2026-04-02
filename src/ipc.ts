@@ -12,6 +12,7 @@ import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  sendFile?: (jid: string, filePath: string, filename?: string) => Promise<void>;
   reactToMessage?: (
     jid: string,
     emoji: string,
@@ -118,6 +119,29 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.info(
                     { chatJid: data.chatJid, emoji: data.emoji },
                     'IPC reaction sent',
+                  );
+                }
+              }
+              // Handle send_file IPC
+              if (
+                data.type === 'send_file' &&
+                data.chatJid &&
+                data.filePath &&
+                deps.sendFile
+              ) {
+                const targetGroup = registeredGroups[data.chatJid];
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  await deps.sendFile(
+                    data.chatJid,
+                    data.filePath,
+                    data.filename,
+                  );
+                  logger.info(
+                    { chatJid: data.chatJid, file: data.filePath },
+                    'IPC file sent',
                   );
                 }
               }

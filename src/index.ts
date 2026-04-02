@@ -900,6 +900,14 @@ async function main(): Promise<void> {
         logger.debug({ jid, emoji }, 'Channel does not support reactions');
       }
     },
+    sendFile: async (jid, filePath, filename) => {
+      const channel = findChannel(channels, jid);
+      if (channel?.sendFile) {
+        await channel.sendFile(jid, filePath, filename);
+      } else {
+        logger.debug({ jid, filePath }, 'Channel does not support file sending');
+      }
+    },
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroups: async (force: boolean) => {

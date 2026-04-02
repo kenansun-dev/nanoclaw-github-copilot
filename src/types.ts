@@ -86,6 +86,8 @@ export interface Channel {
   sendMessage(jid: string, text: string): Promise<void>;
   /** Send a rich card (Adaptive Card on Teams, falls back to text on others) */
   sendCard?(jid: string, card: object, fallbackText: string): Promise<void>;
+  /** Send a file to a chat */
+  sendFile?(jid: string, filePath: string, filename?: string): Promise<void>;
   reactToMessage?(
     jid: string,
     emoji: string,

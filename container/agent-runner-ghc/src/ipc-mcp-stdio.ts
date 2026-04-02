@@ -357,5 +357,27 @@ server.tool(
   },
 );
 
+server.tool(
+  'send_file',
+  'Send a file to the user or group. The file must exist in your working directory or uploads directory.',
+  {
+    file_path: z.string().describe('Absolute path to the file to send'),
+    filename: z.string().optional().describe('Display filename (defaults to the file basename)'),
+  },
+  async (args) => {
+    const data = {
+      type: 'send_file',
+      chatJid,
+      filePath: args.file_path,
+      filename: args.filename,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(MESSAGES_DIR, data);
+    return {
+      content: [{ type: 'text' as const, text: `File sent: ${args.filename || args.file_path}` }],
+    };
+  },
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);

@@ -634,9 +634,12 @@ describe('TelegramChannel', () => {
       });
       await triggerMediaMessage('message:document', ctx);
 
+      // Document handler is async (downloads file), content may include path or download status
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
-        expect.objectContaining({ content: '[Document: report.pdf]' }),
+        expect.objectContaining({
+          content: expect.stringContaining('[Document: report.pdf]'),
+        }),
       );
     });
 
@@ -650,7 +653,9 @@ describe('TelegramChannel', () => {
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
-        expect.objectContaining({ content: '[Document: file]' }),
+        expect.objectContaining({
+          content: expect.stringContaining('[Document: file]'),
+        }),
       );
     });
 

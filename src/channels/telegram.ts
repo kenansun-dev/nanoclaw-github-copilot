@@ -198,9 +198,36 @@ export class TelegramChannel implements Channel {
       storeNonText(ctx, '[Voice message]'),
     );
     this.bot.on('message:audio', (ctx: any) => storeNonText(ctx, '[Audio]'));
-    this.bot.on('message:document', (ctx: any) => {
+    this.bot.on('message:document', async (ctx: any) => {
       const name = ctx.message.document?.file_name || 'file';
-      storeNonText(ctx, `[Document: ${name}]`);
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (group) {
+        // Download file to group workspace
+        try {
+          const fs = await import('fs');
+          const path = await import('path');
+          const { resolveWorkspace } = await import('../workspace.js');
+          const uploadsDir = path.default.join(
+            resolveWorkspace(), 'groups', group.folder, 'uploads',
+          );
+          fs.default.mkdirSync(uploadsDir, { recursive: true });
+          const file = await ctx.getFile();
+          const localPath = path.default.join(uploadsDir, name);
+          // Download via Telegram API
+          const url = `https://api.telegram.org/file/bot${this.bot!.token}/${file.file_path}`;
+          const res = await fetch(url);
+          const buffer = Buffer.from(await res.arrayBuffer());
+          fs.default.writeFileSync(localPath, buffer);
+          logger.info({ jid: chatJid, file: name, path: localPath }, 'Telegram file downloaded');
+          storeNonText(ctx, `[Document: ${name}] (saved to ${localPath})`);
+        } catch (err: any) {
+          logger.error({ err, file: name }, 'Failed to download Telegram file');
+          storeNonText(ctx, `[Document: ${name}] (download failed)`);
+        }
+      } else {
+        storeNonText(ctx, `[Document: ${name}]`);
+      }
     });
     this.bot.on('message:sticker', (ctx: any) => {
       const emoji = ctx.message.sticker?.emoji || '';
@@ -266,6 +293,24 @@ export class TelegramChannel implements Channel {
 
   isConnected(): boolean {
     return this.bot !== null;
+  }
+
+  async sendFile(jid: string, filePath: string, filename?: string): Promise<void> {
+    if (!this.bot) return;
+    const fs = await import('fs');
+    const path = await import('path');
+    const { InputFile } = await import('grammy');
+    try {
+      const numericId = jid.replace(/^tg:/, '');
+      const name = filename || path.default.basename(filePath);
+      await this.bot.api.sendDocument(
+        numericId,
+        new InputFile(fs.default.createReadStream(filePath), name),
+      );
+      logger.info({ jid, filename: name }, 'Telegram file sent');
+    } catch (err: any) {
+      logger.error({ err, jid, filePath }, 'Failed to send Telegram file');
+    }
   }
 
   ownsJid(jid: string): boolean {
