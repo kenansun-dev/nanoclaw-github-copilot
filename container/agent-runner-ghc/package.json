@@ -12,6 +12,7 @@
     "@github/copilot-sdk": "^0.2.0",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "cron-parser": "^5.0.0",
+    "pdf-parse": "^2.4.5",
     "zod": "^4.0.0"
   },
   "devDependencies": {

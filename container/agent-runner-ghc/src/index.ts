@@ -392,6 +392,32 @@ async function main(): Promise<void> {
             }
             return {};
           })(),
+          // Auto-discover built-in MCP servers from mcp-servers/ directory
+          // Each subdirectory with an index.js is registered as a local MCP server.
+          // This keeps agent-runner decoupled — no hardcoded MCP server references.
+          ...(() => {
+            const mcpServersDir = path.join(__dirname, '..', 'mcp-servers');
+            const servers: Record<string, any> = {};
+            if (fs.existsSync(mcpServersDir)) {
+              for (const entry of fs.readdirSync(mcpServersDir)) {
+                const serverDir = path.join(mcpServersDir, entry);
+                // Check dist/index.js first (compiled), then index.js
+                const distJs = path.join(serverDir, 'dist', 'index.js');
+                const indexJs = path.join(serverDir, 'index.js');
+                const entryPoint = fs.existsSync(distJs) ? distJs : fs.existsSync(indexJs) ? indexJs : null;
+                if (entryPoint) {
+                  servers[`nanoclaw-${entry}`] = {
+                    type: 'local' as const,
+                    command: 'node',
+                    args: [entryPoint],
+                    tools: ['*'],
+                  };
+                  log(`Discovered built-in MCP server: nanoclaw-${entry}`);
+                }
+              }
+            }
+            return servers;
+          })(),
         },
         // Skill directories for additional capabilities
         skillDirectories: extraDirs.length > 0 ? extraDirs : undefined,
