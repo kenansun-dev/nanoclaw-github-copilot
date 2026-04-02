@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "build:runners": "cd container/agent-runner-ghc && npm install --omit=dev && npx tsc && cd ../agent-runner && npm install --omit=dev 2>/dev/null; true",
+    "build:runners": "cd container/agent-runner-ghc && npm install --omit=dev && npx tsc && cd mcp-servers/pdf && npx tsc && cd ../../../agent-runner && npm install --omit=dev 2>/dev/null; true",
     "prepack": "npm run build && npm run build:runners",
     "postinstall": "node scripts/postinstall.mjs",
     "start": "node dist/index.js",
@@ -77,6 +77,7 @@
     "container/Dockerfile",
     "container/Dockerfile.ghc",
     "container/agent-runner-ghc/dist/",
+  "container/agent-runner-ghc/mcp-servers/",
     "container/agent-runner-ghc/package-lock.json",
     "container/agent-runner-ghc/package.json",
     "container/agent-runner-ghc/src/",
