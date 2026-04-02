@@ -455,13 +455,65 @@ async function runAgent(
         'Container agent error',
       );
 
-      // Send error feedback to user
+      // Send error feedback to user (if enabled and not shutting down)
+      const sendErrors = getConfig().sendErrorToUser === true;
+      if (sendErrors && !queue.isShuttingDown()) {
+        try {
+          const errMsg = output.error || 'Unknown error';
+          let userMessage = '\u26a0\ufe0f Unable to process your message.';
+          if (errMsg.includes('docker') || errMsg.includes('Docker')) {
+            userMessage +=
+              ' Docker is not running or not installed. Run "nanoclaw doctor" to check.';
+          } else if (errMsg.includes('timeout')) {
+            userMessage += ' The agent timed out processing your request.';
+          } else if (
+            errMsg.includes('ERR_MODULE_NOT_FOUND') ||
+            errMsg.includes('Cannot find package')
+          ) {
+            userMessage +=
+              ' Container image may be outdated or wrong provider. Run "nanoclaw sandbox build" to rebuild.';
+          } else if (
+            errMsg.includes('No authentication info') ||
+            errMsg.includes('not created with authentication')
+          ) {
+            userMessage +=
+              ' Authentication failed. Check your GitHub token or API key configuration.';
+          } else if (
+            errMsg.includes('No such image') ||
+            errMsg.includes('image not found')
+          ) {
+            userMessage +=
+              ' Container image not found. Run "nanoclaw sandbox build" to build it.';
+          } else {
+            userMessage += ' Error: ' + errMsg.slice(0, 200);
+          }
+          const errChannel = findChannel(channels, chatJid);
+          if (errChannel) await errChannel.sendMessage(chatJid, userMessage);
+        } catch {
+          // best-effort
+        }
+      }
+
+      return 'error';
+    }
+
+    return 'success';
+  } catch (err: any) {
+    logger.error({ group: group.name, err }, 'Agent error');
+
+    // Send error feedback to user (if enabled and not shutting down)
+    const sendErrors2 = getConfig().sendErrorToUser === true;
+    if (sendErrors2 && !queue.isShuttingDown()) {
       try {
-        const errMsg = output.error || 'Unknown error';
+        const errMsg = err?.message || String(err);
         let userMessage = '\u26a0\ufe0f Unable to process your message.';
-        if (errMsg.includes('docker') || errMsg.includes('Docker')) {
+        if (
+          errMsg.includes('docker') ||
+          errMsg.includes('ENOENT') ||
+          errMsg.includes('spawn')
+        ) {
           userMessage +=
-            ' Docker is not running or not installed. Run "nanoclaw doctor" to check.';
+            ' Docker may not be running or installed. Run "nanoclaw doctor" to check.';
         } else if (errMsg.includes('timeout')) {
           userMessage += ' The agent timed out processing your request.';
         } else if (
@@ -483,59 +535,13 @@ async function runAgent(
           userMessage +=
             ' Container image not found. Run "nanoclaw sandbox build" to build it.';
         } else {
-          userMessage += ' Error: ' + errMsg.slice(0, 200);
+          userMessage += ` Error: ${errMsg.slice(0, 200)}`;
         }
         const errChannel = findChannel(channels, chatJid);
         if (errChannel) await errChannel.sendMessage(chatJid, userMessage);
       } catch {
         // best-effort
       }
-
-      return 'error';
-    }
-
-    return 'success';
-  } catch (err: any) {
-    logger.error({ group: group.name, err }, 'Agent error');
-
-    // Send error feedback to user instead of failing silently
-    try {
-      const errMsg = err?.message || String(err);
-      let userMessage = '\u26a0\ufe0f Unable to process your message.';
-      if (
-        errMsg.includes('docker') ||
-        errMsg.includes('ENOENT') ||
-        errMsg.includes('spawn')
-      ) {
-        userMessage +=
-          ' Docker may not be running or installed. Run "nanoclaw doctor" to check.';
-      } else if (errMsg.includes('timeout')) {
-        userMessage += ' The agent timed out processing your request.';
-      } else if (
-        errMsg.includes('ERR_MODULE_NOT_FOUND') ||
-        errMsg.includes('Cannot find package')
-      ) {
-        userMessage +=
-          ' Container image may be outdated or wrong provider. Run "nanoclaw sandbox build" to rebuild.';
-      } else if (
-        errMsg.includes('No authentication info') ||
-        errMsg.includes('not created with authentication')
-      ) {
-        userMessage +=
-          ' Authentication failed. Check your GitHub token or API key configuration.';
-      } else if (
-        errMsg.includes('No such image') ||
-        errMsg.includes('image not found')
-      ) {
-        userMessage +=
-          ' Container image not found. Run "nanoclaw sandbox build" to build it.';
-      } else {
-        userMessage += ` Error: ${errMsg.slice(0, 200)}`;
-      }
-      const errChannel = findChannel(channels, chatJid);
-      if (errChannel) await errChannel.sendMessage(chatJid, userMessage);
-    } catch {
-      // best-effort — don't fail on the error message itself
     }
 
     return 'error';

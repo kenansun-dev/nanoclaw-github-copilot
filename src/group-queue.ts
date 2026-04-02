@@ -344,6 +344,10 @@ export class GroupQueue {
     }
   }
 
+  isShuttingDown(): boolean {
+    return this.shuttingDown;
+  }
+
   async shutdown(gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
 

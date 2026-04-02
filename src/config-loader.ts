@@ -116,6 +116,7 @@ export interface NanoclawConfig {
   };
   logLevel: string;
   timezone: string;
+  sendErrorToUser?: boolean; // Send error messages to user on agent failure (default: false)
   tui?: {
     mode?: 'host' | 'sandbox';
     model?: string;
