@@ -4,6 +4,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { resolveWorkspace, ensureWorkspace } from '../workspace.js';
 
 export async function initWorkspace(projectRoot: string): Promise<void> {
@@ -111,6 +112,13 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
   }
 
   // Interactive onboard: auth + channel setup
+  // Skip interactive prompts in non-TTY mode (pipes, scripts, CI)
+  if (!process.stdin.isTTY) {
+    console.log('');
+    console.log('Non-interactive mode detected. Skipping channel setup.');
+    console.log('Edit nanoclaw.json to configure channels manually.');
+    return;
+  }
   const readline = await import('readline');
   const rl = readline.createInterface({
     input: process.stdin,
@@ -188,7 +196,7 @@ Next steps:
   // Write version file for tracking
   try {
     const pkgJsonPath = path.join(
-      path.dirname(new URL(import.meta.url).pathname),
+      path.dirname(fileURLToPath(import.meta.url)),
       '..',
       '..',
       'package.json',

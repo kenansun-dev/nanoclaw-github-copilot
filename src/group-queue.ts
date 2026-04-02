@@ -1,4 +1,4 @@
-import { ChildProcess } from 'child_process';
+import { ChildProcess, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -355,16 +355,7 @@ export class GroupQueue {
       if (state.process && !state.process.killed) {
         const name = state.containerName || jid;
         try {
-          // Kill the entire process group (detached agents create their own group)
-          if (state.process.pid) {
-            try {
-              process.kill(-state.process.pid, 'SIGTERM');
-            } catch {
-              state.process.kill('SIGTERM');
-            }
-          } else {
-            state.process.kill('SIGTERM');
-          }
+          this.killProcess(state.process, 'SIGTERM');
           killed.push(name);
         } catch {
           // Process already dead
@@ -376,15 +367,11 @@ export class GroupQueue {
       // Give agents a moment to clean up, then force kill
       await new Promise((r) => setTimeout(r, Math.min(gracePeriodMs, 3000)));
       for (const [, state] of this.groups) {
-        if (state.process && !state.process.killed && state.process.pid) {
+        if (state.process && !state.process.killed) {
           try {
-            process.kill(-state.process.pid, 'SIGKILL');
+            this.killProcess(state.process, 'SIGKILL');
           } catch {
-            try {
-              state.process.kill('SIGKILL');
-            } catch {
-              /* already dead */
-            }
+            /* already dead */
           }
         }
       }
@@ -394,5 +381,32 @@ export class GroupQueue {
       { activeCount: this.activeCount, killed },
       'GroupQueue shutting down (agents terminated)',
     );
+  }
+
+  /** Cross-platform process kill. Windows uses taskkill /T for tree kill. */
+  private killProcess(
+    proc: ChildProcess,
+    signal: NodeJS.Signals = 'SIGTERM',
+  ): void {
+    if (!proc.pid) {
+      proc.kill(signal);
+      return;
+    }
+    if (process.platform === 'win32') {
+      // Windows: taskkill /T kills the process tree (equivalent to -pid on Unix)
+      const flag = signal === 'SIGKILL' ? '/F' : '';
+      try {
+        execSync(`taskkill ${flag} /T /PID ${proc.pid}`, { stdio: 'pipe' });
+      } catch {
+        proc.kill(signal);
+      }
+    } else {
+      // Unix: kill the process group
+      try {
+        process.kill(-proc.pid, signal);
+      } catch {
+        proc.kill(signal);
+      }
+    }
   }
 }

@@ -9,6 +9,7 @@
 import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 import {
   CONTAINER_TIMEOUT,
@@ -38,7 +39,10 @@ function resolveAgentRunnerPath(agent: AgentConfig): string {
   const isGHC = isAgentGHC(agent);
   const runnerDir = isGHC ? 'agent-runner-ghc' : 'agent-runner';
   // Resolve relative to this file (not process.cwd()) — works for both dev and global install
-  const pkgRoot = path.resolve(new URL('.', import.meta.url).pathname, '..');
+  const pkgRoot = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '..',
+  );
   const distPath = path.join(
     pkgRoot,
     'container',
@@ -149,7 +153,10 @@ export async function runHostAgent(
 
   // Skills directory — prefer workspace skills, fall back to container/skills
   // Use package root (relative to this file) for npm-installed fallback
-  const pkgRoot = path.resolve(new URL('.', import.meta.url).pathname, '..');
+  const pkgRoot = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '..',
+  );
   const containerSkills = path.join(pkgRoot, 'container', 'skills');
   if (
     fs.existsSync(wsPaths.skills) &&
@@ -185,7 +192,10 @@ export async function runHostAgent(
   // Spawn command
   // Resolve tsx: try package node_modules, then global
   const tsxExt = process.platform === 'win32' ? 'tsx.cmd' : 'tsx';
-  const tsxPkgRoot = path.resolve(new URL('.', import.meta.url).pathname, '..');
+  const tsxPkgRoot = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '..',
+  );
   const pkgTsx = path.join(tsxPkgRoot, 'node_modules', '.bin', tsxExt);
   let cmd: string;
   if (useTsx) {

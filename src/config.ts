@@ -8,6 +8,7 @@
 import os from 'os';
 import path from 'path';
 
+import { fileURLToPath } from 'url';
 import { loadConfig, NanoclawConfig } from './config-loader.js';
 import { workspacePath, resolveWorkspace } from './workspace.js';
 
@@ -49,7 +50,7 @@ export function buildTriggerPattern(trigger: string): RegExp {
 
 // Package root — where nanoclaw is installed (for bundled assets like agent-runner)
 export const PACKAGE_ROOT = path.resolve(
-  path.dirname(new URL(import.meta.url).pathname),
+  path.dirname(fileURLToPath(import.meta.url)),
   '..',
 );
 const HOME_DIR = process.env.HOME || os.homedir();

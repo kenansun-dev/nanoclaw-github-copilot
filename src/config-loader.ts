@@ -133,7 +133,7 @@ const DEFAULTS: NanoclawConfig = {
       name: 'Andy',
       triggerWord: '@Andy',
       hasOwnNumber: false,
-      mode: 'sandbox',
+      mode: process.platform === 'win32' ? 'host' : 'sandbox',
     },
   },
   channels: {
