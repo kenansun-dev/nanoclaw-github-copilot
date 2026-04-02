@@ -1,14 +1,22 @@
 /**
- * Unified slash command registry.
+ * Unified slash command registry + execution.
  *
- * Define commands once here — each channel adapter reads this list
- * and registers natively (Telegram setMyCommands, Teams Adaptive Card, etc.).
+ * Commands are defined once here. Each channel adapter reads COMMANDS for
+ * native menus (Telegram setMyCommands, Teams Adaptive Card, etc.).
  *
- * Command execution stays in index.ts (text-based interception).
- * This file only defines metadata for platform menus/cards.
+ * handleSlashCommand() is the single entry point for command execution.
+ * index.ts calls it and acts on the result — no command logic leaks into index.ts.
  *
  * NON-INVASIVE: no upstream channel files are modified.
  */
+
+import fs from 'fs';
+import path from 'path';
+import { DATA_DIR, getConfig, reloadConfig } from './config.js';
+import { deleteSession } from './db.js';
+import { Channel } from './types.js';
+
+// ─── Command definitions ─────────────────────────────────────────────────────
 
 export interface SlashCommand {
   /** Command name without leading / */
@@ -47,6 +55,141 @@ export const COMMANDS: SlashCommand[] = [
     noArgs: true,
   },
 ];
+
+// ─── Command execution ───────────────────────────────────────────────────────
+
+/** Result of handling a slash command */
+export interface SlashCommandResult {
+  /** true if input was a recognized slash command */
+  handled: boolean;
+}
+
+/**
+ * Normalize raw message text into a slash command string.
+ * Strips @mentions, lowercases, trims.
+ */
+export function normalizeSlashInput(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/^@\S+\s*/, '') // strip leading @mention
+    .replace(/@\S+$/, ''); // strip trailing @botname (Telegram adds @bot_username)
+}
+
+/**
+ * Context passed from index.ts — keeps slash-commands decoupled from index internals.
+ */
+export interface SlashCommandContext {
+  chatJid: string;
+  groupFolder: string;
+  channel: Channel | undefined;
+  /** Delete in-memory session entry (e.g., `delete sessions[folder]`) */
+  clearSession: (folder: string) => void;
+}
+
+/**
+ * Handle a slash command if the input matches one.
+ * Returns { handled: true } if it was a command, { handled: false } otherwise.
+ *
+ * Side effects: sends messages via channel, modifies config, deletes sessions.
+ */
+export async function handleSlashCommand(
+  input: string,
+  ctx: SlashCommandContext,
+): Promise<SlashCommandResult> {
+  // /new or /reset — clear session
+  if (input === '/new' || input === '/reset') {
+    ctx.clearSession(ctx.groupFolder);
+    deleteSession(ctx.groupFolder);
+
+    // Also clear .copilot session data
+    const sessionDir = path.join(
+      DATA_DIR,
+      'sessions',
+      ctx.groupFolder,
+      '.copilot',
+    );
+    if (fs.existsSync(sessionDir)) {
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+
+    if (ctx.channel) {
+      await ctx.channel.sendMessage(
+        ctx.chatJid,
+        '🔄 Session reset. Next message starts a fresh conversation.',
+      );
+    }
+    return { handled: true };
+  }
+
+  // /think [level] — set reasoning effort
+  const thinkMatch = input.match(
+    /^\/think(?:\s+(off|low|medium|high|xhigh))?$/,
+  );
+  if (thinkMatch) {
+    const level = thinkMatch[1] as string | undefined;
+    await handleThink(level, ctx);
+    return { handled: true };
+  }
+
+  // /help — show available commands
+  if (input === '/help') {
+    if (ctx.channel) {
+      await ctx.channel.sendMessage(ctx.chatJid, buildHelpText());
+    }
+    return { handled: true };
+  }
+
+  return { handled: false };
+}
+
+// ─── /think implementation ───────────────────────────────────────────────────
+
+async function handleThink(
+  level: string | undefined,
+  ctx: SlashCommandContext,
+): Promise<void> {
+  if (!level) {
+    // Show current think level
+    const currentLevel = getConfig().agents?.defaults?.thinkLevel || 'off';
+    if (ctx.channel) {
+      if (ctx.chatJid.startsWith('teams:') && ctx.channel.sendCard) {
+        const thinkCmd = COMMANDS.find((c) => c.name === 'think')!;
+        await ctx.channel.sendCard(
+          ctx.chatJid,
+          buildTeamsAdaptiveCard(thinkCmd, currentLevel),
+          `🧠 Think level: **${currentLevel}**\nUsage: /think off|low|medium|high|xhigh`,
+        );
+      } else {
+        await ctx.channel.sendMessage(
+          ctx.chatJid,
+          `🧠 Think level: **${currentLevel}**\nUsage: /think off|low|medium|high|xhigh`,
+        );
+      }
+    }
+  } else {
+    // Update config in memory and persist to file
+    const { loadConfig, saveConfig } = await import('./config-loader.js');
+    const config = loadConfig();
+    if (level === 'off') {
+      delete config.agents.defaults.thinkLevel;
+    } else {
+      config.agents.defaults.thinkLevel = level as
+        | 'low'
+        | 'medium'
+        | 'high'
+        | 'xhigh';
+    }
+    saveConfig(config);
+    reloadConfig();
+    if (ctx.channel) {
+      await ctx.channel.sendMessage(
+        ctx.chatJid,
+        `🧠 Think level set to **${level}**. Takes effect on next message.`,
+      );
+    }
+  }
+}
 
 // ─── Telegram: register bot menu commands ────────────────────────────────────
 

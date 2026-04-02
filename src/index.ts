@@ -16,7 +16,6 @@ import {
   TIMEZONE,
   TRIGGER_PATTERN,
   getConfig,
-  reloadConfig,
 } from './config.js';
 import {
   resolveAgentForChat,
@@ -53,7 +52,6 @@ import {
   setRegisteredGroup,
   setRouterState,
   setSession,
-  deleteSession,
   storeChatMetadata,
   storeMessage,
 } from './db.js';
@@ -253,100 +251,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Handle slash commands BEFORE trigger check — commands work without @mention
   const lastMsg = missedMessages[missedMessages.length - 1];
-  const slashCmd = lastMsg.content
-    .trim()
-    .toLowerCase()
-    .replace(/^@\S+\s*/, '') // strip leading @mention
-    .replace(/@\S+$/, ''); // strip trailing @botname (Telegram adds @bot_username)
-  if (slashCmd === '/new' || slashCmd === '/reset') {
-    // Clear session for this group
-    delete sessions[group.folder];
-    deleteSession(group.folder);
-    // Also clear .copilot session data
-    const sessionDir = path.join(
-      DATA_DIR,
-      'sessions',
-      group.folder,
-      '.copilot',
-    );
-    if (fs.existsSync(sessionDir)) {
-      fs.rmSync(sessionDir, { recursive: true, force: true });
-    }
-    const channel = findChannel(channels, chatJid);
-    if (channel) {
-      await channel.sendMessage(
-        chatJid,
-        '🔄 Session reset. Next message starts a fresh conversation.',
-      );
-    }
-    // Advance cursor past the command
-    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-    saveState();
-    return true;
-  }
-
-  // Handle /think command — set reasoning effort level
-  const thinkMatch = slashCmd.match(
-    /^\/think(?:\s+(off|low|medium|high|xhigh))?$/,
-  );
-  if (thinkMatch) {
-    const level = thinkMatch[1] as string | undefined;
-    const channel = findChannel(channels, chatJid);
-
-    if (!level) {
-      // Show current think level — use Adaptive Card on Teams
-      const currentLevel = getConfig().agents?.defaults?.thinkLevel || 'off';
-      if (channel) {
-        if (chatJid.startsWith('teams:') && channel.sendCard) {
-          const { COMMANDS, buildTeamsAdaptiveCard } =
-            await import('./slash-commands.js');
-          const thinkCmd = COMMANDS.find((c) => c.name === 'think')!;
-          await channel.sendCard(
-            chatJid,
-            buildTeamsAdaptiveCard(thinkCmd, currentLevel),
-            `🧠 Think level: **${currentLevel}**\nUsage: /think off|low|medium|high|xhigh`,
-          );
-        } else {
-          await channel.sendMessage(
-            chatJid,
-            `🧠 Think level: **${currentLevel}**\nUsage: /think off|low|medium|high|xhigh`,
-          );
-        }
-      }
-    } else {
-      // Update config in memory and persist to file
-      const { loadConfig, saveConfig } = await import('./config-loader.js');
-      const config = loadConfig();
-      if (level === 'off') {
-        delete config.agents.defaults.thinkLevel;
-      } else {
-        config.agents.defaults.thinkLevel = level as
-          | 'low'
-          | 'medium'
-          | 'high'
-          | 'xhigh';
-      }
-      saveConfig(config);
-      reloadConfig();
-      if (channel) {
-        await channel.sendMessage(
-          chatJid,
-          `🧠 Think level set to **${level}**. Takes effect on next message.`,
-        );
-      }
-    }
-    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-    saveState();
-    return true;
-  }
-
-  // Handle /help command
-  if (slashCmd === '/help') {
-    const channel = findChannel(channels, chatJid);
-    if (channel) {
-      const { buildHelpText } = await import('./slash-commands.js');
-      await channel.sendMessage(chatJid, buildHelpText());
-    }
+  const { normalizeSlashInput, handleSlashCommand } =
+    await import('./slash-commands.js');
+  const slashInput = normalizeSlashInput(lastMsg.content);
+  const slashResult = await handleSlashCommand(slashInput, {
+    chatJid,
+    groupFolder: group.folder,
+    channel: findChannel(channels, chatJid),
+    clearSession: (folder) => delete sessions[folder],
+  });
+  if (slashResult.handled) {
     lastAgentTimestamp[chatJid] = lastMsg.timestamp;
     saveState();
     return true;
