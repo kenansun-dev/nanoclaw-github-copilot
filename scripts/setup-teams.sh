@@ -176,33 +176,47 @@ echo ""
 
 # ─── Step 3: App Registration ────────────────────────────────────────────────
 
-echo "🔑 Step 3: Creating App Registration '$BOT_NAME'..."
-APP_ID=$(az ad app create \
-  --display-name "$BOT_NAME" \
-  --sign-in-audience "$SIGN_IN_AUDIENCE" \
-  --query "appId" -o tsv)
-echo "   App ID: $APP_ID"
-
-echo "   Creating client secret (2 year expiry)..."
-APP_PASSWORD=$(az ad app credential reset \
-  --id "$APP_ID" \
-  --years 2 \
-  --query "password" -o tsv)
-echo "   ✅ Secret created."
+echo "🔑 Step 3: App Registration '$BOT_NAME'..."
+# Check if app already exists
+EXISTING_APP_ID=$(az ad app list --display-name "$BOT_NAME" --query "[0].appId" -o tsv 2>/dev/null)
+if [ -n "$EXISTING_APP_ID" ]; then
+    APP_ID="$EXISTING_APP_ID"
+    echo "   Found existing app: $APP_ID"
+    echo "   Rotating client secret..."
+    APP_PASSWORD=$(az ad app credential reset --id "$APP_ID" --years 2 --query "password" -o tsv)
+    echo "   ✅ Secret rotated."
+else
+    APP_ID=$(az ad app create \
+      --display-name "$BOT_NAME" \
+      --sign-in-audience "$SIGN_IN_AUDIENCE" \
+      --query "appId" -o tsv)
+    echo "   Created app: $APP_ID"
+    echo "   Creating client secret (2 year expiry)..."
+    APP_PASSWORD=$(az ad app credential reset --id "$APP_ID" --years 2 --query "password" -o tsv)
+    echo "   ✅ Secret created."
+fi
 echo ""
 
 # ─── Step 4: Azure Bot ──────────────────────────────────────────────────────
 
-echo "🤖 Step 4: Creating Azure Bot..."
-az bot create \
-  --name "$BOT_NAME" \
-  --resource-group "$RESOURCE_GROUP" \
-  --app-type "$BOT_TYPE" \
-  --appid "$APP_ID" \
-  --password "$APP_PASSWORD" \
-  --endpoint "$MESSAGING_ENDPOINT" \
-  --sku "F0" \
-  --output none 2>/dev/null || echo "   (Bot may already exist)"
+echo "🤖 Step 4: Azure Bot..."
+EXISTING_BOT=$(az bot show --name "$BOT_NAME" --resource-group "$RESOURCE_GROUP" --query "name" -o tsv 2>/dev/null)
+if [ -n "$EXISTING_BOT" ]; then
+    echo "   Found existing bot. Updating endpoint..."
+    az bot update --name "$BOT_NAME" --resource-group "$RESOURCE_GROUP" --endpoint "$MESSAGING_ENDPOINT" --output none 2>/dev/null
+    echo "   ✅ Bot updated."
+else
+    az bot create \
+      --name "$BOT_NAME" \
+      --resource-group "$RESOURCE_GROUP" \
+      --app-type "$BOT_TYPE" \
+      --appid "$APP_ID" \
+      --password "$APP_PASSWORD" \
+      --endpoint "$MESSAGING_ENDPOINT" \
+      --sku "F0" \
+      --output none 2>/dev/null || echo "   (Bot creation may have failed)"
+    echo "   ✅ Bot created."
+fi
 echo "   ✅ Bot ready."
 echo ""
 
@@ -219,7 +233,7 @@ echo ""
 # ─── Step 6: Generate manifest ───────────────────────────────────────────────
 
 echo "📄 Step 6: Generating Teams app manifest..."
-MANIFEST_DIR="$PROJECT_DIR/teams-app"
+MANIFEST_DIR="$WORKSPACE_DIR/teams-app"
 mkdir -p "$MANIFEST_DIR"
 
 cat > "$MANIFEST_DIR/manifest.json" << EOFMANIFEST
@@ -276,7 +290,7 @@ make_png(192, 192, 79, 70, 229, sys.argv[1])
 make_png(32, 32, 255, 255, 255, sys.argv[2])
 " "$MANIFEST_DIR/color.png" "$MANIFEST_DIR/outline.png"
 
-(cd "$MANIFEST_DIR" && zip -q "$PROJECT_DIR/teams-app.zip" manifest.json color.png outline.png)
+(cd "$MANIFEST_DIR" && zip -q "$WORKSPACE_DIR/teams-app.zip" manifest.json color.png outline.png)
 echo "   ✅ Manifest: $PROJECT_DIR/teams-app.zip"
 echo ""
 

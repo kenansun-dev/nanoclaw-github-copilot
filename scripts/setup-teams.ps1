@@ -127,20 +127,36 @@ Write-Host ""
 
 # ─── Step 3: App Registration ────────────────────────────────────────────────
 
-Write-Host "🔑 Step 3: Creating App Registration '$BotName'..." -ForegroundColor Yellow
-$AppId = az ad app create --display-name $BotName --sign-in-audience $SignInAudience --query "appId" -o tsv
-Write-Host "   App ID: $AppId"
-
-Write-Host "   Creating client secret..."
-$AppPassword = az ad app credential reset --id $AppId --years 2 --query "password" -o tsv
-Write-Host "   ✅ Secret created." -ForegroundColor Green
+Write-Host "🔑 Step 3: App Registration '$BotName'..." -ForegroundColor Yellow
+# Check if app already exists
+$ExistingAppId = az ad app list --display-name $BotName --query "[0].appId" -o tsv 2>$null
+if ($ExistingAppId) {
+    $AppId = $ExistingAppId
+    Write-Host "   Found existing app: $AppId"
+    Write-Host "   Rotating client secret..."
+    $AppPassword = az ad app credential reset --id $AppId --years 2 --query "password" -o tsv
+    Write-Host "   ✅ Secret rotated." -ForegroundColor Green
+} else {
+    $AppId = az ad app create --display-name $BotName --sign-in-audience $SignInAudience --query "appId" -o tsv
+    Write-Host "   Created app: $AppId"
+    Write-Host "   Creating client secret..."
+    $AppPassword = az ad app credential reset --id $AppId --years 2 --query "password" -o tsv
+    Write-Host "   ✅ Secret created." -ForegroundColor Green
+}
 Write-Host ""
 
 # ─── Step 4: Azure Bot ──────────────────────────────────────────────────────
 
-Write-Host "🤖 Step 4: Creating Azure Bot..." -ForegroundColor Yellow
-az bot create --name $BotName --resource-group $ResourceGroup --app-type $BotType --appid $AppId --password $AppPassword --endpoint $MessagingEndpoint --sku "F0" --output none 2>$null
-Write-Host "   ✅ Bot ready." -ForegroundColor Green
+Write-Host "🤖 Step 4: Azure Bot..." -ForegroundColor Yellow
+$ExistingBot = az bot show --name $BotName --resource-group $ResourceGroup --query "name" -o tsv 2>$null
+if ($ExistingBot) {
+    Write-Host "   Found existing bot. Updating endpoint..."
+    az bot update --name $BotName --resource-group $ResourceGroup --endpoint $MessagingEndpoint --output none 2>$null
+    Write-Host "   ✅ Bot updated." -ForegroundColor Green
+} else {
+    az bot create --name $BotName --resource-group $ResourceGroup --app-type $BotType --appid $AppId --password $AppPassword --endpoint $MessagingEndpoint --sku "F0" --output none 2>$null
+    Write-Host "   ✅ Bot created." -ForegroundColor Green
+}
 Write-Host ""
 
 # ─── Step 5: Enable Teams Channel ───────────────────────────────────────────
@@ -153,7 +169,7 @@ Write-Host ""
 # ─── Step 6: Generate manifest ───────────────────────────────────────────────
 
 Write-Host "📄 Step 6: Generating Teams app manifest..." -ForegroundColor Yellow
-$ManifestDir = Join-Path $ProjectDir "teams-app"
+$ManifestDir = Join-Path $WorkspaceDir "teams-app"
 New-Item -ItemType Directory -Force -Path $ManifestDir | Out-Null
 
 $manifest = @{
@@ -190,8 +206,8 @@ $manifest | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $ManifestDir "mani
 [System.IO.File]::WriteAllBytes((Join-Path $ManifestDir "color.png"), $colorPng)
 [System.IO.File]::WriteAllBytes((Join-Path $ManifestDir "outline.png"), $colorPng)
 
-Compress-Archive -Path (Join-Path $ManifestDir "*") -DestinationPath (Join-Path $ProjectDir "teams-app.zip") -Force
-Write-Host "   ✅ Manifest: $(Join-Path $ProjectDir 'teams-app.zip')" -ForegroundColor Green
+Compress-Archive -Path (Join-Path $ManifestDir "*") -DestinationPath (Join-Path $WorkspaceDir "teams-app.zip") -Force
+Write-Host "   ✅ Manifest: $(Join-Path $WorkspaceDir 'teams-app.zip')" -ForegroundColor Green
 Write-Host ""
 
 # ─── Step 7: Write .env ─────────────────────────────────────────────────────
@@ -264,6 +280,6 @@ try {
 
 Write-Host ""
 Write-Host "  1. Services registered (auto-start on login)"
-Write-Host "  2. Upload teams-app.zip: Teams → Apps → Upload a custom app"
+Write-Host "  2. Upload $WorkspaceDir\teams-app.zip: Teams → Apps → Upload a custom app"
 Write-Host "  3. Start NanoClaw: nanoclaw start"
 Write-Host "============================================" -ForegroundColor Cyan
