@@ -423,7 +423,24 @@ async function main(): Promise<void> {
         skillDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       };
 
-      if (sessionId) {
+      // Track MCP server names to detect config changes across restarts.
+      // If MCP servers changed, create a new session instead of resuming
+      // (resumeSession reuses old MCP connections and won't see new tools).
+      const currentMcpNames = Object.keys(sessionConfig.mcpServers || {}).sort().join(',');
+      const mcpFingerprint = path.join(
+        process.env.NANOCLAW_WORK_DIR || '/workspace/group',
+        '.mcp-fingerprint',
+      );
+      let mcpChanged = false;
+      if (fs.existsSync(mcpFingerprint)) {
+        const savedNames = fs.readFileSync(mcpFingerprint, 'utf-8').trim();
+        if (savedNames !== currentMcpNames) {
+          log(`MCP config changed (was: ${savedNames}, now: ${currentMcpNames}). Will create new session.`);
+          mcpChanged = true;
+        }
+      }
+
+      if (sessionId && !mcpChanged) {
         // Resume existing session
         try {
           session = await client.resumeSession(sessionId, sessionConfig);
@@ -438,7 +455,8 @@ async function main(): Promise<void> {
           log(`New session created: ${sessionId}`);
         }
       } else {
-        // Create new session
+        // Create new session (first time or MCP config changed)
+        if (mcpChanged) log('Creating new session due to MCP config change');
         session = await client.createSession({
           ...sessionConfig,
           sessionId: `nanoclaw-${containerInput.groupFolder}-${Date.now()}`,
@@ -446,6 +464,11 @@ async function main(): Promise<void> {
         sessionId = session.sessionId;
         log(`Session created: ${sessionId}`);
       }
+
+      // Save MCP fingerprint for next startup
+      try {
+        fs.writeFileSync(mcpFingerprint, currentMcpNames);
+      } catch { /* ignore */ }
 
       // Poll IPC for follow-up messages during query execution
       let ipcPolling = true;
