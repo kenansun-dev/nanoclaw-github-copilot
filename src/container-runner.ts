@@ -140,28 +140,51 @@ function buildVolumeMounts(
     sessionDir,
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
-  const settingsFile = path.join(groupSessionsDir, 'settings.json');
-  if (!fs.existsSync(settingsFile)) {
-    fs.writeFileSync(
-      settingsFile,
-      JSON.stringify(
-        {
-          env: {
-            // Enable agent swarms (subagent orchestration)
-            // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
-            CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-            // Load CLAUDE.md from additional mounted directories
-            // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
-            CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-            // Enable Claude's memory feature (persists user preferences between sessions)
-            // https://code.claude.com/docs/en/memory#manage-auto-memory
-            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+
+  if (IS_GHC_PROVIDER) {
+    // GHC: Create managed copilot config.json with nanoclaw-controlled settings
+    const configFile = path.join(groupSessionsDir, 'config.json');
+    if (!fs.existsSync(configFile)) {
+      // Copy auth credentials from host's ~/.copilot/config.json if available
+      const hostCopilotConfig = path.join(
+        process.env.HOME || '/root',
+        '.copilot',
+        'config.json',
+      );
+      let baseConfig: Record<string, unknown> = {};
+      if (fs.existsSync(hostCopilotConfig)) {
+        try {
+          baseConfig = JSON.parse(fs.readFileSync(hostCopilotConfig, 'utf-8'));
+        } catch {
+          // Ignore parse errors
+        }
+      }
+      // Enable web search and other nanoclaw-managed settings
+      baseConfig.webSearch = true;
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify(baseConfig, null, 2) + '\n',
+      );
+    }
+  } else {
+    // CC: Create settings.json with Claude-specific env vars
+    const settingsFile = path.join(groupSessionsDir, 'settings.json');
+    if (!fs.existsSync(settingsFile)) {
+      fs.writeFileSync(
+        settingsFile,
+        JSON.stringify(
+          {
+            env: {
+              CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+              CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+              CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+            },
           },
-        },
-        null,
-        2,
-      ) + '\n',
-    );
+          null,
+          2,
+        ) + '\n',
+      );
+    }
   }
 
   // Sync skills from container/skills/ into each group's .claude/skills/

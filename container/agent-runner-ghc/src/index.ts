@@ -324,6 +324,8 @@ async function main(): Promise<void> {
       const sessionConfig = {
         model,
         ...(thinkLevel ? { reasoningEffort: thinkLevel as any } : {}),
+        // Use nanoclaw-managed config directory (set via COPILOT_HOME env)
+        ...(process.env.COPILOT_HOME ? { configDir: process.env.COPILOT_HOME } : {}),
         systemMessage,
         workingDirectory: process.env.NANOCLAW_WORK_DIR || '/workspace/group',
         onPermissionRequest: approveAll,

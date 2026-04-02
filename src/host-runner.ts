@@ -85,6 +85,31 @@ export async function runHostAgent(
   );
   fs.mkdirSync(sessionDir, { recursive: true });
 
+  // GHC: Create managed copilot config.json with nanoclaw-controlled settings
+  if (isAgentGHC(agent)) {
+    const configFile = path.join(sessionDir, 'config.json');
+    if (!fs.existsSync(configFile)) {
+      const hostCopilotConfig = path.join(
+        process.env.HOME || '/root',
+        '.copilot',
+        'config.json',
+      );
+      let baseConfig: Record<string, unknown> = {};
+      if (fs.existsSync(hostCopilotConfig)) {
+        try {
+          baseConfig = JSON.parse(fs.readFileSync(hostCopilotConfig, 'utf-8'));
+        } catch {
+          // Ignore parse errors
+        }
+      }
+      baseConfig.webSearch = true;
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify(baseConfig, null, 2) + '\n',
+      );
+    }
+  }
+
   // Prepare IPC directory
   const ipcDir = resolveGroupIpcPath(group.folder);
   fs.mkdirSync(path.join(ipcDir, 'input'), { recursive: true });
@@ -117,6 +142,8 @@ export async function runHostAgent(
     if (agent.thinkLevel) {
       env.COPILOT_THINK_LEVEL = agent.thinkLevel;
     }
+    // Point GHC CLI to nanoclaw-managed config directory
+    env.COPILOT_HOME = sessionDir;
   }
 
   // Skills directory — prefer workspace skills, fall back to container/skills
