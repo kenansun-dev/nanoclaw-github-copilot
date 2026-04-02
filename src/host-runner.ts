@@ -46,13 +46,7 @@ function resolveAgentRunnerPath(agent: AgentConfig): string {
     'dist',
     'index.js',
   );
-  const srcPath = path.join(
-    pkgRoot,
-    'container',
-    runnerDir,
-    'src',
-    'index.ts',
-  );
+  const srcPath = path.join(pkgRoot, 'container', runnerDir, 'src', 'index.ts');
   // Always use source — dist may be stale and miss env var support
   return srcPath;
 }
@@ -161,16 +155,13 @@ export async function runHostAgent(
   }
 
   // Spawn command
-  // Resolve tsx: try local node_modules, then package node_modules, then global
+  // Resolve tsx: try package node_modules, then global
   const tsxExt = process.platform === 'win32' ? 'tsx.cmd' : 'tsx';
   const tsxPkgRoot = path.resolve(new URL('.', import.meta.url).pathname, '..');
-  const localTsx = path.join(process.cwd(), 'node_modules', '.bin', tsxExt);
   const pkgTsx = path.join(tsxPkgRoot, 'node_modules', '.bin', tsxExt);
   let cmd: string;
   if (useTsx) {
-    if (fs.existsSync(localTsx)) {
-      cmd = localTsx;
-    } else if (fs.existsSync(pkgTsx)) {
+    if (fs.existsSync(pkgTsx)) {
       cmd = pkgTsx;
     } else {
       // Fall back to global tsx

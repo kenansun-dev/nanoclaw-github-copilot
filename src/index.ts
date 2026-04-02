@@ -825,11 +825,8 @@ async function main(): Promise<void> {
     if (!channel) return;
 
     if (command === '/remote-control') {
-      const result = await startRemoteControl(
-        msg.sender,
-        chatJid,
-        process.cwd(),
-      );
+      const { resolveWorkspace: rw } = await import('./workspace.js');
+      const result = await startRemoteControl(msg.sender, chatJid, rw());
       if (result.ok) {
         await channel.sendMessage(chatJid, result.url);
       } else {

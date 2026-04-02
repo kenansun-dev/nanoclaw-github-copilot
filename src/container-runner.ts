@@ -16,6 +16,7 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   ONECLI_URL,
+  PACKAGE_ROOT,
   TIMEZONE,
   getConfig,
 } from './config.js';
@@ -87,7 +88,7 @@ function buildVolumeMounts(
   const agent = chatJid ? resolveAgentForChat(chatJid) : undefined;
   const sessionDir = agent ? getAgentSessionDir(agent) : PROVIDER_SESSION_DIR;
   const agentIsGHC = agent ? isAgentGHC(agent) : IS_GHC_PROVIDER;
-  const projectRoot = process.cwd();
+  const projectRoot = PACKAGE_ROOT;
   const groupDir = resolveGroupFolderPath(group.folder);
 
   if (isMain) {
@@ -174,7 +175,7 @@ function buildVolumeMounts(
   }
 
   // Sync skills from container/skills/ into each group's .claude/skills/
-  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
+  const skillsSrc = path.join(PACKAGE_ROOT, 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
   if (fs.existsSync(skillsSrc)) {
     for (const skillDir of fs.readdirSync(skillsSrc)) {

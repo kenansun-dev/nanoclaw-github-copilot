@@ -47,7 +47,11 @@ export function buildTriggerPattern(trigger: string): RegExp {
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
 
-const PROJECT_ROOT = process.cwd();
+// Package root — where nanoclaw is installed (for bundled assets like agent-runner)
+export const PACKAGE_ROOT = path.resolve(
+  path.dirname(new URL(import.meta.url).pathname),
+  '..',
+);
 const HOME_DIR = process.env.HOME || os.homedir();
 
 // Security allowlists — in workspace
