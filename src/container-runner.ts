@@ -18,21 +18,18 @@ import {
   ONECLI_URL,
   PACKAGE_ROOT,
   TIMEZONE,
-  getConfig,
 } from './config.js';
 import {
-  resolveAgentForChat,
-  isAgentGHC,
-  getAgentSessionDir,
-  getAgentImage,
-  GHC_CONTAINER_IMAGE,
-  getModelName,
+  resolveSessionDir,
+  resolveContainerImage,
+  resolveRunnerDir,
+  buildProviderEnvArgs,
+  buildProviderMounts,
   IS_GHC_PROVIDER,
   PROVIDER_SESSION_DIR,
 } from './config-extensions.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
-import { resolveWorkspace } from './workspace.js';
 import {
   CONTAINER_RUNTIME_BIN,
   hostGatewayArgs,
@@ -46,10 +43,6 @@ import { RegisteredGroup } from './types.js';
 const onecli = new OneCLI({ url: ONECLI_URL });
 
 // Sentinel markers for robust output parsing (must match agent-runner)
-function detectAuthMode(): string {
-  return process.env.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
-}
-
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
@@ -84,10 +77,7 @@ function buildVolumeMounts(
   chatJid?: string,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
-  // Resolve agent for this chat to determine session dir and mounts
-  const agent = chatJid ? resolveAgentForChat(chatJid) : undefined;
-  const sessionDir = agent ? getAgentSessionDir(agent) : PROVIDER_SESSION_DIR;
-  const agentIsGHC = agent ? isAgentGHC(agent) : IS_GHC_PROVIDER;
+  const sessionDir = resolveSessionDir(chatJid);
   const projectRoot = PACKAGE_ROOT;
   const groupDir = resolveGroupFolderPath(group.folder);
 
@@ -187,32 +177,12 @@ function buildVolumeMounts(
   }
   mounts.push({
     hostPath: groupSessionsDir,
-    containerPath: agentIsGHC ? '/home/node/.copilot' : '/home/node/.claude',
+    containerPath: `/home/node/${sessionDir}`,
     readonly: false,
   });
 
-  // GHC-specific mounts: skills directory and MCP config
-  if (agentIsGHC) {
-    const ws = resolveWorkspace();
-    // Mount user skills directory (read-only)
-    const skillsDir = path.join(ws, 'skills');
-    if (fs.existsSync(skillsDir)) {
-      mounts.push({
-        hostPath: skillsDir,
-        containerPath: '/workspace/skills',
-        readonly: true,
-      });
-    }
-    // Mount MCP config (read-only)
-    const mcpConfig = path.join(ws, 'mcp.json');
-    if (fs.existsSync(mcpConfig)) {
-      mounts.push({
-        hostPath: mcpConfig,
-        containerPath: '/workspace/mcp.json',
-        readonly: true,
-      });
-    }
-  }
+  // Provider-specific mounts (GHC: skills, mcp.json)
+  mounts.push(...buildProviderMounts(chatJid));
 
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
@@ -232,7 +202,7 @@ function buildVolumeMounts(
   const agentRunnerSrc = path.join(
     projectRoot,
     'container',
-    agentIsGHC ? 'agent-runner-ghc' : 'agent-runner',
+    resolveRunnerDir(chatJid),
     'src',
   );
   const groupAgentRunnerDir = path.join(
@@ -278,69 +248,18 @@ function buildContainerArgs(
   chatJid?: string,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
-  const agent = chatJid ? resolveAgentForChat(chatJid) : undefined;
-  const agentIsGHC = agent ? isAgentGHC(agent) : IS_GHC_PROVIDER;
-  const containerImage = agent ? getAgentImage(agent) : GHC_CONTAINER_IMAGE;
+  const containerImage = resolveContainerImage(chatJid);
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  if (agentIsGHC) {
-    // GHC mode: pass GitHub token directly to container
-    // GHC CLI handles its own auth — credential proxy not needed
-    let ghToken =
-      process.env.COPILOT_GITHUB_TOKEN ||
-      process.env.GH_TOKEN ||
-      process.env.GITHUB_TOKEN;
-    if (!ghToken) {
-      // Try OpenClaw auth profile
-      try {
-        const profilePath = path.join(
-          process.env.HOME || '/root',
-          '.openclaw/agents/main/agent/auth-profiles.json',
-        );
-        if (fs.existsSync(profilePath)) {
-          const profiles = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
-          for (const [, profile] of Object.entries(profiles.profiles || {})) {
-            const p = profile as { provider?: string; token?: string };
-            if (p.provider === 'github-copilot' && p.token) {
-              ghToken = p.token;
-              break;
-            }
-          }
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-    if (ghToken) {
-      args.push('-e', `COPILOT_GITHUB_TOKEN=${ghToken}`);
-    }
-    // Pass model config
-    const model = getModelName() || undefined;
-    if (model) {
-      args.push('-e', `COPILOT_MODEL=${model}`);
-    }
-    // Pass think level (getConfig() returns reloaded value after /think command)
-    const thinkLevel = getConfig().agents?.defaults?.thinkLevel;
-    if (thinkLevel) {
-      args.push('-e', `COPILOT_THINK_LEVEL=${thinkLevel}`);
-    }
-  } else {
-    // CC mode: Route API traffic through the credential proxy
-    args.push(
-      '-e',
-      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-    );
-
-    // Mirror the host's auth method with a placeholder value.
-    const authMode = detectAuthMode();
-    if (authMode === 'api-key') {
-      args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
-    } else {
-      args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
-    }
-  }
+  // Provider-specific env vars (GHC token/model or CC credential proxy)
+  args.push(
+    ...buildProviderEnvArgs(chatJid, {
+      credentialProxyPort: CREDENTIAL_PROXY_PORT,
+      hostGateway: CONTAINER_HOST_GATEWAY,
+    }),
+  );
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());

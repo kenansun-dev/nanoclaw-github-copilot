@@ -17,11 +17,7 @@ import {
   TRIGGER_PATTERN,
   getConfig,
 } from './config.js';
-import {
-  resolveAgentForChat,
-  runAgentForChat,
-  IS_GHC_PROVIDER,
-} from './config-extensions.js';
+import { runAgentForChat, IS_GHC_PROVIDER } from './config-extensions.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -29,11 +25,9 @@ import {
 } from './channels/registry.js';
 import {
   ContainerOutput,
-  runContainerAgent,
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './container-runner.js';
-import { runHostAgent } from './host-runner.js';
 import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
@@ -412,11 +406,8 @@ async function runAgent(
     : undefined;
 
   try {
-    // Resolve agent config for this chat
-    const agent = resolveAgentForChat(chatJid);
-    // Route to host or container runner based on agent mode
-    const runnerFn = agent.mode === 'host' ? runHostAgent : runContainerAgent;
-    const output = await runnerFn(
+    const output = await runAgentForChat(
+      chatJid,
       group,
       {
         prompt,
@@ -424,8 +415,7 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
-        assistantName: agent.name || ASSISTANT_NAME,
-        model: agent.model,
+        assistantName: ASSISTANT_NAME,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),

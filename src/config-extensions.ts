@@ -7,6 +7,7 @@
 import path from 'path';
 import fs from 'fs';
 import { CONTAINER_IMAGE } from './config.js';
+import { resolveWorkspace } from './workspace.js';
 import {
   loadConfig,
   resolveAgent,
@@ -102,6 +103,117 @@ export function resolveGithubToken(): string | undefined {
   return undefined;
 }
 
+// ─── Container provider configuration ────────────────────────────────────────────
+
+/**
+ * Build provider-specific environment variable args for `docker run`.
+ * GHC: injects COPILOT_GITHUB_TOKEN, COPILOT_MODEL, COPILOT_THINK_LEVEL.
+ * CC:  injects ANTHROPIC_BASE_URL and auth placeholder.
+ */
+export function buildProviderEnvArgs(
+  chatJid?: string,
+  opts?: { credentialProxyPort?: number; hostGateway?: string },
+): string[] {
+  const agent = chatJid ? resolveAgentForChat(chatJid) : undefined;
+  const agentIsGHC = agent ? isAgentGHC(agent) : IS_GHC_PROVIDER;
+  const args: string[] = [];
+
+  if (agentIsGHC) {
+    const ghToken = resolveGithubToken();
+    if (ghToken) {
+      args.push('-e', `COPILOT_GITHUB_TOKEN=${ghToken}`);
+    }
+    const model = agent
+      ? getAgentModelName(agent)
+      : getModelName() || undefined;
+    if (model) {
+      args.push('-e', `COPILOT_MODEL=${model}`);
+    }
+    const config = loadConfig();
+    const thinkLevel = config.agents?.defaults?.thinkLevel;
+    if (thinkLevel) {
+      args.push('-e', `COPILOT_THINK_LEVEL=${thinkLevel}`);
+    }
+  } else {
+    // CC mode: credential proxy
+    const gateway = opts?.hostGateway || 'host-gateway';
+    const port = opts?.credentialProxyPort || 18080;
+    args.push('-e', `ANTHROPIC_BASE_URL=http://${gateway}:${port}`);
+    const authMode = process.env.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
+    if (authMode === 'api-key') {
+      args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+    } else {
+      args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+    }
+  }
+  return args;
+}
+
+export interface VolumeMount {
+  hostPath: string;
+  containerPath: string;
+  readonly: boolean;
+}
+
+/**
+ * Build GHC-specific extra volume mounts (skills, mcp.json).
+ * Returns empty array for CC provider.
+ */
+export function buildProviderMounts(chatJid?: string): VolumeMount[] {
+  const agent = chatJid ? resolveAgentForChat(chatJid) : undefined;
+  const agentIsGHC = agent ? isAgentGHC(agent) : IS_GHC_PROVIDER;
+  if (!agentIsGHC) return [];
+
+  const ws = resolveWorkspace();
+  const mounts: VolumeMount[] = [];
+
+  // User skills directory
+  const skillsDir = path.join(ws, 'skills');
+  if (fs.existsSync(skillsDir)) {
+    mounts.push({
+      hostPath: skillsDir,
+      containerPath: '/workspace/skills',
+      readonly: true,
+    });
+  }
+  // MCP config
+  const mcpConfig = path.join(ws, 'mcp.json');
+  if (fs.existsSync(mcpConfig)) {
+    mounts.push({
+      hostPath: mcpConfig,
+      containerPath: '/workspace/mcp.json',
+      readonly: true,
+    });
+  }
+  return mounts;
+}
+
+/**
+ * Resolve the session directory name for a chat.
+ * GHC uses .copilot/, CC uses .claude/.
+ */
+export function resolveSessionDir(chatJid?: string): string {
+  const agent = chatJid ? resolveAgentForChat(chatJid) : undefined;
+  return agent ? getAgentSessionDir(agent) : PROVIDER_SESSION_DIR;
+}
+
+/**
+ * Resolve the container image for a chat.
+ */
+export function resolveContainerImage(chatJid?: string): string {
+  const agent = chatJid ? resolveAgentForChat(chatJid) : undefined;
+  return agent ? getAgentImage(agent) : GHC_CONTAINER_IMAGE;
+}
+
+/**
+ * Resolve the agent-runner directory name.
+ */
+export function resolveRunnerDir(chatJid?: string): string {
+  const agent = chatJid ? resolveAgentForChat(chatJid) : undefined;
+  const agentIsGHC = agent ? isAgentGHC(agent) : IS_GHC_PROVIDER;
+  return agentIsGHC ? 'agent-runner-ghc' : 'agent-runner';
+}
+
 // --- Runner selection (host vs container) ---
 // Re-export a unified runner function so callers (index.ts, task-scheduler.ts)
 // don't need to import both runners and duplicate the mode check.
@@ -130,9 +242,15 @@ export async function runAgentForChat(
   onOutput?: OnOutput,
 ): Promise<ContainerOutput> {
   const agent = resolveAgentForChat(chatJid);
+  // Enrich input with agent-specific overrides
+  const enrichedInput = {
+    ...input,
+    assistantName: agent.name || input.assistantName,
+    model: agent.model || input.model,
+  };
   if (agent.mode === 'host') {
     const { runHostAgent } = await getHostRunner();
-    return runHostAgent(group, input, onProcess, onOutput);
+    return runHostAgent(group, enrichedInput, onProcess, onOutput);
   }
-  return runContainerAgent(group, input, onProcess, onOutput);
+  return runContainerAgent(group, enrichedInput, onProcess, onOutput);
 }

@@ -21,6 +21,13 @@ vi.mock('./config-extensions.js', () => ({
   getAgentImage: () => 'nanoclaw-agent:latest',
   getAgentModelName: () => 'claude-sonnet-4',
   resolveGithubToken: () => undefined,
+  resolveSessionDir: () => '.claude',
+  resolveContainerImage: () => 'nanoclaw-agent:latest',
+  resolveRunnerDir: () => 'agent-runner',
+  buildProviderEnvArgs: () => ['-e', 'ANTHROPIC_API_KEY=placeholder'],
+  buildProviderMounts: () => [],
+  IS_GHC_PROVIDER: false,
+  PROVIDER_SESSION_DIR: '.claude',
 }));
 
 vi.mock('./config.js', () => ({
