@@ -209,7 +209,10 @@ export class TelegramChannel implements Channel {
           const path = await import('path');
           const { resolveWorkspace } = await import('../workspace.js');
           const uploadsDir = path.default.join(
-            resolveWorkspace(), 'groups', group.folder, 'uploads',
+            resolveWorkspace(),
+            'groups',
+            group.folder,
+            'uploads',
           );
           fs.default.mkdirSync(uploadsDir, { recursive: true });
           const file = await ctx.getFile();
@@ -219,7 +222,10 @@ export class TelegramChannel implements Channel {
           const res = await fetch(url);
           const buffer = Buffer.from(await res.arrayBuffer());
           fs.default.writeFileSync(localPath, buffer);
-          logger.info({ jid: chatJid, file: name, path: localPath }, 'Telegram file downloaded');
+          logger.info(
+            { jid: chatJid, file: name, path: localPath },
+            'Telegram file downloaded',
+          );
           storeNonText(ctx, `[Document: ${name}] (saved to ${localPath})`);
         } catch (err: any) {
           logger.error({ err, file: name }, 'Failed to download Telegram file');
@@ -295,7 +301,11 @@ export class TelegramChannel implements Channel {
     return this.bot !== null;
   }
 
-  async sendFile(jid: string, filePath: string, filename?: string): Promise<void> {
+  async sendFile(
+    jid: string,
+    filePath: string,
+    filename?: string,
+  ): Promise<void> {
     if (!this.bot) return;
     const fs = await import('fs');
     const path = await import('path');

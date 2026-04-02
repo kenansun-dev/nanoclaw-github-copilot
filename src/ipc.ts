@@ -12,7 +12,11 @@ import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
-  sendFile?: (jid: string, filePath: string, filename?: string) => Promise<void>;
+  sendFile?: (
+    jid: string,
+    filePath: string,
+    filename?: string,
+  ) => Promise<void>;
   reactToMessage?: (
     jid: string,
     emoji: string,

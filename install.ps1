@@ -13,7 +13,9 @@
     irm https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/install.ps1 | iex
 #>
 param(
-    [string]$Package = ""
+    [string]$Package = "",
+    [ValidateSet('auto','github','npm')]
+    [string]$Source = "auto"
 )
 
 $ErrorActionPreference = "Stop"
@@ -76,11 +78,37 @@ if ($Package -and (Test-Path $Package)) {
     Write-Host "   From local package: $Package"
     npm install -g $Package
 } elseif ($Package) {
-    Write-Host "[*] Package file not found: $Package" -ForegroundColor Red
+    Write-Host "[X] Package file not found: $Package" -ForegroundColor Red
     exit 1
-} else {
+} elseif ($Source -eq 'npm') {
     Write-Host "   From npm registry..."
     npm install -g nanoclaw-github-copilot
+} else {
+    # auto or github: try GitHub Release first
+    $installed = $false
+    try {
+        Write-Host "   Checking GitHub Release..."
+        $releaseUrl = "https://api.github.com/repos/$REPO/releases/tags/latest"
+        $release = Invoke-RestMethod -Uri $releaseUrl -ErrorAction Stop
+        $asset = $release.assets | Where-Object { $_.name -like "*.tgz" } | Select-Object -First 1
+        if ($asset) {
+            $tgzPath = Join-Path $env:TEMP $asset.name
+            Write-Host "   Downloading $($asset.name)..." -ForegroundColor Gray
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tgzPath
+            npm install -g $tgzPath
+            $installed = $true
+        }
+    } catch {
+        Write-Host "   GitHub Release not available" -ForegroundColor Gray
+    }
+    if (-not $installed) {
+        if ($Source -eq 'github') {
+            Write-Host "[X] GitHub Release download failed." -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "   Falling back to npm registry..."
+        npm install -g nanoclaw-github-copilot
+    }
 }
 
 if ($LASTEXITCODE -ne 0) {

@@ -905,7 +905,10 @@ async function main(): Promise<void> {
       if (channel?.sendFile) {
         await channel.sendFile(jid, filePath, filename);
       } else {
-        logger.debug({ jid, filePath }, 'Channel does not support file sending');
+        logger.debug(
+          { jid, filePath },
+          'Channel does not support file sending',
+        );
       }
     },
     registeredGroups: () => registeredGroups,
