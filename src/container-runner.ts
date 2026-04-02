@@ -161,10 +161,7 @@ function buildVolumeMounts(
       }
       // Enable web search and other nanoclaw-managed settings
       baseConfig.webSearch = true;
-      fs.writeFileSync(
-        configFile,
-        JSON.stringify(baseConfig, null, 2) + '\n',
-      );
+      fs.writeFileSync(configFile, JSON.stringify(baseConfig, null, 2) + '\n');
     }
   } else {
     // CC: Create settings.json with Claude-specific env vars

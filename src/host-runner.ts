@@ -103,10 +103,7 @@ export async function runHostAgent(
         }
       }
       baseConfig.webSearch = true;
-      fs.writeFileSync(
-        configFile,
-        JSON.stringify(baseConfig, null, 2) + '\n',
-      );
+      fs.writeFileSync(configFile, JSON.stringify(baseConfig, null, 2) + '\n');
     }
   }
 
