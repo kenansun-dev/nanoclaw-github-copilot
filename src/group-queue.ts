@@ -344,22 +344,55 @@ export class GroupQueue {
     }
   }
 
-  async shutdown(_gracePeriodMs: number): Promise<void> {
+  async shutdown(gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
 
-    // Count active containers but don't kill them — they'll finish on their own
-    // via idle timeout or container timeout. The --rm flag cleans them up on exit.
-    // This prevents WhatsApp reconnection restarts from killing working agents.
-    const activeContainers: string[] = [];
+    // Kill all active agent processes on shutdown.
+    // Host-mode agents are spawned with detached:true, so they survive parent exit
+    // unless explicitly killed. Without this, restart leaves orphaned agents.
+    const killed: string[] = [];
     for (const [jid, state] of this.groups) {
-      if (state.process && !state.process.killed && state.containerName) {
-        activeContainers.push(state.containerName);
+      if (state.process && !state.process.killed) {
+        const name = state.containerName || jid;
+        try {
+          // Kill the entire process group (detached agents create their own group)
+          if (state.process.pid) {
+            try {
+              process.kill(-state.process.pid, 'SIGTERM');
+            } catch {
+              state.process.kill('SIGTERM');
+            }
+          } else {
+            state.process.kill('SIGTERM');
+          }
+          killed.push(name);
+        } catch {
+          // Process already dead
+        }
+      }
+    }
+
+    if (killed.length > 0) {
+      // Give agents a moment to clean up, then force kill
+      await new Promise((r) => setTimeout(r, Math.min(gracePeriodMs, 3000)));
+      for (const [, state] of this.groups) {
+        if (state.process && !state.process.killed && state.process.pid) {
+          try {
+            process.kill(-state.process.pid, 'SIGKILL');
+          } catch {
+            try {
+              state.process.kill('SIGKILL');
+            } catch {
+              /* already dead */
+            }
+          }
+        }
       }
     }
 
     logger.info(
-      { activeCount: this.activeCount, detachedContainers: activeContainers },
-      'GroupQueue shutting down (containers detached, not killed)',
+      { activeCount: this.activeCount, killed },
+      'GroupQueue shutting down (agents terminated)',
     );
   }
 }
