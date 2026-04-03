@@ -714,20 +714,36 @@ export class TeamsChannel implements Channel {
     }
   }
 
-  async setTyping(jid: string, _isTyping: boolean): Promise<void> {
-    if (!_isTyping) return;
+  private typingIntervals = new Map<string, NodeJS.Timeout>();
+
+  async setTyping(jid: string, isTyping: boolean): Promise<void> {
+    // Clear existing interval
+    const existing = this.typingIntervals.get(jid);
+    if (existing) {
+      clearInterval(existing);
+      this.typingIntervals.delete(jid);
+    }
+
+    if (!isTyping) return;
     const ref = this.conversationRefs.get(jid);
     if (!ref) return;
-    try {
-      await this.adapter.continueConversation(
-        ref as ConversationReference,
-        async (context: TurnContext) => {
-          await context.sendActivity({ type: 'typing' } as Partial<Activity>);
-        },
-      );
-    } catch (err: any) {
-      logger.debug({ jid, err }, 'Failed to send Teams typing indicator');
-    }
+
+    const sendAction = async () => {
+      try {
+        await this.adapter.continueConversation(
+          ref as ConversationReference,
+          async (context: TurnContext) => {
+            await context.sendActivity({ type: 'typing' } as Partial<Activity>);
+          },
+        );
+      } catch {
+        // ignore
+      }
+    };
+
+    // Send immediately + repeat every 3 seconds (Teams typing expires after ~3s)
+    await sendAction();
+    this.typingIntervals.set(jid, setInterval(sendAction, 3000));
   }
 }
 
