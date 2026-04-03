@@ -3,6 +3,7 @@
 #
 $Package = ""
 $Source = "auto"
+$REPO = "kenans/nanoclaw-github-copilot"
 
 $ErrorActionPreference = "Stop"
 
