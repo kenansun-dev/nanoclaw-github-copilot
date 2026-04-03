@@ -166,9 +166,20 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
       console.log('✅ GitHub Copilot auth found' + (hasCopilotAuth ? ' (~/.copilot/)' : ' (CLI)'));
     } else {
       console.log('GitHub Copilot auth not found.');
-      console.log('  Option 1: Set COPILOT_GITHUB_TOKEN in .env');
-      console.log('  Option 2: Run: copilot login');
-      console.log('  Option 3: If OpenClaw is installed, auth is shared automatically');
+      const authChoice = await ask('Enter GitHub token (or press Enter to skip): ');
+      if (authChoice.trim()) {
+        const envPath = path.join(ws, '.env');
+        let env = fs.readFileSync(envPath, 'utf-8');
+        if (env.includes('# COPILOT_GITHUB_TOKEN=')) {
+          env = env.replace('# COPILOT_GITHUB_TOKEN=', `COPILOT_GITHUB_TOKEN=${authChoice.trim()}`);
+        } else {
+          env += `\nCOPILOT_GITHUB_TOKEN=${authChoice.trim()}\n`;
+        }
+        fs.writeFileSync(envPath, env);
+        console.log('\u2705 Token saved to .env');
+      } else {
+        console.log('  Skipped. Set COPILOT_GITHUB_TOKEN in .env later, or run: copilot login');
+      }
     }
     console.log('');
   } else {
@@ -202,31 +213,72 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
 
   const enableTeams = await ask('Enable Teams? (y/N): ');
   if (enableTeams.toLowerCase() === 'y') {
-    console.log(
-      '  Run: scripts/setup-teams.sh (Linux) or scripts/setup-teams.ps1 (Windows)',
-    );
+    // Enable Teams in config
+    const config2 = JSON.parse(fs.readFileSync(path.join(ws, 'nanoclaw.json'), 'utf-8'));
+    config2.channels = config2.channels || {};
+    config2.channels.teams = { enabled: true };
+    fs.writeFileSync(path.join(ws, 'nanoclaw.json'), JSON.stringify(config2, null, 2) + '\n');
+
+    console.log('  Teams requires Azure Bot registration.');
+    const appId = await ask('  Teams App ID (or Enter to skip): ');
+    if (appId.trim()) {
+      const appPw = await ask('  Teams App Password: ');
+      const tenantId = await ask('  Teams Tenant ID: ');
+      const envPath2 = path.join(ws, '.env');
+      let env2 = fs.readFileSync(envPath2, 'utf-8');
+      env2 = env2.replace('# MSTEAMS_APP_ID=', `MSTEAMS_APP_ID=${appId.trim()}`);
+      env2 = env2.replace('# MSTEAMS_APP_PASSWORD=', `MSTEAMS_APP_PASSWORD=${appPw.trim()}`);
+      env2 = env2.replace('# MSTEAMS_TENANT_ID=', `MSTEAMS_TENANT_ID=${tenantId.trim()}`);
+      fs.writeFileSync(envPath2, env2);
+      console.log('\u2705 Teams configured');
+    } else {
+      console.log('  Teams enabled in config. Add credentials to .env before starting.');
+    }
   }
 
   rl.close();
 
-  console.log(`
-✅ Workspace created at ${ws}
+  console.log('');
+  console.log(`\u2705 Setup complete! Workspace: ${ws}`);
+  console.log('');
+  console.log('  Config:      ' + path.join(ws, 'nanoclaw.json'));
+  console.log('  Credentials: ' + path.join(ws, '.env'));
+  console.log('  Agent:       ' + path.join(ws, 'AGENT.md'));
+  console.log('');
 
-Files:
-  ${ws}/nanoclaw.json    — Main config (edit this)
-  ${ws}/.env             — Credentials (fill in tokens)
-  ${ws}/AGENT.md         — Agent personality (customize)
-  ${ws}/skills/          — Custom skills
-  ${ws}/docs/            — Documentation
-
-Next steps:
-  1. Edit nanoclaw.json — set assistant name, enable channels
-  2. Edit .env — add bot tokens / credentials
-  3. Run: nanoclaw doctor — check everything is ready
-  4. Run: nanoclaw sandbox build — build agent container (sandbox mode)
-     Or set "mode": "host" in nanoclaw.json to skip Docker
-  5. Run: nanoclaw start — start the service
-`);
+  // Offer to start
+  if (process.stdin.isTTY) {
+    const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const ask2 = (q: string): Promise<string> => new Promise((resolve) => rl2.question(q, resolve));
+    const startNow = await ask2('Start nanoclaw now? (Y/n): ');
+    rl2.close();
+    if (startNow.toLowerCase() !== 'n') {
+      console.log('');
+      try {
+        const { execSync } = await import('child_process');
+        const finalConfig = JSON.parse(fs.readFileSync(path.join(ws, 'nanoclaw.json'), 'utf-8'));
+        if (finalConfig.agents?.defaults?.mode === 'sandbox') {
+          console.log('Building container...');
+          try {
+            execSync('nanoclaw sandbox build', { stdio: 'inherit', timeout: 300000 });
+          } catch {
+            console.log('Container build failed \u2014 switching to host mode.');
+            updateConfigField(ws, 'agents.defaults.mode', 'host');
+          }
+        }
+        execSync('nanoclaw start', { stdio: 'inherit', timeout: 30000 });
+      } catch (err: any) {
+        console.log(`Start failed: ${err.message}`);
+        console.log('Run manually: nanoclaw start');
+      }
+    } else {
+      console.log('');
+      console.log('To start: nanoclaw start');
+      console.log('To check: nanoclaw doctor');
+    }
+  } else {
+    console.log('To start: nanoclaw start');
+  }
 
   // Write version file for tracking
   try {
