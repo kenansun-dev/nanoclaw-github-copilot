@@ -1,14 +1,8 @@
 # NanoClaw one-line installer for Windows
 # Usage: irm https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/install.ps1 | iex
-# Or:   .\install.ps1 -Package .\nanoclaw.tgz -Source github
 #
-# Use $args instead of param() for irm|iex compatibility
 $Package = ""
 $Source = "auto"
-for ($i = 0; $i -lt $args.Count; $i++) {
-    if ($args[$i] -eq '-Package' -and $i + 1 -lt $args.Count) { $Package = $args[$i + 1]; $i++ }
-    if ($args[$i] -eq '-Source' -and $i + 1 -lt $args.Count) { $Source = $args[$i + 1]; $i++ }
-}
 
 $ErrorActionPreference = "Stop"
 
@@ -158,10 +152,10 @@ Write-Host ""
 Write-Host "[*] Checking authentication..." -ForegroundColor Yellow
 $authResult = nanoclaw auth status 2>&1
 if ($authResult -match "Not authenticated") {
-    Write-Host "[!] GitHub Copilot not authenticated." -ForegroundColor Yellow
+    Write-Host "[WARN] GitHub Copilot not authenticated." -ForegroundColor Yellow
     Write-Host "    Running: $copilotCheck = Get-Command copilot -ErrorAction SilentlyContinue
     if (-not $copilotCheck) {
-        Write-Host "[!] GitHub Copilot CLI not found." -ForegroundColor Yellow
+        Write-Host "[WARN] GitHub Copilot CLI not found." -ForegroundColor Yellow
         $installCli = Read-Host "    Install it now? (Y/n)"
         if ($installCli -ne 'n') {
             Write-Host "    Installing @github/copilot..." -ForegroundColor Yellow
@@ -171,7 +165,7 @@ if ($authResult -match "Not authenticated") {
     nanoclaw auth login" -ForegroundColor Yellow
     $copilotCheck = Get-Command copilot -ErrorAction SilentlyContinue
     if (-not $copilotCheck) {
-        Write-Host "[!] GitHub Copilot CLI not found." -ForegroundColor Yellow
+        Write-Host "[WARN] GitHub Copilot CLI not found." -ForegroundColor Yellow
         $installCli = Read-Host "    Install it now? (Y/n)"
         if ($installCli -ne 'n') {
             Write-Host "    Installing @github/copilot..." -ForegroundColor Yellow
@@ -191,7 +185,7 @@ if ($config.channels) {
     if ($config.channels.telegram.enabled -or $config.channels.teams.enabled) { $hasChannel = $true }
 }
 if (-not $hasChannel) {
-    Write-Host "[!] No channels configured." -ForegroundColor Yellow
+    Write-Host "[WARN] No channels configured." -ForegroundColor Yellow
     Write-Host "    Edit: notepad $workspace\nanoclaw.json" -ForegroundColor Yellow
     Write-Host "    Enable telegram or teams, then add bot token to .env" -ForegroundColor Yellow
 }
