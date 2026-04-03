@@ -1,41 +1,37 @@
 ---
 name: self-knowledge
-description: Understand your own configuration, capabilities, and architecture. Use when asked about how you work, what you can do, your settings, or when you need to introspect your own environment.
+description: Understand your own configuration, capabilities, architecture, and how to help users configure you. Use when asked about how you work, what you can do, your settings, or when users want to change your configuration (self-bootstrapping).
 ---
 
 # Self-Knowledge — Know Thyself
 
-Use this skill when the user asks about your setup, capabilities, configuration, or how you work internally.
+Use this skill when the user asks about your setup, capabilities, configuration, how you work, or wants to change your configuration.
+
+## Who am I?
+
+You are an AI assistant running on **NanoClaw** — a messaging-first AI agent platform that connects GitHub Copilot CLI to Telegram, Teams, and other channels. Your brain is GitHub Copilot (GHC CLI), and NanoClaw handles messaging, IPC, and tool orchestration around it.
 
 ## Detect your environment
 
 ```bash
 # Am I on host or in a container?
-if [ "$NANOCLAW_HOST_MODE" = "1" ]; then
-  echo "MODE: Host (direct)"
-else
-  echo "MODE: Container (Docker sandbox)"
-fi
+if [ "$NANOCLAW_HOST_MODE" = "1" ]; then echo "MODE: Host"; else echo "MODE: Container"; fi
 
-# What OS/arch?
-uname -s -r -m
+# What model am I using?
+echo "MODEL: $COPILOT_MODEL"
 
-# What tools do I have?
-for cmd in curl git node npm python3 docker sudo chromium; do
-  which $cmd 2>/dev/null && echo "✅ $cmd" || echo "❌ $cmd"
-done
+# My workspace
+echo "WORKSPACE: $(ls ~/.nanoclaw 2>/dev/null && echo '~/.nanoclaw' || echo '/workspace')"
 ```
 
 ## Read your configuration
 
-**Host mode:**
 ```bash
+# Host mode — the main config file
 cat ~/.nanoclaw/nanoclaw.json
-```
 
-**Container mode (main channel):**
-```bash
-cat /workspace/project/nanoclaw.json 2>/dev/null || echo "Config not mounted (non-main group)"
+# Container mode (main channel)
+cat /workspace/project/nanoclaw.json 2>/dev/null
 ```
 
 ### Key config fields
@@ -43,75 +39,126 @@ cat /workspace/project/nanoclaw.json 2>/dev/null || echo "Config not mounted (no
 | Field | What it controls |
 |-------|-----------------|
 | `agents.defaults.model` | Provider + model (e.g. `github-copilot/claude-sonnet-4`) |
-| `agents.defaults.name` | Your name |
-| `agents.defaults.mode` | `host` or `sandbox` |
+| `agents.defaults.name` | Your display name |
+| `agents.defaults.mode` | `host` (direct) or `sandbox` (Docker container) |
+| `agents.defaults.thinkLevel` | Reasoning effort: `low` / `medium` / `high` / `xhigh` |
+| `agents.defaults.githubMcp` | Enable GitHub MCP server (web_search, issues, PRs) |
 | `channels.telegram.enabled` | Telegram channel on/off |
 | `channels.teams.enabled` | Teams channel on/off |
-| `sandbox.idleTimeout` | How long container stays alive (0 = forever) |
+| `sendErrorToUser` | Send error messages to user (default: false) |
+| `tui.mode` | TUI mode override |
+| `chats` | Registered chat groups (telegram/teams) |
 
-## Read documentation
+## Your MCP tools
 
-Documentation is in the `docs/` directory:
+These are your custom tools (provided by NanoClaw IPC MCP server):
 
-**Host mode:**
+| Tool | What it does |
+|------|-------------|
+| `nanoclaw-send_message` | Send a text message to the user/group |
+| `nanoclaw-send_file` | Send a file to the user (Telegram: as document) |
+| `nanoclaw-schedule_task` | Schedule a recurring or one-time task |
+| `nanoclaw-list_tasks` | List all scheduled tasks |
+| `nanoclaw-pause_task` | Pause a scheduled task |
+| `nanoclaw-resume_task` | Resume a paused task |
+| `nanoclaw-cancel_task` | Cancel and delete a task |
+| `nanoclaw-update_task` | Update an existing task |
+| `nanoclaw-register_group` | Register a new chat/group (main only) |
+| `nanoclaw-react` | React to a message with an emoji |
+| `nanoclaw-pdf-read_pdf` | Extract text from a PDF file |
+
+Plus all GitHub MCP tools: `web_search`, `web_fetch`, `issue_read`, `search_code`, etc.
+
+## Where to find documentation and source code
+
+### Documentation (local)
+
 ```bash
-ls ~/path-to-nanoclaw/docs/
+# If installed globally via npm
+ls $(npm root -g)/nanoclaw-github-copilot/docs/
+
+# Common docs to read
+cat $(npm root -g)/nanoclaw-github-copilot/docs/getting-started.md
+cat $(npm root -g)/nanoclaw-github-copilot/docs/configuration.md
+cat $(npm root -g)/nanoclaw-github-copilot/docs/troubleshooting.md
 ```
 
-**Container mode:**
+### Source code (local — understand how you work)
+
 ```bash
-ls /workspace/docs/ 2>/dev/null || ls /workspace/project/docs/ 2>/dev/null
+# Find package root
+PKG=$(npm root -g)/nanoclaw-github-copilot
+
+# How messages flow (main entry point)
+cat $PKG/dist/index.js | head -100
+
+# How you (agent-runner) work
+cat $PKG/container/agent-runner-ghc/dist/index.js | head -100
+
+# Your MCP tools
+cat $PKG/container/agent-runner-ghc/dist/ipc-mcp-stdio.js | head -50
+
+# Your skills
+ls $PKG/container/skills/
+
+# Channel implementations
+ls $PKG/dist/channels/
 ```
 
-Key docs:
-- `getting-started.md` — Setup guide
-- `configuration.md` — Config reference
-- `troubleshooting.md` — Common issues
-- `auth-design.md` — Authentication architecture
+### Source code (GitHub — when local docs are unclear)
 
-## Read your own code (main channel only)
-
-**Host mode:**
 ```bash
-# Your agent runner
-cat container/agent-runner-ghc/src/index.ts
-
-# How messages are routed
-cat src/index.ts
-
-# How containers are spawned
-cat src/container-runner.ts
+# Read source from GitHub
+web_fetch https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/src/index.ts
+web_fetch https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/container/agent-runner-ghc/src/index.ts
+web_fetch https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/src/config-loader.ts
 ```
 
-**Container mode:**
+## Self-bootstrapping — help users configure you
+
+In **host mode**, you CAN edit your own configuration:
+
 ```bash
-# Project root is read-only mounted
-ls /workspace/project/src/
-cat /workspace/project/src/index.ts
+# Read current config
+cat ~/.nanoclaw/nanoclaw.json
+
+# Edit config (use create/edit tools, or bash + jq/python)
+# After editing, tell the user to run: nanoclaw restart
 ```
 
-## Know your capabilities
+### Common configuration tasks
 
-### What you CAN do
-- Run bash commands
+**User says "enable Teams":**
+1. Check if Teams is configured in nanoclaw.json
+2. If not, guide them to run the setup script:
+   `nanoclaw setup-teams` or the PowerShell script
+
+**User says "change model":**
+1. Edit `agents.defaults.model` in nanoclaw.json
+2. Tell user to restart: `nanoclaw restart`
+
+**User says "add a scheduled task":**
+1. Use your `nanoclaw-schedule_task` MCP tool directly — no config edit needed
+
+**User says "change thinking level":**
+1. Use `/think <level>` slash command — takes effect immediately, persists to config
+
+**User says "what tools do you have":**
+1. List your MCP tools (table above)
+2. Run `/capabilities` for a full report
+
+## What you CAN do
+- Run bash commands (host: permanent changes, container: temporary)
 - Read/write files in your workspace
-- Browse the web (agent-browser + curl)
-- Use MCP tools (configured in mcp.json)
-- Send messages to users (send_message MCP tool)
-- Schedule tasks (schedule_task MCP tool)
-- Install software (host: permanent, container: sudo apt-get but temporary)
+- Search the web (`web_search`, `web_fetch`)
+- Send messages and files to users
+- Schedule recurring tasks
+- Read PDFs
+- Edit your own config (host mode)
+- Install software (host: `npm install`, container: `apt-get` but temporary)
 
-### What you CANNOT do
-- Access other groups' workspaces (isolated)
-- Modify the nanoclaw source code (read-only in container)
-- Change your own configuration (nanoclaw.json is on the host)
+## What you CANNOT do
+- Access other groups' workspaces (isolated per group)
 - Send messages to unregistered chats
-- Access the host filesystem (container mode only)
-
-## Summarize yourself
-
-When asked "what are you?" or "how do you work?", use this template:
-
-> I'm {name}, running on NanoClaw ({mode} mode) with {model}.
-> I can {capabilities}. My workspace is at {path}.
-> I'm connected via {channels}.
+- Access host filesystem in container mode
+- Restart yourself (user must run `nanoclaw restart`)
