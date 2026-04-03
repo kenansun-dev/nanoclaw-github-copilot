@@ -29,38 +29,31 @@ A fork of [NanoClaw](https://github.com/qwibitai/nanoclaw) that replaces Claude 
 
 ## Install
 
-**One-line install (Linux / macOS / WSL):**
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/install.ps1 | iex
+```
+
+**Linux / macOS / WSL:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/install.sh | bash
 ```
 
-**Or via npm:**
-```bash
-npm install -g nanoclaw-github-copilot
-nanoclaw init
-```
-
-**Requirements:** Node.js 20+, Docker, GitHub Copilot subscription
+**Requirements:** Node.js 20+, GitHub Copilot subscription. Docker optional (for sandbox mode).
 
 ## Quick Start
 
 ```bash
-# 1. Install
-npm install -g nanoclaw-github-copilot
-
-# 2. Initialize workspace (interactive)
+# 1. Initialize workspace
 nanoclaw init
 
-# 3. Edit credentials
-nano ~/.nanoclaw/.env
+# 2. Authenticate with GitHub Copilot
+nanoclaw auth login
 
-# 4. Check setup
+# 3. Check setup
 nanoclaw doctor
 
-# 5. Build agent container
-nanoclaw sandbox build
-
-# 6. Start
+# 4. Start
 nanoclaw start
 ```
 
