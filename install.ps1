@@ -106,17 +106,18 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "`[*] NanoClaw installed" -ForegroundColor Green
 Write-Host ""
 
-# ─── Initialize workspace ────────────────────────────────────────────────────
-
-$workspace = Join-Path $env:USERPROFILE ".nanoclaw"
-if (-not (Test-Path (Join-Path $workspace "nanoclaw.json"))) {
-    Write-Host "📁 Initializing workspace..." -ForegroundColor Yellow
-    nanoclaw init
-} else {
-    Write-Host "📁 Workspace already exists at $workspace" -ForegroundColor Green
-}
+# ─── Initialize + Configure ───────────────────────────────────────────────────
 
 Write-Host ""
+Write-Host "`[*] Running nanoclaw init..." -ForegroundColor Yellow
+
+# Start nanoclaw init in a new process with TTY (irm|iex has no stdin)
+try {
+    Start-Process -FilePath "nanoclaw" -ArgumentList "init" -Wait -NoNewWindow
+} catch {
+    Write-Host "`[WARN] Could not run nanoclaw init." -ForegroundColor Yellow
+    Write-Host "  Run manually: nanoclaw init" -ForegroundColor Yellow
+}
 
 # ─── Done ────────────────────────────────────────────────────────────────────
 
