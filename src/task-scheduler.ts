@@ -74,7 +74,11 @@ export interface SchedulerDependencies {
     groupFolder: string,
   ) => void;
   sendMessage: (jid: string, text: string) => Promise<string | void>;
-  editMessage?: (jid: string, messageId: string, text: string) => Promise<string | void>;
+  editMessage?: (
+    jid: string,
+    messageId: string,
+    text: string,
+  ) => Promise<string | void>;
 }
 
 async function runTask(
@@ -199,7 +203,11 @@ async function runTask(
               const msgId = await deps.sendMessage(task.chat_jid, text + ' ◌');
               progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;
             } else {
-              await deps.editMessage(task.chat_jid, progressiveMsgId, text + ' ◌');
+              await deps.editMessage(
+                task.chat_jid,
+                progressiveMsgId,
+                text + ' ◌',
+              );
             }
           } else {
             if (progressiveMsgId && deps.editMessage) {

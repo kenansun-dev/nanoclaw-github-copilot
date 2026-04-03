@@ -381,5 +381,43 @@ server.tool(
   },
 );
 
+server.tool(
+  'nanoclaw_control',
+  'Control the NanoClaw host service. Use this to restart nanoclaw, reload config, or update settings. Available actions: restart, reload_config, set_config.',
+  {
+    action: z.enum(['restart', 'reload_config', 'set_config']).describe(
+      'Action to perform: restart (restart nanoclaw service), reload_config (reload nanoclaw.json without restart), set_config (change a config value)',
+    ),
+    config_path: z
+      .string()
+      .optional()
+      .describe('Config field path for set_config (e.g. "agents.defaults.model")'),
+    config_value: z
+      .string()
+      .optional()
+      .describe('New value for set_config (JSON string)'),
+  },
+  async (args) => {
+    const data = {
+      type: 'control',
+      action: args.action,
+      configPath: args.config_path,
+      configValue: args.config_value,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(MESSAGES_DIR, data);
+    const messages: Record<string, string> = {
+      restart: 'Restart signal sent. NanoClaw will restart — your current session will end. Changes take effect on next message.',
+      reload_config: 'Config reload signal sent.',
+      set_config: `Config update sent: ${args.config_path} = ${args.config_value}`,
+    };
+    return {
+      content: [
+        { type: 'text' as const, text: messages[args.action] || 'Control signal sent.' },
+      ],
+    };
+  },
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
