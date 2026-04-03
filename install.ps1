@@ -129,6 +129,7 @@ Write-Host "  2. Add credentials: notepad $workspace\.env"
 Write-Host "  3. Check setup:    nanoclaw doctor"
 Write-Host ""
 
+$dockerOk = $false
 if (Get-Command docker -ErrorAction SilentlyContinue) {
     try {
         docker info 2>$null | Out-Null
@@ -136,14 +137,33 @@ if (Get-Command docker -ErrorAction SilentlyContinue) {
         nanoclaw sandbox build
         if ($LASTEXITCODE -eq 0) {
             Write-Host "`[OK] Container built" -ForegroundColor Green
+            $dockerOk = $true
         } else {
-            Write-Host "`[WARN] Container build failed. Retry: nanoclaw sandbox build" -ForegroundColor Yellow
+            Write-Host "`[WARN] Container build failed." -ForegroundColor Yellow
         }
     } catch {
-        Write-Host "`[WARN] Docker not running. Skip container build." -ForegroundColor Yellow
+        Write-Host "`[WARN] Docker installed but not running." -ForegroundColor Yellow
     }
 } else {
-    Write-Host "`[INFO] Docker not found. Using host mode (no container)." -ForegroundColor Cyan
+    Write-Host "`[*] Docker not found. Skipping container build." -ForegroundColor Gray
+}
+
+# Auto-fallback to host mode if Docker unavailable or build failed
+if (-not $dockerOk) {
+    Write-Host "`[*] Setting host mode (no Docker required)..." -ForegroundColor Yellow
+    $configPath = Join-Path $workspace "nanoclaw.json"
+    if (Test-Path $configPath) {
+        $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
+        if ($cfg.agents -and $cfg.agents.defaults) {
+            if ($cfg.agents.defaults.PSObject.Properties.Match('mode').Count -gt 0) {
+                $cfg.agents.defaults.mode = "host"
+            } else {
+                $cfg.agents.defaults | Add-Member -NotePropertyName mode -NotePropertyValue "host"
+            }
+            $cfg | ConvertTo-Json -Depth 10 | Set-Content $configPath
+            Write-Host "`[OK] Config set to host mode" -ForegroundColor Green
+        }
+    }
 }
 
 Write-Host ""
@@ -199,6 +219,6 @@ Write-Host "    1. Edit config:     notepad $workspace\nanoclaw.json"
 Write-Host "    2. Add credentials: notepad $workspace\.env"
 Write-Host "    3. Check setup:     nanoclaw doctor"
 Write-Host ""
-Write-Host "  Sandbox mode: nanoclaw sandbox build && nanoclaw start"
-Write-Host "  Host mode:    set mode to host in nanoclaw.json, then nanoclaw start"
+Write-Host "  Configure channels: nanoclaw init" -ForegroundColor Yellow
+Write-Host "  Start:              nanoclaw start" -ForegroundColor Yellow
 Write-Host "============================================" -ForegroundColor Cyan
