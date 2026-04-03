@@ -1,15 +1,7 @@
-<#
-.SYNOPSIS
-    NanoClaw one-line installer for Windows
-.DESCRIPTION
-    Installs NanoClaw globally from GitHub Release (latest) and runs setup.
-    Automatically cleans up any previous installation.
-.EXAMPLE
-    # One-liner (download + run):
-    irm https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/install.ps1 -OutFile $env:TEMP\nc.ps1; & $env:TEMP\nc.ps1
-    # Or with parameters:
-    .\install.ps1 -Package .\nanoclaw.tgz -Source github
-#>
+# NanoClaw one-line installer for Windows
+# Usage: irm https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/install.ps1 | iex
+# Or:   .\install.ps1 -Package .\nanoclaw.tgz -Source github
+#
 # Use $args instead of param() for irm|iex compatibility
 $Package = ""
 $Source = "auto"
