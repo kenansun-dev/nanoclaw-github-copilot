@@ -921,8 +921,7 @@ async function main(): Promise<void> {
     }
   }
   if (channels.length === 0) {
-    logger.fatal('No channels connected');
-    process.exit(1);
+    logger.warn('No channels connected — service running for TUI/IPC only');
   }
 
   // Start subsystems (independently of connection handler)
