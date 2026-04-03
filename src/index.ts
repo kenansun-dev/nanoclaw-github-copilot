@@ -939,7 +939,13 @@ async function main(): Promise<void> {
         return;
       }
       const text = formatOutbound(rawText);
-      if (text) await channel.sendMessage(jid, text);
+      if (text) return await channel.sendMessage(jid, text);
+    },
+    editMessage: async (jid, messageId, rawText) => {
+      const channel = findChannel(channels, jid);
+      if (!channel?.editMessage) return;
+      const text = formatOutbound(rawText);
+      if (text) return await channel.editMessage(jid, messageId, text);
     },
   });
   startIpcWatcher({
