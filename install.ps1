@@ -2,21 +2,21 @@
 .SYNOPSIS
     NanoClaw one-line installer for Windows
 .DESCRIPTION
-    Installs NanoClaw globally via npm and runs nanoclaw init.
-    Supports installing from a local .tgz package or npm registry.
-.PARAMETER Package
-    Path to local .tgz package file. If not specified, installs from npm registry.
+    Installs NanoClaw globally from GitHub Release (latest) and runs setup.
+    Automatically cleans up any previous installation.
 .EXAMPLE
-    .\install.ps1
-    .\install.ps1 -Package .\nanoclaw-github-copilot-1.2.19.tgz
-    # Or one-liner:
-    irm https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/install.ps1 | iex
+    # One-liner (download + run):
+    irm https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/install.ps1 -OutFile $env:TEMP\nc.ps1; & $env:TEMP\nc.ps1
+    # Or with parameters:
+    .\install.ps1 -Package .\nanoclaw.tgz -Source github
 #>
-param(
-    [string]$Package = "",
-    [ValidateSet('auto','github','npm')]
-    [string]$Source = "auto"
-)
+# Use $args instead of param() for irm|iex compatibility
+$Package = ""
+$Source = "auto"
+for ($i = 0; $i -lt $args.Count; $i++) {
+    if ($args[$i] -eq '-Package' -and $i + 1 -lt $args.Count) { $Package = $args[$i + 1]; $i++ }
+    if ($args[$i] -eq '-Source' -and $i + 1 -lt $args.Count) { $Source = $args[$i + 1]; $i++ }
+}
 
 $ErrorActionPreference = "Stop"
 
