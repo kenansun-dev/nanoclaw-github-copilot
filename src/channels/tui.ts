@@ -1,0 +1,272 @@
+/**
+ * TUI channel — accepts connections via Unix domain socket (or named pipe on Windows).
+ *
+ * Protocol: newline-delimited JSON over a socket at ~/.nanoclaw/tui.sock
+ *
+ * Client → Server (inbound):
+ *   { "type": "message", "text": "hello" }
+ *   { "type": "new_session" }
+ *
+ * Server → Client (outbound):
+ *   { "type": "reply", "text": "...", "messageId": "..." }
+ *   { "type": "typing", "isTyping": true }
+ *   { "type": "partial", "text": "...", "messageId": "..." }
+ *   { "type": "error", "error": "..." }
+ *   { "type": "connected", "assistantName": "..." }
+ */
+
+import fs from 'fs';
+import net from 'net';
+import path from 'path';
+
+import { ASSISTANT_NAME } from '../config.js';
+import { logger } from '../logger.js';
+import { loadConfig } from '../config-loader.js';
+import { resolveWorkspace } from '../workspace.js';
+import { getAllRegisteredGroups, setRegisteredGroup } from '../db.js';
+import { registerChannel, ChannelOpts } from './registry.js';
+import { Channel, NewMessage } from '../types.js';
+
+const TUI_JID_PREFIX = 'tui:';
+const SOCK_NAME =
+  process.platform === 'win32' ? '\\\\.\\pipe\\nanoclaw-tui' : 'tui.sock';
+
+interface TuiClient {
+  id: string;
+  socket: net.Socket;
+  buffer: string;
+}
+
+export class TuiChannel implements Channel {
+  name = 'tui';
+
+  private server: net.Server | null = null;
+  private clients = new Map<string, TuiClient>();
+  private opts: ChannelOpts;
+  private sockPath: string;
+  private nextClientId = 1;
+  private connected = false;
+
+  constructor(opts: ChannelOpts) {
+    this.opts = opts;
+    const ws = resolveWorkspace();
+    this.sockPath =
+      process.platform === 'win32' ? SOCK_NAME : path.join(ws, 'tui.sock');
+  }
+
+  async connect(): Promise<void> {
+    // Clean up stale socket file
+    if (process.platform !== 'win32' && fs.existsSync(this.sockPath)) {
+      try {
+        fs.unlinkSync(this.sockPath);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    this.server = net.createServer((socket) => this.handleConnection(socket));
+
+    await new Promise<void>((resolve, reject) => {
+      this.server!.listen(this.sockPath, () => {
+        if (process.platform !== 'win32') {
+          try {
+            fs.chmodSync(this.sockPath, 0o600);
+          } catch {
+            /* ignore */
+          }
+        }
+        logger.info({ path: this.sockPath }, 'TUI channel listening');
+        this.connected = true;
+        resolve();
+      });
+      this.server!.on('error', reject);
+    });
+  }
+
+  private handleConnection(socket: net.Socket): void {
+    const clientId = String(this.nextClientId++);
+    const jid = `${TUI_JID_PREFIX}${clientId}`;
+    const client: TuiClient = { id: clientId, socket, buffer: '' };
+    this.clients.set(clientId, client);
+
+    logger.info({ clientId }, 'TUI client connected');
+
+    // Auto-register TUI group so messages get routed
+    const config = loadConfig();
+    const assistantName = config.agents?.defaults?.name || ASSISTANT_NAME;
+
+    const existingGroups = getAllRegisteredGroups();
+    if (!existingGroups[jid]) {
+      // Only the first TUI client is main; subsequent ones are not
+      const hasMainTui = Object.entries(existingGroups).some(
+        ([k, g]) => k.startsWith(TUI_JID_PREFIX) && g.isMain,
+      );
+      const tuiGroup = {
+        name: `tui-${clientId}`,
+        folder: `tui-${clientId}`,
+        isMain: !hasMainTui,
+        trigger: '',
+        added_at: new Date().toISOString(),
+      };
+      setRegisteredGroup(jid, tuiGroup);
+      logger.info(
+        { jid, group: tuiGroup.name, isMain: tuiGroup.isMain },
+        'Auto-registered TUI group',
+      );
+    }
+
+    // Notify chat metadata
+    this.opts.onChatMetadata(
+      jid,
+      new Date().toISOString(),
+      `tui-${clientId}`,
+      'tui',
+      false,
+    );
+
+    // Send connected message
+    this.sendJson(socket, {
+      type: 'connected',
+      assistantName,
+      clientId,
+    });
+
+    socket.on('data', (data) => {
+      client.buffer += data.toString();
+      let newlineIdx: number;
+      while ((newlineIdx = client.buffer.indexOf('\n')) !== -1) {
+        const line = client.buffer.substring(0, newlineIdx).trim();
+        client.buffer = client.buffer.substring(newlineIdx + 1);
+        if (line) this.handleMessage(client, jid, line);
+      }
+    });
+
+    socket.on('close', () => {
+      logger.info({ clientId }, 'TUI client disconnected');
+      this.clients.delete(clientId);
+    });
+
+    socket.on('error', (err) => {
+      logger.warn({ clientId, err: err.message }, 'TUI client error');
+      this.clients.delete(clientId);
+    });
+  }
+
+  private handleMessage(client: TuiClient, jid: string, line: string): void {
+    let msg: any;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      this.sendJson(client.socket, { type: 'error', error: 'Invalid JSON' });
+      return;
+    }
+
+    switch (msg.type) {
+      case 'message':
+        if (!msg.text?.trim()) {
+          this.sendJson(client.socket, {
+            type: 'error',
+            error: 'Empty message',
+          });
+          return;
+        }
+        // Route to the main message handler
+        const newMsg: NewMessage = {
+          id: msg.id || `tui-in-${Date.now()}`,
+          chat_jid: jid,
+          sender: 'user',
+          sender_name: 'user',
+          content: msg.text.trim(),
+          timestamp: new Date().toISOString(),
+          is_from_me: false,
+        };
+        this.opts.onMessage(jid, newMsg);
+        break;
+
+      case 'new_session':
+        this.sendJson(client.socket, { type: 'session_reset' });
+        break;
+
+      default:
+        this.sendJson(client.socket, {
+          type: 'error',
+          error: `Unknown type: ${msg.type}`,
+        });
+    }
+  }
+
+  async sendMessage(jid: string, text: string): Promise<string | void> {
+    const client = this.getClientByJid(jid);
+    if (!client) return;
+    const messageId = `tui-msg-${Date.now()}`;
+    this.sendJson(client.socket, { type: 'reply', text, messageId });
+    return messageId;
+  }
+
+  async editMessage(
+    jid: string,
+    messageId: string,
+    text: string,
+  ): Promise<string | void> {
+    const client = this.getClientByJid(jid);
+    if (!client) return;
+    this.sendJson(client.socket, { type: 'partial', text, messageId });
+    return messageId;
+  }
+
+  async setTyping(jid: string, isTyping: boolean): Promise<void> {
+    const client = this.getClientByJid(jid);
+    if (!client) return;
+    this.sendJson(client.socket, { type: 'typing', isTyping });
+  }
+
+  isConnected(): boolean {
+    return this.connected;
+  }
+
+  ownsJid(jid: string): boolean {
+    return jid.startsWith(TUI_JID_PREFIX);
+  }
+
+  async disconnect(): Promise<void> {
+    this.connected = false;
+    for (const client of this.clients.values()) {
+      try {
+        client.socket.destroy();
+      } catch {
+        /* ignore */
+      }
+    }
+    this.clients.clear();
+    if (this.server) {
+      this.server.close();
+      if (process.platform !== 'win32' && fs.existsSync(this.sockPath)) {
+        try {
+          fs.unlinkSync(this.sockPath);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+
+  private getClientByJid(jid: string): TuiClient | undefined {
+    const clientId = jid.replace(TUI_JID_PREFIX, '');
+    return this.clients.get(clientId);
+  }
+
+  private sendJson(socket: net.Socket, obj: object): void {
+    try {
+      if (!socket.destroyed) {
+        socket.write(JSON.stringify(obj) + '\n');
+      }
+    } catch (err: any) {
+      logger.warn({ err: err.message }, 'Failed to send to TUI client');
+    }
+  }
+}
+
+// Self-register: TUI channel is always available (no config needed)
+registerChannel('tui', (opts) => {
+  return new TuiChannel(opts);
+});

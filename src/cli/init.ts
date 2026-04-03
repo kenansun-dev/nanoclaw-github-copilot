@@ -129,15 +129,50 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
 
   console.log('\n--- Quick Setup ---\n');
 
+  // Mode selection
+  const hasDocker = await checkDocker();
+  if (hasDocker) {
+    const modeChoice = await ask('Run mode — sandbox (Docker) or host (direct)? (S/h): ');
+    if (modeChoice.toLowerCase() === 'h') {
+      updateConfigField(ws, 'agents.defaults.mode', 'host');
+      console.log('✅ Mode: host');
+    } else {
+      updateConfigField(ws, 'agents.defaults.mode', 'sandbox');
+      console.log('✅ Mode: sandbox (Docker)');
+    }
+  } else {
+    console.log('Docker not available — using host mode.');
+    updateConfigField(ws, 'agents.defaults.mode', 'host');
+    console.log('✅ Mode: host');
+  }
+  console.log('');
+
   // Auth
   const hasToken = process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!hasToken) {
-    console.log('GitHub Copilot auth not found.');
-    console.log('  Option 1: Set COPILOT_GITHUB_TOKEN in .env');
-    console.log('  Option 2: Run: copilot login');
-    console.log(
-      '  Option 3: If OpenClaw is installed, auth is shared automatically',
-    );
+    // Check if copilot CLI is logged in or has stored auth
+    let copilotLoggedIn = false;
+    try {
+      const { execSync } = await import('child_process');
+      execSync('copilot --version', { stdio: 'pipe', timeout: 5000 });
+      copilotLoggedIn = true;
+    } catch { /* not available */ }
+
+    // Check ~/.copilot/ directory (GHC CLI's own auth storage)
+    const homeCopilotDir = path.join(process.env.HOME || process.env.USERPROFILE || '', '.copilot');
+    const hasCopilotAuth = fs.existsSync(path.join(homeCopilotDir, 'config.json'));
+
+    if (copilotLoggedIn || hasCopilotAuth) {
+      console.log('✅ GitHub Copilot auth found' + (hasCopilotAuth ? ' (~/.copilot/)' : ' (CLI)'));
+    } else {
+      console.log('GitHub Copilot auth not found.');
+      console.log('  Option 1: Set COPILOT_GITHUB_TOKEN in .env');
+      console.log('  Option 2: Run: copilot login');
+      console.log('  Option 3: If OpenClaw is installed, auth is shared automatically');
+    }
+    console.log('');
+  } else {
+    console.log('✅ GitHub auth found');
     console.log('');
   }
 
@@ -281,6 +316,29 @@ const DEFAULT_ENV = `# NanoClaw Credentials
 # === GitHub Copilot (optional — falls back to OpenClaw auth profile) ===
 # COPILOT_GITHUB_TOKEN=
 `;
+async function checkDocker(): Promise<boolean> {
+  try {
+    const { execSync } = await import('child_process');
+    execSync('docker info', { stdio: 'pipe', timeout: 10000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function updateConfigField(ws: string, fieldPath: string, value: any): void {
+  const configPath = path.join(ws, 'nanoclaw.json');
+  if (!fs.existsSync(configPath)) return;
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  const parts = fieldPath.split('.');
+  let obj = config;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!obj[parts[i]]) obj[parts[i]] = {};
+    obj = obj[parts[i]];
+  }
+  obj[parts[parts.length - 1]] = value;
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
+}
 
 const DEFAULT_AGENT_MD = `# NanoClaw Agent
 
