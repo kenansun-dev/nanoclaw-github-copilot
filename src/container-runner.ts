@@ -63,6 +63,8 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  /** true if this is a partial/delta result (more content coming) */
+  partial?: boolean;
 }
 
 interface VolumeMount {

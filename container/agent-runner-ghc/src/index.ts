@@ -33,6 +33,7 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  partial?: boolean;
 }
 
 const IPC_INPUT_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc/input';
@@ -480,21 +481,63 @@ async function main(): Promise<void> {
       };
       setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
 
-      // Send prompt and stream results (event-driven, like CC SDK's for-await pattern)
+      // Send prompt and stream results
       let lastContent: string | null = null as string | null;
       let streamedChunks = 0;
+
+      // Delta streaming: accumulate tokens, emit partial output periodically
+      let deltaBuffer = '';
+      let deltaTimer: ReturnType<typeof setTimeout> | null = null;
+      const DELTA_FLUSH_MS = 1500; // Flush accumulated delta every 1.5s
+
+      const flushDelta = () => {
+        if (deltaBuffer.length > 0) {
+          writeOutput({
+            status: 'success',
+            result: deltaBuffer,
+            newSessionId: sessionId,
+            partial: true,
+          });
+          log(`Delta flush: ${deltaBuffer.length} chars`);
+        }
+      };
+
+      const scheduleDeltaFlush = () => {
+        if (!deltaTimer) {
+          deltaTimer = setTimeout(() => {
+            deltaTimer = null;
+            flushDelta();
+          }, DELTA_FLUSH_MS);
+        }
+      };
 
       const idlePromise = new Promise<void>((resolve, reject) => {
         const cleanup = session.on('session.idle' as any, () => {
           cleanup();
+          // Flush any remaining delta
+          if (deltaTimer) { clearTimeout(deltaTimer); deltaTimer = null; }
+          flushDelta();
+          deltaBuffer = '';
           resolve();
         });
 
-        // Stream: emit partial results as they arrive (like CC SDK's result messages)
+        // Delta streaming: accumulate token-by-token output
+        session.on('assistant.message_delta' as any, (event: any) => {
+          const delta = event.data?.deltaContent || event.data?.content || '';
+          if (delta) {
+            deltaBuffer += delta;
+            scheduleDeltaFlush();
+          }
+        });
+
+        // Full message: send complete result (replaces any partial)
         session.on('assistant.message' as any, (event: any) => {
           if (event.data?.content) {
             lastContent = event.data.content;
-            // Write streaming output — host can send to user immediately
+            // Cancel pending delta flush — full message supersedes it
+            if (deltaTimer) { clearTimeout(deltaTimer); deltaTimer = null; }
+            deltaBuffer = '';
+            // Write final (non-partial) output
             writeOutput({
               status: 'success',
               result: event.data.content,
@@ -507,6 +550,7 @@ async function main(): Promise<void> {
 
         session.on('session.error' as any, (event: any) => {
           cleanup();
+          if (deltaTimer) { clearTimeout(deltaTimer); deltaTimer = null; }
           reject(new Error(event.data?.message || 'Session error'));
         });
       });
