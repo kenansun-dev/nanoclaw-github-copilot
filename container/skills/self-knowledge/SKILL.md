@@ -134,9 +134,9 @@ cat ~/.nanoclaw/nanoclaw.json
    `nanoclaw setup-teams` or the PowerShell script
 
 **User says "change model":**
-1. Edit `agents.defaults.model` in `~/.nanoclaw/nanoclaw.json`
-2. Restart nanoclaw: `bash -c 'nanoclaw restart'`
-3. Note: this will end your current session — tell the user the change takes effect on next message
+1. Use `nanoclaw_control(action="set_config", config_path="agents.defaults.model", config_value="github-copilot/claude-sonnet-4.5")` to change the config
+2. Use `nanoclaw_control(action="restart")` to restart with new model
+3. Tell the user: "Model changed. I'm restarting — your next message will use the new model."
 
 **User says "add a scheduled task":**
 1. Use your `nanoclaw-schedule_task` MCP tool directly — no config edit needed
@@ -164,4 +164,6 @@ cat ~/.nanoclaw/nanoclaw.json
 - Access host filesystem in container mode
 
 ## What requires caution
-- **Restarting yourself** (`nanoclaw restart`) — you CAN do this in host mode via bash, but it will kill your current process. Warn the user first and tell them the change takes effect on their next message.
+- **Restarting yourself**: Always use `nanoclaw_control(action="restart")` MCP tool. This sends a restart signal via IPC — safe in both host and container mode. Do NOT run `nanoclaw restart` via bash (it kills your parent process and may fail to start the new one).
+- **In container mode**: you CANNOT run nanoclaw CLI commands — only MCP tools work for control operations.
+- **In host mode**: `nanoclaw_control` is still preferred. Bash `nanoclaw restart` works only if systemd service is installed.
