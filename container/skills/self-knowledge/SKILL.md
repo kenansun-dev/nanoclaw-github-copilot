@@ -134,8 +134,9 @@ cat ~/.nanoclaw/nanoclaw.json
    `nanoclaw setup-teams` or the PowerShell script
 
 **User says "change model":**
-1. Edit `agents.defaults.model` in nanoclaw.json
-2. Tell user to restart: `nanoclaw restart`
+1. Edit `agents.defaults.model` in `~/.nanoclaw/nanoclaw.json`
+2. Restart nanoclaw: `bash -c 'nanoclaw restart'`
+3. Note: this will end your current session — tell the user the change takes effect on next message
 
 **User says "add a scheduled task":**
 1. Use your `nanoclaw-schedule_task` MCP tool directly — no config edit needed
@@ -161,4 +162,6 @@ cat ~/.nanoclaw/nanoclaw.json
 - Access other groups' workspaces (isolated per group)
 - Send messages to unregistered chats
 - Access host filesystem in container mode
-- Restart yourself (user must run `nanoclaw restart`)
+
+## What requires caution
+- **Restarting yourself** (`nanoclaw restart`) — you CAN do this in host mode via bash, but it will kill your current process. Warn the user first and tell them the change takes effect on their next message.
