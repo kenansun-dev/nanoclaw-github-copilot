@@ -50,6 +50,21 @@ export const COMMANDS: SlashCommand[] = [
     noArgs: true,
   },
   {
+    name: 'tasks',
+    description: 'List scheduled tasks',
+    noArgs: true,
+  },
+  {
+    name: 'status',
+    description: 'Show agent status and config',
+    noArgs: true,
+  },
+  {
+    name: 'capabilities',
+    description: 'Show available tools and skills',
+    noArgs: true,
+  },
+  {
     name: 'help',
     description: 'Show available commands',
     noArgs: true,
@@ -138,6 +153,13 @@ export async function handleSlashCommand(
       await ctx.channel.sendMessage(ctx.chatJid, buildHelpText());
     }
     return { handled: true };
+  }
+
+  // /tasks, /status, /capabilities — pass to agent as prompts
+  // These are handled by the agent using its tools/skills, not by nanoclaw directly.
+  // Returning handled: false lets them flow through to the agent.
+  if (input === '/tasks' || input === '/status' || input === '/capabilities') {
+    return { handled: false };
   }
 
   return { handled: false };
