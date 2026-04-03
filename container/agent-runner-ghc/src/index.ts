@@ -178,8 +178,8 @@ async function main(): Promise<void> {
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   // Resolve IPC MCP server path.
-  // In tsx (dev) mode: __dirname = src/, .js doesn't exist → use dist/
-  // In compiled mode: __dirname = dist/, .js exists
+  // Compiled mode: __dirname = dist/, ipc-mcp-stdio.js exists locally.
+  // Dev mode (tsx): __dirname = src/, .js missing → use ../dist/.
   const localJs = path.join(__dirname, 'ipc-mcp-stdio.js');
   const distJs = path.join(__dirname, '..', 'dist', 'ipc-mcp-stdio.js');
   const mcpServerPath = fs.existsSync(localJs) ? localJs : distJs;

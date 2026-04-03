@@ -38,21 +38,14 @@ const OUTPUT_END = '---NANOCLAW_OUTPUT_END---';
 function resolveAgentRunnerPath(agent: AgentConfig): string {
   const isGHC = isAgentGHC(agent);
   const runnerDir = isGHC ? 'agent-runner-ghc' : 'agent-runner';
-  // Resolve relative to this file (not process.cwd()) — works for both dev and global install
   const pkgRoot = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     '..',
   );
-  const distPath = path.join(
-    pkgRoot,
-    'container',
-    runnerDir,
-    'dist',
-    'index.js',
-  );
+  // Prefer compiled dist (production), fall back to src (dev via tsx)
+  const distPath = path.join(pkgRoot, 'container', runnerDir, 'dist', 'index.js');
   const srcPath = path.join(pkgRoot, 'container', runnerDir, 'src', 'index.ts');
-  // Always use source — dist may be stale and miss env var support
-  return srcPath;
+  return fs.existsSync(distPath) ? distPath : srcPath;
 }
 
 /**
@@ -116,10 +109,9 @@ export async function runHostAgent(
   fs.mkdirSync(path.join(ipcDir, 'input'), { recursive: true });
   fs.mkdirSync(path.join(ipcDir, 'output'), { recursive: true });
 
-  // Resolve runner path
+  // Resolve runner path — prefer compiled dist, fall back to tsx in dev
   const runnerPath = resolveAgentRunnerPath(agent);
-  // Always use tsx for host mode — handles ESM resolution (vscode-jsonrpc/node etc)
-  const useTsx = true;
+  const useTsx = runnerPath.endsWith('.ts');
 
   // Build environment
   const env: Record<string, string> = {
