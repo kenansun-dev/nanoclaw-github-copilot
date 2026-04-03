@@ -177,7 +177,12 @@ async function main(): Promise<void> {
   }
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
+  // Resolve IPC MCP server path.
+  // In tsx (dev) mode: __dirname = src/, .js doesn't exist → use dist/
+  // In compiled mode: __dirname = dist/, .js exists
+  const localJs = path.join(__dirname, 'ipc-mcp-stdio.js');
+  const distJs = path.join(__dirname, '..', 'dist', 'ipc-mcp-stdio.js');
+  const mcpServerPath = fs.existsSync(localJs) ? localJs : distJs;
 
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
