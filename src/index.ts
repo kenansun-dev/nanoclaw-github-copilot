@@ -307,6 +307,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
+  // Progressive send state: track message ID for editMessage on partial updates
+  let progressiveMsgId: string | undefined;
+  let progressiveText = '';
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
@@ -315,15 +318,41 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         typeof result.result === 'string'
           ? result.result
           : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
-      if (text) {
+      if (!text) {
+        if (result.status === 'success') queue.notifyIdle(chatJid);
+        return;
+      }
+
+      if (result.partial && channel.editMessage) {
+        // Delta/partial: accumulate and edit existing message
+        progressiveText = text; // delta buffer already accumulated in agent-runner
+        if (!progressiveMsgId) {
+          // First partial — send new message
+          await channel.setTyping?.(chatJid, false);
+          const msgId = await channel.sendMessage(chatJid, text + ' ◌');
+          progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;
+        } else {
+          // Subsequent partial — edit existing message
+          await channel.editMessage(chatJid, progressiveMsgId, text + ' ◌');
+        }
+      } else {
+        // Final message (or channel doesn't support edit)
         await channel.setTyping?.(chatJid, false);
-        await channel.sendMessage(chatJid, text);
+        if (progressiveMsgId && channel.editMessage) {
+          // Replace the progressive message with final content
+          await channel.editMessage(chatJid, progressiveMsgId, text);
+          progressiveMsgId = undefined;
+          progressiveText = '';
+        } else {
+          await channel.sendMessage(chatJid, text);
+        }
         outputSentToUser = true;
       }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
+      logger.info(
+        { group: group.name, partial: !!result.partial },
+        `Agent output: ${raw.length} chars`,
+      );
       resetIdleTimer();
     }
 

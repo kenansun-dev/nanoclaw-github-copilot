@@ -29,16 +29,16 @@ async function sendTelegramMessage(
   chatId: string | number,
   text: string,
   options: { message_thread_id?: number } = {},
-): Promise<void> {
+): Promise<any> {
   try {
-    await api.sendMessage(chatId, text, {
+    return await api.sendMessage(chatId, text, {
       ...options,
       parse_mode: 'Markdown',
     });
   } catch (err: any) {
     // Fallback: send as plain text if Markdown parsing fails
     logger.debug({ err }, 'Markdown send failed, falling back to plain text');
-    await api.sendMessage(chatId, text, options);
+    return await api.sendMessage(chatId, text, options);
   }
 }
 
@@ -269,7 +269,7 @@ export class TelegramChannel implements Channel {
     });
   }
 
-  async sendMessage(jid: string, text: string): Promise<void> {
+  async sendMessage(jid: string, text: string): Promise<string | void> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
       return;
@@ -277,21 +277,23 @@ export class TelegramChannel implements Channel {
 
     try {
       const numericId = jid.replace(/^tg:/, '');
-
-      // Telegram has a 4096 character limit per message — split if needed
       const MAX_LENGTH = 4096;
+      let lastMsgId: string | undefined;
       if (text.length <= MAX_LENGTH) {
-        await sendTelegramMessage(this.bot.api, numericId, text);
+        const sent = await sendTelegramMessage(this.bot.api, numericId, text);
+        lastMsgId = sent?.message_id?.toString();
       } else {
         for (let i = 0; i < text.length; i += MAX_LENGTH) {
-          await sendTelegramMessage(
+          const sent = await sendTelegramMessage(
             this.bot.api,
             numericId,
             text.slice(i, i + MAX_LENGTH),
           );
+          lastMsgId = sent?.message_id?.toString();
         }
       }
       logger.info({ jid, length: text.length }, 'Telegram message sent');
+      return lastMsgId;
     } catch (err: any) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
     }
@@ -325,6 +327,26 @@ export class TelegramChannel implements Channel {
 
   ownsJid(jid: string): boolean {
     return jid.startsWith('tg:');
+  }
+
+  async editMessage(
+    jid: string,
+    messageId: string,
+    text: string,
+  ): Promise<string | void> {
+    if (!this.bot) return;
+    try {
+      const numericId = jid.replace(/^tg:/, '');
+      await this.bot.api.editMessageText(numericId, parseInt(messageId), text, {
+        parse_mode: undefined,
+      });
+      return messageId;
+    } catch (err: any) {
+      // Telegram returns error if message content unchanged
+      if (err?.description?.includes('message is not modified'))
+        return messageId;
+      logger.debug({ jid, messageId, err }, 'Failed to edit Telegram message');
+    }
   }
 
   async disconnect(): Promise<void> {

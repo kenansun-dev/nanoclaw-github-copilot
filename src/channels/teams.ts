@@ -561,7 +561,7 @@ export class TeamsChannel implements Channel {
     );
   }
 
-  async sendMessage(jid: string, text: string): Promise<void> {
+  async sendMessage(jid: string, text: string): Promise<string | void> {
     const ref = this.conversationRefs.get(jid);
     if (!ref) {
       logger.warn(
@@ -571,22 +571,27 @@ export class TeamsChannel implements Channel {
       return;
     }
 
+    let lastActivityId: string | undefined;
     try {
       await this.adapter.continueConversation(
         ref as ConversationReference,
         async (context: TurnContext) => {
-          // Teams has ~28KB message limit; split if needed
           const MAX_LENGTH = 25000;
           if (text.length <= MAX_LENGTH) {
-            await context.sendActivity(text);
+            const res = await context.sendActivity(text);
+            lastActivityId = res?.id;
           } else {
             for (let i = 0; i < text.length; i += MAX_LENGTH) {
-              await context.sendActivity(text.slice(i, i + MAX_LENGTH));
+              const res = await context.sendActivity(
+                text.slice(i, i + MAX_LENGTH),
+              );
+              lastActivityId = res?.id;
             }
           }
         },
       );
       logger.info({ jid, length: text.length }, 'Teams message sent');
+      return lastActivityId;
     } catch (err: any) {
       logger.error({ jid, err }, 'Failed to send Teams message');
     }
@@ -603,7 +608,8 @@ export class TeamsChannel implements Channel {
         { jid },
         'No conversation reference for Teams card — falling back to text',
       );
-      return this.sendMessage(jid, fallbackText);
+      await this.sendMessage(jid, fallbackText);
+      return;
     }
 
     try {
@@ -636,6 +642,30 @@ export class TeamsChannel implements Channel {
 
   ownsJid(jid: string): boolean {
     return jid.startsWith('teams:');
+  }
+
+  async editMessage(
+    jid: string,
+    messageId: string,
+    text: string,
+  ): Promise<string | void> {
+    const ref = this.conversationRefs.get(jid);
+    if (!ref) return;
+    try {
+      await this.adapter.continueConversation(
+        ref as ConversationReference,
+        async (context: TurnContext) => {
+          await context.updateActivity({
+            id: messageId,
+            type: 'message',
+            text,
+          } as Partial<Activity>);
+        },
+      );
+      return messageId;
+    } catch (err: any) {
+      logger.debug({ jid, messageId, err }, 'Failed to edit Teams message');
+    }
   }
 
   async sendFile(

@@ -38,7 +38,7 @@ export function routeOutbound(
   channels: Channel[],
   jid: string,
   text: string,
-): Promise<void> {
+): Promise<string | void> {
   const channel = channels.find((c) => c.ownsJid(jid) && c.isConnected());
   if (!channel) throw new Error(`No channel for JID: ${jid}`);
   return channel.sendMessage(jid, text);

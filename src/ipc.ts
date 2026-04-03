@@ -11,7 +11,7 @@ import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
-  sendMessage: (jid: string, text: string) => Promise<void>;
+  sendMessage: (jid: string, text: string) => Promise<string | void>;
   sendFile?: (
     jid: string,
     filePath: string,
