@@ -575,10 +575,21 @@ async function runProvider(args: string[]) {
 async function runChannel(args: string[]) {
   const sub = args[0];
   switch (sub) {
-    case 'list':
-      const { channelList } = await import('./cli/channel-commands.js');
-      channelList();
+    case 'list': {
+      const { runChannelCommand } = await import('./cli/channel.js');
+      await runChannelCommand(['list']);
       break;
+    }
+    case 'add': {
+      const { runChannelCommand } = await import('./cli/channel.js');
+      await runChannelCommand(['add', args[1]]);
+      break;
+    }
+    case 'remove': {
+      const { runChannelCommand } = await import('./cli/channel.js');
+      await runChannelCommand(['remove', args[1]]);
+      break;
+    }
     case 'test':
       if (!args[1]) {
         console.log('Usage: nanoclaw channel test <name>');
@@ -588,7 +599,7 @@ async function runChannel(args: string[]) {
       await channelTest(args[1]);
       break;
     default:
-      console.log('Usage: nanoclaw channel <list|test> [name]');
+      console.log('Usage: nanoclaw channel <list|add|remove|test> [name]');
   }
 }
 

@@ -190,44 +190,39 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
   if (enableTg.toLowerCase() === 'y') {
     const token = await ask('Telegram bot token: ');
     if (token) {
-      const envPath = path.join(ws, '.env');
-      const fs2 = await import('fs');
-      let env = fs2.readFileSync(envPath, 'utf-8');
-      env = env.replace('# TELEGRAM_BOT_TOKEN=', `TELEGRAM_BOT_TOKEN=${token}`);
-      fs2.writeFileSync(envPath, env);
-      // Enable in config
-      const config = JSON.parse(
-        fs2.readFileSync(path.join(ws, 'nanoclaw.json'), 'utf-8'),
-      );
+      // Write credentials to nanoclaw.json (single source of truth)
+      const configPath = path.join(ws, 'nanoclaw.json');
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
       config.channels = config.channels || {};
-      config.channels.telegram = { enabled: true };
-      fs2.writeFileSync(
-        path.join(ws, 'nanoclaw.json'),
-        JSON.stringify(config, null, 2) + '\n',
-      );
+      config.channels.telegram = {
+        ...config.channels.telegram,
+        enabled: true,
+        botToken: token.trim(),
+      };
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
       console.log('✅ Telegram configured');
     }
   }
 
   const enableTeams = await ask('Enable Teams? (y/N): ');
   if (enableTeams.toLowerCase() === 'y') {
-    // Enable Teams in config
-    const config2 = JSON.parse(fs.readFileSync(path.join(ws, 'nanoclaw.json'), 'utf-8'));
-    config2.channels = config2.channels || {};
-    config2.channels.teams = { enabled: true };
-    fs.writeFileSync(path.join(ws, 'nanoclaw.json'), JSON.stringify(config2, null, 2) + '\n');
-
     console.log('  Teams requires Azure Bot registration.');
     const appId = await ask('  Teams App ID (or Enter to skip): ');
     if (appId.trim()) {
       const appPw = await ask('  Teams App Password: ');
-      const tenantId = await ask('  Teams Tenant ID: ');
-      const envPath2 = path.join(ws, '.env');
-      let env2 = fs.readFileSync(envPath2, 'utf-8');
-      env2 = env2.replace('# MSTEAMS_APP_ID=', `MSTEAMS_APP_ID=${appId.trim()}`);
-      env2 = env2.replace('# MSTEAMS_APP_PASSWORD=', `MSTEAMS_APP_PASSWORD=${appPw.trim()}`);
-      env2 = env2.replace('# MSTEAMS_TENANT_ID=', `MSTEAMS_TENANT_ID=${tenantId.trim()}`);
-      fs.writeFileSync(envPath2, env2);
+      const tenantId = await ask('  Teams Tenant ID (or Enter for "common"): ');
+      // Write all credentials to nanoclaw.json
+      const configPath3 = path.join(ws, 'nanoclaw.json');
+      const config3 = JSON.parse(fs.readFileSync(configPath3, 'utf-8'));
+      config3.channels = config3.channels || {};
+      config3.channels.teams = {
+        ...config3.channels.teams,
+        enabled: true,
+        appId: appId.trim(),
+        appPassword: appPw.trim() || undefined,
+        tenantId: tenantId.trim() || undefined,
+      };
+      fs.writeFileSync(configPath3, JSON.stringify(config3, null, 2) + '\n');
       console.log('\u2705 Teams configured');
     } else {
       console.log('  Teams enabled in config. Add credentials to .env before starting.');
