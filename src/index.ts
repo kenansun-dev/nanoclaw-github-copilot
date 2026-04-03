@@ -841,22 +841,28 @@ async function main(): Promise<void> {
 
       // Unified pair instructions for unregistered chats
       if (!msg.is_from_me && !registeredGroups[chatJid]) {
-        const pairChannel = findChannel(channels, chatJid);
-        if (pairChannel) {
-          const chatName = chatJid.replace(/[^a-zA-Z0-9]/g, '-');
-          pairChannel
-            .sendMessage(
-              chatJid,
-              `👋 This chat isn't paired yet.\n\nTo pair, run on your server:\nnanoclaw pair ${chatJid} --name "${chatName}"\nnanoclaw restart`,
-            )
-            .catch((err: any) =>
-              logger.debug(
-                { err, chatJid },
-                'Failed to send pair instructions',
-              ),
-            );
+        // Check DB in case a channel (e.g. TUI) auto-registered
+        const freshGroups = getAllRegisteredGroups();
+        if (freshGroups[chatJid]) {
+          registeredGroups = freshGroups;
+        } else {
+          const pairChannel = findChannel(channels, chatJid);
+          if (pairChannel) {
+            const chatName = chatJid.replace(/[^a-zA-Z0-9]/g, '-');
+            pairChannel
+              .sendMessage(
+                chatJid,
+                `👋 This chat isn't paired yet.\n\nTo pair, run on your server:\nnanoclaw pair ${chatJid} --name "${chatName}"\nnanoclaw restart`,
+              )
+              .catch((err: any) =>
+                logger.debug(
+                  { err, chatJid },
+                  'Failed to send pair instructions',
+                ),
+              );
+          }
+          return;
         }
-        return;
       }
 
       // Sender allowlist drop mode: discard messages from denied senders before storing

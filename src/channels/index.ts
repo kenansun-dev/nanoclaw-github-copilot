@@ -14,4 +14,7 @@ import './telegram.js';
 // teams
 import './teams.js';
 
+// tui (always available — Unix domain socket)
+import './tui.js';
+
 // whatsapp
