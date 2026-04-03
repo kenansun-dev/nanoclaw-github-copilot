@@ -1,3 +1,4 @@
+& {
 # NanoClaw one-line installer for Windows
 # Usage: irm https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/install.ps1 | iex
 #
@@ -201,3 +202,4 @@ Write-Host ""
 Write-Host "  Sandbox mode: nanoclaw sandbox build && nanoclaw start"
 Write-Host "  Host mode:    set mode to host in nanoclaw.json, then nanoclaw start"
 Write-Host "============================================" -ForegroundColor Cyan
+}
