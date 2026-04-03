@@ -266,6 +266,135 @@ export class TeamsChannel implements Channel {
       if (!(await this.resolveCardSubmit(activity))) return;
     }
 
+    // Handle FileConsentCard invoke (user accepted file download)
+    if (activity.type === 'invoke' && activity.name === 'fileConsent/invoke') {
+      const value = activity.value;
+      if (value?.action === 'accept' && value?.context?.filePath) {
+        const uploadUrl = value.uploadInfo?.uploadUrl;
+        const filePath = value.context.filePath;
+        if (uploadUrl) {
+          try {
+            const fs = await import('fs');
+            const fileBuffer = fs.default.readFileSync(filePath);
+            const uploadRes = await fetch(uploadUrl, {
+              method: 'PUT',
+              headers: {
+                'Content-Type': 'application/octet-stream',
+                'Content-Range': `bytes 0-${fileBuffer.length - 1}/${fileBuffer.length}`,
+              },
+              body: fileBuffer,
+            });
+            if (uploadRes.ok) {
+              logger.info(
+                { jid: chatJid, file: value.context.filename },
+                'Teams file uploaded via FileConsent',
+              );
+              // Send file info card after successful upload
+              await this.adapter.continueConversation(
+                this.conversationRefs.get(chatJid) as ConversationReference,
+                async (ctx: TurnContext) => {
+                  await ctx.sendActivity({
+                    attachments: [
+                      {
+                        contentType:
+                          'application/vnd.microsoft.teams.card.file.info',
+                        name: value.uploadInfo?.name || value.context.filename,
+                        content: {
+                          uniqueId: value.uploadInfo?.uniqueId,
+                          fileType:
+                            value.uploadInfo?.fileType ||
+                            value.context.filename?.split('.').pop(),
+                        },
+                      } as any,
+                    ],
+                  } as Partial<Activity>);
+                },
+              );
+            } else {
+              logger.warn(
+                { status: uploadRes.status },
+                'Teams file upload failed',
+              );
+            }
+          } catch (err: any) {
+            logger.error({ err }, 'Teams FileConsent upload error');
+          }
+        }
+      }
+      return;
+    }
+
+    // Handle file attachments (download to group workspace)
+    if (
+      activity.type === 'message' &&
+      activity.attachments &&
+      activity.attachments.length > 0
+    ) {
+      for (const att of activity.attachments) {
+        // Skip Adaptive Cards and other non-file attachments
+        if (
+          att.contentType === 'application/vnd.microsoft.card.adaptive' ||
+          att.contentType === 'application/vnd.microsoft.card.hero' ||
+          !att.contentUrl
+        )
+          continue;
+
+        const fileName = att.name || 'attachment';
+        const group = this.opts.registeredGroups()[chatJid];
+        if (group) {
+          try {
+            const fs = await import('fs');
+            const pathMod = await import('path');
+            const { resolveWorkspace } = await import('../workspace.js');
+            const uploadsDir = pathMod.default.join(
+              resolveWorkspace(),
+              'groups',
+              group.folder,
+              'uploads',
+            );
+            fs.default.mkdirSync(uploadsDir, { recursive: true });
+            const localPath = pathMod.default.join(uploadsDir, fileName);
+
+            // Teams attachment contentUrl is typically a direct download link
+            const res = await fetch(att.contentUrl);
+            if (res.ok) {
+              const buffer = Buffer.from(await res.arrayBuffer());
+              fs.default.writeFileSync(localPath, buffer);
+              logger.info(
+                { jid: chatJid, file: fileName, path: localPath },
+                'Teams file downloaded',
+              );
+              // Append file info to message content
+              const fileNote = `[Document: ${fileName}] (saved to ${localPath})`;
+              if (activity.text) {
+                activity.text += `\n${fileNote}`;
+              } else {
+                activity.text = fileNote;
+              }
+            } else {
+              logger.warn(
+                { jid: chatJid, file: fileName, status: res.status },
+                'Teams file download failed',
+              );
+              if (!activity.text) {
+                activity.text = `[Document: ${fileName}] (download failed)`;
+              }
+            }
+          } catch (err: any) {
+            logger.error(
+              { err, file: fileName },
+              'Failed to download Teams file',
+            );
+            if (!activity.text) {
+              activity.text = `[Document: ${fileName}]`;
+            }
+          }
+        } else if (!activity.text) {
+          activity.text = `[Document: ${fileName}]`;
+        }
+      }
+    }
+
     if (activity.type !== 'message' || !activity.text) return;
 
     // Store a minimal conversation reference for replies
@@ -507,6 +636,74 @@ export class TeamsChannel implements Channel {
 
   ownsJid(jid: string): boolean {
     return jid.startsWith('teams:');
+  }
+
+  async sendFile(
+    jid: string,
+    filePath: string,
+    filename?: string,
+  ): Promise<void> {
+    const ref = this.conversationRefs.get(jid);
+    if (!ref) {
+      logger.warn({ jid }, 'Teams: no conversation ref for sendFile');
+      return;
+    }
+
+    const fs = await import('fs');
+    const pathMod = await import('path');
+    if (!fs.default.existsSync(filePath)) {
+      logger.warn({ jid, filePath }, 'Teams sendFile: file not found');
+      return;
+    }
+
+    const name = filename || pathMod.default.basename(filePath);
+    const stat = fs.default.statSync(filePath);
+
+    try {
+      await this.adapter.continueConversation(
+        ref as ConversationReference,
+        async (context: TurnContext) => {
+          // Use FileConsentCard for 1:1 chats
+          const isGroup =
+            (ref as any).conversation?.conversationType === 'groupChat' ||
+            (ref as any).conversation?.conversationType === 'channel';
+
+          if (!isGroup) {
+            // 1:1 DM: send FileConsentCard
+            const consentCard = {
+              type: 'application/vnd.microsoft.teams.card.file.consent',
+              name,
+              content: {
+                description: `File from NanoClaw: ${name}`,
+                sizeInBytes: stat.size,
+                acceptContext: { filePath, filename: name },
+                declineContext: { filePath },
+              },
+            };
+            await context.sendActivity({
+              attachments: [consentCard as any],
+            } as Partial<Activity>);
+            logger.info(
+              { jid, filename: name },
+              'Teams FileConsentCard sent (DM)',
+            );
+          } else {
+            // Group/channel: send as text with file info
+            // Full SharePoint upload requires Graph API + more permissions
+            await context.sendActivity(
+              `📎 File ready: **${name}** (${(stat.size / 1024).toFixed(1)} KB). ` +
+                `File is available on the server at: ${filePath}`,
+            );
+            logger.info(
+              { jid, filename: name },
+              'Teams file notification sent (group)',
+            );
+          }
+        },
+      );
+    } catch (err: any) {
+      logger.error({ jid, err, filePath }, 'Teams sendFile failed');
+    }
   }
 
   async disconnect(): Promise<void> {

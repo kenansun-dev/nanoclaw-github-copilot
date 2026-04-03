@@ -43,7 +43,13 @@ function resolveAgentRunnerPath(agent: AgentConfig): string {
     '..',
   );
   // Prefer compiled dist (production), fall back to src (dev via tsx)
-  const distPath = path.join(pkgRoot, 'container', runnerDir, 'dist', 'index.js');
+  const distPath = path.join(
+    pkgRoot,
+    'container',
+    runnerDir,
+    'dist',
+    'index.js',
+  );
   const srcPath = path.join(pkgRoot, 'container', runnerDir, 'src', 'index.ts');
   return fs.existsSync(distPath) ? distPath : srcPath;
 }
