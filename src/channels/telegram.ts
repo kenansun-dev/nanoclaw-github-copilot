@@ -335,17 +335,28 @@ export class TelegramChannel implements Channel {
     text: string,
   ): Promise<string | void> {
     if (!this.bot) return;
+    const numericId = jid.replace(/^tg:/, '');
+    const msgId = parseInt(messageId);
     try {
-      const numericId = jid.replace(/^tg:/, '');
-      await this.bot.api.editMessageText(numericId, parseInt(messageId), text, {
-        parse_mode: undefined,
+      await this.bot.api.editMessageText(numericId, msgId, text, {
+        parse_mode: 'Markdown',
       });
       return messageId;
     } catch (err: any) {
-      // Telegram returns error if message content unchanged
       if (err?.description?.includes('message is not modified'))
         return messageId;
-      logger.debug({ jid, messageId, err }, 'Failed to edit Telegram message');
+      // Fallback: try without Markdown
+      try {
+        await this.bot.api.editMessageText(numericId, msgId, text);
+        return messageId;
+      } catch (err2: any) {
+        if (err2?.description?.includes('message is not modified'))
+          return messageId;
+        logger.debug(
+          { jid, messageId, err: err2 },
+          'Failed to edit Telegram message',
+        );
+      }
     }
   }
 
