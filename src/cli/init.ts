@@ -166,19 +166,17 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
       console.log('✅ GitHub Copilot auth found' + (hasCopilotAuth ? ' (~/.copilot/)' : ' (CLI)'));
     } else {
       console.log('GitHub Copilot auth not found.');
-      const authChoice = await ask('Enter GitHub token (or press Enter to skip): ');
-      if (authChoice.trim()) {
-        const envPath = path.join(ws, '.env');
-        let env = fs.readFileSync(envPath, 'utf-8');
-        if (env.includes('# COPILOT_GITHUB_TOKEN=')) {
-          env = env.replace('# COPILOT_GITHUB_TOKEN=', `COPILOT_GITHUB_TOKEN=${authChoice.trim()}`);
-        } else {
-          env += `\nCOPILOT_GITHUB_TOKEN=${authChoice.trim()}\n`;
+      const loginChoice = await ask('Run copilot login now? (Y/n): ');
+      if (loginChoice.toLowerCase() !== 'n') {
+        try {
+          const { execSync } = await import('child_process');
+          execSync('nanoclaw auth login', { stdio: 'inherit', timeout: 120000 });
+          console.log('\u2705 Auth configured');
+        } catch {
+          console.log('  Auth failed. Run manually: nanoclaw auth login');
         }
-        fs.writeFileSync(envPath, env);
-        console.log('\u2705 Token saved to .env');
       } else {
-        console.log('  Skipped. Set COPILOT_GITHUB_TOKEN in .env later, or run: copilot login');
+        console.log('  Skipped. Run later: nanoclaw auth login');
       }
     }
     console.log('');
