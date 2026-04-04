@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 /**
  * NanoClaw Agent Runner (Copilot SDK version)
  * Runs inside a container, receives config via stdin, outputs result to stdout.
@@ -454,7 +455,7 @@ async function main(): Promise<void> {
           try {
             session = await client.createSession({
               ...createConfig,
-              sessionId: `nanoclaw-${containerInput.groupFolder}-${Date.now()}`,
+              sessionId: randomUUID(),
             });
           } catch (createErr) {
             // Retry without reasoningEffort as last resort
@@ -464,7 +465,7 @@ async function main(): Promise<void> {
               session = await client.createSession({
                 ...sessionConfig,
                 reasoningEffort: undefined,
-                sessionId: `nanoclaw-${containerInput.groupFolder}-${Date.now()}`,
+                sessionId: randomUUID(),
               });
             } else {
               throw createErr;
@@ -478,7 +479,7 @@ async function main(): Promise<void> {
         try {
           session = await client.createSession({
             ...sessionConfig,
-            sessionId: `nanoclaw-${containerInput.groupFolder}-${Date.now()}`,
+            sessionId: randomUUID(),
           });
         } catch (createErr) {
           const msg = createErr instanceof Error ? createErr.message : String(createErr);
@@ -487,7 +488,7 @@ async function main(): Promise<void> {
             session = await client.createSession({
               ...sessionConfig,
               reasoningEffort: undefined,
-              sessionId: `nanoclaw-${containerInput.groupFolder}-${Date.now()}`,
+              sessionId: randomUUID(),
             });
           } else {
             throw createErr;
