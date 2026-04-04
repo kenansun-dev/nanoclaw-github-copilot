@@ -267,7 +267,19 @@ cat > "$MANIFEST_DIR/manifest.json" << EOFMANIFEST
     }]
   }],
   "permissions": ["identity", "messageTeamMembers"],
-  "validDomains": []
+  "validDomains": [],
+  "webApplicationInfo": {
+    "id": "$APP_ID",
+    "resource": ""
+  },
+  "authorization": {
+    "permissions": {
+      "resourceSpecific": [
+        { "name": "ChatMessage.Read.Chat", "type": "Application" },
+        { "name": "ChannelMessage.Read.Group", "type": "Application" }
+      ]
+    }
+  }
 }
 EOFMANIFEST
 

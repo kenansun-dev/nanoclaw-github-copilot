@@ -56,6 +56,91 @@ export class TeamsChannel implements Channel {
   // Store conversation references for proactive messaging
   private conversationRefs = new Map<string, Partial<ConversationReference>>();
 
+  // Graph API token cache for fetching reply context
+  private graphToken: { token: string; expiresAt: number } | null = null;
+
+  /**
+   * Get a Graph API access token using the bot's app credentials.
+   * Caches the token until 5 minutes before expiry.
+   */
+  private async getGraphToken(): Promise<string | null> {
+    if (this.graphToken && Date.now() < this.graphToken.expiresAt) {
+      return this.graphToken.token;
+    }
+    const appId = this.adapterSettings.appId;
+    const appPassword = this.adapterSettings.appPassword;
+    const tenant =
+      this.adapterSettings.channelAuthTenant || 'botframework.com';
+    if (!appId || !appPassword) return null;
+
+    try {
+      const body = new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: appId,
+        client_secret: appPassword,
+        scope: 'https://graph.microsoft.com/.default',
+      });
+      const res = await fetch(
+        `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
+        { method: 'POST', body },
+      );
+      if (!res.ok) {
+        logger.debug(
+          { status: res.status },
+          'Failed to get Graph token for reply context',
+        );
+        return null;
+      }
+      const data = (await res.json()) as any;
+      this.graphToken = {
+        token: data.access_token,
+        expiresAt: Date.now() + (data.expires_in - 300) * 1000, // 5 min buffer
+      };
+      return data.access_token;
+    } catch (err: any) {
+      logger.debug({ err: err.message }, 'Graph token fetch failed');
+      return null;
+    }
+  }
+
+  /**
+   * Fetch a message's content via Graph API.
+   * Works for DM/group chat: GET /chats/{chatId}/messages/{messageId}
+   */
+  private async fetchReplyViaGraph(
+    conversationId: string,
+    messageId: string,
+  ): Promise<{ content: string; author: string } | null> {
+    const token = await this.getGraphToken();
+    if (!token) return null;
+
+    try {
+      const url = `https://graph.microsoft.com/v1.0/chats/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        logger.debug(
+          { status: res.status, conversationId, messageId },
+          'Graph API reply fetch failed',
+        );
+        return null;
+      }
+      const msg = (await res.json()) as any;
+      const content = msg.body?.content || '';
+      // Strip HTML tags if contentType is html
+      const text =
+        msg.body?.contentType === 'html'
+          ? content.replace(/<[^>]+>/g, '').trim()
+          : content;
+      const author = msg.from?.user?.displayName || 'Someone';
+      return text ? { content: text, author } : null;
+    } catch (err: any) {
+      logger.debug({ err: err.message }, 'Graph reply fetch error');
+      return null;
+    }
+  }
+
   /** Convert Adaptive Card submit (activity.value) to synthetic slash command text. */
   private async resolveCardSubmit(activity: any): Promise<boolean> {
     if (activity.type !== 'message' || activity.text || !activity.value)
@@ -452,13 +537,24 @@ export class TeamsChannel implements Channel {
           const author = quoted.sender_name || 'Someone';
           const truncated = (quoted.content || '').slice(0, 200);
           content = `[Replying to ${author}: ${truncated}]\n${content}`;
+        } else {
+          // Fallback: try Graph API for messages not in local DB
+          const convId = activity.conversation?.id;
+          if (convId) {
+            const graphMsg = await this.fetchReplyViaGraph(
+              convId,
+              activity.replyToId,
+            );
+            if (graphMsg) {
+              const truncated = graphMsg.content.slice(0, 200);
+              content = `[Replying to ${graphMsg.author}: ${truncated}]\n${content}`;
+            }
+          }
         }
       } catch {
-        // DB not available — skip quote context
+        // DB/Graph not available — skip quote context
       }
     }
-
-    // Note: unregistered chats are handled by index.ts (pair instructions)
 
     this.opts.onMessage(chatJid, {
       id: msgId,
@@ -565,9 +661,22 @@ export class TeamsChannel implements Channel {
           const author = quoted.sender_name || 'Someone';
           const truncated = (quoted.content || '').slice(0, 200);
           content = `[Replying to ${author}: ${truncated}]\n${content}`;
+        } else {
+          // Fallback: try Graph API for messages not in local DB
+          const convId = activity.conversation?.id;
+          if (convId) {
+            const graphMsg = await this.fetchReplyViaGraph(
+              convId,
+              activity.replyToId,
+            );
+            if (graphMsg) {
+              const truncated = graphMsg.content.slice(0, 200);
+              content = `[Replying to ${graphMsg.author}: ${truncated}]\n${content}`;
+            }
+          }
         }
       } catch {
-        // DB not available — skip quote context
+        // DB/Graph not available — skip quote context
       }
     }
 

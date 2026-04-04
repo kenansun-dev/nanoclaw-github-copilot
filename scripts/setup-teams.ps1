@@ -215,6 +215,18 @@ $manifest = @{
     })
     permissions = @("identity", "messageTeamMembers")
     validDomains = @()
+    webApplicationInfo = @{
+        id = $AppId
+        resource = ""
+    }
+    authorization = @{
+        permissions = @{
+            resourceSpecific = @(
+                @{ name = "ChatMessage.Read.Chat"; type = "Application" }
+                @{ name = "ChannelMessage.Read.Group"; type = "Application" }
+            )
+        }
+    }
 }
 $manifest | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $ManifestDir "manifest.json")
 
