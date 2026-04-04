@@ -479,19 +479,31 @@ export function resolveAgentIdFromBindings(
   chatConfig?: { agentId?: string },
 ): string | undefined {
   if (config.bindings?.length) {
-    // Derive channel from JID
+    // Derive channel and accountId from JID
+    // Format: tg:<chatId> (default account) or tg:<accountId>:<chatId>
     let channel: string | undefined;
-    if (chatJid.startsWith('tg:')) channel = 'telegram';
-    else if (chatJid.startsWith('teams:')) channel = 'teams';
-    else if (chatJid.startsWith('dc:')) channel = 'discord';
-    else if (chatJid.startsWith('wa:')) channel = 'whatsapp';
+    let jidAccountId: string | undefined;
+    if (chatJid.startsWith('tg:')) {
+      channel = 'telegram';
+      const parts = chatJid.split(':');
+      if (parts.length >= 3) jidAccountId = parts[1]; // tg:accountId:chatId
+    } else if (chatJid.startsWith('teams:')) {
+      channel = 'teams';
+    } else if (chatJid.startsWith('dc:')) {
+      channel = 'discord';
+    } else if (chatJid.startsWith('wa:')) {
+      channel = 'whatsapp';
+    }
 
     for (const binding of config.bindings) {
       const m = binding.match;
       if (m.channel && m.channel !== channel) continue;
+      if (m.accountId) {
+        // Match accountId: 'default' matches JIDs without accountId prefix
+        const effective = jidAccountId || 'default';
+        if (m.accountId !== effective) continue;
+      }
       if (m.peer?.id && !chatJid.includes(m.peer.id)) continue;
-      // accountId matching would require knowing which account the message came from
-      // For now, channel + peer matching is sufficient
       return binding.agentId;
     }
   }

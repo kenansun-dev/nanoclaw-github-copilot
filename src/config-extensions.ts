@@ -8,6 +8,7 @@ import path from 'path';
 import fs from 'fs';
 import { CONTAINER_IMAGE } from './config.js';
 import { resolveWorkspace } from './workspace.js';
+import { resolveAgentIdFromBindings } from './config-loader.js';
 import {
   loadConfig,
   resolveAgent,
@@ -48,7 +49,9 @@ export const GHC_CONTAINER_IMAGE = IS_GHC_PROVIDER
 export function resolveAgentForChat(chatJid: string): AgentConfig {
   const config = loadConfig();
   const chat = config.chats[chatJid];
-  return resolveAgent(config, chat?.agentId);
+  // Check bindings first, then legacy chatConfig.agentId
+  const agentId = resolveAgentIdFromBindings(config, chatJid, chat) || chat?.agentId;
+  return resolveAgent(config, agentId);
 }
 
 export function isAgentGHC(agent: AgentConfig): boolean {

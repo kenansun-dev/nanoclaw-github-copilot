@@ -48,10 +48,19 @@ export class TelegramChannel implements Channel {
   private bot: Bot | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
+  private accountId?: string;
 
-  constructor(botToken: string, opts: TelegramChannelOpts) {
+  constructor(botToken: string, opts: TelegramChannelOpts, accountId?: string) {
     this.botToken = botToken;
     this.opts = opts;
+    this.accountId = accountId;
+  }
+
+  /** Build a chat JID, scoped by accountId when in multi-account mode. */
+  private chatJid(chatId: number | string): string {
+    return this.accountId && this.accountId !== 'default'
+      ? `tg:${this.accountId}:${chatId}`
+      : `tg:${chatId}`;
   }
 
   async connect(): Promise<void> {
@@ -90,7 +99,7 @@ export class TelegramChannel implements Channel {
       if (colonIdx > 0) {
         const command = data.substring(0, colonIdx);
         const value = data.substring(colonIdx + 1);
-        const chatJid = `tg:${ctx.chat?.id}`;
+        const chatJid = this.chatJid(ctx.chat!.id);
         const timestamp = new Date().toISOString();
         const senderName = ctx.from?.first_name || 'user';
         // Route as a slash command message
@@ -121,7 +130,7 @@ export class TelegramChannel implements Channel {
         if (TELEGRAM_BOT_COMMANDS.has(cmd)) return;
       }
 
-      const chatJid = `tg:${ctx.chat.id}`;
+      const chatJid = this.chatJid(ctx.chat.id);
       let content = ctx.message.text;
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
       const senderName =
@@ -201,7 +210,7 @@ export class TelegramChannel implements Channel {
 
     // Handle non-text messages with placeholders so the agent knows something was sent
     const storeNonText = (ctx: any, placeholder: string) => {
-      const chatJid = `tg:${ctx.chat.id}`;
+      const chatJid = this.chatJid(ctx.chat.id);
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) return;
 
@@ -241,7 +250,7 @@ export class TelegramChannel implements Channel {
     this.bot.on('message:audio', (ctx: any) => storeNonText(ctx, '[Audio]'));
     this.bot.on('message:document', async (ctx: any) => {
       const name = ctx.message.document?.file_name || 'file';
-      const chatJid = `tg:${ctx.chat.id}`;
+      const chatJid = this.chatJid(ctx.chat.id);
       const group = this.opts.registeredGroups()[chatJid];
       if (group) {
         // Download file to group workspace
@@ -317,7 +326,7 @@ export class TelegramChannel implements Channel {
     }
 
     try {
-      const numericId = jid.replace(/^tg:/, '');
+      const numericId = jid.split(':').pop()!;
       const MAX_LENGTH = 4096;
       let lastMsgId: string | undefined;
       if (text.length <= MAX_LENGTH) {
@@ -354,7 +363,7 @@ export class TelegramChannel implements Channel {
     const path = await import('path');
     const { InputFile } = await import('grammy');
     try {
-      const numericId = jid.replace(/^tg:/, '');
+      const numericId = jid.split(':').pop()!;
       const name = filename || path.default.basename(filePath);
       await this.bot.api.sendDocument(
         numericId,
@@ -377,7 +386,7 @@ export class TelegramChannel implements Channel {
   ): Promise<void> {
     if (!this.bot) return;
     try {
-      const numericId = jid.replace(/^tg:/, '');
+      const numericId = jid.split(':').pop()!;
       const { InlineKeyboard } = await import('grammy');
       // card.choices → inline keyboard buttons
       const cardObj = card as any;
@@ -415,7 +424,7 @@ export class TelegramChannel implements Channel {
     text: string,
   ): Promise<string | void> {
     if (!this.bot) return;
-    const numericId = jid.replace(/^tg:/, '');
+    const numericId = jid.split(':').pop()!;
     const msgId = parseInt(messageId);
     try {
       await this.bot.api.editMessageText(numericId, msgId, text, {
@@ -462,7 +471,7 @@ export class TelegramChannel implements Channel {
 
     if (!isTyping) return;
 
-    const numericId = jid.replace(/^tg:/, '');
+    const numericId = jid.split(':').pop()!;
     const sendAction = async () => {
       try {
         await this.bot!.api.sendChatAction(numericId, 'typing');
@@ -491,5 +500,5 @@ registerChannel('telegram', (opts: ChannelOpts) => {
   }
 
   if (!token) return null;
-  return new TelegramChannel(token, opts);
+  return new TelegramChannel(token, opts, opts.accountId);
 });
