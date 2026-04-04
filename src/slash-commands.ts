@@ -172,14 +172,18 @@ async function handleThink(
   ctx: SlashCommandContext,
 ): Promise<void> {
   if (!level) {
-    // Show current think level
+    // Show current think level with interactive selection
     const currentLevel = getConfig().agents?.defaults?.thinkLevel || 'off';
     if (ctx.channel) {
-      if (ctx.chatJid.startsWith('teams:') && ctx.channel.sendCard) {
+      if (ctx.channel.sendCard) {
         const thinkCmd = COMMANDS.find((c) => c.name === 'think')!;
+        // Teams: Adaptive Card; Telegram: inline keyboard via sendCard
+        const card = ctx.chatJid.startsWith('teams:')
+          ? buildTeamsAdaptiveCard(thinkCmd, currentLevel)
+          : { command: 'think', choices: thinkCmd.choices };
         await ctx.channel.sendCard(
           ctx.chatJid,
-          buildTeamsAdaptiveCard(thinkCmd, currentLevel),
+          card,
           `🧠 Think level: **${currentLevel}**\nUsage: /think off|low|medium|high|xhigh`,
         );
       } else {

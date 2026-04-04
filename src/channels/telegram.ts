@@ -82,6 +82,36 @@ export class TelegramChannel implements Channel {
     });
 
     // Telegram bot commands handled above — skip them in the general handler
+    // Handle inline keyboard callbacks (e.g., /think level selection)
+    this.bot.on('callback_query:data', async (ctx: any) => {
+      const data = ctx.callbackQuery.data || '';
+      // Parse command:value format
+      const colonIdx = data.indexOf(':');
+      if (colonIdx > 0) {
+        const command = data.substring(0, colonIdx);
+        const value = data.substring(colonIdx + 1);
+        const chatJid = `tg:${ctx.chat?.id}`;
+        const timestamp = new Date().toISOString();
+        const senderName = ctx.from?.first_name || 'user';
+        // Route as a slash command message
+        this.opts.onMessage(chatJid, {
+          id: `cb-${Date.now()}`,
+          chat_jid: chatJid,
+          sender: ctx.from?.id?.toString() || '',
+          sender_name: senderName,
+          content: `/${command} ${value}`,
+          timestamp,
+          is_from_me: false,
+        });
+        // Answer callback to remove loading state
+        try {
+          await ctx.answerCallbackQuery(`Set ${command} to ${value}`);
+        } catch {
+          /* */
+        }
+      }
+    });
+
     // so they don't also get stored as messages. All other /commands flow through.
     const TELEGRAM_BOT_COMMANDS = new Set(['chatid', 'ping']);
 
@@ -327,6 +357,45 @@ export class TelegramChannel implements Channel {
 
   ownsJid(jid: string): boolean {
     return jid.startsWith('tg:');
+  }
+
+  async sendCard(
+    jid: string,
+    card: object,
+    fallbackText: string,
+  ): Promise<void> {
+    if (!this.bot) return;
+    try {
+      const numericId = jid.replace(/^tg:/, '');
+      const { InlineKeyboard } = await import('grammy');
+      // card.choices → inline keyboard buttons
+      const cardObj = card as any;
+      if (cardObj.choices && Array.isArray(cardObj.choices)) {
+        const keyboard = new InlineKeyboard();
+        for (const choice of cardObj.choices) {
+          keyboard.text(
+            choice.title,
+            `${cardObj.command || 'action'}:${choice.value}`,
+          );
+        }
+        // Arrange in rows of 3
+        const rows: any[][] = [];
+        const buttons = cardObj.choices.map((c: any) => ({
+          text: c.title,
+          callback_data: `${cardObj.command || 'action'}:${c.value}`,
+        }));
+        for (let i = 0; i < buttons.length; i += 3) {
+          rows.push(buttons.slice(i, i + 3));
+        }
+        await this.bot.api.sendMessage(numericId, fallbackText, {
+          reply_markup: { inline_keyboard: rows },
+        });
+      } else {
+        await sendTelegramMessage(this.bot.api, numericId, fallbackText);
+      }
+    } catch (err: any) {
+      logger.error({ jid, err }, 'Failed to send Telegram card');
+    }
   }
 
   async editMessage(
