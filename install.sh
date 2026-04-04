@@ -204,6 +204,23 @@ init_workspace() {
 run_doctor() {
   info "Running health check..."
   nanoclaw doctor || true
+
+  # Auto-fallback to host mode if Docker unavailable
+  if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+    info "Docker available (sandbox mode supported)"
+  else
+    info "Docker not available — setting host mode"
+    local config="$HOME/.nanoclaw/nanoclaw.json"
+    if [ -f "$config" ] && command -v node &>/dev/null; then
+      node -e "
+        const fs = require('fs');
+        const c = JSON.parse(fs.readFileSync('$config','utf-8'));
+        if (c.agents && c.agents.defaults) { c.agents.defaults.mode = 'host'; }
+        fs.writeFileSync('$config', JSON.stringify(c, null, 2) + '\\n');
+        console.log('  Config set to host mode');
+      " || true
+    fi
+  fi
 }
 
 # ─── Main ──────────────────────────────────────────────────────
@@ -232,10 +249,9 @@ main() {
   echo "  ╚═══════════════════════════════════════════╝"
   echo ""
   echo "  Next steps:"
-  echo "    1. Edit config:  nano ~/.nanoclaw/nanoclaw.json"
-  echo "    2. Add secrets:  nano ~/.nanoclaw/.env"
-  echo "    3. Build agent:  nanoclaw sandbox build"
-  echo "    4. Start:        nanoclaw start"
+  echo "    nanoclaw doctor  — check setup"
+  echo "    nanoclaw start   — start service"
+  echo "    nanoclaw tui     — chat in terminal"
   echo ""
   echo "  Docs: ${REPO_URL}"
   echo ""
