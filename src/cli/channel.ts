@@ -9,9 +9,14 @@
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
+import { execSync } from 'child_process';
+import { fileURLToPath } from 'url';
 
 import { loadConfig, saveConfig } from '../config-loader.js';
 import { resolveWorkspace } from '../workspace.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PACKAGE_ROOT = path.resolve(__dirname, '..', '..');
 
 const SUPPORTED_CHANNELS = ['telegram', 'teams'] as const;
 type ChannelName = (typeof SUPPORTED_CHANNELS)[number];
@@ -123,6 +128,12 @@ async function channelAdd(name?: string): Promise<void> {
   }
 
   const channelName = name as ChannelName;
+
+  // Teams: run setup-teams script (handles Azure Bot + DevTunnel + credentials)
+  if (channelName === 'teams') {
+    return channelAddTeams();
+  }
+
   const fields = CHANNEL_FIELDS[channelName];
 
   if (!process.stdin.isTTY) {
@@ -188,5 +199,50 @@ function channelRemove(name?: string): void {
     console.log('  Restart nanoclaw for changes to take effect.\n');
   } else {
     console.log(`Channel ${name} is not configured.`);
+  }
+}
+
+/**
+ * Teams setup: run the setup-teams script which handles
+ * Azure Bot registration + DevTunnel + credentials.
+ */
+async function channelAddTeams(): Promise<void> {
+  const isWindows = process.platform === 'win32';
+  const scriptName = isWindows ? 'setup-teams.ps1' : 'setup-teams.sh';
+  const scriptPath = path.join(PACKAGE_ROOT, 'scripts', scriptName);
+
+  if (!fs.existsSync(scriptPath)) {
+    console.error(`Setup script not found: ${scriptPath}`);
+    console.log('Run from a nanoclaw installation directory.');
+    return;
+  }
+
+  console.log('\nSetting up Teams channel...');
+  console.log('  This requires Azure CLI and DevTunnel CLI.');
+  console.log(`  Running: ${scriptName}\n`);
+
+  try {
+    if (isWindows) {
+      execSync(
+        `powershell -ExecutionPolicy Bypass -File "${scriptPath}"`,
+        { stdio: 'inherit', timeout: 600000 },
+      );
+    } else {
+      execSync(`bash "${scriptPath}"`, {
+        stdio: 'inherit',
+        timeout: 600000,
+      });
+    }
+    console.log('\n\u2705 Teams setup complete.');
+    console.log('  Restart nanoclaw for changes to take effect.\n');
+  } catch (err: any) {
+    if (err.status) {
+      console.error(`\nTeams setup failed (exit code ${err.status}).`);
+    } else {
+      console.error(`\nTeams setup failed: ${err.message}`);
+    }
+    console.log(
+      `  Run manually: ${isWindows ? 'powershell' : 'bash'} "${scriptPath}"\n`,
+    );
   }
 }

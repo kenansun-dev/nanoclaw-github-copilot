@@ -221,28 +221,12 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
 
   const enableTeams = await ask('Enable Teams? (y/N): ');
   if (enableTeams.toLowerCase() === 'y') {
-    console.log('  Teams requires Azure Bot registration.');
-    const appId = await ask('  Teams App ID (or Enter to skip): ');
-    if (appId.trim()) {
-      const appPw = await ask('  Teams App Password: ');
-      const tenantId = await ask('  Teams Tenant ID (or Enter for "common"): ');
-      // Write all credentials to nanoclaw.json
-      const configPath3 = path.join(ws, 'nanoclaw.json');
-      const config3 = JSON.parse(fs.readFileSync(configPath3, 'utf-8'));
-      config3.channels = config3.channels || {};
-      config3.channels.teams = {
-        ...config3.channels.teams,
-        enabled: true,
-        appId: appId.trim(),
-        appPassword: appPw.trim() || undefined,
-        tenantId: tenantId.trim() || undefined,
-      };
-      fs.writeFileSync(configPath3, JSON.stringify(config3, null, 2) + '\n');
-      console.log('\u2705 Teams configured');
-    } else {
-      console.log(
-        '  Teams enabled in config. Add credentials to .env before starting.',
-      );
+    try {
+      const { runChannelCommand } = await import('./channel.js');
+      await runChannelCommand(['add', 'teams']);
+    } catch (err: any) {
+      console.log(`  Teams setup failed: ${err.message}`);
+      console.log('  Run later: nanoclaw channel add teams');
     }
   }
 
