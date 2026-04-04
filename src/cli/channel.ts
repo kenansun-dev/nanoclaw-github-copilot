@@ -223,10 +223,10 @@ async function channelAddTeams(): Promise<void> {
 
   try {
     if (isWindows) {
-      execSync(
-        `powershell -ExecutionPolicy Bypass -File "${scriptPath}"`,
-        { stdio: 'inherit', timeout: 600000 },
-      );
+      execSync(`powershell -ExecutionPolicy Bypass -File "${scriptPath}"`, {
+        stdio: 'inherit',
+        timeout: 600000,
+      });
     } else {
       execSync(`bash "${scriptPath}"`, {
         stdio: 'inherit',

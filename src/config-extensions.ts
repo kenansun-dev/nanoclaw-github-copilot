@@ -251,7 +251,7 @@ export async function runAgentForChat(
   const enrichedInput = {
     ...input,
     assistantName: agent.name || input.assistantName,
-    model: agent.model || input.model,
+    model: getAgentModelName(agent) || input.model,
   };
   if (agent.mode === 'host') {
     const { runHostAgent } = await getHostRunner();
