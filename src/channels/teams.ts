@@ -443,6 +443,21 @@ export class TeamsChannel implements Channel {
 
     this.opts.onChatMetadata(chatJid, timestamp, chatName, 'teams', isGroup);
 
+    // Include quoted/replied-to message content so the agent has context
+    if (activity.replyToId) {
+      try {
+        const { getMessageById } = await import('../db.js');
+        const quoted = getMessageById(chatJid, activity.replyToId);
+        if (quoted?.content) {
+          const author = quoted.sender_name || 'Someone';
+          const truncated = (quoted.content || '').slice(0, 200);
+          content = `[Replying to ${author}: ${truncated}]\n${content}`;
+        }
+      } catch {
+        // DB not available — skip quote context
+      }
+    }
+
     // Note: unregistered chats are handled by index.ts (pair instructions)
 
     this.opts.onMessage(chatJid, {
@@ -541,8 +556,20 @@ export class TeamsChannel implements Channel {
     // Store chat metadata
     this.opts.onChatMetadata(chatJid, timestamp, chatName, 'teams', isGroup);
 
-    // Only deliver to registered groups
-    // Note: unregistered chats are handled by index.ts (pair instructions)
+    // Include quoted/replied-to message content so the agent has context
+    if (activity.replyToId) {
+      try {
+        const { getMessageById } = await import('../db.js');
+        const quoted = getMessageById(chatJid, activity.replyToId);
+        if (quoted?.content) {
+          const author = quoted.sender_name || 'Someone';
+          const truncated = (quoted.content || '').slice(0, 200);
+          content = `[Replying to ${author}: ${truncated}]\n${content}`;
+        }
+      } catch {
+        // DB not available — skip quote context
+      }
+    }
 
     // Deliver message
     this.opts.onMessage(chatJid, {

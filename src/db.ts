@@ -350,6 +350,24 @@ export function getNewMessages(
   return { messages: rows, newTimestamp };
 }
 
+/**
+ * Get a single message by its ID and chat JID.
+ * Used for resolving reply/quote context (e.g. Teams replyToId).
+ */
+export function getMessageById(
+  chatJid: string,
+  messageId: string,
+): { content: string; sender_name: string } | undefined {
+  const row = db
+    .prepare(
+      'SELECT content, sender_name FROM messages WHERE id = ? AND chat_jid = ?',
+    )
+    .get(messageId, chatJid) as
+    | { content: string; sender_name: string }
+    | undefined;
+  return row;
+}
+
 export function getMessagesSince(
   chatJid: string,
   sinceTimestamp: string,
