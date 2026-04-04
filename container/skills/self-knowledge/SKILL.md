@@ -148,6 +148,58 @@ cat ~/.nanoclaw/nanoclaw.json
 1. List your MCP tools (table above)
 2. Run `/capabilities` for a full report
 
+## Self-diagnosis — reading your own logs
+
+When something goes wrong (errors, agent not responding, crashes), you can read nanoclaw's logs to diagnose:
+
+### Log location
+```bash
+# Host mode
+cat ~/.nanoclaw/logs/nanoclaw.log | tail -50
+
+# Or use CLI
+nanoclaw logs          # last 50 lines
+nanoclaw logs -f       # follow (live)
+```
+
+### Log format (pino JSON)
+Each line is JSON:
+```json
+{"level":30,"time":1775270000000,"msg":"Telegram message stored","chatJid":"tg:123"}
+```
+Levels: 10=trace, 20=debug, 30=info, 40=warn, 50=error, 60=fatal
+
+### Common patterns to look for
+```bash
+# Errors (works with both pino JSON and pretty-print format)
+cat ~/.nanoclaw/logs/nanoclaw.log | grep -i 'error\|fatal\|ERR' | tail -5
+
+# Agent spawn failures
+cat ~/.nanoclaw/logs/nanoclaw.log | grep -i 'spawn\|ENOENT\|exited' | tail -5
+
+# Channel connection issues
+cat ~/.nanoclaw/logs/nanoclaw.log | grep -i 'telegram\|teams\|connected\|failed' | tail -10
+
+# Session issues
+cat ~/.nanoclaw/logs/nanoclaw.log | grep -i 'session\|resume\|create' | tail -5
+```
+
+### Common errors and fixes
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `ENOENT...tsx` | tsx not found | Rebuild: `npx tsc` in agent-runner |
+| `No channels connected` | No channel enabled | `nanoclaw channel add telegram` |
+| `Docker not running` | Container mode needs Docker | Switch to host: `nanoclaw_control(action="set_config", config_path="agents.defaults.mode", config_value="host")` |
+| `Model does not support` | Model/thinkLevel mismatch | Check model supports reasoning, or `/think off` |
+| `session.resume failed` | Stale session after config change | Agent-runner auto-creates new session on resume failure |
+| `COPILOT_GITHUB_TOKEN` | Auth not configured | `nanoclaw auth login` |
+
+### Checking service status
+```bash
+nanoclaw status        # running? pid? systemd?
+nanoclaw doctor        # full health check
+```
+
 ## What you CAN do
 - Run bash commands (host: permanent changes, container: temporary)
 - Read/write files in your workspace
