@@ -445,20 +445,54 @@ async function main(): Promise<void> {
             log(`Resumed session: ${sessionId} (MCP reload skipped)`);
           }
         } catch (err) {
-          log(`Failed to resume session ${sessionId}, creating new: ${err instanceof Error ? err.message : String(err)}`);
-          session = await client.createSession({
-            ...sessionConfig,
-            sessionId: `nanoclaw-${containerInput.groupFolder}-${Date.now()}`,
-          });
+          const errMsg = err instanceof Error ? err.message : String(err);
+          log(`Failed to resume session ${sessionId}, creating new: ${errMsg}`);
+          // If model doesn't support reasoningEffort, retry without it
+          const createConfig = errMsg.includes('reasoning') || errMsg.includes('reasoningEffort')
+            ? { ...sessionConfig, reasoningEffort: undefined }
+            : sessionConfig;
+          try {
+            session = await client.createSession({
+              ...createConfig,
+              sessionId: `nanoclaw-${containerInput.groupFolder}-${Date.now()}`,
+            });
+          } catch (createErr) {
+            // Retry without reasoningEffort as last resort
+            const createErrMsg = createErr instanceof Error ? createErr.message : String(createErr);
+            if (createErrMsg.includes('reasoning') && createConfig.reasoningEffort) {
+              log(`Model does not support reasoningEffort, retrying without it`);
+              session = await client.createSession({
+                ...sessionConfig,
+                reasoningEffort: undefined,
+                sessionId: `nanoclaw-${containerInput.groupFolder}-${Date.now()}`,
+              });
+            } else {
+              throw createErr;
+            }
+          }
           sessionId = session.sessionId;
           log(`New session created: ${sessionId}`);
         }
       } else {
-        // Create new session (first time)
-        session = await client.createSession({
-          ...sessionConfig,
-          sessionId: `nanoclaw-${containerInput.groupFolder}-${Date.now()}`,
-        });
+                // Create new session (first time)
+        try {
+          session = await client.createSession({
+            ...sessionConfig,
+            sessionId: `nanoclaw-${containerInput.groupFolder}-${Date.now()}`,
+          });
+        } catch (createErr) {
+          const msg = createErr instanceof Error ? createErr.message : String(createErr);
+          if (msg.includes('reasoning') && (sessionConfig as any).reasoningEffort) {
+            log(`Model does not support reasoningEffort, creating session without it`);
+            session = await client.createSession({
+              ...sessionConfig,
+              reasoningEffort: undefined,
+              sessionId: `nanoclaw-${containerInput.groupFolder}-${Date.now()}`,
+            });
+          } else {
+            throw createErr;
+          }
+        }
         sessionId = session.sessionId;
         log(`Session created: ${sessionId}`);
       }
