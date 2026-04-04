@@ -8,6 +8,7 @@ import os from 'os';
 import path from 'path';
 import { paths, resolveWorkspace } from './workspace.js';
 import { loadConfig } from './config-loader.js';
+import { PACKAGE_ROOT } from './config.js';
 
 interface CheckResult {
   name: string;
@@ -130,6 +131,28 @@ export function runDoctor(): CheckResult[] {
       ) {
         return { ok: true, msg: 'authenticated (env token)' };
       }
+
+      // Check .env file
+      const ws = resolveWorkspace();
+      const envFile = path.join(ws, '.env');
+      if (fs.existsSync(envFile)) {
+        const envContent = fs.readFileSync(envFile, 'utf-8');
+        const tokenLine = envContent
+          .split('\n')
+          .find((l) => l.startsWith('COPILOT_GITHUB_TOKEN=') && l.length > 22);
+        if (tokenLine) return { ok: true, msg: 'authenticated (.env)' };
+      }
+
+      // Check ~/.copilot/ (GHC CLI's own auth storage from copilot login)
+      const copilotDir = path.join(
+        process.env.HOME || process.env.USERPROFILE || os.homedir(),
+        '.copilot',
+      );
+      if (fs.existsSync(path.join(copilotDir, 'config.json'))) {
+        return { ok: true, msg: 'authenticated (~/.copilot/)' };
+      }
+
+      // Check OpenClaw auth profile
       const profilePath = path.join(
         os.homedir(),
         '.openclaw/agents/main/agent/auth-profiles.json',
@@ -198,15 +221,36 @@ export function runDoctor(): CheckResult[] {
   // GHC CLI
   results.push(
     check('GHC CLI', () => {
+      // Check global
       try {
         execSync('copilot --version', {
           stdio: ['pipe', 'pipe', 'pipe'],
           timeout: 5000,
         });
-        return { ok: true, msg: 'installed' };
+        return { ok: true, msg: 'installed (global)' };
       } catch {
-        return { ok: false, msg: 'not found' };
+        /* not in PATH */
       }
+      // Check in agent-runner-ghc node_modules (bundled with nanoclaw)
+      try {
+        const localBin = path.join(
+          PACKAGE_ROOT,
+          'container',
+          'agent-runner-ghc',
+          'node_modules',
+          '.bin',
+          process.platform === 'win32' ? 'copilot.cmd' : 'copilot',
+        );
+        if (fs.existsSync(localBin)) {
+          return { ok: true, msg: 'installed (bundled)' };
+        }
+      } catch {
+        /* ignore */
+      }
+      return {
+        ok: false,
+        msg: 'not found \u2014 run: npm install -g @github/copilot',
+      };
     }),
   );
 

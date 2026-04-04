@@ -154,9 +154,7 @@ async function channelAdd(name?: string): Promise<void> {
       : '';
     const requiredHint = field.required ? ' *' : '';
 
-    const value = await ask(
-      `  ${field.prompt}${requiredHint}${currentHint}: `,
-    );
+    const value = await ask(`  ${field.prompt}${requiredHint}${currentHint}: `);
     if (value.trim()) {
       // Parse numbers for port
       if (field.key === 'webhookPort') {

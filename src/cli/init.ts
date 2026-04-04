@@ -132,7 +132,9 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
   // Mode selection
   const hasDocker = await checkDocker();
   if (hasDocker) {
-    const modeChoice = await ask('Run mode — sandbox (Docker) or host (direct)? (S/h): ');
+    const modeChoice = await ask(
+      'Run mode — sandbox (Docker) or host (direct)? (S/h): ',
+    );
     if (modeChoice.toLowerCase() === 'h') {
       updateConfigField(ws, 'agents.defaults.mode', 'host');
       console.log('✅ Mode: host');
@@ -156,21 +158,34 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
       const { execSync } = await import('child_process');
       execSync('copilot --version', { stdio: 'pipe', timeout: 5000 });
       copilotLoggedIn = true;
-    } catch { /* not available */ }
+    } catch {
+      /* not available */
+    }
 
     // Check ~/.copilot/ directory (GHC CLI's own auth storage)
-    const homeCopilotDir = path.join(process.env.HOME || process.env.USERPROFILE || '', '.copilot');
-    const hasCopilotAuth = fs.existsSync(path.join(homeCopilotDir, 'config.json'));
+    const homeCopilotDir = path.join(
+      process.env.HOME || process.env.USERPROFILE || '',
+      '.copilot',
+    );
+    const hasCopilotAuth = fs.existsSync(
+      path.join(homeCopilotDir, 'config.json'),
+    );
 
     if (copilotLoggedIn || hasCopilotAuth) {
-      console.log('✅ GitHub Copilot auth found' + (hasCopilotAuth ? ' (~/.copilot/)' : ' (CLI)'));
+      console.log(
+        '✅ GitHub Copilot auth found' +
+          (hasCopilotAuth ? ' (~/.copilot/)' : ' (CLI)'),
+      );
     } else {
       console.log('GitHub Copilot auth not found.');
       const loginChoice = await ask('Run copilot login now? (Y/n): ');
       if (loginChoice.toLowerCase() !== 'n') {
         try {
           const { execSync } = await import('child_process');
-          execSync('nanoclaw auth login', { stdio: 'inherit', timeout: 120000 });
+          execSync('nanoclaw auth login', {
+            stdio: 'inherit',
+            timeout: 120000,
+          });
           console.log('\u2705 Auth configured');
         } catch {
           console.log('  Auth failed. Run manually: nanoclaw auth login');
@@ -225,7 +240,9 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
       fs.writeFileSync(configPath3, JSON.stringify(config3, null, 2) + '\n');
       console.log('\u2705 Teams configured');
     } else {
-      console.log('  Teams enabled in config. Add credentials to .env before starting.');
+      console.log(
+        '  Teams enabled in config. Add credentials to .env before starting.',
+      );
     }
   }
 
@@ -241,21 +258,32 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
 
   // Offer to start
   if (process.stdin.isTTY) {
-    const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const ask2 = (q: string): Promise<string> => new Promise((resolve) => rl2.question(q, resolve));
+    const rl2 = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    const ask2 = (q: string): Promise<string> =>
+      new Promise((resolve) => rl2.question(q, resolve));
     const startNow = await ask2('Start nanoclaw now? (Y/n): ');
     rl2.close();
     if (startNow.toLowerCase() !== 'n') {
       console.log('');
       try {
         const { execSync } = await import('child_process');
-        const finalConfig = JSON.parse(fs.readFileSync(path.join(ws, 'nanoclaw.json'), 'utf-8'));
+        const finalConfig = JSON.parse(
+          fs.readFileSync(path.join(ws, 'nanoclaw.json'), 'utf-8'),
+        );
         if (finalConfig.agents?.defaults?.mode === 'sandbox') {
           console.log('Building container...');
           try {
-            execSync('nanoclaw sandbox build', { stdio: 'inherit', timeout: 300000 });
+            execSync('nanoclaw sandbox build', {
+              stdio: 'inherit',
+              timeout: 300000,
+            });
           } catch {
-            console.log('Container build failed \u2014 switching to host mode.');
+            console.log(
+              'Container build failed \u2014 switching to host mode.',
+            );
             updateConfigField(ws, 'agents.defaults.mode', 'host');
           }
         }

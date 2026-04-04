@@ -13,9 +13,8 @@ import { fileURLToPath } from 'url';
 import { loadConfig, saveConfig } from '../config-loader.js';
 import { resolveWorkspace } from '../workspace.js';
 
-const SOCK_NAME = process.platform === 'win32'
-  ? '\\\\.\\pipe\\nanoclaw-tui'
-  : 'tui.sock';
+const SOCK_NAME =
+  process.platform === 'win32' ? '\\\\.\\pipe\\nanoclaw-tui' : 'tui.sock';
 
 export async function runTui(_args: string[]): Promise<void> {
   const config = loadConfig();
@@ -27,12 +26,13 @@ export async function runTui(_args: string[]): Promise<void> {
   const thinkLevel = tuiCfg.thinkLevel || agent.thinkLevel;
 
   const ws = resolveWorkspace();
-  const sockPath = process.platform === 'win32'
-    ? SOCK_NAME
-    : path.join(ws, 'tui.sock');
+  const sockPath =
+    process.platform === 'win32' ? SOCK_NAME : path.join(ws, 'tui.sock');
 
   console.log(`\n  ${assistantName} — Terminal Chat`);
-  console.log(`  Model: ${model}${thinkLevel ? ` (think: ${thinkLevel})` : ''}`);
+  console.log(
+    `  Model: ${model}${thinkLevel ? ` (think: ${thinkLevel})` : ''}`,
+  );
   console.log(`  Commands: /new /think <level> /quit\n`);
 
   // Try to connect to running service
@@ -105,13 +105,17 @@ export async function runTui(_args: string[]): Promise<void> {
       case 'partial':
         stopSpinner();
         // Overwrite current line with partial text
-        process.stdout.write(`\r\x1b[K\x1b[32m${currentAssistantName}>\x1b[0m ${msg.text}`);
+        process.stdout.write(
+          `\r\x1b[K\x1b[32m${currentAssistantName}>\x1b[0m ${msg.text}`,
+        );
         break;
 
       case 'reply':
         stopSpinner();
         waitingForReply = false;
-        process.stdout.write(`\r\x1b[K\x1b[32m${currentAssistantName}>\x1b[0m ${msg.text}\n\n`);
+        process.stdout.write(
+          `\r\x1b[K\x1b[32m${currentAssistantName}>\x1b[0m ${msg.text}\n\n`,
+        );
         break;
 
       case 'error':
@@ -133,7 +137,9 @@ export async function runTui(_args: string[]): Promise<void> {
     if (spinTimer) return;
     spinIdx = 0;
     spinTimer = setInterval(() => {
-      process.stdout.write(`\r${spinner[spinIdx++ % spinner.length]} thinking...`);
+      process.stdout.write(
+        `\r${spinner[spinIdx++ % spinner.length]} thinking...`,
+      );
     }, 100);
   }
 
@@ -183,7 +189,9 @@ export async function runTui(_args: string[]): Promise<void> {
     }
 
     // /think command (local config change)
-    const thinkMatch = trimmed.match(/^\/think(?:\s+(off|low|medium|high|xhigh))?$/i);
+    const thinkMatch = trimmed.match(
+      /^\/think(?:\s+(off|low|medium|high|xhigh))?$/i,
+    );
     if (thinkMatch) {
       const level = thinkMatch[1]?.toLowerCase();
       if (!level) {
@@ -195,7 +203,11 @@ export async function runTui(_args: string[]): Promise<void> {
         if (level === 'off') {
           delete cfg.agents.defaults.thinkLevel;
         } else {
-          cfg.agents.defaults.thinkLevel = level as 'low' | 'medium' | 'high' | 'xhigh';
+          cfg.agents.defaults.thinkLevel = level as
+            | 'low'
+            | 'medium'
+            | 'high'
+            | 'xhigh';
         }
         saveConfig(cfg);
         console.log(`🧠 Think level: ${level}\n`);
