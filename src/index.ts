@@ -282,7 +282,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   // Include recent conversation history so model has context
-  const recentHistory = getRecentConversation(chatJid, 200);
+  const recentHistory = getRecentConversation(chatJid);
   const historyPrefix = formatConversationContext(
     recentHistory.filter((m) => !missedMessages.some((mm) => mm.id === m.id)),
     TIMEZONE,
@@ -696,7 +696,7 @@ async function startMessageLoop(): Promise<void> {
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           // Include recent conversation context so GHC model has history
-          const recentConversation = getRecentConversation(chatJid, 200);
+          const recentConversation = getRecentConversation(chatJid);
           const contextPrefix = formatConversationContext(
             recentConversation.slice(0, -messagesToSend.length), // exclude new messages
             TIMEZONE,

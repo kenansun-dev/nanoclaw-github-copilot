@@ -378,9 +378,15 @@ export function getMessagesSince(
 /**
  * Get recent conversation messages (both user and agent) for context.
  */
+/**
+ * Get recent conversation messages (both user and agent) for context.
+ * Fetches up to maxMessages, then truncates to fit within maxTokens.
+ * Token estimate: ~4 characters per token.
+ */
 export function getRecentConversation(
   chatJid: string,
-  limit: number = 20,
+  maxMessages: number = 500,
+  maxTokens: number = 150000,
 ): NewMessage[] {
   const sql = `
     SELECT * FROM (
@@ -392,7 +398,20 @@ export function getRecentConversation(
       LIMIT ?
     ) ORDER BY timestamp
   `;
-  return db.prepare(sql).all(chatJid, limit) as NewMessage[];
+  const messages = db.prepare(sql).all(chatJid, maxMessages) as NewMessage[];
+
+  // Truncate from oldest to fit within token budget
+  let totalChars = 0;
+  let startIdx = 0;
+  // Calculate total chars
+  for (const m of messages) totalChars += (m.content?.length || 0) + 50; // +50 for envelope
+  // Remove oldest messages until we fit
+  const maxChars = maxTokens * 4; // ~4 chars per token
+  while (startIdx < messages.length && totalChars > maxChars) {
+    totalChars -= (messages[startIdx].content?.length || 0) + 50;
+    startIdx++;
+  }
+  return messages.slice(startIdx);
 }
 
 export function getLastBotMessageTimestamp(
