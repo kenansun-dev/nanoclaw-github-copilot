@@ -23,7 +23,7 @@ import { ASSISTANT_NAME } from '../config.js';
 import { logger } from '../logger.js';
 import { loadConfig } from '../config-loader.js';
 import { resolveWorkspace } from '../workspace.js';
-import { getAllRegisteredGroups, setRegisteredGroup } from '../db.js';
+// registerGroup callback is provided via ChannelOpts
 import { registerChannel, ChannelOpts } from './registry.js';
 import { Channel, NewMessage } from '../types.js';
 
@@ -95,8 +95,8 @@ export class TuiChannel implements Channel {
     const config = loadConfig();
     const assistantName = config.agents?.defaults?.name || ASSISTANT_NAME;
 
-    const existingGroups = getAllRegisteredGroups();
-    if (!existingGroups[jid]) {
+    const existingGroups = this.opts.registeredGroups();
+    if (!existingGroups[jid] && this.opts.registerGroup) {
       // Only the first TUI client is main; subsequent ones are not
       const hasMainTui = Object.entries(existingGroups).some(
         ([k, g]) => k.startsWith(TUI_JID_PREFIX) && g.isMain,
@@ -108,7 +108,7 @@ export class TuiChannel implements Channel {
         trigger: '',
         added_at: new Date().toISOString(),
       };
-      setRegisteredGroup(jid, tuiGroup);
+      this.opts.registerGroup(jid, tuiGroup);
       logger.info(
         { jid, group: tuiGroup.name, isMain: tuiGroup.isMain },
         'Auto-registered TUI group',
