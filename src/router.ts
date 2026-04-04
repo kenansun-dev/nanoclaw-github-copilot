@@ -24,6 +24,30 @@ export function formatMessages(
   return `${header}<messages>\n${lines.join('\n')}\n</messages>`;
 }
 
+/**
+ * Format recent conversation as context prefix for IPC follow-up prompts.
+ * Includes both user and agent messages so the model has conversation history.
+ */
+export function formatConversationContext(
+  messages: any[],
+  timezone: string,
+  botPrefix: string,
+): string {
+  if (messages.length === 0) return '';
+  const lines = messages.map((m) => {
+    const displayTime = formatLocalTime(m.timestamp, timezone);
+    const role =
+      m.is_bot_message || m.is_from_me || m.sender_name?.startsWith(botPrefix)
+        ? 'assistant'
+        : 'user';
+    const name = escapeXml(
+      m.sender_name || (role === 'assistant' ? 'assistant' : 'user'),
+    );
+    return `<${role} name="${name}" time="${escapeXml(displayTime)}">${escapeXml(m.content)}</${role}>`;
+  });
+  return `<conversation_history timezone="${escapeXml(timezone)}">\n${lines.join('\n')}\n</conversation_history>`;
+}
+
 export function stripInternalTags(text: string): string {
   return text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
 }

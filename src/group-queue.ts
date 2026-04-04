@@ -311,6 +311,19 @@ export class GroupQueue {
 
     // Then pending messages
     if (state.pendingMessages) {
+      // If process is idle-waiting, close it and re-enqueue
+      // so a fresh processGroupMessages picks up new messages
+      if (
+        state.active &&
+        state.idleWaiting &&
+        state.process &&
+        !state.process.killed
+      ) {
+        state.pendingMessages = false;
+        // Close the idle process, then re-enqueue to process pending messages
+        this.closeStdin(groupJid);
+        return;
+      }
       this.runForGroup(groupJid, 'drain').catch((err) =>
         logger.error(
           { groupJid, err },

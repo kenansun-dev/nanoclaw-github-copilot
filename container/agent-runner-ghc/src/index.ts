@@ -550,26 +550,29 @@ async function main(): Promise<void> {
       };
 
       const idlePromise = new Promise<void>((resolve, reject) => {
-        const cleanup = session.on('session.idle' as any, () => {
-          cleanup();
+        const cleanups: Array<() => void> = [];
+        const cleanupAll = () => { for (const fn of cleanups) fn(); cleanups.length = 0; };
+
+        cleanups.push(session.on('session.idle' as any, () => {
+          cleanupAll();
           // Flush any remaining delta
           if (deltaTimer) { clearTimeout(deltaTimer); deltaTimer = null; }
           flushDelta();
           deltaBuffer = '';
           resolve();
-        });
+        }));
 
         // Delta streaming: accumulate token-by-token output
-        session.on('assistant.message_delta' as any, (event: any) => {
+        cleanups.push(session.on('assistant.message_delta' as any, (event: any) => {
           const delta = event.data?.deltaContent || event.data?.content || '';
           if (delta) {
             deltaBuffer += delta;
             scheduleDeltaFlush();
           }
-        });
+        }));
 
         // Full message: send complete result (replaces any partial)
-        session.on('assistant.message' as any, (event: any) => {
+        cleanups.push(session.on('assistant.message' as any, (event: any) => {
           if (event.data?.content) {
             lastContent = event.data.content;
             // Cancel pending delta flush — full message supersedes it
@@ -584,13 +587,13 @@ async function main(): Promise<void> {
             streamedChunks++;
             log(`Streamed result #${streamedChunks}: ${event.data.content.slice(0, 100)}...`);
           }
-        });
+        }));
 
-        session.on('session.error' as any, (event: any) => {
-          cleanup();
+        cleanups.push(session.on('session.error' as any, (event: any) => {
+          cleanupAll();
           if (deltaTimer) { clearTimeout(deltaTimer); deltaTimer = null; }
           reject(new Error(event.data?.message || 'Session error'));
-        });
+        }));
       });
 
       await session.send({ prompt });

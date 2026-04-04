@@ -36,6 +36,7 @@ import {
 import {
   getAllChats,
   getAllRegisteredGroups,
+  getRecentConversation,
   getAllSessions,
   deleteSession,
   getAllTasks,
@@ -54,7 +55,12 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+import {
+  findChannel,
+  formatMessages,
+  formatOutbound,
+  formatConversationContext,
+} from './router.js';
 import {
   restoreRemoteControl,
   startRemoteControl,
@@ -275,7 +281,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(missedMessages, TIMEZONE);
+  // Include recent conversation history so model has context
+  const recentHistory = getRecentConversation(chatJid, 200);
+  const historyPrefix = formatConversationContext(
+    recentHistory.filter((m) => !missedMessages.some((mm) => mm.id === m.id)),
+    TIMEZONE,
+    ASSISTANT_NAME,
+  );
+  const newMessages = formatMessages(missedMessages, TIMEZONE);
+  const prompt = historyPrefix
+    ? historyPrefix + '\n\n' + newMessages
+    : newMessages;
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -679,7 +695,18 @@ async function startMessageLoop(): Promise<void> {
 
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
-          if (queue.sendMessage(chatJid, formatted)) {
+          // Include recent conversation context so GHC model has history
+          const recentConversation = getRecentConversation(chatJid, 200);
+          const contextPrefix = formatConversationContext(
+            recentConversation.slice(0, -messagesToSend.length), // exclude new messages
+            TIMEZONE,
+            ASSISTANT_NAME,
+          );
+          const fullPrompt = contextPrefix
+            ? contextPrefix + '\n\n' + formatted
+            : formatted;
+
+          if (queue.sendMessage(chatJid, fullPrompt)) {
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
