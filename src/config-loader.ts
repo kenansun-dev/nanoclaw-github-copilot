@@ -21,6 +21,31 @@ export interface AgentConfig {
   githubMcp?: boolean; // GHC: register GitHub MCP server (web_search, issues, PRs, etc.)
 }
 
+// Per-account credentials for multi-bot support
+export interface TelegramAccountConfig {
+  botToken?: string;
+}
+
+export interface TeamsAccountConfig {
+  appId?: string;
+  appPassword?: string;
+  tenantId?: string;
+  webhookPort?: number;
+  authMode?: 'secret' | 'certificate';
+  certThumbprint?: string;
+  certPrivateKeyPath?: string;
+}
+
+// Binding: route (channel, accountId, peer) -> agentId
+export interface Binding {
+  agentId: string;
+  match: {
+    channel?: string;
+    accountId?: string;
+    peer?: { kind?: 'direct' | 'group'; id?: string };
+  };
+}
+
 // New chats format: grouped by channel
 export interface ChatEntry {
   jid: string;
@@ -50,6 +75,7 @@ export interface NanoclawConfig {
     telegram: {
       enabled: boolean;
       botToken?: string;
+      accounts?: Record<string, TelegramAccountConfig>;
     };
     teams: {
       enabled: boolean;
@@ -60,6 +86,7 @@ export interface NanoclawConfig {
       authMode: 'secret' | 'certificate';
       certThumbprint?: string;
       certPrivateKeyPath?: string;
+      accounts?: Record<string, TeamsAccountConfig>;
     };
     [key: string]: { enabled: boolean; [k: string]: unknown };
   };
@@ -98,6 +125,7 @@ export interface NanoclawConfig {
       agentId?: string;
     }
   >;
+  bindings?: Binding[];
   pairing: {
     mode: 'open' | 'prompt' | 'allowlist' | 'disabled';
     notifyChat?: string;
@@ -372,6 +400,27 @@ export function loadConfig(): NanoclawConfig {
     }
   }
 
+  // Normalize channel credentials: old flat format → accounts.default
+  // This ensures channel factories always read from accounts{}
+  const tg = config.channels.telegram;
+  if (tg.botToken && !tg.accounts) {
+    tg.accounts = { default: { botToken: tg.botToken } };
+  }
+  const tm = config.channels.teams;
+  if (tm.appId && !tm.accounts) {
+    tm.accounts = {
+      default: {
+        appId: tm.appId,
+        appPassword: tm.appPassword,
+        tenantId: tm.tenantId,
+        webhookPort: tm.webhookPort,
+        authMode: tm.authMode,
+        certThumbprint: tm.certThumbprint,
+        certPrivateKeyPath: tm.certPrivateKeyPath,
+      },
+    };
+  }
+
   return config;
 }
 
@@ -417,6 +466,38 @@ export function resolveAgent(
   }
   // Merge: agent-specific overrides defaults
   return { ...defaults, ...found };
+}
+
+/**
+ * Resolve agentId from bindings for a given chat.
+ * Checks bindings[] in order; first match wins.
+ * Falls back to chatConfig.agentId (legacy) or undefined (use default agent).
+ */
+export function resolveAgentIdFromBindings(
+  config: NanoclawConfig,
+  chatJid: string,
+  chatConfig?: { agentId?: string },
+): string | undefined {
+  if (config.bindings?.length) {
+    // Derive channel from JID
+    let channel: string | undefined;
+    if (chatJid.startsWith('tg:')) channel = 'telegram';
+    else if (chatJid.startsWith('teams:')) channel = 'teams';
+    else if (chatJid.startsWith('dc:')) channel = 'discord';
+    else if (chatJid.startsWith('wa:')) channel = 'whatsapp';
+
+    for (const binding of config.bindings) {
+      const m = binding.match;
+      if (m.channel && m.channel !== channel) continue;
+      if (m.peer?.id && !chatJid.includes(m.peer.id)) continue;
+      // accountId matching would require knowing which account the message came from
+      // For now, channel + peer matching is sufficient
+      return binding.agentId;
+    }
+  }
+
+  // Legacy: chatConfig.agentId
+  return chatConfig?.agentId;
 }
 
 /**

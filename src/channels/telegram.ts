@@ -479,9 +479,17 @@ export class TelegramChannel implements Channel {
 
 registerChannel('telegram', (opts: ChannelOpts) => {
   const config = loadConfig();
-  const token = config.channels.telegram.botToken || '';
-  if (!config.channels.telegram.enabled || !token) {
-    return null;
+  const tg = config.channels.telegram;
+  if (!tg.enabled) return null;
+
+  // Multi-account: read token from accounts[accountId] if available
+  let token = '';
+  if (opts.accountId && tg.accounts?.[opts.accountId]) {
+    token = tg.accounts[opts.accountId].botToken || '';
+  } else {
+    token = tg.botToken || '';
   }
+
+  if (!token) return null;
   return new TelegramChannel(token, opts);
 });

@@ -929,18 +929,31 @@ async function main(): Promise<void> {
   // Create and connect all registered channels.
   // Each channel self-registers via the barrel import above.
   // Factories return null when credentials are missing, so unconfigured channels are skipped.
+  // Multi-account: iterate accounts{} if present, creating one instance per account.
   for (const channelName of getRegisteredChannelNames()) {
     const factory = getChannelFactory(channelName)!;
-    const channel = factory(channelOpts);
-    if (!channel) {
-      logger.warn(
-        { channel: channelName },
-        'Channel installed but credentials missing — skipping. Check .env or re-run the channel skill.',
-      );
-      continue;
-    }
-    channels.push(channel);
-    await channel.connect();
+    const channelConfig = (getConfig().channels as any)?.[channelName];
+    const accounts = channelConfig?.accounts as
+      | Record<string, any>
+      | undefined;
+
+    // Build list of (accountId, opts) pairs to instantiate
+    const accountEntries: Array<{ accountId?: string }> = accounts
+      ? Object.keys(accounts).map((id) => ({ accountId: id }))
+      : [{ accountId: undefined }]; // single instance (no accounts)
+
+    for (const { accountId } of accountEntries) {
+      const opts = { ...channelOpts, ...(accountId ? { accountId } : {}) };
+      const channel = factory(opts);
+      if (!channel) {
+        logger.warn(
+          { channel: channelName, accountId },
+          'Channel installed but credentials missing — skipping.',
+        );
+        continue;
+      }
+      channels.push(channel);
+      await channel.connect();
 
     // Register slash commands with platform-native menus (non-invasive)
     try {
@@ -958,6 +971,7 @@ async function main(): Promise<void> {
         'Slash command registration skipped',
       );
     }
+    } // end accountEntries loop
   }
   if (channels.length === 0) {
     logger.warn('No channels connected — service running for TUI/IPC only');

@@ -786,10 +786,29 @@ registerChannel('teams', (opts: ChannelOpts) => {
 
   if (!teams.enabled) return null;
 
-  const appId = teams.appId || '';
-  const appPassword = teams.appPassword || '';
-  const certThumbprint = teams.certThumbprint || '';
-  const certPrivateKeyPath = teams.certPrivateKeyPath || '';
+  // Multi-account: read credentials from accounts[accountId] if available
+  let appId = '';
+  let appPassword = '';
+  let certThumbprint = '';
+  let certPrivateKeyPath = '';
+  let tenantId = teams.tenantId;
+  let port = teams.webhookPort;
+
+  if (opts.accountId && teams.accounts?.[opts.accountId]) {
+    const acct = teams.accounts[opts.accountId];
+    appId = acct.appId || '';
+    appPassword = acct.appPassword || '';
+    certThumbprint = acct.certThumbprint || '';
+    certPrivateKeyPath = acct.certPrivateKeyPath || '';
+    if (acct.tenantId) tenantId = acct.tenantId;
+    if (acct.webhookPort) port = acct.webhookPort;
+  } else {
+    appId = teams.appId || '';
+    appPassword = teams.appPassword || '';
+    certThumbprint = teams.certThumbprint || '';
+    certPrivateKeyPath = teams.certPrivateKeyPath || '';
+  }
+
   const hasCert = !!(certThumbprint && certPrivateKeyPath);
 
   if (!appId || (!appPassword && !hasCert)) {
@@ -800,8 +819,6 @@ registerChannel('teams', (opts: ChannelOpts) => {
     return null;
   }
 
-  const tenantId = teams.tenantId;
-  const port = teams.webhookPort;
   const authMode = hasCert ? 'certificate' : 'secret';
 
   logger.info(
