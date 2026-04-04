@@ -64,7 +64,10 @@ export function syncChatsFromConfig(config: NanoclawConfig): void {
         requiresTrigger: chatConfig.requiresTrigger ?? false,
         isMain: chatConfig.isMain ?? false,
       });
-      logger.info({ jid, name: chatConfig.name, folder }, 'Chat synced from config');
+      logger.info(
+        { jid, name: chatConfig.name, folder },
+        'Chat synced from config',
+      );
     }
   }
 }
@@ -75,7 +78,11 @@ export function syncChatsFromConfig(config: NanoclawConfig): void {
 export function addChat(
   jid: string,
   name: string,
-  options: { isMain?: boolean; requiresTrigger?: boolean; agentId?: string } = {},
+  options: {
+    isMain?: boolean;
+    requiresTrigger?: boolean;
+    agentId?: string;
+  } = {},
 ): void {
   const config = loadConfig();
 
@@ -87,7 +94,10 @@ export function addChat(
 
   saveConfig(config);
 
-  const folder = deriveGroupFolder(jid, { isMain: options.isMain, agentId: options.agentId });
+  const folder = deriveGroupFolder(jid, {
+    isMain: options.isMain,
+    agentId: options.agentId,
+  });
   setRegisteredGroup(jid, {
     name,
     folder,

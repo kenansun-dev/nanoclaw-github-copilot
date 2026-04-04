@@ -22,9 +22,9 @@ describe('deriveGroupFolder', () => {
   });
 
   it('includes agentId prefix when assigned', () => {
-    expect(
-      deriveGroupFolder('teams:conv-123', { agentId: 'teams-host' }),
-    ).toBe('teams-host--teams-conv-123');
+    expect(deriveGroupFolder('teams:conv-123', { agentId: 'teams-host' })).toBe(
+      'teams-host--teams-conv-123',
+    );
   });
 
   it('isolates different agents in same conversation', () => {

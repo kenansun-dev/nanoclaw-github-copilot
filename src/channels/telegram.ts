@@ -132,6 +132,17 @@ export class TelegramChannel implements Channel {
       const sender = ctx.from?.id.toString() || '';
       const msgId = ctx.message.message_id.toString();
 
+      // Include quoted/replied-to message content so the agent has context
+      const replyMsg = ctx.message.reply_to_message;
+      const replyText = replyMsg?.text || replyMsg?.caption;
+      if (replyText) {
+        const replyAuthor =
+          replyMsg.from?.first_name || replyMsg.from?.username || 'Someone';
+        const truncated =
+          replyText.length > 200 ? replyText.slice(0, 200) + '\u2026' : replyText;
+        content = `[Replying to ${replyAuthor}: ${truncated}]\n${content}`;
+      }
+
       // Determine chat name
       const chatName =
         ctx.chat.type === 'private'
