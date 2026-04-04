@@ -316,7 +316,11 @@ async function main(): Promise<void> {
   const client = new CopilotClient(githubToken ? { githubToken } : undefined);
 
   // Determine model: use container input model, env var, or default
-  const model = containerInput.model || process.env.COPILOT_MODEL || 'claude-sonnet-4';
+  // Strip provider prefix if present (e.g. github-copilot/claude-sonnet-4 → claude-sonnet-4)
+  let model = containerInput.model || process.env.COPILOT_MODEL || 'claude-sonnet-4';
+  if (model.includes('/')) {
+    model = model.split('/').slice(1).join('/');
+  }
   const thinkLevel = process.env.COPILOT_THINK_LEVEL || undefined; // low|medium|high|xhigh
 
   let sessionId = containerInput.sessionId;
