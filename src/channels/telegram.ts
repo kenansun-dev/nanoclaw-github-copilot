@@ -304,7 +304,7 @@ export class TelegramChannel implements Channel {
     // Start polling — returns a Promise that resolves when started
     return new Promise<void>((resolve) => {
       this.bot!.start({
-        onStart: (botInfo: any) => {
+        onStart: async (botInfo: any) => {
           logger.info(
             { username: botInfo.username, id: botInfo.id },
             'Telegram bot connected',
@@ -313,6 +313,22 @@ export class TelegramChannel implements Channel {
           console.log(
             `  Send /chatid to the bot to get a chat's registration ID\n`,
           );
+
+          // Register slash command menu in Telegram
+          try {
+            await this.bot!.api.setMyCommands([
+              { command: 'chatid', description: 'Get chat registration ID' },
+              { command: 'ping', description: 'Check if bot is online' },
+              { command: 'status', description: 'Show agent status' },
+              { command: 'new', description: 'Start a new conversation' },
+              { command: 'think', description: 'Set reasoning level' },
+              { command: 'help', description: 'Show available commands' },
+            ]);
+            logger.info('Telegram slash commands registered');
+          } catch (err: any) {
+            logger.debug({ err: err.message }, 'Failed to register slash commands');
+          }
+
           resolve();
         },
       });
