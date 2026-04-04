@@ -459,6 +459,11 @@ async function runAgent(
       setSession(group.folder, output.newSessionId);
     }
 
+    // Mark idle-waiting so GroupQueue keeps process alive for IPC reuse
+    if (output.status === 'success') {
+      queue.markIdle(chatJid);
+    }
+
     if (output.status === 'error') {
       // Detect stale/corrupt session — clear it so the next retry starts fresh.
       // The session .jsonl can go missing after a crash mid-write, manual

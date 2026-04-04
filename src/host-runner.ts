@@ -280,6 +280,8 @@ export async function runHostAgent(
     child.stdin.write(inputJson);
     child.stdin.end();
 
+    let resolved = false;
+
     child.stdout.on('data', (data: Buffer) => {
       stdout += data.toString();
 
@@ -309,6 +311,18 @@ export async function runHostAgent(
               );
             });
           }
+
+          // Query-complete signal: result is null with newSessionId
+          // This means agent finished the query and is waiting for IPC
+          if (
+            !resolved &&
+            output.result === null &&
+            output.newSessionId &&
+            !output.partial
+          ) {
+            resolved = true;
+            resolve(output);
+          }
         } catch (err) {
           logger.error(
             { error: err, json: jsonStr.substring(0, 200) },
@@ -330,6 +344,14 @@ export async function runHostAgent(
     child.on('close', (code) => {
       if (timeout) clearTimeout(timeout);
       const duration = Date.now() - startTime;
+
+      if (resolved) {
+        logger.info(
+          { group: group.name, processName, code, duration },
+          'Host agent process ended (output already delivered)',
+        );
+        return;
+      }
 
       if (timedOut) {
         logger.error(
