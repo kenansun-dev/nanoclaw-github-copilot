@@ -113,7 +113,24 @@ if (-not $TunnelId) {
 devtunnel port create $TunnelId -p $Port --protocol https 2>$null | Out-Null
 devtunnel access create $TunnelId -p $Port --anonymous 2>$null | Out-Null
 
-$TunnelUrl = "https://${TunnelId}-${Port}.asse.devtunnels.ms"
+# Get actual tunnel URL from devtunnel (region may vary)
+$TunnelUrl = ""
+try {
+    $tunnelInfo = devtunnel show $TunnelId --output json 2>$null | ConvertFrom-Json
+    if ($tunnelInfo.tunnel.ports) {
+        foreach ($p in $tunnelInfo.tunnel.ports) {
+            if ($p.portNumber -eq $Port -and $p.portForwardingUris) {
+                $TunnelUrl = $p.portForwardingUris | Select-Object -First 1
+                break
+            }
+        }
+    }
+} catch { }
+
+# Fallback to constructed URL if devtunnel show didn't work
+if (-not $TunnelUrl) {
+    $TunnelUrl = "https://${TunnelId}-${Port}.devtunnels.ms"
+}
 $MessagingEndpoint = "${TunnelUrl}/api/messages"
 Write-Host "   ✅ Endpoint: $MessagingEndpoint" -ForegroundColor Green
 Write-Host ""
@@ -231,6 +248,15 @@ MSTEAMS_TUNNEL_ID=$TunnelId
 MSTEAMS_RESOURCE_GROUP=$ResourceGroup
 MSTEAMS_PASSWORD_CREATED=$(Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
 "@
+# Remove old Teams section if re-running
+if (Test-Path $EnvFile) {
+    $existingEnv = Get-Content $EnvFile -Raw
+    if ($existingEnv -match 'MSTEAMS_APP_ID=') {
+        # Strip old Teams block
+        $existingEnv = $existingEnv -replace '(?s)\n# === Teams Channel.*?MSTEAMS_PASSWORD_CREATED=[^\n]*', ''
+        Set-Content -Path $EnvFile -Value $existingEnv.TrimEnd()
+    }
+}
 Add-Content -Path $EnvFile -Value $envContent
 Write-Host "   ✅ Written to $EnvFile" -ForegroundColor Green
 Write-Host ""
