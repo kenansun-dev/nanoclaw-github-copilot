@@ -326,12 +326,15 @@ async function main(): Promise<void> {
 
   let sessionId = containerInput.sessionId;
 
+  // Session persists across the query loop — only created/resumed once
+  let session: any = null;
+
   try {
     // Query loop: run query → wait for IPC message → repeat
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, model: ${model})...`);
 
-      let session;
+      // sessionConfig for create/resume (not used when reusing existing session)
       const sessionConfig = {
         model,
         ...(thinkLevel ? { reasoningEffort: thinkLevel as any } : {}),
@@ -434,8 +437,11 @@ async function main(): Promise<void> {
         skillDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       };
 
-      if (sessionId) {
-        // Resume existing session
+      if (session) {
+        // Session already exists from previous iteration â reuse it
+        log(`Reusing existing session: ${sessionId}`);
+      } else if (sessionId) {
+        // Resume existing session (first iteration or after error)
         try {
           session = await client.resumeSession(sessionId, sessionConfig);
           // Always reload MCP connections after resume to pick up new/changed tools
