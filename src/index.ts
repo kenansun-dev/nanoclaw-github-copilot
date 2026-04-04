@@ -959,9 +959,14 @@ async function main(): Promise<void> {
     try {
       const { registerTelegramCommands } = await import('./slash-commands.js');
       if (channelName === 'telegram') {
-        const tgToken = getConfig().channels?.telegram?.botToken;
-        if (tgToken) {
-          await registerTelegramCommands(tgToken);
+        // Multi-account: register for each account's bot token
+        const tgConfig = getConfig().channels?.telegram;
+        const accts = tgConfig?.accounts;
+        if (accts && accountId && accts[accountId]?.botToken) {
+          await registerTelegramCommands(accts[accountId].botToken!);
+          logger.info({ accountId }, 'Telegram slash command menu registered');
+        } else if (tgConfig?.botToken) {
+          await registerTelegramCommands(tgConfig.botToken);
           logger.info('Telegram slash command menu registered');
         }
       }

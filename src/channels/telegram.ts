@@ -376,7 +376,15 @@ export class TelegramChannel implements Channel {
   }
 
   ownsJid(jid: string): boolean {
-    return jid.startsWith('tg:');
+    if (!jid.startsWith('tg:')) return false;
+    // Multi-account: only own JIDs matching our accountId
+    if (this.accountId && this.accountId !== 'default') {
+      const parts = jid.split(':');
+      return parts.length >= 3 && parts[1] === this.accountId;
+    }
+    // Default account owns tg:<chatId> (no accountId segment)
+    const parts = jid.split(':');
+    return parts.length === 2;
   }
 
   async sendCard(
