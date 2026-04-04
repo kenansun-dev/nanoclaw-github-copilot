@@ -280,6 +280,8 @@ export async function runHostAgent(
     child.stdin.write(inputJson);
     child.stdin.end();
 
+    let resolved = false;
+
     child.stdout.on('data', (data: Buffer) => {
       stdout += data.toString();
 
@@ -309,6 +311,18 @@ export async function runHostAgent(
               );
             });
           }
+
+          // Resolve when query is complete:
+          // - Final result (non-partial with content)
+          // - Query-complete signal (result: null with newSessionId)
+          if (
+            !resolved &&
+            !output.partial &&
+            (output.result !== null || output.newSessionId)
+          ) {
+            resolved = true;
+            resolve(output);
+          }
         } catch (err) {
           logger.error(
             { error: err, json: jsonStr.substring(0, 200) },
@@ -330,6 +344,22 @@ export async function runHostAgent(
     child.on('close', (code) => {
       if (timeout) clearTimeout(timeout);
       const duration = Date.now() - startTime;
+
+      // If already resolved via streaming output, just log
+      if (resolved) {
+        if (code !== 0 && code !== null) {
+          logger.warn(
+            { group: group.name, processName, code, duration },
+            'Host agent exited after output was delivered',
+          );
+        } else {
+          logger.info(
+            { group: group.name, processName, duration },
+            'Host agent process ended',
+          );
+        }
+        return;
+      }
 
       if (timedOut) {
         logger.error(

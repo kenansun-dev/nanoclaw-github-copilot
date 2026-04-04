@@ -157,6 +157,14 @@ export class GroupQueue {
    * Send a follow-up message to the active container via IPC file.
    * Returns true if the message was written, false if no active container.
    */
+  /**
+   * Mark a group's agent as idle-waiting (query done, process alive for IPC).
+   */
+  markIdle(groupJid: string): void {
+    const state = this.getGroup(groupJid);
+    state.idleWaiting = true;
+  }
+
   sendMessage(groupJid: string, text: string): boolean {
     const state = this.getGroup(groupJid);
     if (!state.active || !state.groupFolder || state.isTaskContainer)
@@ -222,11 +230,21 @@ export class GroupQueue {
       logger.error({ groupJid, err }, 'Error processing messages for group');
       this.scheduleRetry(groupJid, state);
     } finally {
-      state.active = false;
-      state.process = null;
-      state.containerName = null;
-      state.groupFolder = null;
-      this.activeCount--;
+      // If process is still alive (idle-waiting for IPC), keep active
+      if (state.process && !state.process.killed && state.idleWaiting) {
+        // Process still alive — keep active, waiting for IPC follow-up
+        // It will be cleaned up on next close sentinel or idle timeout
+        logger.debug(
+          { groupJid },
+          'Host agent query done, process idle-waiting for IPC',
+        );
+      } else {
+        state.active = false;
+        state.process = null;
+        state.containerName = null;
+        state.groupFolder = null;
+        this.activeCount--;
+      }
       this.drainGroup(groupJid);
     }
   }
