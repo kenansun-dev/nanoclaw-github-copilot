@@ -17,6 +17,36 @@ export interface ChatInfo {
 }
 
 /**
+ * Derive a unique group folder name from a chat JID and its config.
+ * When an agentId is assigned, the folder includes the agent prefix to
+ * prevent session collisions when multiple agents share the same chat
+ * (e.g. two Teams bots in one group conversation).
+ */
+export function deriveGroupFolder(
+  jid: string,
+  chatConfig?: { isMain?: boolean; agentId?: string },
+): string {
+  if (chatConfig?.isMain) return 'main';
+
+  const base = jid.replace(/[^a-zA-Z0-9-]/g, '-');
+
+  // Include agentId in folder name when assigned to ensure isolation
+  if (chatConfig?.agentId) {
+    const agentSlug = chatConfig.agentId.replace(/[^a-zA-Z0-9-]/g, '-');
+    const combined = `${agentSlug}--${base}`;
+    // Group folder max length is 64 chars; truncate base if needed
+    if (combined.length > 64) {
+      const maxBase = 64 - agentSlug.length - 2; // 2 for '--'
+      return `${agentSlug}--${base.slice(0, Math.max(8, maxBase))}`;
+    }
+    return combined;
+  }
+
+  // Truncate to 64 chars for non-agent folders too
+  return base.slice(0, 64);
+}
+
+/**
  * Sync chats from nanoclaw.json into the SQLite DB.
  * Called on startup to ensure DB matches config.
  */
@@ -25,9 +55,7 @@ export function syncChatsFromConfig(config: NanoclawConfig): void {
 
   for (const [jid, chatConfig] of Object.entries(config.chats)) {
     if (!existing[jid]) {
-      const folder = chatConfig.isMain
-        ? 'main'
-        : jid.replace(/[^a-zA-Z0-9-]/g, '-');
+      const folder = deriveGroupFolder(jid, chatConfig);
       setRegisteredGroup(jid, {
         name: chatConfig.name,
         folder,
@@ -36,7 +64,7 @@ export function syncChatsFromConfig(config: NanoclawConfig): void {
         requiresTrigger: chatConfig.requiresTrigger ?? false,
         isMain: chatConfig.isMain ?? false,
       });
-      logger.info({ jid, name: chatConfig.name }, 'Chat synced from config');
+      logger.info({ jid, name: chatConfig.name, folder }, 'Chat synced from config');
     }
   }
 }
@@ -47,7 +75,7 @@ export function syncChatsFromConfig(config: NanoclawConfig): void {
 export function addChat(
   jid: string,
   name: string,
-  options: { isMain?: boolean; requiresTrigger?: boolean } = {},
+  options: { isMain?: boolean; requiresTrigger?: boolean; agentId?: string } = {},
 ): void {
   const config = loadConfig();
 
@@ -59,7 +87,7 @@ export function addChat(
 
   saveConfig(config);
 
-  const folder = options.isMain ? 'main' : jid.replace(/[^a-zA-Z0-9-]/g, '-');
+  const folder = deriveGroupFolder(jid, { isMain: options.isMain, agentId: options.agentId });
   setRegisteredGroup(jid, {
     name,
     folder,
@@ -69,7 +97,7 @@ export function addChat(
     isMain: options.isMain ?? false,
   });
 
-  logger.info({ jid, name }, 'Chat added');
+  logger.info({ jid, name, folder }, 'Chat added');
 }
 
 /**
