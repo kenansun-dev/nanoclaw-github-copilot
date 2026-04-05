@@ -325,8 +325,7 @@ export class GroupQueue {
         state.process &&
         !state.process.killed
       ) {
-        state.pendingMessages = false;
-        // Close the idle process, then re-enqueue to process pending messages
+        // Keep pendingMessages=true so drainGroup re-processes after process exits
         this.closeStdin(groupJid);
         return;
       }
