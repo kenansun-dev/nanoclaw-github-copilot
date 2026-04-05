@@ -103,13 +103,15 @@ function drainIpcInput(): string[] {
 function waitForIpcMessage(): Promise<string | null> {
   return new Promise((resolve) => {
     const poll = () => {
-      if (shouldClose()) {
-        resolve(null);
-        return;
-      }
+      // Drain messages BEFORE checking close sentinel — prevents race where
+      // _close arrives before a pending message file is read
       const messages = drainIpcInput();
       if (messages.length > 0) {
         resolve(messages.join('\n'));
+        return;
+      }
+      if (shouldClose()) {
+        resolve(null);
         return;
       }
       setTimeout(poll, IPC_POLL_MS);

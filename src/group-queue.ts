@@ -139,6 +139,21 @@ export class GroupQueue {
     state.process = proc;
     state.containerName = containerName;
     if (groupFolder) state.groupFolder = groupFolder;
+
+    // When process exits externally (Docker stop, kill, crash), release active
+    // state and drain pending work. Without this, host-mode early-resolve leaves
+    // state.active=true after the process dies, swallowing pending messages.
+    proc.on('exit', () => {
+      if (state.active && state.idleWaiting) {
+        state.active = false;
+        state.idleWaiting = false;
+        state.process = null;
+        state.containerName = null;
+        state.groupFolder = null;
+        this.activeCount--;
+        this.drainGroup(groupJid);
+      }
+    });
   }
 
   /**
