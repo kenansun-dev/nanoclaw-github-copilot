@@ -95,19 +95,35 @@ export async function runUpdate(args: string[]): Promise<void> {
       console.log('  ⚠️  Workspace sync had issues. Run: nanoclaw init');
     }
 
-    // Rebuild sandbox image if in sandbox mode
+    // Rebuild sandbox image if any agent uses sandbox mode
     try {
       const { loadConfig } = await import('../config-loader.js');
       const config = loadConfig();
-      if (config.agents?.defaults?.mode !== 'host') {
+      const needsContainers =
+        config.agents?.list?.some((a: any) => a.mode === 'sandbox') ||
+        config.agents?.defaults?.mode !== 'host';
+      if (needsContainers) {
         console.log('  Rebuilding container image...');
         execSync('nanoclaw sandbox build', {
           stdio: 'inherit',
           timeout: 600000,
         });
       }
+
+      // Clear agent-runner source cache — forces fresh copy on next container spawn
+      const { resolveWorkspace } = await import('../workspace.js');
+      const sessionsDir = path.join(resolveWorkspace(), 'data', 'sessions');
+      if (fs.existsSync(sessionsDir)) {
+        for (const dir of fs.readdirSync(sessionsDir)) {
+          const cacheDir = path.join(sessionsDir, dir, 'agent-runner-src');
+          if (fs.existsSync(cacheDir)) {
+            fs.rmSync(cacheDir, { recursive: true, force: true });
+          }
+        }
+        console.log('  Cleared agent-runner cache');
+      }
     } catch {
-      // host mode or config not available
+      // config not available or no sandbox agents
     }
 
     // Restart service
