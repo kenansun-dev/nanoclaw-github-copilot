@@ -69,8 +69,7 @@ export class TeamsChannel implements Channel {
     }
     const appId = this.adapterSettings.appId;
     const appPassword = this.adapterSettings.appPassword;
-    const tenant =
-      this.adapterSettings.channelAuthTenant || 'botframework.com';
+    const tenant = this.adapterSettings.channelAuthTenant || 'botframework.com';
     if (!appId || !appPassword) return null;
 
     try {

@@ -933,9 +933,7 @@ async function main(): Promise<void> {
   for (const channelName of getRegisteredChannelNames()) {
     const factory = getChannelFactory(channelName)!;
     const channelConfig = (getConfig().channels as any)?.[channelName];
-    const accounts = channelConfig?.accounts as
-      | Record<string, any>
-      | undefined;
+    const accounts = channelConfig?.accounts as Record<string, any> | undefined;
 
     // Build list of (accountId, opts) pairs to instantiate
     const accountEntries: Array<{ accountId?: string }> = accounts
@@ -955,27 +953,31 @@ async function main(): Promise<void> {
       channels.push(channel);
       await channel.connect();
 
-    // Register slash commands with platform-native menus (non-invasive)
-    try {
-      const { registerTelegramCommands } = await import('./slash-commands.js');
-      if (channelName === 'telegram') {
-        // Multi-account: register for each account's bot token
-        const tgConfig = getConfig().channels?.telegram;
-        const accts = tgConfig?.accounts;
-        if (accts && accountId && accts[accountId]?.botToken) {
-          await registerTelegramCommands(accts[accountId].botToken!);
-          logger.info({ accountId }, 'Telegram slash command menu registered');
-        } else if (tgConfig?.botToken) {
-          await registerTelegramCommands(tgConfig.botToken);
-          logger.info('Telegram slash command menu registered');
+      // Register slash commands with platform-native menus (non-invasive)
+      try {
+        const { registerTelegramCommands } =
+          await import('./slash-commands.js');
+        if (channelName === 'telegram') {
+          // Multi-account: register for each account's bot token
+          const tgConfig = getConfig().channels?.telegram;
+          const accts = tgConfig?.accounts;
+          if (accts && accountId && accts[accountId]?.botToken) {
+            await registerTelegramCommands(accts[accountId].botToken!);
+            logger.info(
+              { accountId },
+              'Telegram slash command menu registered',
+            );
+          } else if (tgConfig?.botToken) {
+            await registerTelegramCommands(tgConfig.botToken);
+            logger.info('Telegram slash command menu registered');
+          }
         }
+      } catch (err) {
+        logger.debug(
+          { err, channel: channelName },
+          'Slash command registration skipped',
+        );
       }
-    } catch (err) {
-      logger.debug(
-        { err, channel: channelName },
-        'Slash command registration skipped',
-      );
-    }
     } // end accountEntries loop
   }
   if (channels.length === 0) {

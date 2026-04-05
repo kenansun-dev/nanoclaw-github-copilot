@@ -50,7 +50,8 @@ export function resolveAgentForChat(chatJid: string): AgentConfig {
   const config = loadConfig();
   const chat = config.chats[chatJid];
   // Check bindings first, then legacy chatConfig.agentId
-  const agentId = resolveAgentIdFromBindings(config, chatJid, chat) || chat?.agentId;
+  const agentId =
+    resolveAgentIdFromBindings(config, chatJid, chat) || chat?.agentId;
   return resolveAgent(config, agentId);
 }
 

@@ -124,3 +124,109 @@ describe('config model passthrough', () => {
     expect(config.agents.defaults.model).toBe('github-copilot/claude-sonnet-4');
   });
 });
+
+// --- Accounts normalization + bindings ---
+
+describe('channel accounts normalization', () => {
+  const tmpDir2 = path.join(os.tmpdir(), `nanoclaw-test-accts-${Date.now()}`);
+
+  beforeEach(() => {
+    setWorkspace(tmpDir2);
+    ensureWorkspace();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir2, { recursive: true, force: true });
+  });
+
+  it('auto-normalizes flat telegram credentials to accounts.default', () => {
+    fs.writeFileSync(
+      path.join(tmpDir2, 'nanoclaw.json'),
+      JSON.stringify({
+        channels: {
+          telegram: { enabled: true, botToken: 'test-token-123' },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.channels.telegram.accounts).toBeDefined();
+    expect(config.channels.telegram.accounts!.default).toBeDefined();
+    expect(config.channels.telegram.accounts!.default.botToken).toBe(
+      'test-token-123',
+    );
+  });
+
+  it('auto-normalizes flat teams credentials to accounts.default', () => {
+    fs.writeFileSync(
+      path.join(tmpDir2, 'nanoclaw.json'),
+      JSON.stringify({
+        channels: {
+          teams: {
+            enabled: true,
+            appId: 'app-123',
+            appPassword: 'secret',
+            tenantId: 'tenant-456',
+            webhookPort: 3978,
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.channels.teams.accounts).toBeDefined();
+    expect(config.channels.teams.accounts!.default.appId).toBe('app-123');
+    expect(config.channels.teams.accounts!.default.appPassword).toBe('secret');
+    expect(config.channels.teams.accounts!.default.tenantId).toBe('tenant-456');
+    expect(config.channels.teams.accounts!.default.webhookPort).toBe(3978);
+  });
+
+  it('preserves explicit accounts without auto-normalization', () => {
+    fs.writeFileSync(
+      path.join(tmpDir2, 'nanoclaw.json'),
+      JSON.stringify({
+        channels: {
+          telegram: {
+            enabled: true,
+            accounts: {
+              default: { botToken: 'token-a' },
+              daily: { botToken: 'token-b' },
+            },
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(Object.keys(config.channels.telegram.accounts!)).toEqual([
+      'default',
+      'daily',
+    ]);
+    expect(config.channels.telegram.accounts!.default.botToken).toBe('token-a');
+    expect(config.channels.telegram.accounts!.daily.botToken).toBe('token-b');
+  });
+
+  it('bindings config is loaded and accessible', () => {
+    fs.writeFileSync(
+      path.join(tmpDir2, 'nanoclaw.json'),
+      JSON.stringify({
+        bindings: [
+          {
+            agentId: 'main',
+            match: { channel: 'telegram', accountId: 'default' },
+          },
+          {
+            agentId: 'coder',
+            match: { channel: 'telegram', accountId: 'daily' },
+          },
+        ],
+      }),
+    );
+    const config = loadConfig();
+    expect(config.bindings).toHaveLength(2);
+    expect(config.bindings![0].agentId).toBe('main');
+    expect(config.bindings![1].match.accountId).toBe('daily');
+  });
+
+  it('bindings defaults to undefined when not configured', () => {
+    const config = loadConfig();
+    expect(config.bindings).toBeUndefined();
+  });
+});

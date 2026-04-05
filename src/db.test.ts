@@ -7,6 +7,7 @@ import {
   getAllChats,
   getAllRegisteredGroups,
   getLastBotMessageTimestamp,
+  getMessageById,
   getMessagesSince,
   getNewMessages,
   getTaskById,
@@ -568,5 +569,87 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+// --- getMessageById (reply context) ---
+
+describe('getMessageById', () => {
+  it('returns message content and sender_name', () => {
+    storeChatMetadata(
+      'tg:123',
+      new Date().toISOString(),
+      'test',
+      'telegram',
+      false,
+    );
+    storeMessage({
+      id: 'msg-100',
+      chat_jid: 'tg:123',
+      sender: 'user1',
+      sender_name: 'Alice',
+      content: 'Hello world',
+      timestamp: new Date().toISOString(),
+      is_from_me: false,
+    });
+
+    const result = getMessageById('tg:123', 'msg-100');
+    expect(result).toBeDefined();
+    expect(result!.content).toBe('Hello world');
+    expect(result!.sender_name).toBe('Alice');
+  });
+
+  it('returns undefined for non-existent message', () => {
+    expect(getMessageById('tg:123', 'does-not-exist')).toBeUndefined();
+  });
+
+  it('returns undefined for wrong chat_jid', () => {
+    storeChatMetadata(
+      'tg:999',
+      new Date().toISOString(),
+      'test2',
+      'telegram',
+      false,
+    );
+    storeMessage({
+      id: 'msg-200',
+      chat_jid: 'tg:999',
+      sender: 'user1',
+      sender_name: 'Bob',
+      content: 'Secret',
+      timestamp: new Date().toISOString(),
+      is_from_me: false,
+    });
+
+    // Same message ID but different chat — should not find it
+    expect(getMessageById('tg:123', 'msg-200')).toBeUndefined();
+    // Correct chat — should find it
+    expect(getMessageById('tg:999', 'msg-200')).toBeDefined();
+  });
+
+  it('works with multi-account JIDs', () => {
+    storeChatMetadata(
+      'tg:daily:8731187021',
+      new Date().toISOString(),
+      'daily',
+      'telegram',
+      false,
+    );
+    storeMessage({
+      id: 'msg-300',
+      chat_jid: 'tg:daily:8731187021',
+      sender: 'user1',
+      sender_name: 'kenan',
+      content: 'Daily message',
+      timestamp: new Date().toISOString(),
+      is_from_me: false,
+    });
+
+    const result = getMessageById('tg:daily:8731187021', 'msg-300');
+    expect(result).toBeDefined();
+    expect(result!.content).toBe('Daily message');
+
+    // Different account — should not find it
+    expect(getMessageById('tg:8731187021', 'msg-300')).toBeUndefined();
   });
 });

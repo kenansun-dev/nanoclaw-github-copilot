@@ -148,7 +148,9 @@ export class TelegramChannel implements Channel {
         const replyAuthor =
           replyMsg.from?.first_name || replyMsg.from?.username || 'Someone';
         const truncated =
-          replyText.length > 200 ? replyText.slice(0, 200) + '\u2026' : replyText;
+          replyText.length > 200
+            ? replyText.slice(0, 200) + '\u2026'
+            : replyText;
         content = `[Replying to ${replyAuthor}: ${truncated}]\n${content}`;
       }
 
@@ -326,7 +328,10 @@ export class TelegramChannel implements Channel {
             ]);
             logger.info('Telegram slash commands registered');
           } catch (err: any) {
-            logger.debug({ err: err.message }, 'Failed to register slash commands');
+            logger.debug(
+              { err: err.message },
+              'Failed to register slash commands',
+            );
           }
 
           resolve();
