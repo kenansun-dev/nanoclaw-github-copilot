@@ -833,6 +833,40 @@ describe('TelegramChannel', () => {
       const channel = new TelegramChannel('test-token', createTestOpts());
       expect(channel.ownsJid('random-string')).toBe(false);
     });
+
+    // Multi-account ownsJid tests (PR #166/#167 bug fixes)
+    it('default account only owns 2-segment JIDs (tg:<chatId>)', () => {
+      const channel = new TelegramChannel('test-token', createTestOpts());
+      expect(channel.ownsJid('tg:123456')).toBe(true);
+      expect(channel.ownsJid('tg:-1001234')).toBe(true);
+      // Must NOT own 3-segment JIDs belonging to other accounts
+      expect(channel.ownsJid('tg:daily:123456')).toBe(false);
+      expect(channel.ownsJid('tg:other:999')).toBe(false);
+    });
+
+    it('non-default account only owns matching 3-segment JIDs', () => {
+      const channel = new TelegramChannel(
+        'test-token',
+        createTestOpts(),
+        'daily',
+      );
+      expect(channel.ownsJid('tg:daily:123456')).toBe(true);
+      expect(channel.ownsJid('tg:daily:-1001234')).toBe(true);
+      // Must NOT own default account JIDs
+      expect(channel.ownsJid('tg:123456')).toBe(false);
+      // Must NOT own other account JIDs
+      expect(channel.ownsJid('tg:other:123456')).toBe(false);
+    });
+
+    it('explicit "default" accountId behaves like no accountId', () => {
+      const channel = new TelegramChannel(
+        'test-token',
+        createTestOpts(),
+        'default',
+      );
+      expect(channel.ownsJid('tg:123456')).toBe(true);
+      expect(channel.ownsJid('tg:daily:123456')).toBe(false);
+    });
   });
 
   // --- setTyping ---
