@@ -758,10 +758,23 @@ function recoverPendingMessages(): void {
 let containerRuntimeAvailable = false;
 
 function ensureContainerSystemRunning(): void {
-  // Host mode doesn't need Docker
   const config = getConfig();
-  if (config.agents?.defaults?.mode === 'host') {
-    logger.info('Host mode — skipping container runtime check');
+
+  // Always cleanup orphaned containers, regardless of default mode.
+  // Other agents might use sandbox even when default is host.
+  // This matches upstream behavior where cleanupOrphans always runs.
+  try {
+    cleanupOrphans();
+  } catch {
+    // Container runtime might not be available — that’s OK for host-only setups
+  }
+
+  // Only check Docker runtime if any agent needs container mode
+  const needsContainers =
+    config.agents?.list?.some((a: any) => a.mode === 'sandbox') ||
+    config.agents?.defaults?.mode !== 'host';
+  if (!needsContainers) {
+    logger.info('No agents require containers — skipping runtime check');
     return;
   }
   try {
