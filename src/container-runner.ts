@@ -13,6 +13,7 @@ import {
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
   DATA_DIR,
+  getConfig,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   ONECLI_URL,
@@ -221,35 +222,40 @@ function buildVolumeMounts(
   // Copy agent-runner source into a per-group writable location so agents
   // can customize it (add tools, change behavior) without affecting other
   // groups. Recompiled on container startup via entrypoint.sh.
-  const agentRunnerSrc = path.join(
-    projectRoot,
-    'container',
-    resolveRunnerDir(chatJid),
-    'src',
-  );
-  const groupAgentRunnerDir = path.join(
-    DATA_DIR,
-    'sessions',
-    group.folder,
-    'agent-runner-src',
-  );
-  if (fs.existsSync(agentRunnerSrc)) {
-    const srcIndex = path.join(agentRunnerSrc, 'index.ts');
-    const cachedIndex = path.join(groupAgentRunnerDir, 'index.ts');
-    const needsCopy =
-      !fs.existsSync(groupAgentRunnerDir) ||
-      !fs.existsSync(cachedIndex) ||
-      (fs.existsSync(srcIndex) &&
-        fs.statSync(srcIndex).mtimeMs > fs.statSync(cachedIndex).mtimeMs);
-    if (needsCopy) {
-      fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+  // Agent-runner source mount — only needed for tsx engine (self-modifying mode)
+  // node engine uses compiled dist baked into the image
+  const sandboxEngine = getConfig().sandbox?.engine || 'node';
+  if (sandboxEngine === 'tsx') {
+    const agentRunnerSrc = path.join(
+      projectRoot,
+      'container',
+      resolveRunnerDir(chatJid),
+      'src',
+    );
+    const groupAgentRunnerDir = path.join(
+      DATA_DIR,
+      'sessions',
+      group.folder,
+      'agent-runner-src',
+    );
+    if (fs.existsSync(agentRunnerSrc)) {
+      const srcIndex = path.join(agentRunnerSrc, 'index.ts');
+      const cachedIndex = path.join(groupAgentRunnerDir, 'index.ts');
+      const needsCopy =
+        !fs.existsSync(groupAgentRunnerDir) ||
+        !fs.existsSync(cachedIndex) ||
+        (fs.existsSync(srcIndex) &&
+          fs.statSync(srcIndex).mtimeMs > fs.statSync(cachedIndex).mtimeMs);
+      if (needsCopy) {
+        fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+      }
     }
+    mounts.push({
+      hostPath: groupAgentRunnerDir,
+      containerPath: '/app/src',
+      readonly: false,
+    });
   }
-  mounts.push({
-    hostPath: groupAgentRunnerDir,
-    containerPath: '/app/src',
-    readonly: false,
-  });
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
@@ -274,6 +280,10 @@ function buildContainerArgs(
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
+
+  // Pass sandbox engine setting (node=compiled dist, tsx=self-modifying)
+  const engine = getConfig().sandbox?.engine || 'node';
+  args.push('-e', `NANOCLAW_ENGINE=${engine}`);
 
   // Provider-specific env vars (GHC token/model or CC credential proxy)
   args.push(

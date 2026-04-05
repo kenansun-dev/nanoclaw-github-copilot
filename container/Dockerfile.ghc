@@ -58,8 +58,10 @@ RUN npm run build
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
 
-# Create entrypoint script (uses tsx instead of node for ESM compat)
-RUN printf '#!/bin/bash\nset -e\ncat > /tmp/input.json\ncd /app && tsx src/index.ts < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+# Entrypoint — engine selected at runtime via NANOCLAW_ENGINE env
+# Default: node (compiled dist). Set NANOCLAW_ENGINE=tsx for self-modifying agent mode.
+COPY entrypoint-ghc.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root) for writable directories
 RUN chown -R node:node /workspace && chmod 777 /home/node

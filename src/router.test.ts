@@ -111,8 +111,16 @@ describe('formatMessages', () => {
 
   it('formats multiple messages in order', () => {
     const msgs = [
-      makeMsg({ sender_name: 'Alice', content: 'first', timestamp: '2026-04-05T10:00:00.000Z' }),
-      makeMsg({ sender_name: 'Bob', content: 'second', timestamp: '2026-04-05T10:01:00.000Z' }),
+      makeMsg({
+        sender_name: 'Alice',
+        content: 'first',
+        timestamp: '2026-04-05T10:00:00.000Z',
+      }),
+      makeMsg({
+        sender_name: 'Bob',
+        content: 'second',
+        timestamp: '2026-04-05T10:01:00.000Z',
+      }),
     ];
     const result = formatMessages(msgs, 'UTC');
     expect(result.indexOf('first')).toBeLessThan(result.indexOf('second'));
@@ -134,7 +142,12 @@ describe('formatConversationContext', () => {
 
   it('includes sender names in context', () => {
     const msgs = [
-      { sender_name: 'Alice', content: 'hi', timestamp: '2026-04-05T10:00:00.000Z', is_from_me: false },
+      {
+        sender_name: 'Alice',
+        content: 'hi',
+        timestamp: '2026-04-05T10:00:00.000Z',
+        is_from_me: false,
+      },
     ];
     const result = formatConversationContext(msgs, 'UTC', 'Bot');
     expect(result).toContain('Alice');
@@ -143,7 +156,12 @@ describe('formatConversationContext', () => {
 
   it('labels bot messages with bot prefix', () => {
     const msgs = [
-      { sender_name: 'Bot', content: 'I am bot', timestamp: '2026-04-05T10:00:00.000Z', is_from_me: true },
+      {
+        sender_name: 'Bot',
+        content: 'I am bot',
+        timestamp: '2026-04-05T10:00:00.000Z',
+        is_from_me: true,
+      },
     ];
     const result = formatConversationContext(msgs, 'UTC', 'Bot');
     expect(result).toContain('Bot');

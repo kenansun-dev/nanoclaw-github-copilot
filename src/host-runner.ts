@@ -42,7 +42,6 @@ function resolveAgentRunnerPath(agent: AgentConfig): string {
     path.dirname(fileURLToPath(import.meta.url)),
     '..',
   );
-  // Prefer compiled dist (production), fall back to src (dev via tsx)
   const distPath = path.join(
     pkgRoot,
     'container',
@@ -50,8 +49,12 @@ function resolveAgentRunnerPath(agent: AgentConfig): string {
     'dist',
     'index.js',
   );
-  const srcPath = path.join(pkgRoot, 'container', runnerDir, 'src', 'index.ts');
-  return fs.existsSync(distPath) ? distPath : srcPath;
+  if (!fs.existsSync(distPath)) {
+    throw new Error(
+      `Agent runner not compiled: ${distPath}. Run 'npm run build' first.`,
+    );
+  }
+  return distPath;
 }
 
 /**

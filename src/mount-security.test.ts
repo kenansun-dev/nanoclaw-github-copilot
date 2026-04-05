@@ -11,10 +11,7 @@ import os from 'os';
 
 // We test the pure validation functions by importing them
 // and mocking the allowlist loading
-import {
-  validateMount,
-  MountValidationResult,
-} from './mount-security.js';
+import { validateMount, MountValidationResult } from './mount-security.js';
 
 // Test isValidContainerPath logic (extracted for testing)
 describe('container path validation', () => {
@@ -40,10 +37,7 @@ describe('container path validation', () => {
   });
 
   it('rejects empty container paths', () => {
-    const result = validateMount(
-      { hostPath: '/tmp', containerPath: '' },
-      true,
-    );
+    const result = validateMount({ hostPath: '/tmp', containerPath: '' }, true);
     expect(result.allowed).toBe(false);
   });
 
@@ -84,18 +78,12 @@ describe('blocked patterns', () => {
   });
 
   it('blocks credentials paths', () => {
-    const result = validateMount(
-      { hostPath: '/some/path/credentials' },
-      true,
-    );
+    const result = validateMount({ hostPath: '/some/path/credentials' }, true);
     expect(result.allowed).toBe(false);
   });
 
   it('blocks private_key paths', () => {
-    const result = validateMount(
-      { hostPath: '/some/path/private_key' },
-      true,
-    );
+    const result = validateMount({ hostPath: '/some/path/private_key' }, true);
     expect(result.allowed).toBe(false);
   });
 });
@@ -103,10 +91,7 @@ describe('blocked patterns', () => {
 describe('no allowlist = all mounts blocked', () => {
   it('blocks all mounts when no allowlist exists', () => {
     // Without an allowlist file, ALL additional mounts should be blocked
-    const result = validateMount(
-      { hostPath: '/tmp/safe-dir' },
-      true,
-    );
+    const result = validateMount({ hostPath: '/tmp/safe-dir' }, true);
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('allowlist');
   });
@@ -122,10 +107,7 @@ describe('mount validation edge cases', () => {
   });
 
   it('derives containerPath from hostPath basename when not specified', () => {
-    const result = validateMount(
-      { hostPath: '/tmp' },
-      true,
-    );
+    const result = validateMount({ hostPath: '/tmp' }, true);
     // The containerPath derivation happens even if the mount is blocked
     // We just verify the function doesn't crash
     expect(result).toBeDefined();

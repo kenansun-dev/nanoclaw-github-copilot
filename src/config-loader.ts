@@ -115,6 +115,7 @@ export interface NanoclawConfig {
     maxOutputSize: number;
     maxConcurrent: number;
     idleTimeout: number;
+    engine?: 'node' | 'tsx'; // node = compiled dist (default), tsx = self-modifying
   };
   chats: Record<
     string,
@@ -186,6 +187,7 @@ const DEFAULTS: NanoclawConfig = {
     maxOutputSize: 10485760,
     maxConcurrent: 5,
     idleTimeout: 0,
+    engine: 'node' as const,
   },
   chats: {},
   pairing: { mode: 'disabled' },

@@ -230,3 +230,45 @@ describe('channel accounts normalization', () => {
     expect(config.bindings).toBeUndefined();
   });
 });
+
+// --- sandbox.engine config ---
+
+describe('sandbox.engine config', () => {
+  const tmpDir3 = path.join(os.tmpdir(), `nanoclaw-test-engine-${Date.now()}`);
+
+  beforeEach(() => {
+    setWorkspace(tmpDir3);
+    ensureWorkspace();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir3, { recursive: true, force: true });
+  });
+
+  it('defaults to node when not specified', () => {
+    fs.writeFileSync(
+      path.join(tmpDir3, 'nanoclaw.json'),
+      JSON.stringify({}),
+    );
+    const config = loadConfig();
+    expect(config.sandbox.engine).toBe('node');
+  });
+
+  it('respects explicit engine: tsx', () => {
+    fs.writeFileSync(
+      path.join(tmpDir3, 'nanoclaw.json'),
+      JSON.stringify({ sandbox: { engine: 'tsx' } }),
+    );
+    const config = loadConfig();
+    expect(config.sandbox.engine).toBe('tsx');
+  });
+
+  it('respects explicit engine: node', () => {
+    fs.writeFileSync(
+      path.join(tmpDir3, 'nanoclaw.json'),
+      JSON.stringify({ sandbox: { engine: 'node' } }),
+    );
+    const config = loadConfig();
+    expect(config.sandbox.engine).toBe('node');
+  });
+});

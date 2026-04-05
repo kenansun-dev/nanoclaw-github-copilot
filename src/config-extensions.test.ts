@@ -33,7 +33,9 @@ function makeAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 
 describe('getProvider', () => {
   it('extracts provider from provider/model format', () => {
-    expect(getProvider('github-copilot/claude-sonnet-4.5')).toBe('github-copilot');
+    expect(getProvider('github-copilot/claude-sonnet-4.5')).toBe(
+      'github-copilot',
+    );
     expect(getProvider('anthropic/claude-opus-4')).toBe('anthropic');
     expect(getProvider('openai/gpt-5.3')).toBe('openai');
   });
@@ -52,7 +54,9 @@ describe('getProvider', () => {
 
 describe('getModelName', () => {
   it('extracts model name after slash', () => {
-    expect(getModelName('github-copilot/claude-sonnet-4.5')).toBe('claude-sonnet-4.5');
+    expect(getModelName('github-copilot/claude-sonnet-4.5')).toBe(
+      'claude-sonnet-4.5',
+    );
     expect(getModelName('openai/gpt-5.3')).toBe('gpt-5.3');
   });
 
@@ -79,11 +83,15 @@ describe('isGHCProvider', () => {
 
 describe('isAgentGHC', () => {
   it('returns true for GHC agent', () => {
-    expect(isAgentGHC(makeAgent({ model: 'github-copilot/claude-sonnet-4.5' }))).toBe(true);
+    expect(
+      isAgentGHC(makeAgent({ model: 'github-copilot/claude-sonnet-4.5' })),
+    ).toBe(true);
   });
 
   it('returns false for non-GHC agent', () => {
-    expect(isAgentGHC(makeAgent({ model: 'anthropic/claude-opus-4' }))).toBe(false);
+    expect(isAgentGHC(makeAgent({ model: 'anthropic/claude-opus-4' }))).toBe(
+      false,
+    );
   });
 });
 
@@ -91,11 +99,17 @@ describe('isAgentGHC', () => {
 
 describe('getAgentSessionDir', () => {
   it('returns .copilot for GHC agents', () => {
-    expect(getAgentSessionDir(makeAgent({ model: 'github-copilot/claude-sonnet-4.5' }))).toBe('.copilot');
+    expect(
+      getAgentSessionDir(
+        makeAgent({ model: 'github-copilot/claude-sonnet-4.5' }),
+      ),
+    ).toBe('.copilot');
   });
 
   it('returns .claude for CC agents', () => {
-    expect(getAgentSessionDir(makeAgent({ model: 'anthropic/claude-opus-4' }))).toBe('.claude');
+    expect(
+      getAgentSessionDir(makeAgent({ model: 'anthropic/claude-opus-4' })),
+    ).toBe('.claude');
   });
 });
 
@@ -103,12 +117,16 @@ describe('getAgentSessionDir', () => {
 
 describe('getAgentModelName', () => {
   it('extracts model from agent config', () => {
-    expect(getAgentModelName(makeAgent({ model: 'github-copilot/gpt-5.3' }))).toBe('gpt-5.3');
+    expect(
+      getAgentModelName(makeAgent({ model: 'github-copilot/gpt-5.3' })),
+    ).toBe('gpt-5.3');
   });
 });
 
 describe('getAgentProvider', () => {
   it('extracts provider from agent config', () => {
-    expect(getAgentProvider(makeAgent({ model: 'github-copilot/gpt-5.3' }))).toBe('github-copilot');
+    expect(
+      getAgentProvider(makeAgent({ model: 'github-copilot/gpt-5.3' })),
+    ).toBe('github-copilot');
   });
 });

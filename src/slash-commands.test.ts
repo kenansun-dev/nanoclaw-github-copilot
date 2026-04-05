@@ -113,7 +113,9 @@ describe('handleSlashCommand', () => {
     // Should send confirmation via sendMessage or sendCard
     const sendMsg = ctx.channel!.sendMessage as ReturnType<typeof vi.fn>;
     const sendCard = ctx.channel!.sendCard as ReturnType<typeof vi.fn>;
-    expect(sendMsg.mock.calls.length + sendCard.mock.calls.length).toBeGreaterThan(0);
+    expect(
+      sendMsg.mock.calls.length + sendCard.mock.calls.length,
+    ).toBeGreaterThan(0);
   });
 
   it('/think without level returns handled (shows selector)', async () => {
@@ -264,7 +266,9 @@ describe('COMMANDS registry', () => {
 
 describe('registerTelegramCommands', () => {
   it('calls Telegram setMyCommands API', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
     vi.stubGlobal('fetch', mockFetch);
 
     const { registerTelegramCommands } = await import('./slash-commands.js');
