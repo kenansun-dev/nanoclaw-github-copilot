@@ -227,7 +227,13 @@ export class GroupQueue {
       logger.error({ groupJid, err }, 'Error processing messages for group');
       this.scheduleRetry(groupJid, state);
     } finally {
-      if (state.process && !state.process.killed && state.idleWaiting) {
+      // Check if the process is truly alive — Docker stop doesn't set process.killed,
+      // but exitCode becomes non-null when the process exits.
+      const processAlive =
+        state.process &&
+        state.process.exitCode === null &&
+        !state.process.killed;
+      if (processAlive && state.idleWaiting) {
         logger.debug({ groupJid }, 'Agent idle-waiting for IPC');
       } else {
         state.active = false;
