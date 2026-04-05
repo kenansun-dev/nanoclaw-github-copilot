@@ -340,8 +340,18 @@ export class GroupQueue {
         state.process &&
         !state.process.killed
       ) {
-        // Keep pendingMessages=true so drainGroup re-processes after process exits
-        this.closeStdin(groupJid);
+        // Process is alive and idle — pipe new messages via IPC instead of killing.
+        // processMessagesFn will read from DB and call sendMessage() which writes
+        // IPC files that the idle agent reads.
+        state.pendingMessages = false;
+        if (this.processMessagesFn) {
+          this.processMessagesFn(groupJid).catch((err) =>
+            logger.error(
+              { groupJid, err },
+              'Error piping messages to idle agent',
+            ),
+          );
+        }
         return;
       }
       this.runForGroup(groupJid, 'drain').catch((err) =>
