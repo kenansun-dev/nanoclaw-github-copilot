@@ -242,7 +242,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const isMainGroup = group.isMain === true;
 
-  const missedMessages = getMessagesSince(
+  let missedMessages = getMessagesSince(
     chatJid,
     getOrRecoverCursor(chatJid),
     ASSISTANT_NAME,
@@ -251,22 +251,32 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (missedMessages.length === 0) return true;
 
-  // Handle slash commands BEFORE trigger check — commands work without @mention
-  const lastMsg = missedMessages[missedMessages.length - 1];
+  // Handle slash commands in ALL messages, not just the last one.
+  // Separate slash commands from regular messages to avoid swallowing.
   const { normalizeSlashInput, handleSlashCommand } =
     await import('./slash-commands.js');
-  const slashInput = normalizeSlashInput(lastMsg.content);
-  const slashResult = await handleSlashCommand(slashInput, {
+  const slashCtx = {
     chatJid,
     groupFolder: group.folder,
     channel: findChannel(channels, chatJid),
-    clearSession: (folder) => delete sessions[folder],
-  });
-  if (slashResult.handled) {
-    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
-    saveState();
-    return true;
+    clearSession: (folder: string) => delete sessions[folder],
+  };
+  const regularMessages: typeof missedMessages = [];
+  for (const msg of missedMessages) {
+    const slashInput = normalizeSlashInput(msg.content);
+    const slashResult = await handleSlashCommand(slashInput, slashCtx);
+    if (slashResult.handled) {
+      lastAgentTimestamp[chatJid] = msg.timestamp;
+    } else {
+      regularMessages.push(msg);
+    }
   }
+  saveState();
+
+  if (regularMessages.length === 0) return true;
+
+  // Replace missedMessages with non-slash messages for further processing
+  missedMessages = regularMessages;
 
   // For non-main groups, check if trigger is required and present
   // (after slash commands, so /think etc. work without @mention)
@@ -671,26 +681,32 @@ async function startMessageLoop(): Promise<void> {
             ASSISTANT_NAME,
             MAX_MESSAGES_PER_PROMPT,
           );
-          const messagesToSend =
+          let messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
 
-          // Check if the last message is a slash command — intercept before IPC
-          const lastIpcMsg = messagesToSend[messagesToSend.length - 1];
-          if (lastIpcMsg) {
+          // Handle slash commands in ALL pending messages, not just the last
+          if (messagesToSend.length > 0) {
             const { normalizeSlashInput, handleSlashCommand } =
               await import('./slash-commands.js');
-            const slashInput = normalizeSlashInput(lastIpcMsg.content);
-            const slashResult = await handleSlashCommand(slashInput, {
+            const slashCtx2 = {
               chatJid,
               groupFolder: group.folder,
               channel: findChannel(channels, chatJid),
-              clearSession: (folder) => delete sessions[folder],
-            });
-            if (slashResult.handled) {
-              lastAgentTimestamp[chatJid] = lastIpcMsg.timestamp;
-              saveState();
-              continue;
+              clearSession: (folder: string) => delete sessions[folder],
+            };
+            const nonSlash: typeof messagesToSend = [];
+            for (const msg of messagesToSend) {
+              const slashInput = normalizeSlashInput(msg.content);
+              const slashResult = await handleSlashCommand(slashInput, slashCtx2);
+              if (slashResult.handled) {
+                lastAgentTimestamp[chatJid] = msg.timestamp;
+              } else {
+                nonSlash.push(msg);
+              }
             }
+            saveState();
+            messagesToSend = nonSlash;
+            if (messagesToSend.length === 0) continue;
           }
 
           const formatted = formatMessages(messagesToSend, TIMEZONE);
