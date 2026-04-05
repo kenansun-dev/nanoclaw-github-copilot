@@ -509,6 +509,7 @@ async function main(): Promise<void> {
       // Poll IPC for follow-up messages during query execution
       let ipcPolling = true;
       let closedDuringQuery = false;
+      const queuedIpcMessages: string[] = [];
 
       const pollIpcDuringQuery = () => {
         if (!ipcPolling) return;
@@ -521,8 +522,7 @@ async function main(): Promise<void> {
         const messages = drainIpcInput();
         for (const text of messages) {
           log(`Queuing IPC message (${text.length} chars) — will send after current query`);
-          // Note: Copilot SDK doesn't support mid-query message injection like Claude SDK's
-          // async iterable. Messages will be sent as new queries in the next loop iteration.
+          queuedIpcMessages.push(text);
         }
         setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
       };
@@ -621,7 +621,16 @@ async function main(): Promise<void> {
 
       log('Query ended, waiting for next IPC message...');
 
-      const nextMessage = await waitForIpcMessage();
+      // Check for messages queued during the query before polling for new ones
+      let nextMessage: string | null;
+      if (queuedIpcMessages.length > 0) {
+        nextMessage = queuedIpcMessages.join('\n');
+        queuedIpcMessages.length = 0;
+        log(`Using ${nextMessage.length} chars queued during query`);
+      } else {
+        nextMessage = await waitForIpcMessage();
+      }
+
       if (nextMessage === null) {
         log('Close sentinel received, exiting');
         break;
