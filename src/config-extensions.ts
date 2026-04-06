@@ -256,6 +256,7 @@ export async function runAgentForChat(
     ...input,
     assistantName: agent.name || input.assistantName,
     model: getAgentModelName(agent) || input.model,
+    agentId: agent.id || undefined,
   };
   if (agent.mode === 'host') {
     const { runHostAgent } = await getHostRunner();

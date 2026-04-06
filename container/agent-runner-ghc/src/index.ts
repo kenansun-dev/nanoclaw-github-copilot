@@ -27,6 +27,7 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   model?: string;
+  agentId?: string;
 }
 
 interface ContainerOutput {
@@ -230,6 +231,10 @@ async function main(): Promise<void> {
     runtimeLines.push('- **Persistence**: Only /workspace/group persists across restarts');
     runtimeLines.push('- **Sudo**: Available (passwordless)');
   }
+  if (containerInput.agentId) {
+    runtimeLines.push(`- **Agent ID**: ${containerInput.agentId}`);
+  }
+  runtimeLines.push(`- **Main chat**: ${containerInput.isMain ? 'Yes — you can use nanoclaw_control to change config and restart' : 'No — nanoclaw_control is not available (config changes require the main chat)'}`);
   const identityPrompt = runtimeLines.join('\n');
 
   // Load global CLAUDE.md as additional system context

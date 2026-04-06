@@ -57,6 +57,7 @@ export interface ContainerInput {
   assistantName?: string;
   model?: string;
   script?: string;
+  agentId?: string;
 }
 
 export interface ContainerOutput {
