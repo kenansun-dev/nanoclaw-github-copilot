@@ -177,7 +177,7 @@ describe('findChannel', () => {
     ownsJid: (jid: string) => jid.startsWith(`${prefix}:`),
     connect: async () => {},
     disconnect: async () => {},
-    sendMessage: async () => undefined,
+    sendMessage: async () => undefined, isConnected: () => true,
   });
 
   it('finds channel by JID prefix', () => {

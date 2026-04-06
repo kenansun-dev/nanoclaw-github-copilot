@@ -697,7 +697,10 @@ async function startMessageLoop(): Promise<void> {
             const nonSlash: typeof messagesToSend = [];
             for (const msg of messagesToSend) {
               const slashInput = normalizeSlashInput(msg.content);
-              const slashResult = await handleSlashCommand(slashInput, slashCtx2);
+              const slashResult = await handleSlashCommand(
+                slashInput,
+                slashCtx2,
+              );
               if (slashResult.handled) {
                 lastAgentTimestamp[chatJid] = msg.timestamp;
               } else {

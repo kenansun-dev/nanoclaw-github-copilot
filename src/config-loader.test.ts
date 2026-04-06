@@ -246,10 +246,7 @@ describe('sandbox.engine config', () => {
   });
 
   it('defaults to node when not specified', () => {
-    fs.writeFileSync(
-      path.join(tmpDir3, 'nanoclaw.json'),
-      JSON.stringify({}),
-    );
+    fs.writeFileSync(path.join(tmpDir3, 'nanoclaw.json'), JSON.stringify({}));
     const config = loadConfig();
     expect(config.sandbox.engine).toBe('node');
   });

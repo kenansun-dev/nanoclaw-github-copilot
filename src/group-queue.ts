@@ -145,21 +145,36 @@ export class GroupQueue {
     // state.active=true after the process dies, swallowing pending messages.
     proc.on('exit', () => {
       if (state.active && state.idleWaiting) {
-        logger.info({ groupJid }, 'Process exited while idle-waiting, releasing active state');
+        logger.info(
+          { groupJid },
+          'Process exited while idle-waiting, releasing active state',
+        );
         // Clean up stale IPC files that were written for this now-dead process
         if (state.groupFolder) {
-          const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
+          const inputDir = path.join(
+            DATA_DIR,
+            'ipc',
+            state.groupFolder,
+            'input',
+          );
           try {
-            const files = fs.readdirSync(inputDir).filter(f => f.endsWith('.json'));
+            const files = fs
+              .readdirSync(inputDir)
+              .filter((f) => f.endsWith('.json'));
             for (const f of files) {
               fs.unlinkSync(path.join(inputDir, f));
             }
             if (files.length > 0) {
-              logger.info({ groupJid, count: files.length }, 'Cleaned stale IPC files');
+              logger.info(
+                { groupJid, count: files.length },
+                'Cleaned stale IPC files',
+              );
               // Re-set pendingMessages so drainGroup picks them up from DB
               state.pendingMessages = true;
             }
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
         state.active = false;
         state.idleWaiting = false;
@@ -197,14 +212,22 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     if (!state.active || !state.groupFolder || state.isTaskContainer) {
       logger.info(
-        { groupJid, active: state.active, hasFolder: !!state.groupFolder, isTask: state.isTaskContainer },
+        {
+          groupJid,
+          active: state.active,
+          hasFolder: !!state.groupFolder,
+          isTask: state.isTaskContainer,
+        },
         'sendMessage: rejected (no active container or wrong state)',
       );
       return false;
     }
     // Check process is actually alive — prevents piping to dead process's IPC dir
     if (state.process && state.process.exitCode !== null) {
-      logger.info({ groupJid, exitCode: state.process.exitCode }, 'sendMessage: rejected (process already exited)');
+      logger.info(
+        { groupJid, exitCode: state.process.exitCode },
+        'sendMessage: rejected (process already exited)',
+      );
       return false;
     }
     state.idleWaiting = false;
