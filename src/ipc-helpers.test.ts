@@ -27,8 +27,9 @@ describe('IPC helper logic', () => {
   function drainIpcInput(): string[] {
     const messages: string[] = [];
     try {
-      const files = fs.readdirSync(inputDir)
-        .filter(f => f.endsWith('.json'))
+      const files = fs
+        .readdirSync(inputDir)
+        .filter((f) => f.endsWith('.json'))
         .sort();
       for (const file of files) {
         const filepath = path.join(inputDir, file);
@@ -36,9 +37,13 @@ describe('IPC helper logic', () => {
           const data = JSON.parse(fs.readFileSync(filepath, 'utf-8'));
           if (data.text) messages.push(data.text);
           fs.unlinkSync(filepath);
-        } catch { /* skip malformed */ }
+        } catch {
+          /* skip malformed */
+        }
       }
-    } catch { /* dir doesn't exist */ }
+    } catch {
+      /* dir doesn't exist */
+    }
     return messages;
   }
 
@@ -60,7 +65,9 @@ describe('IPC helper logic', () => {
     expect(messages).toEqual(['first', 'second']);
 
     // Files should be deleted
-    const remaining = fs.readdirSync(inputDir).filter(f => f.endsWith('.json'));
+    const remaining = fs
+      .readdirSync(inputDir)
+      .filter((f) => f.endsWith('.json'));
     expect(remaining).toHaveLength(0);
   });
 

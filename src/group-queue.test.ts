@@ -482,7 +482,6 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
-
   // --- Tests for #188/#189 process liveness + IPC queue ---
 
   it('sendMessage rejects when process exitCode is not null', async () => {
@@ -508,7 +507,10 @@ describe('GroupQueue', () => {
     vi.useRealTimers();
     const queue = new GroupQueue();
     let pipeCalled = false;
-    queue.setProcessMessagesFn(async () => { pipeCalled = true; return true; });
+    queue.setProcessMessagesFn(async () => {
+      pipeCalled = true;
+      return true;
+    });
 
     queue.registerProcess(
       'group1@g.us',
@@ -523,9 +525,8 @@ describe('GroupQueue', () => {
     (queue as any).activeCount = 1;
 
     (queue as any).drainGroup('group1@g.us');
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 50));
     expect(pipeCalled).toBe(true);
     expect(state.pendingMessages).toBe(false);
   });
-
 });

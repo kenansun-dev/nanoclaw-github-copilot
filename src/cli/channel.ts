@@ -83,17 +83,58 @@ export async function runChannelCommand(args: string[]): Promise<void> {
 // Parse flags from args
 // ---------------------------------------------------------------------------
 
-function parseFlags(args: string[]): { agent?: string; force: boolean } {
+function parseFlags(args: string[]): {
+  agent?: string;
+  account?: string;
+  setup: boolean;
+  force: boolean;
+  appId?: string;
+  appPassword?: string;
+  tenantId?: string;
+  botToken?: string;
+  webhookPort?: number;
+} {
   let agent: string | undefined;
+  let account: string | undefined;
+  let setup = false;
   let force = false;
+  let appId: string | undefined;
+  let appPassword: string | undefined;
+  let tenantId: string | undefined;
+  let botToken: string | undefined;
+  let webhookPort: number | undefined;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--agent' && args[i + 1]) {
       agent = args[++i];
+    } else if (args[i] === '--account' && args[i + 1]) {
+      account = args[++i];
+    } else if (args[i] === '--setup') {
+      setup = true;
     } else if (args[i] === '--force') {
       force = true;
+    } else if (args[i] === '--appId' && args[i + 1]) {
+      appId = args[++i];
+    } else if (args[i] === '--appPassword' && args[i + 1]) {
+      appPassword = args[++i];
+    } else if (args[i] === '--tenantId' && args[i + 1]) {
+      tenantId = args[++i];
+    } else if (args[i] === '--botToken' && args[i + 1]) {
+      botToken = args[++i];
+    } else if (args[i] === '--webhookPort' && args[i + 1]) {
+      webhookPort = parseInt(args[++i], 10);
     }
   }
-  return { agent, force };
+  return {
+    agent,
+    account,
+    setup,
+    force,
+    appId,
+    appPassword,
+    tenantId,
+    botToken,
+    webhookPort,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +176,15 @@ async function channelAdd(
   args: string[],
 ): Promise<void> {
   if (!name) {
-    console.log('Usage: nanoclaw channel add <name> [--agent <id>] [--force]');
+    console.log(
+      'Usage: nanoclaw channel add <name> [--account <id>] [--setup] [--agent <id>] [--force]',
+    );
+    console.log(
+      '       nanoclaw channel add teams --appId xxx --appPassword yyy [--account bot-b]',
+    );
+    console.log(
+      '       nanoclaw channel add telegram --botToken xxx [--account daily]',
+    );
     console.log('Available: ' + SUPPORTED_CHANNELS.join(', '));
     return;
   }
@@ -148,12 +197,12 @@ async function channelAdd(
 
   const channelName = name as ChannelName;
   const flags = parseFlags(args);
+  const accountId = flags.account || 'default';
 
   // Resolve agent
   const config = loadConfig();
   const agentId = flags.agent;
   if (agentId) {
-    // Check agent exists
     const agentList = config.agents?.list || [];
     const found = agentList.find((a: any) => a.id === agentId);
     if (!found) {
@@ -164,36 +213,56 @@ async function channelAdd(
     }
   }
 
-  // Check if agent already has this channel configured
-  const agent = resolveAgent(config, agentId);
-  const agentName = agent.name || agentId || 'default';
-  const existingChannel = (config.channels as any)?.[channelName];
-  if (existingChannel?.enabled && existingChannel?.appId && !flags.force) {
-    console.log(`Agent '${agentName}' already has ${channelName} configured.`);
-    console.log(
-      `  Use --force to reconfigure, or --agent <name> for a different agent.`,
+  // Validate mutually exclusive flags
+  if (flags.setup && (flags.appId || flags.botToken)) {
+    console.error(
+      'Error: --setup and --appId/--botToken are mutually exclusive.',
     );
+    console.log('  Use --setup to provision new resources, OR pass credentials directly.');
     return;
   }
 
-  // Teams: run setup-teams script
-  if (channelName === 'teams') {
+  // Teams with --setup: run full provision script
+  if (channelName === 'teams' && flags.setup) {
+    const agent = resolveAgent(config, agentId);
+    const agentName = agent.name || agentId || 'default';
     return channelAddTeams(agentName, flags.force);
   }
 
-  // Other channels: interactive credential input
-  return channelAddInteractive(channelName);
+  // Direct credentials via flags (non-interactive)
+  if (channelName === 'teams' && flags.appId) {
+    return channelAddDirect(channelName, accountId, {
+      appId: flags.appId,
+      appPassword: flags.appPassword,
+      tenantId: flags.tenantId,
+      webhookPort: flags.webhookPort,
+    });
+  }
+  if (channelName === 'telegram' && flags.botToken) {
+    return channelAddDirect(channelName, accountId, {
+      botToken: flags.botToken,
+    });
+  }
+
+  // Interactive credential input
+  return channelAddInteractive(channelName, accountId);
 }
 
 // ---------------------------------------------------------------------------
 // Interactive credential input (Telegram, etc.)
 // ---------------------------------------------------------------------------
 
-async function channelAddInteractive(channelName: ChannelName): Promise<void> {
+async function channelAddInteractive(
+  channelName: ChannelName,
+  accountId: string,
+): Promise<void> {
   const fields = CHANNEL_FIELDS[channelName];
 
   if (!process.stdin.isTTY) {
     console.log('Interactive mode required. Run from a terminal.');
+    console.log(
+      `  Or use flags: nanoclaw channel add ${channelName} --account ${accountId} --${fields[0].key} <value>`,
+    );
     return;
   }
 
@@ -204,39 +273,52 @@ async function channelAddInteractive(channelName: ChannelName): Promise<void> {
   const ask = (q: string): Promise<string> =>
     new Promise((resolve) => rl.question(q, resolve));
 
-  console.log(`\nConfiguring ${channelName}:\n`);
+  console.log(`\nConfiguring ${channelName} (account: ${accountId}):\n`);
 
+  const credentials: Record<string, any> = {};
+
+  for (const field of fields) {
+    const requiredHint = field.required ? ' *' : '';
+    const value = await ask(`  ${field.prompt}${requiredHint}: `);
+    if (value.trim()) {
+      credentials[field.key] = value.trim();
+    }
+  }
+
+  rl.close();
+
+  return channelAddDirect(channelName, accountId, credentials);
+}
+
+// ---------------------------------------------------------------------------
+// Direct credential write (non-interactive)
+// ---------------------------------------------------------------------------
+
+function channelAddDirect(
+  channelName: ChannelName,
+  accountId: string,
+  credentials: Record<string, any>,
+): void {
   const config = loadConfig();
   config.channels = config.channels || {};
+
   const channelConfig: Record<string, any> =
     (config.channels as any)[channelName] || {};
   channelConfig.enabled = true;
 
-  for (const field of fields) {
-    const current = channelConfig[field.key];
-    const currentHint = current
-      ? field.secret
-        ? ' (current: ***)'
-        : ` (current: ${current})`
-      : '';
-    const requiredHint = field.required ? ' *' : '';
-
-    const value = await ask(`  ${field.prompt}${requiredHint}${currentHint}: `);
-    if (value.trim()) {
-      if (field.key === 'webhookPort') {
-        channelConfig[field.key] = parseInt(value.trim(), 10) || 3978;
-      } else {
-        channelConfig[field.key] = value.trim();
-      }
-    }
+  // Write credentials to accounts.<accountId>
+  if (!channelConfig.accounts) {
+    channelConfig.accounts = {};
   }
+  const existingAccount = channelConfig.accounts[accountId] || {};
+  channelConfig.accounts[accountId] = { ...existingAccount, ...credentials };
 
   (config.channels as any)[channelName] = channelConfig;
   saveConfig(config);
 
-  rl.close();
-
-  console.log(`\n✅ ${channelName} configured and enabled in nanoclaw.json`);
+  console.log(
+    `\n✅ ${channelName} account '${accountId}' configured in nanoclaw.json`,
+  );
   console.log('  Restart nanoclaw for changes to take effect.\n');
 }
 
