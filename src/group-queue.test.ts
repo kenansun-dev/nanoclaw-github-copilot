@@ -481,4 +481,51 @@ describe('GroupQueue', () => {
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
   });
+
+
+  // --- Tests for #188/#189 process liveness + IPC queue ---
+
+  it('sendMessage rejects when process exitCode is not null', async () => {
+    vi.useRealTimers();
+    const queue = new GroupQueue();
+    queue.setProcessMessagesFn(async () => true);
+
+    queue.registerProcess(
+      'group1@g.us',
+      { on: () => {}, exitCode: null, killed: false } as any,
+      'c1',
+      'folder1',
+    );
+    const state = (queue as any).getGroup('group1@g.us');
+    state.active = true;
+
+    // Simulate process death
+    state.process.exitCode = 1;
+    expect(queue.sendMessage('group1@g.us', 'hello')).toBe(false);
+  });
+
+  it('drainGroup pipes messages to idle agent via processMessagesFn', async () => {
+    vi.useRealTimers();
+    const queue = new GroupQueue();
+    let pipeCalled = false;
+    queue.setProcessMessagesFn(async () => { pipeCalled = true; return true; });
+
+    queue.registerProcess(
+      'group1@g.us',
+      { on: () => {}, exitCode: null, killed: false } as any,
+      'c1',
+      'folder1',
+    );
+    const state = (queue as any).getGroup('group1@g.us');
+    state.active = true;
+    state.idleWaiting = true;
+    state.pendingMessages = true;
+    (queue as any).activeCount = 1;
+
+    (queue as any).drainGroup('group1@g.us');
+    await new Promise(r => setTimeout(r, 50));
+    expect(pipeCalled).toBe(true);
+    expect(state.pendingMessages).toBe(false);
+  });
+
 });

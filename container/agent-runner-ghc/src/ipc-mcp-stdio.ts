@@ -383,7 +383,7 @@ server.tool(
 
 server.tool(
   'nanoclaw_control',
-  'Control the NanoClaw host service. Use this to restart nanoclaw, reload config, or update settings. Available actions: restart, reload_config, set_config.',
+  'Control the NanoClaw host service. Use this to restart nanoclaw, reload config, or update settings. Available actions: restart, reload_config, set_config. Only available in main chat.',
   {
     action: z.enum(['restart', 'reload_config', 'set_config']).describe(
       'Action to perform: restart (restart nanoclaw service), reload_config (reload nanoclaw.json without restart), set_config (change a config value)',
@@ -398,6 +398,14 @@ server.tool(
       .describe('New value for set_config (JSON string)'),
   },
   async (args) => {
+    // Only main group can use control commands
+    if (!isMain) {
+      return {
+        content: [
+          { type: 'text' as const, text: 'Error: nanoclaw_control is only available in the main chat. This chat is not the main chat, so control commands (restart, config changes) are not allowed.' },
+        ],
+      };
+    }
     const data = {
       type: 'control',
       action: args.action,
