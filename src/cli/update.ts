@@ -18,6 +18,36 @@ const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const PACKAGE_NAME = 'nanoclaw-github-copilot';
 const GITHUB_REPO = 'kenans/nanoclaw-github-copilot';
 
+/**
+ * Wait for a PID to exit, with force kill fallback.
+ * Returns when the process is gone or timeout is reached.
+ */
+async function waitForProcessExit(
+  pid: number,
+  timeoutMs = 10000,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      process.kill(pid, 0); // Check if process exists
+      await new Promise((r) => setTimeout(r, 300));
+    } catch {
+      return; // Process is gone
+    }
+  }
+  // Timeout: force kill
+  try {
+    if (process.platform === 'win32') {
+      execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe' });
+    } else {
+      process.kill(pid, 'SIGKILL');
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  } catch {
+    /* already dead */
+  }
+}
+
 export async function runUpdate(args: string[]): Promise<void> {
   // Parse flags
   let packagePath: string | null = null;
@@ -49,8 +79,31 @@ export async function runUpdate(args: string[]): Promise<void> {
   try {
     // Stop service if running
     try {
+      // Read PID before stopping so we can wait for exit
+      let runningPid: number | undefined;
+      try {
+        const { resolveWorkspace } = await import('../workspace.js');
+        const ws = resolveWorkspace();
+        const pidFile = path.join(ws, 'state', 'nanoclaw.pid');
+        if (fs.existsSync(pidFile)) {
+          runningPid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
+        }
+      } catch {
+        /* */
+      }
+
       execSync('nanoclaw stop', { stdio: 'pipe', timeout: 15000 });
       console.log('  Stopped running instance');
+
+      // Wait for process to fully release file locks (important on Windows)
+      if (runningPid && !isNaN(runningPid)) {
+        process.stdout.write('  Waiting for process to exit...');
+        await waitForProcessExit(runningPid, 8000);
+        console.log(' done');
+      } else {
+        // No PID file — wait a fixed time for safety
+        await new Promise((r) => setTimeout(r, 2000));
+      }
     } catch {
       // Not running, fine
     }
@@ -111,16 +164,23 @@ export async function runUpdate(args: string[]): Promise<void> {
       }
 
       // Clear agent-runner source cache — forces fresh copy on next container spawn
-      const { resolveWorkspace } = await import('../workspace.js');
-      const sessionsDir = path.join(resolveWorkspace(), 'data', 'sessions');
+      const { resolveWorkspace: rw2 } = await import('../workspace.js');
+      const sessionsDir = path.join(rw2(), 'data', 'sessions');
       if (fs.existsSync(sessionsDir)) {
         for (const dir of fs.readdirSync(sessionsDir)) {
           const cacheDir = path.join(sessionsDir, dir, 'agent-runner-src');
           if (fs.existsSync(cacheDir)) {
             fs.rmSync(cacheDir, { recursive: true, force: true });
           }
+          // Clear cached skill copies so agent picks up latest from package
+          for (const skillsCache of ['.copilot/skills', '.claude/skills']) {
+            const skillDir = path.join(sessionsDir, dir, skillsCache);
+            if (fs.existsSync(skillDir)) {
+              fs.rmSync(skillDir, { recursive: true, force: true });
+            }
+          }
         }
-        console.log('  Cleared agent-runner cache');
+        console.log('  Cleared agent-runner and skills cache');
       }
     } catch {
       // config not available or no sandbox agents

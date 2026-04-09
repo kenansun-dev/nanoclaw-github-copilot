@@ -11,16 +11,22 @@ export async function runPair(args: string[]): Promise<void> {
   if (args.length > 0 && !args[0].startsWith('-')) {
     const jid = args[0];
     let name = '';
-    let isMain = false;
+    let isMain = true;
 
     for (let i = 1; i < args.length; i++) {
       if (args[i] === '--name' && args[i + 1]) {
         name = args[++i];
       } else if (args[i] === '--main') {
         isMain = true;
+      } else if (args[i] === '--no-main') {
+        isMain = false;
       }
     }
-    if (!name) name = jid.replace(/[^a-zA-Z0-9]/g, '-');
+    if (!name) {
+      // Generate a readable short name from the JID
+      const prefix = jid.split(':')[0] || 'chat';
+      name = `${prefix}-chat`;
+    }
 
     const channel = jid.startsWith('tg:')
       ? 'telegram'
@@ -51,8 +57,8 @@ export async function runPair(args: string[]): Promise<void> {
   console.log('NanoClaw — Pair a new chat\n');
   const jid = await ask('Chat JID (e.g. tg:123456 or teams:abc): ');
   const name = await ask('Name for this chat: ');
-  const mainAnswer = await ask('Is this the main chat? (y/N): ');
-  const isMain = mainAnswer.toLowerCase() === 'y';
+  const mainAnswer = await ask('Is this the main chat? (Y/n): ');
+  const isMain = mainAnswer.toLowerCase() !== 'n';
   rl.close();
 
   if (!jid) {

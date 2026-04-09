@@ -188,21 +188,53 @@ async function runService(action: string) {
     }
   })();
 
+  const hasWindowsAutoStart = (() => {
+    if (process.platform !== 'win32') return false;
+    try {
+      execSync(
+        'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "nanoclaw"',
+        { stdio: 'pipe' },
+      );
+      return true;
+    } catch {
+      const startupDir = join(
+        os.homedir(),
+        'AppData',
+        'Roaming',
+        'Microsoft',
+        'Windows',
+        'Start Menu',
+        'Programs',
+        'Startup',
+      );
+      return (
+        existsSync(join(startupDir, 'nanoclaw.vbs')) ||
+        existsSync(join(startupDir, 'nanoclaw.bat'))
+      );
+    }
+  })();
+
   const useSystemd = hasSystemd && action !== 'dev';
 
   // --- Windows kill helper ---
   const killProcess = (pid: number) => {
     if (process.platform === 'win32') {
       try {
-        execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe' });
+        // /T kills the process tree (including child agent-runner processes)
+        execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'pipe' });
       } catch {
         /* */
       }
     } else {
       try {
-        process.kill(pid, 'SIGTERM');
+        // Kill the process group (negative PID) to kill children too
+        process.kill(-pid, 'SIGTERM');
       } catch {
-        /* */
+        try {
+          process.kill(pid, 'SIGTERM');
+        } catch {
+          /* */
+        }
       }
     }
   };
@@ -235,6 +267,55 @@ async function runService(action: string) {
           /* fall through to direct */
         }
       }
+      // Auto-install service if not installed (prefer service over raw process)
+      if (!hasSystemd && !hasSchedTask && !hasWindowsAutoStart) {
+        // Stop any existing PID-mode process first to avoid port conflicts
+        if (existsSync(pidFile)) {
+          const oldPid = fs.readFileSync(pidFile, 'utf-8').trim();
+          try {
+            killProcess(parseInt(oldPid));
+            console.log(`Stopped existing process (pid: ${oldPid})`);
+            await new Promise((r) => setTimeout(r, 500));
+          } catch {
+            /* already dead */
+          }
+        }
+        if (process.platform === 'linux') {
+          try {
+            const { runServiceCommand } = await import('./cli/service.js');
+            console.log('Service not installed. Installing systemd service...');
+            await runServiceCommand(['install']);
+            execSync(`systemctl --user start ${SERVICE_NAME}`, {
+              stdio: 'pipe',
+            });
+            await new Promise((r) => setTimeout(r, 2000));
+            const status = execSync(
+              `systemctl --user is-active ${SERVICE_NAME}`,
+              { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+            ).trim();
+            console.log(`Started via systemd (${status})`);
+            console.log(`Logs: journalctl --user -u ${SERVICE_NAME} -f`);
+            return;
+          } catch {
+            console.log(
+              'Service auto-install failed. Starting as foreground process instead.',
+            );
+          }
+        } else if (process.platform === 'win32') {
+          try {
+            const { runServiceCommand } = await import('./cli/service.js');
+            console.log('Service not installed. Installing scheduled task...');
+            await runServiceCommand(['install']);
+            execSync(`schtasks /Run /TN "${SERVICE_NAME}"`, { stdio: 'pipe' });
+            console.log('Started via Scheduled Task');
+            return;
+          } catch {
+            console.log(
+              'Service auto-install failed. Starting as foreground process instead.',
+            );
+          }
+        }
+      }
       await startDirect();
       break;
     }
@@ -246,15 +327,54 @@ async function runService(action: string) {
         } catch {
           console.log('systemd stop failed');
         }
+        // Also kill any lingering agent child processes
+        try {
+          const { killAllAgentPids } = await import('./host-runner.js');
+          killAllAgentPids();
+        } catch {
+          /* */
+        }
         return;
       }
       // PID fallback
       if (!existsSync(pidFile)) {
+        // Still try to kill agent children in case of stale state
+        try {
+          const { killAllAgentPids } = await import('./host-runner.js');
+          killAllAgentPids();
+        } catch {
+          /* */
+        }
         console.log('Not running');
         return;
       }
       const pid = fs.readFileSync(pidFile, 'utf-8').trim();
-      killProcess(parseInt(pid));
+      const pidNum = parseInt(pid);
+      // Kill child agent processes first
+      try {
+        const { killAllAgentPids } = await import('./host-runner.js');
+        killAllAgentPids();
+      } catch {
+        /* */
+      }
+      killProcess(pidNum);
+      // Wait for process to release file locks (important on Windows)
+      const stopStart = Date.now();
+      while (Date.now() - stopStart < 8000) {
+        try {
+          process.kill(pidNum, 0);
+          await new Promise((r) => setTimeout(r, 300));
+        } catch {
+          break; // Process is gone
+        }
+      }
+      // Force kill if still alive
+      try {
+        process.kill(pidNum, 0);
+        killProcess(pidNum);
+      } catch {
+        /* */
+      }
       try {
         fs.unlinkSync(pidFile);
       } catch {
@@ -293,6 +413,7 @@ async function runService(action: string) {
     }
     case 'status': {
       // Service backend info
+      let uptimeStr = '';
       if (hasSystemd) {
         console.log('Service: systemd (user)');
         try {
@@ -304,9 +425,27 @@ async function runService(action: string) {
             `systemctl --user show ${SERVICE_NAME} --property=MainPID --value`,
             { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
           ).trim();
-          console.log(`Status: ${active} (pid: ${pid})`);
+          // Get uptime
+          try {
+            const since = execSync(
+              `systemctl --user show ${SERVICE_NAME} --property=ActiveEnterTimestamp --value`,
+              { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+            ).trim();
+            if (since) {
+              const startTime = new Date(since).getTime();
+              const elapsed = Date.now() - startTime;
+              const hours = Math.floor(elapsed / 3600000);
+              const mins = Math.floor((elapsed % 3600000) / 60000);
+              uptimeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+            }
+          } catch {
+            /* uptime not available */
+          }
+          console.log(
+            `Status: \u2705 ${active} (pid: ${pid}${uptimeStr ? `, uptime: ${uptimeStr}` : ''})`,
+          );
         } catch {
-          console.log('Status: not running');
+          console.log('Status: \u274c not running');
         }
       } else if (hasSchedTask) {
         console.log('Service: Windows Scheduled Task');
@@ -316,21 +455,38 @@ async function runService(action: string) {
             { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
           ).trim();
           const status = out.includes('Running') ? 'running' : 'ready';
-          console.log(`Status: ${status}`);
+          console.log(
+            `Status: ${status === 'running' ? '\u2705' : '\u26a0\ufe0f'} ${status}`,
+          );
         } catch {
-          console.log('Status: not installed');
+          console.log('Status: \u274c not installed');
         }
+      } else if (hasWindowsAutoStart) {
+        console.log('Service: Windows AutoStart');
+        console.log('Status: ⚠️ installed via HKCU Run or Startup folder');
       } else if (existsSync(pidFile)) {
         const pid = fs.readFileSync(pidFile, 'utf-8').trim();
         try {
           process.kill(parseInt(pid), 0);
-          console.log(`Status: running (pid: ${pid}, PID mode)`);
+          // Get uptime from pid file mtime
+          try {
+            const pidStat = fs.statSync(pidFile);
+            const elapsed = Date.now() - pidStat.mtimeMs;
+            const hours = Math.floor(elapsed / 3600000);
+            const mins = Math.floor((elapsed % 3600000) / 60000);
+            uptimeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+          } catch {
+            /* */
+          }
+          console.log(
+            `Status: \u2705 running (pid: ${pid}, PID mode${uptimeStr ? `, uptime: ${uptimeStr}` : ''})`,
+          );
         } catch {
-          console.log('Status: not running (stale pid file)');
+          console.log('Status: \u274c not running (stale pid file)');
         }
       } else {
-        console.log('Status: not running');
-        console.log('Tip: run `nanoclaw service install` to enable auto-start');
+        console.log('Status: \u274c not running');
+        console.log('Run `nanoclaw start` to start.');
       }
 
       // Common info
@@ -339,14 +495,27 @@ async function runService(action: string) {
       console.log(`Logs: ${logFile}`);
 
       // Show config summary
+      let provider = 'github-copilot';
       try {
         const { loadConfig } = await import('./config-loader.js');
         const config = loadConfig();
         const agent = config.agents?.defaults;
+        provider =
+          (agent as any)?.provider ||
+          (agent?.model?.includes('/')
+            ? agent.model.split('/')[0]
+            : 'github-copilot');
+        const modelShort = agent?.model || 'unknown';
+        const providerStr =
+          provider === 'github-copilot'
+            ? 'GHC'
+            : provider === 'claude'
+              ? 'CC'
+              : provider;
         console.log(
-          `Agent: ${agent?.name || 'Andy'} (${agent?.model || 'unknown'}, ${agent?.mode || 'sandbox'})`,
+          `Agent: ${agent?.name || 'Andy'} | ${providerStr}/${modelShort} | mode: ${agent?.mode || 'sandbox'}`,
         );
-        if (agent?.thinkLevel) console.log(`Think: ${agent.thinkLevel}`);
+        if (agent?.thinkLevel) console.log(`Think:    ${agent.thinkLevel}`);
         const channels = Object.entries(config.channels || {})
           .filter(([, v]: [string, any]) => v?.enabled)
           .map(([k]) => k);
@@ -354,9 +523,53 @@ async function runService(action: string) {
           `Channels: ${channels.length > 0 ? channels.join(', ') : 'none enabled'}`,
         );
         const chatCount = Object.keys(config.chats || {}).length;
-        console.log(`Chats: ${chatCount} registered`);
+        console.log(`Chats:    ${chatCount} registered`);
       } catch {
         /* config not available */
+      }
+
+      // Auth status — provider-aware
+      try {
+        const isCC = provider === 'claude' || provider === 'anthropic';
+        if (isCC) {
+          // Check Claude credentials
+          const claudeCreds = join(
+            os.homedir(),
+            '.claude',
+            '.credentials.json',
+          );
+          const claudeDir = join(os.homedir(), '.claude');
+          const hasAuth = existsSync(claudeCreds) || existsSync(claudeDir);
+          console.log(
+            `Auth:     ${hasAuth ? '\u2705 Claude credentials found (~/.claude/)' : '\u274c No Claude auth — run: claude login'}`,
+          );
+        } else {
+          const { resolveGithubToken } = await import('./config-extensions.js');
+          const token = resolveGithubToken();
+          console.log(
+            `Auth:     ${token ? '\u2705 GitHub Copilot token found (' + token.substring(0, 4) + '****)' : '\u274c No token — run: copilot auth login  (or: nanoclaw provider login)'}`,
+          );
+        }
+      } catch {
+        /* */
+      }
+
+      // Last log activity
+      try {
+        if (existsSync(logFile)) {
+          const logStat = fs.statSync(logFile);
+          const ago = Date.now() - logStat.mtimeMs;
+          const agoMins = Math.floor(ago / 60000);
+          const agoStr =
+            agoMins < 1
+              ? 'just now'
+              : agoMins < 60
+                ? `${agoMins}m ago`
+                : `${Math.floor(agoMins / 60)}h ${agoMins % 60}m ago`;
+          console.log(`Activity: ${agoStr}`);
+        }
+      } catch {
+        /* */
       }
       break;
     }
@@ -506,12 +719,28 @@ async function runProvider(args: string[]) {
   const sub = args[0];
   switch (sub) {
     case 'login': {
-      const provider = args[1] || 'github-copilot';
+      // Detect provider from config if not specified
+      let provider = args[1];
+      if (!provider) {
+        try {
+          const { loadConfig } = await import('./config-loader.js');
+          const cfg = loadConfig();
+          const agent = cfg.agents?.defaults as any;
+          provider =
+            agent?.provider ||
+            (agent?.model?.includes('/')
+              ? agent.model.split('/')[0]
+              : 'github-copilot');
+        } catch {
+          /* */
+        }
+        provider = provider || 'github-copilot';
+      }
+
       if (provider === 'github-copilot') {
         console.log('Starting GitHub Copilot login (device code flow)...');
         try {
           const { execSync } = await import('child_process');
-          // Use GHC CLI's built-in login
           execSync('copilot auth login', { stdio: 'inherit', timeout: 120000 });
           console.log('Login successful.');
         } catch {
@@ -519,8 +748,20 @@ async function runProvider(args: string[]) {
             'Login failed. Make sure copilot CLI is installed: npm install -g @github/copilot',
           );
         }
+      } else if (provider === 'claude' || provider === 'anthropic') {
+        console.log('Starting Claude Code login...');
+        try {
+          const { execSync } = await import('child_process');
+          execSync('claude login', { stdio: 'inherit', timeout: 300000 });
+          console.log('Login successful.');
+        } catch {
+          console.error(
+            'Login failed. Make sure Claude Code CLI is installed: npm install -g @anthropic-ai/claude-code',
+          );
+        }
       } else {
         console.log(`Unknown provider: ${provider}`);
+        console.log('Supported: github-copilot, claude');
       }
       break;
     }
@@ -803,6 +1044,8 @@ Sandbox
 
   sandbox build                     Build agent container image
   sandbox status                    Show sandbox runtime info
+
+Tunnel
 
 MCP
   mcp auth <server|url>             Authenticate remote MCP server

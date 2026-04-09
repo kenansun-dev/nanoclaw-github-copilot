@@ -27,6 +27,7 @@ export function getConfig(): NanoclawConfig {
 
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
+
 export const IPC_POLL_INTERVAL = 1000;
 
 // These are getters so they reflect config changes

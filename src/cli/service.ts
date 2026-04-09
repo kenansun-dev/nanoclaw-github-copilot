@@ -191,64 +191,6 @@ function statusSystemd(): void {
 
 function installWindows(ws: string, tunnelId?: string): void {
   const nanoclawBin = resolveNanoclawBin();
-
-  // NanoClaw task — runs at logon
-  try {
-    execSync(
-      `schtasks /Create /TN "${SERVICE_NAME}" /TR "${getNodePath()} ${nanoclawBin} start --foreground" /SC ONLOGON /RL LIMITED /F`,
-      { stdio: 'pipe' },
-    );
-    console.log(`  ✅ ${SERVICE_NAME} scheduled task created (runs at logon)`);
-  } catch (err) {
-    // Fallback: Startup folder
-    console.log('  ⚠️  Scheduled Task creation failed, using Startup folder');
-    const startupDir = path.join(
-      os.homedir(),
-      'AppData',
-      'Roaming',
-      'Microsoft',
-      'Windows',
-      'Start Menu',
-      'Programs',
-      'Startup',
-    );
-    fs.mkdirSync(startupDir, { recursive: true });
-    const batFile = path.join(startupDir, `${SERVICE_NAME}.bat`);
-    fs.writeFileSync(
-      batFile,
-      `@echo off\ncd /d "${ws}"\n"${getNodePath()}" "${nanoclawBin}" start --foreground\n`,
-    );
-    console.log(`  ✅ Created startup script: ${batFile}`);
-  }
-
-  // DevTunnel task
-  if (tunnelId) {
-    try {
-      const devtunnelBin = execSync('where devtunnel', { encoding: 'utf-8' })
-        .trim()
-        .split('\n')[0];
-      execSync(
-        `schtasks /Create /TN "${DEVTUNNEL_SERVICE_NAME}" /TR "${devtunnelBin} host ${tunnelId} --allow-anonymous" /SC ONLOGON /RL LIMITED /F`,
-        { stdio: 'pipe' },
-      );
-      console.log(`  ✅ ${DEVTUNNEL_SERVICE_NAME} scheduled task created`);
-    } catch {
-      console.log('  ⚠️  DevTunnel scheduled task creation failed');
-    }
-  }
-}
-
-function uninstallWindows(): void {
-  for (const name of [SERVICE_NAME, DEVTUNNEL_SERVICE_NAME]) {
-    try {
-      execSync(`schtasks /Delete /TN "${name}" /F`, { stdio: 'pipe' });
-      console.log(`  Removed scheduled task: ${name}`);
-    } catch {
-      /* */
-    }
-  }
-
-  // Also check Startup folder
   const startupDir = path.join(
     os.homedir(),
     'AppData',
@@ -259,15 +201,161 @@ function uninstallWindows(): void {
     'Programs',
     'Startup',
   );
-  const batFile = path.join(startupDir, `${SERVICE_NAME}.bat`);
-  if (fs.existsSync(batFile)) {
-    fs.unlinkSync(batFile);
-    console.log(`  Removed: ${batFile}`);
+  const runKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+  const nanoclawCmd = `"${getNodePath()}" "${nanoclawBin}" start --foreground`;
+
+  const writeLauncher = (name: string, command: string) => {
+    fs.mkdirSync(startupDir, { recursive: true });
+    const batFile = path.join(startupDir, `${name}.bat`);
+    const vbsFile = path.join(startupDir, `${name}.vbs`);
+    fs.writeFileSync(
+      batFile,
+      `@echo off\ncd /d "${ws}"\n${command}\n`,
+    );
+    fs.writeFileSync(
+      vbsFile,
+      `Set WshShell = CreateObject("WScript.Shell")\nWshShell.Run chr(34) & "${batFile.replace(/\\/g, '\\\\')}" & chr(34), 0, False\n`,
+    );
+    return { batFile, vbsFile };
+  };
+
+  const createTask = (name: string, command: string, highest = false) => {
+    try {
+      const rl = highest ? ' /RL HIGHEST' : '';
+      const cmd = `schtasks /Create /TN "${name}" /TR "${command}" /SC ONLOGON${rl} /F`;
+      execSync(cmd, { stdio: 'pipe' });
+      return { ok: true, err: '' };
+    } catch (err: any) {
+      const msg = ((err.stderr || '') + '\n' + (err.stdout || '')).toString().trim();
+      return { ok: false, err: msg || err.message || 'unknown error' };
+    }
+  };
+
+  // NanoClaw task — runs at logon
+  let taskCreated = false;
+  let lastErr = '';
+  for (const highest of [true, false]) {
+    const result = createTask(SERVICE_NAME, nanoclawCmd, highest);
+    if (result.ok) {
+      console.log(`  ✅ ${SERVICE_NAME} scheduled task created (runs at logon)`);
+      taskCreated = true;
+      break;
+    }
+    lastErr = result.err;
+    console.log(`  ⚠️  schtasks failed${highest ? ' (/RL HIGHEST)' : ''}: ${result.err}`);
+  }
+
+  if (!taskCreated && /Access is denied/i.test(lastErr)) {
+    try {
+      const schtasksCmd = `schtasks /Create /TN "${SERVICE_NAME}" /TR "${nanoclawCmd}" /SC ONLOGON /RL HIGHEST /F`;
+      const psScript = `$cmd = '${schtasksCmd.replace(/'/g, "''")}'; Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList @('-NoProfile','-Command',$cmd)`;
+      const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+      execSync(`powershell -NoProfile -EncodedCommand ${encoded}`, { stdio: 'inherit' });
+      console.log(`  ✅ ${SERVICE_NAME} scheduled task created via UAC`);
+      taskCreated = true;
+    } catch (err: any) {
+      const msg = ((err.stderr || '') + '\n' + (err.stdout || '')).toString().trim();
+      console.log(`  ⚠️  Elevated schtasks failed: ${msg || err.message || 'unknown error'}`);
+    }
+  }
+
+  if (!taskCreated) {
+    try {
+      const { vbsFile } = writeLauncher(SERVICE_NAME, nanoclawCmd);
+      execSync(
+        `reg add "${runKey}" /v "${SERVICE_NAME}" /t REG_SZ /d "wscript.exe \"${vbsFile}\"" /f`,
+        { stdio: 'pipe' },
+      );
+      console.log(`  ✅ Registered HKCU Run key for ${SERVICE_NAME}`);
+      console.log('  ℹ️  nanoclaw will start silently on next login');
+    } catch {
+      console.log('  ⚠️  HKCU Run registration failed, using Startup folder');
+      const { vbsFile } = writeLauncher(SERVICE_NAME, nanoclawCmd);
+      console.log(`  ✅ Created startup script: ${vbsFile}`);
+    }
+  }
+
+  // DevTunnel persistence
+  if (tunnelId) {
+    const devtunnelCmd = `devtunnel host ${tunnelId} --allow-anonymous`;
+    let dtCreated = false;
+    for (const highest of [true, false]) {
+      const result = createTask(DEVTUNNEL_SERVICE_NAME, devtunnelCmd, highest);
+      if (result.ok) {
+        console.log(`  ✅ ${DEVTUNNEL_SERVICE_NAME} scheduled task created`);
+        dtCreated = true;
+        break;
+      }
+    }
+    if (!dtCreated) {
+      try {
+        const { vbsFile } = writeLauncher(DEVTUNNEL_SERVICE_NAME, devtunnelCmd);
+        execSync(
+          `reg add "${runKey}" /v "${DEVTUNNEL_SERVICE_NAME}" /t REG_SZ /d "wscript.exe \"${vbsFile}\"" /f`,
+          { stdio: 'pipe' },
+        );
+        console.log(`  ✅ Registered HKCU Run key for ${DEVTUNNEL_SERVICE_NAME}`);
+      } catch {
+        console.log('  ⚠️  DevTunnel persistence fallback failed');
+      }
+    }
+  }
+}
+
+function uninstallWindows(): void {
+  const runKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+  const startupDir = path.join(
+    os.homedir(),
+    'AppData',
+    'Roaming',
+    'Microsoft',
+    'Windows',
+    'Start Menu',
+    'Programs',
+    'Startup',
+  );
+
+  for (const name of [SERVICE_NAME, DEVTUNNEL_SERVICE_NAME]) {
+    try {
+      execSync(`schtasks /Delete /TN "${name}" /F`, { stdio: 'pipe' });
+      console.log(`  Removed scheduled task: ${name}`);
+    } catch {
+      /* */
+    }
+    try {
+      execSync(`reg delete "${runKey}" /v "${name}" /f`, { stdio: 'pipe' });
+      console.log(`  Removed HKCU Run key: ${name}`);
+    } catch {
+      /* */
+    }
+
+    const batFile = path.join(startupDir, `${name}.bat`);
+    const vbsFile = path.join(startupDir, `${name}.vbs`);
+    if (fs.existsSync(batFile)) {
+      fs.unlinkSync(batFile);
+      console.log(`  Removed: ${batFile}`);
+    }
+    if (fs.existsSync(vbsFile)) {
+      fs.unlinkSync(vbsFile);
+      console.log(`  Removed: ${vbsFile}`);
+    }
   }
   console.log('  ✅ Services uninstalled');
 }
 
 function statusWindows(): void {
+  const runKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+  const startupDir = path.join(
+    os.homedir(),
+    'AppData',
+    'Roaming',
+    'Microsoft',
+    'Windows',
+    'Start Menu',
+    'Programs',
+    'Startup',
+  );
+
   for (const name of [SERVICE_NAME, DEVTUNNEL_SERVICE_NAME]) {
     try {
       const output = execSync(`schtasks /Query /TN "${name}" /FO CSV /NH`, {
@@ -280,9 +368,24 @@ function statusWindows(): void {
           ? 'ready'
           : 'unknown';
       console.log(`  ${name}: ${status}`);
+      continue;
     } catch {
-      console.log(`  ${name}: not installed`);
+      /* */
     }
+    try {
+      execSync(`reg query "${runKey}" /v "${name}"`, { stdio: 'pipe' });
+      console.log(`  ${name}: run-key`);
+      continue;
+    } catch {
+      /* */
+    }
+    const batFile = path.join(startupDir, `${name}.bat`);
+    const vbsFile = path.join(startupDir, `${name}.vbs`);
+    if (fs.existsSync(batFile) || fs.existsSync(vbsFile)) {
+      console.log(`  ${name}: startup-folder`);
+      continue;
+    }
+    console.log(`  ${name}: not installed`);
   }
 }
 

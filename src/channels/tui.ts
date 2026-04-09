@@ -104,7 +104,7 @@ export class TuiChannel implements Channel {
       const tuiGroup = {
         name: `tui-${clientId}`,
         folder: `tui-${clientId}`,
-        isMain: !hasMainTui,
+        isMain: true,
         trigger: '',
         added_at: new Date().toISOString(),
       };

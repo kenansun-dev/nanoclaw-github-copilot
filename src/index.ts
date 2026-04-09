@@ -72,6 +72,7 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
+import { startSessionCleanup } from './session-cleanup.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -820,6 +821,14 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
 
+  // Clear stale agent PIDs from previous run
+  try {
+    const { clearAgentPids } = await import('./host-runner.js');
+    clearAgentPids();
+  } catch {
+    /* */
+  }
+
   // Sync chats from nanoclaw.json config into DB
   try {
     const { loadConfig } = await import('./config-loader.js');
@@ -912,11 +921,14 @@ async function main(): Promise<void> {
         } else {
           const pairChannel = findChannel(channels, chatJid);
           if (pairChannel) {
-            const chatName = chatJid.replace(/[^a-zA-Z0-9]/g, '-');
+            const senderName = msg.sender || 'chat';
+            const safeName = senderName
+              .replace(/[^a-zA-Z0-9_-]/g, '-')
+              .substring(0, 40);
             pairChannel
               .sendMessage(
                 chatJid,
-                `👋 This chat isn't paired yet.\n\nTo pair, run on your server:\nnanoclaw pair ${chatJid} --name "${chatName}"\nnanoclaw restart`,
+                `👋 This chat isn't paired yet.\n\nTo pair, run on your server:\n\`nanoclaw pair ${chatJid} --name "${safeName}"\`\n\`nanoclaw restart\``,
               )
               .catch((err: any) =>
                 logger.debug(
@@ -1093,6 +1105,7 @@ async function main(): Promise<void> {
       }
     },
   });
+  startSessionCleanup();
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
   startMessageLoop().catch((err: any) => {

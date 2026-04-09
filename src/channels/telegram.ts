@@ -324,6 +324,11 @@ export class TelegramChannel implements Channel {
               { command: 'status', description: 'Show agent status' },
               { command: 'new', description: 'Start a new conversation' },
               { command: 'think', description: 'Set reasoning level' },
+              { command: 'tasks', description: 'List scheduled tasks' },
+              {
+                command: 'capabilities',
+                description: 'Show available tools and skills',
+              },
               { command: 'help', description: 'Show available commands' },
             ]);
             logger.info('Telegram slash commands registered');

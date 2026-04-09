@@ -224,10 +224,13 @@ export async function runTui(_args: string[]): Promise<void> {
 function connectToService(sockPath: string): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection(sockPath, () => {
+      // Clear the connection timeout once connected — the socket
+      // should stay open indefinitely while waiting for agent replies.
+      socket.setTimeout(0);
       resolve(socket);
     });
     socket.on('error', reject);
-    // Timeout after 2 seconds
+    // Timeout after 2 seconds for the initial connection only
     socket.setTimeout(2000, () => {
       socket.destroy();
       reject(new Error('Connection timeout'));

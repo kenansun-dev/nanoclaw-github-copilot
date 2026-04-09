@@ -237,13 +237,23 @@ async function main(): Promise<void> {
   runtimeLines.push(`- **Main chat**: ${containerInput.isMain ? 'Yes — you can use nanoclaw_control to change config and restart' : 'No — nanoclaw_control is not available (config changes require the main chat)'}`);
   const identityPrompt = runtimeLines.join('\n');
 
-  // Load global CLAUDE.md as additional system context
+  // Load global agent prompt as additional system context
+  // GHC prefers COPILOT.md over CLAUDE.md when available
   let systemMessage: { mode: 'append'; content: string } | undefined;
-  const globalClaudeMdPath = process.env.NANOCLAW_GLOBAL_CLAUDE_MD || '/workspace/global/CLAUDE.md';
-  if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
+  let globalPromptPath: string;
+  if (process.env.NANOCLAW_GLOBAL_CLAUDE_MD) {
+    // Host-runner already resolved the correct file (COPILOT.md or CLAUDE.md)
+    globalPromptPath = process.env.NANOCLAW_GLOBAL_CLAUDE_MD;
+  } else {
+    // Docker mode: check for COPILOT.md first, fall back to CLAUDE.md
+    const copilotPath = '/workspace/global/COPILOT.md';
+    const claudePath = '/workspace/global/CLAUDE.md';
+    globalPromptPath = fs.existsSync(copilotPath) ? copilotPath : claudePath;
+  }
+  if (!containerInput.isMain && fs.existsSync(globalPromptPath)) {
     systemMessage = {
       mode: 'append',
-      content: identityPrompt + '\n\n' + fs.readFileSync(globalClaudeMdPath, 'utf-8'),
+      content: identityPrompt + '\n\n' + fs.readFileSync(globalPromptPath, 'utf-8'),
     };
   } else {
     systemMessage = {

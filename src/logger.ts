@@ -1,4 +1,10 @@
-const LEVELS = { debug: 20, info: 30, warn: 40, error: 50, fatal: 60 } as const;
+const LEVELS = {
+  debug: 20,
+  info: 30,
+  warn: 40,
+  error: 50,
+  fatal: 60,
+} as const;
 type Level = keyof typeof LEVELS;
 
 const COLORS: Record<Level, string> = {
@@ -16,28 +22,39 @@ const FULL_RESET = '\x1b[0m';
 const threshold =
   LEVELS[(process.env.LOG_LEVEL as Level) || 'info'] ?? LEVELS.info;
 
+// Detect if stdout/stderr are TTYs for color decisions
+const stdoutIsTTY = process.stdout.isTTY === true;
+const stderrIsTTY = process.stderr.isTTY === true;
+
 function formatErr(err: unknown): string {
   if (err instanceof Error) {
-    return `{\n      "type": "${err.constructor.name}",\n      "message": "${err.message}",\n      "stack":\n          ${err.stack}\n    }`;
+    return err.stack || err.message;
   }
   return JSON.stringify(err);
 }
 
-function formatData(data: Record<string, unknown>): string {
+function formatData(
+  data: Record<string, unknown>,
+  useColor: boolean,
+): string {
   let out = '';
   for (const [k, v] of Object.entries(data)) {
     if (k === 'err') {
-      out += `\n    ${KEY_COLOR}err${RESET}: ${formatErr(v)}`;
+      out += useColor
+        ? `\n    ${KEY_COLOR}err${RESET}: ${formatErr(v)}`
+        : `\n    err: ${formatErr(v)}`;
     } else {
-      out += `\n    ${KEY_COLOR}${k}${RESET}: ${JSON.stringify(v)}`;
+      const val = typeof v === 'string' ? v : JSON.stringify(v);
+      out += useColor
+        ? `\n    ${KEY_COLOR}${k}${RESET}: ${val}`
+        : `\n    ${k}: ${val}`;
     }
   }
   return out;
 }
 
 function ts(): string {
-  const d = new Date();
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+  return new Date().toISOString();
 }
 
 function log(
@@ -46,15 +63,23 @@ function log(
   msg?: string,
 ): void {
   if (LEVELS[level] < threshold) return;
-  const tag = `${COLORS[level]}${level.toUpperCase()}${level === 'fatal' ? FULL_RESET : RESET}`;
   const stream = LEVELS[level] >= LEVELS.warn ? process.stderr : process.stdout;
+  const useColor = stream === process.stderr ? stderrIsTTY : stdoutIsTTY;
+  const tag = useColor
+    ? `${COLORS[level]}${level.toUpperCase()}${level === 'fatal' ? FULL_RESET : RESET}`
+    : level.toUpperCase();
+
   if (typeof dataOrMsg === 'string') {
-    stream.write(
-      `[${ts()}] ${tag} (${process.pid}): ${MSG_COLOR}${dataOrMsg}${RESET}\n`,
-    );
+    const text = useColor
+      ? `${MSG_COLOR}${dataOrMsg}${RESET}`
+      : dataOrMsg;
+    stream.write(`[${ts()}] ${tag} ${text}\n`);
   } else {
+    const text = useColor
+      ? `${MSG_COLOR}${msg}${RESET}`
+      : (msg || '');
     stream.write(
-      `[${ts()}] ${tag} (${process.pid}): ${MSG_COLOR}${msg}${RESET}${formatData(dataOrMsg)}\n`,
+      `[${ts()}] ${tag} ${text}${formatData(dataOrMsg, useColor)}\n`,
     );
   }
 }

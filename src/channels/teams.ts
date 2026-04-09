@@ -944,6 +944,21 @@ registerChannel('teams', (opts: ChannelOpts) => {
     certPrivateKeyPath = teams.certPrivateKeyPath || '';
   }
 
+  // Fallback to .env if credentials not found in nanoclaw.json
+  if (!appId) appId = process.env.MSTEAMS_APP_ID || '';
+  if (!appPassword)
+    appPassword =
+      process.env.MSTEAMS_APP_PASSWORD || process.env.MSTEAMS_APP_KEY || '';
+  if (!tenantId) tenantId = process.env.MSTEAMS_TENANT_ID;
+  if (!certThumbprint)
+    certThumbprint = process.env.MSTEAMS_CERT_THUMBPRINT || '';
+  if (!certPrivateKeyPath)
+    certPrivateKeyPath = process.env.MSTEAMS_CERT_PRIVATE_KEY_PATH || '';
+  if (!port)
+    port = process.env.MSTEAMS_WEBHOOK_PORT
+      ? parseInt(process.env.MSTEAMS_WEBHOOK_PORT, 10)
+      : 3978;
+
   const hasCert = !!(certThumbprint && certPrivateKeyPath);
 
   if (!appId || (!appPassword && !hasCert)) {

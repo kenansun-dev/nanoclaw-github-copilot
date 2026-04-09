@@ -20,7 +20,15 @@ import {
 
 export function getProvider(model?: string): string {
   const config = loadConfig();
-  const m = model || config.agents?.defaults?.model || '';
+  const agent = config.agents?.defaults;
+  if (model) {
+    // Explicit model string: parse it directly
+    const slash = model.indexOf('/');
+    return slash > 0 ? model.substring(0, slash) : 'anthropic';
+  }
+  // No model arg: check config provider field, then parse config model
+  if (agent?.provider) return agent.provider;
+  const m = agent?.model || '';
   const slash = m.indexOf('/');
   return slash > 0 ? m.substring(0, slash) : 'anthropic';
 }
@@ -56,6 +64,8 @@ export function resolveAgentForChat(chatJid: string): AgentConfig {
 }
 
 export function isAgentGHC(agent: AgentConfig): boolean {
+  // Check explicit provider field first, then parse model string
+  if (agent.provider) return agent.provider === 'github-copilot';
   return isGHCProvider(agent.model);
 }
 
@@ -74,6 +84,8 @@ export function getAgentModelName(agent: AgentConfig): string {
 }
 
 export function getAgentProvider(agent: AgentConfig): string {
+  // Check explicit provider field first
+  if (agent.provider) return agent.provider;
   const model = agent.model || '';
   const slash = model.indexOf('/');
   return slash > 0 ? model.substring(0, slash) : 'anthropic';

@@ -6,7 +6,7 @@
  *
  * Used when agents.defaults.mode === 'host'.
  */
-import { ChildProcess, spawn } from 'child_process';
+import { ChildProcess, spawn, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -17,6 +17,7 @@ import {
   TIMEZONE,
   getConfig,
 } from './config.js';
+import { resolveWorkspace, paths as wsPaths } from './workspace.js';
 import {
   resolveAgentForChat,
   getAgentModelName,
@@ -27,10 +28,74 @@ import type { AgentConfig } from './config-loader.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { ContainerInput, ContainerOutput } from './container-runner.js';
-import { resolveWorkspace, paths as wsPaths } from './workspace.js';
 
 const OUTPUT_START = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END = '---NANOCLAW_OUTPUT_END---';
+
+// ─── Child PID tracking ────────────────────────────────────────────────────────────────
+
+function agentPidsFile(): string {
+  return path.join(resolveWorkspace(), 'state', 'agent-pids.json');
+}
+
+export function registerAgentPid(pid: number): void {
+  try {
+    const file = agentPidsFile();
+    const pids: number[] = fs.existsSync(file)
+      ? JSON.parse(fs.readFileSync(file, 'utf-8'))
+      : [];
+    if (!pids.includes(pid)) pids.push(pid);
+    fs.writeFileSync(file, JSON.stringify(pids));
+  } catch {
+    /* best effort */
+  }
+}
+
+/** Clear stale PIDs on nanoclaw startup */
+export function clearAgentPids(): void {
+  try {
+    const file = agentPidsFile();
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+  } catch {
+    /* best effort */
+  }
+}
+
+export function unregisterAgentPid(pid: number): void {
+  try {
+    const file = agentPidsFile();
+    if (!fs.existsSync(file)) return;
+    const pids: number[] = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    const updated = pids.filter((p) => p !== pid);
+    fs.writeFileSync(file, JSON.stringify(updated));
+  } catch {
+    /* best effort */
+  }
+}
+
+export function killAllAgentPids(): void {
+  try {
+    const file = agentPidsFile();
+    if (!fs.existsSync(file)) return;
+    const pids: number[] = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    for (const pid of pids) {
+      try {
+        // Verify process still exists before killing
+        process.kill(pid, 0);
+        if (process.platform === 'win32') {
+          execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'pipe' });
+        } else {
+          process.kill(pid, 'SIGTERM');
+        }
+      } catch {
+        /* already dead or doesn't exist */
+      }
+    }
+    fs.unlinkSync(file);
+  } catch {
+    /* best effort */
+  }
+}
 
 /**
  * Resolve the path to the agent-runner entry point.
@@ -150,6 +215,16 @@ export async function runHostAgent(
     if (agent.githubMcp !== false) {
       env.NANOCLAW_GITHUB_MCP = '1';
     }
+  } else {
+    // CC mode: uses Claude Agent SDK with native host auth (~/.claude/)
+    // No token injection needed — CLI handles its own auth
+    const modelName = getAgentModelName(agent);
+    if (modelName) {
+      env.CLAUDE_MODEL = modelName;
+    }
+    if (agent.thinkLevel) {
+      env.CLAUDE_THINK_LEVEL = agent.thinkLevel;
+    }
   }
 
   // Skills directory — prefer workspace skills, fall back to container/skills
@@ -179,12 +254,19 @@ export async function runHostAgent(
   // Working directory (agent cwd)
   env.NANOCLAW_WORK_DIR = groupDir;
 
-  // Global CLAUDE.md template
+  // Global agent prompt template
+  // GHC uses COPILOT.md if available, CC uses CLAUDE.md
+  const groupType = group.isMain ? 'main' : 'global';
+  const promptFilename = isAgentGHC(agent)
+    ? fs.existsSync(path.join(pkgRoot, 'groups', groupType, 'COPILOT.md'))
+      ? 'COPILOT.md'
+      : 'CLAUDE.md'
+    : 'CLAUDE.md';
   const globalClaudeMd = path.join(
     pkgRoot,
     'groups',
-    group.isMain ? 'main' : 'global',
-    'CLAUDE.md',
+    groupType,
+    promptFilename,
   );
   if (fs.existsSync(globalClaudeMd)) {
     env.NANOCLAW_GLOBAL_CLAUDE_MD = globalClaudeMd;
@@ -232,6 +314,9 @@ export async function runHostAgent(
   });
 
   onProcess(child, processName);
+
+  // Track child PID for clean shutdown
+  if (child.pid) registerAgentPid(child.pid);
 
   return new Promise<ContainerOutput>((resolve) => {
     let stdout = '';
@@ -346,6 +431,7 @@ export async function runHostAgent(
 
     child.on('close', (code) => {
       if (timeout) clearTimeout(timeout);
+      if (child.pid) unregisterAgentPid(child.pid);
       const duration = Date.now() - startTime;
 
       if (resolved) {

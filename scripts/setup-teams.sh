@@ -139,7 +139,7 @@ print(data.get('tunnelId', ''))
 fi
 
 # Ensure port is configured with anonymous access
-devtunnel port create "$TUNNEL_ID" -p "$WEBHOOK_PORT" --protocol https 2>/dev/null || true
+devtunnel port create "$TUNNEL_ID" -p "$WEBHOOK_PORT" 2>/dev/null || true
 devtunnel access create "$TUNNEL_ID" -p "$WEBHOOK_PORT" --anonymous 2>/dev/null || true
 
 # Get the tunnel URL
@@ -262,7 +262,12 @@ cat > "$MANIFEST_DIR/manifest.json" << EOFMANIFEST
       "commands": [
         { "title": "chatid", "description": "Get this chat registration ID" },
         { "title": "ping", "description": "Check if bot is online" },
-        { "title": "new", "description": "Start a new conversation" }
+        { "title": "new", "description": "Start a new conversation" },
+        { "title": "status", "description": "Show system status" },
+        { "title": "think", "description": "Set thinking level (low/medium/high/xhigh)" },
+        { "title": "tasks", "description": "List scheduled tasks" },
+        { "title": "capabilities", "description": "Show available tools and skills" },
+        { "title": "help", "description": "Show available commands" }
       ]
     }]
   }],

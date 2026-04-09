@@ -16,7 +16,9 @@ groups/*
 groups/main/*
 groups/global/*
 !groups/main/CLAUDE.md
+!groups/main/COPILOT.md
 !groups/global/CLAUDE.md
+!groups/global/COPILOT.md
 
 # Secrets
 *.keys.json

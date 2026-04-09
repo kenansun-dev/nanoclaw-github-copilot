@@ -12,7 +12,8 @@ import { paths, workspacePath } from './workspace.js';
 export interface AgentConfig {
   id?: string;
   default?: boolean;
-  model: string; // "provider/model" format, e.g. "github-copilot/claude-sonnet-4"
+  provider?: string; // e.g. "github-copilot", "anthropic". If omitted, parsed from model string.
+  model: string; // Short name (e.g. "claude-sonnet-4") or FQDN "provider/model" for backward compat
   name: string;
   triggerWord: string;
   hasOwnNumber: boolean;
@@ -63,6 +64,7 @@ export interface ChannelChats {
 }
 
 export interface NanoclawConfig {
+  configVersion?: number;
   agents: {
     defaults: AgentConfig;
     list?: AgentConfig[];
@@ -159,7 +161,8 @@ export interface NanoclawConfig {
 const DEFAULTS: NanoclawConfig = {
   agents: {
     defaults: {
-      model: 'github-copilot/claude-sonnet-4',
+      provider: 'github-copilot',
+      model: 'claude-sonnet-4',
       name: 'Andy',
       triggerWord: '@Andy',
       hasOwnNumber: false,
@@ -321,6 +324,136 @@ function denormalizeChats(flat: Record<string, any>): ChannelChats {
   return grouped;
 }
 
+// ─── Config Migration ────────────────────────────────────────────────────────
+
+const CURRENT_CONFIG_VERSION = 3;
+
+/**
+ * Migrate config from older versions. Returns true if migration occurred.
+ */
+function migrateConfig(config: Record<string, any>): boolean {
+  const version = config.configVersion || 0;
+  if (version >= CURRENT_CONFIG_VERSION) return false;
+
+  let migrated = false;
+
+  // v0 → v1: normalize structure
+  if (version < 1) {
+    // Ensure chats registered without isMain get isMain: true (personal use default)
+    if (config.chats) {
+      const chats =
+        typeof config.chats === 'object' && !Array.isArray(config.chats)
+          ? config.chats
+          : {};
+      for (const [channel, chatList] of Object.entries(chats)) {
+        if (Array.isArray(chatList)) {
+          for (const chat of chatList as any[]) {
+            if (chat.isMain === undefined) {
+              chat.isMain = true;
+              migrated = true;
+            }
+          }
+        }
+      }
+    }
+
+    // Ensure sandbox.engine defaults to 'node'
+    if (config.sandbox && !config.sandbox.engine) {
+      config.sandbox.engine = 'node';
+      migrated = true;
+    }
+
+    config.configVersion = 1;
+    migrated = true;
+  }
+
+  // v1 → v2: split "provider/model" into separate provider + model fields
+  if (version < 2) {
+    const splitProviderModel = (agent: any) => {
+      if (agent && agent.model && !agent.provider) {
+        const slash = agent.model.indexOf('/');
+        if (slash > 0) {
+          agent.provider = agent.model.substring(0, slash);
+          agent.model = agent.model.substring(slash + 1);
+          migrated = true;
+        }
+      }
+    };
+
+    if (config.agents?.defaults) {
+      splitProviderModel(config.agents.defaults);
+    }
+    if (Array.isArray(config.agents?.list)) {
+      for (const agent of config.agents.list) {
+        splitProviderModel(agent);
+      }
+    }
+    // Also migrate tui.model if present
+    if (config.tui?.model) {
+      const slash = config.tui.model.indexOf('/');
+      if (slash > 0) {
+        config.tui.model = config.tui.model.substring(slash + 1);
+        migrated = true;
+      }
+    }
+
+    config.configVersion = 2;
+    migrated = true;
+  }
+
+  // v2 → v3: move root-level teams.tenantId into accounts.default.tenantId
+  if (version < 3) {
+    const teams = config.channels?.teams;
+    if (teams && teams.tenantId) {
+      if (!teams.accounts) teams.accounts = {};
+      if (!teams.accounts.default) teams.accounts.default = {};
+      if (!teams.accounts.default.tenantId) {
+        teams.accounts.default.tenantId = teams.tenantId;
+      }
+      delete teams.tenantId;
+      migrated = true;
+    }
+    config.configVersion = 3;
+    migrated = true;
+  }
+
+  return migrated;
+}
+
+/**
+ * Recursively resolve ${VAR_NAME} placeholders in string values.
+ * envMap is the merged .env + process.env (workspace .env takes priority).
+ */
+function resolveEnvVars(
+  obj: any,
+  envMap: Record<string, string | undefined>,
+): any {
+  if (typeof obj === 'string') {
+    return obj.replace(/\$\{([^}]+)\}/g, (match, varName) => {
+      const value = envMap[varName];
+      if (value !== undefined) return value;
+      logger.warn(
+        { var: varName },
+        `Env var \${${varName}} not found, leaving as-is`,
+      );
+      return match;
+    });
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => resolveEnvVars(item, envMap));
+  }
+  if (obj && typeof obj === 'object') {
+    const result: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = resolveEnvVars(value, envMap);
+    }
+    return result;
+  }
+  return obj;
+}
+
+// ─── Load / Save ─────────────────────────────────────────────────────────────
+
 export function loadConfig(): NanoclawConfig {
   let userConfig: Partial<NanoclawConfig> = {};
 
@@ -336,6 +469,31 @@ export function loadConfig(): NanoclawConfig {
       'Failed to read nanoclaw.json, using defaults',
     );
   }
+
+  // Run config migrations
+  const migrated = migrateConfig(userConfig);
+  if (migrated) {
+    try {
+      fs.writeFileSync(
+        paths.config,
+        JSON.stringify(userConfig, null, 2) + '\n',
+      );
+      logger.debug(
+        { version: userConfig.configVersion },
+        'Config migrated and saved',
+      );
+    } catch {
+      /* best effort */
+    }
+  }
+
+  // Resolve ${VAR_NAME} env var placeholders in config values
+  const wsEnv = readWorkspaceEnv();
+  const envMap: Record<string, string | undefined> = {
+    ...process.env,
+    ...wsEnv,
+  };
+  userConfig = resolveEnvVars(userConfig, envMap);
 
   // Merge with defaults
   const config = deepMerge(DEFAULTS, userConfig) as NanoclawConfig;
@@ -409,17 +567,17 @@ export function loadConfig(): NanoclawConfig {
     tg.accounts = { default: { botToken: tg.botToken } };
   }
   const tm = config.channels.teams;
-  if (tm.appId && !tm.accounts) {
-    tm.accounts = {
-      default: {
-        appId: tm.appId,
-        appPassword: tm.appPassword,
-        tenantId: tm.tenantId,
-        webhookPort: tm.webhookPort,
-        authMode: tm.authMode,
-        certThumbprint: tm.certThumbprint,
-        certPrivateKeyPath: tm.certPrivateKeyPath,
-      },
+  if (tm.appId) {
+    if (!tm.accounts) tm.accounts = {};
+    const acct = tm.accounts.default || ({} as TeamsAccountConfig);
+    tm.accounts.default = {
+      appId: acct.appId || tm.appId,
+      appPassword: acct.appPassword || tm.appPassword,
+      tenantId: acct.tenantId || tm.tenantId,
+      webhookPort: acct.webhookPort || tm.webhookPort,
+      authMode: acct.authMode || tm.authMode,
+      certThumbprint: acct.certThumbprint || tm.certThumbprint,
+      certPrivateKeyPath: acct.certPrivateKeyPath || tm.certPrivateKeyPath,
     };
   }
 
@@ -438,6 +596,7 @@ export function saveConfig(config: NanoclawConfig): void {
   if (toSave.channels?.teams) {
     delete toSave.channels.teams.appId;
     delete toSave.channels.teams.appPassword;
+    delete toSave.channels.teams.tenantId;
     delete toSave.channels.teams.certThumbprint;
     delete toSave.channels.teams.certPrivateKeyPath;
   }

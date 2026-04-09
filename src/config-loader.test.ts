@@ -115,13 +115,15 @@ describe('config model passthrough', () => {
       }),
     );
     const config = loadConfig();
-    const model = config.agents?.defaults?.model;
-    expect(model).toBe('github-copilot/claude-sonnet-4.6');
+    // Config migration v1→v2 splits provider/model into separate fields
+    expect(config.agents?.defaults?.model).toBe('claude-sonnet-4.6');
+    expect(config.agents?.defaults?.provider).toBe('github-copilot');
   });
 
   it('model defaults to claude-sonnet-4 when not specified', () => {
     const config = loadConfig();
-    expect(config.agents.defaults.model).toBe('github-copilot/claude-sonnet-4');
+    expect(config.agents.defaults.model).toBe('claude-sonnet-4');
+    expect(config.agents.defaults.provider).toBe('github-copilot');
   });
 });
 
@@ -228,6 +230,155 @@ describe('channel accounts normalization', () => {
   it('bindings defaults to undefined when not configured', () => {
     const config = loadConfig();
     expect(config.bindings).toBeUndefined();
+  });
+});
+
+// --- tenantId dedup migration ---
+
+describe('config migration v2→v3: tenantId dedup', () => {
+  const tmpDir4 = path.join(os.tmpdir(), `nanoclaw-test-tenant-${Date.now()}`);
+
+  beforeEach(() => {
+    setWorkspace(tmpDir4);
+    ensureWorkspace();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir4, { recursive: true, force: true });
+  });
+
+  it('migrates root-level teams.tenantId to accounts.default.tenantId', () => {
+    fs.writeFileSync(
+      path.join(tmpDir4, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 2,
+        channels: {
+          teams: {
+            enabled: true,
+            tenantId: 'my-tenant-123',
+            appId: 'app-1',
+            appPassword: 'pass-1',
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    // Root tenantId should be gone after migration, account should have it
+    expect(config.channels.teams.accounts?.default?.tenantId).toBe(
+      'my-tenant-123',
+    );
+  });
+
+  it('saveConfig strips root-level teams.tenantId', () => {
+    const config = loadConfig();
+    (config.channels.teams as any).tenantId = 'should-be-stripped';
+    saveConfig(config);
+    const saved = JSON.parse(
+      fs.readFileSync(path.join(tmpDir4, 'nanoclaw.json'), 'utf-8'),
+    );
+    expect(saved.channels?.teams?.tenantId).toBeUndefined();
+  });
+
+  it('preserves existing accounts.default.tenantId over root during migration', () => {
+    fs.writeFileSync(
+      path.join(tmpDir4, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 2,
+        channels: {
+          teams: {
+            enabled: true,
+            tenantId: 'root-tenant',
+            accounts: {
+              default: {
+                appId: 'app-1',
+                tenantId: 'account-tenant',
+              },
+            },
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    // The existing account-level tenantId should be preserved
+    expect(config.channels.teams.accounts?.default?.tenantId).toBe(
+      'account-tenant',
+    );
+  });
+});
+
+// --- sandbox.engine config ---
+
+describe('env var interpolation', () => {
+  const tmpDir5 = path.join(os.tmpdir(), `nanoclaw-test-envvar-${Date.now()}`);
+
+  beforeEach(() => {
+    setWorkspace(tmpDir5);
+    ensureWorkspace();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir5, { recursive: true, force: true });
+  });
+
+  it('resolves ${VAR} from .env file', () => {
+    fs.writeFileSync(path.join(tmpDir5, '.env'), 'MY_APP_ID=resolved-app-id\n');
+    fs.writeFileSync(
+      path.join(tmpDir5, 'nanoclaw.json'),
+      JSON.stringify({
+        channels: {
+          teams: {
+            enabled: true,
+            accounts: {
+              default: { appId: '${MY_APP_ID}' },
+            },
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.channels.teams.accounts?.default?.appId).toBe(
+      'resolved-app-id',
+    );
+  });
+
+  it('leaves ${VAR} as-is when env var not found', () => {
+    fs.writeFileSync(
+      path.join(tmpDir5, 'nanoclaw.json'),
+      JSON.stringify({
+        channels: {
+          teams: {
+            enabled: true,
+            accounts: {
+              default: { appId: '${NONEXISTENT_VAR_XYZ}' },
+            },
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.channels.teams.accounts?.default?.appId).toBe(
+      '${NONEXISTENT_VAR_XYZ}',
+    );
+  });
+
+  it('workspace .env takes priority over process.env', () => {
+    const origVal = process.env.NANOCLAW_TEST_PRIORITY;
+    process.env.NANOCLAW_TEST_PRIORITY = 'from-process';
+    fs.writeFileSync(
+      path.join(tmpDir5, '.env'),
+      'NANOCLAW_TEST_PRIORITY=from-dotenv\n',
+    );
+    fs.writeFileSync(
+      path.join(tmpDir5, 'nanoclaw.json'),
+      JSON.stringify({
+        agents: { defaults: { name: '${NANOCLAW_TEST_PRIORITY}' } },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.agents.defaults.name).toBe('from-dotenv');
+    // Cleanup
+    if (origVal === undefined) delete process.env.NANOCLAW_TEST_PRIORITY;
+    else process.env.NANOCLAW_TEST_PRIORITY = origVal;
   });
 });
 
