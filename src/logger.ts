@@ -33,10 +33,7 @@ function formatErr(err: unknown): string {
   return JSON.stringify(err);
 }
 
-function formatData(
-  data: Record<string, unknown>,
-  useColor: boolean,
-): string {
+function formatData(data: Record<string, unknown>, useColor: boolean): string {
   let out = '';
   for (const [k, v] of Object.entries(data)) {
     if (k === 'err') {
@@ -70,14 +67,10 @@ function log(
     : level.toUpperCase();
 
   if (typeof dataOrMsg === 'string') {
-    const text = useColor
-      ? `${MSG_COLOR}${dataOrMsg}${RESET}`
-      : dataOrMsg;
+    const text = useColor ? `${MSG_COLOR}${dataOrMsg}${RESET}` : dataOrMsg;
     stream.write(`[${ts()}] ${tag} ${text}\n`);
   } else {
-    const text = useColor
-      ? `${MSG_COLOR}${msg}${RESET}`
-      : (msg || '');
+    const text = useColor ? `${MSG_COLOR}${msg}${RESET}` : msg || '';
     stream.write(
       `[${ts()}] ${tag} ${text}${formatData(dataOrMsg, useColor)}\n`,
     );

@@ -435,6 +435,26 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  // Plugin directories — add plugin skill dirs to extraDirs
+  if (process.env.NANOCLAW_PLUGIN_DIRS) {
+    for (const dir of process.env.NANOCLAW_PLUGIN_DIRS.split(path.delimiter)) {
+      if (dir && fs.existsSync(dir)) {
+        // Add skills/ subdir if it exists
+        const skillsPath = path.join(dir, 'skills');
+        if (fs.existsSync(skillsPath)) {
+          extraDirs.push(skillsPath);
+          log(`Plugin skills: ${skillsPath}`);
+        }
+        // Also add agents/ subdir if it exists
+        const agentsPath = path.join(dir, 'agents');
+        if (fs.existsSync(agentsPath)) {
+          extraDirs.push(agentsPath);
+          log(`Plugin agents: ${agentsPath}`);
+        }
+      }
+    }
+  }
+
   for await (const message of query({
     prompt: stream,
     options: {

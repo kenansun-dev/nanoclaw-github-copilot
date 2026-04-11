@@ -8,6 +8,7 @@
  */
 import { ChildProcess, spawn, execSync } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -246,6 +247,43 @@ export async function runHostAgent(
   // MCP config
   if (fs.existsSync(wsPaths.mcpConfig)) {
     env.NANOCLAW_MCP_CONFIG = wsPaths.mcpConfig;
+  }
+
+  // Plugin directories — collect from 3 sources:
+  // 1. ~/.nanoclaw/plugins/ (nanoclaw-managed)
+  // 2. ~/.copilot/plugins/ (user-installed via copilot CLI)
+  // 3. ~/.claude/plugins/ (user-installed via claude CLI)
+  const pluginDirs: string[] = [];
+  const pluginSources = [
+    path.join(resolveWorkspace(), 'plugins'),
+    path.join(os.homedir(), '.copilot', 'plugins'),
+    path.join(os.homedir(), '.claude', 'plugins'),
+  ];
+  for (const src of pluginSources) {
+    if (fs.existsSync(src)) {
+      try {
+        for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+          if (entry.isDirectory()) {
+            const pluginPath = path.join(src, entry.name);
+            // Must have plugin.json or .claude-plugin/plugin.json
+            if (
+              fs.existsSync(path.join(pluginPath, 'plugin.json')) ||
+              fs.existsSync(
+                path.join(pluginPath, '.claude-plugin', 'plugin.json'),
+              )
+            ) {
+              pluginDirs.push(pluginPath);
+            }
+          }
+        }
+      } catch {
+        /* skip unreadable dirs */
+      }
+    }
+  }
+  if (pluginDirs.length > 0) {
+    env.NANOCLAW_PLUGIN_DIRS = pluginDirs.join(path.delimiter);
+    logger.info({ count: pluginDirs.length }, 'Plugin directories discovered');
   }
 
   // IPC directory

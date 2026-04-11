@@ -6,6 +6,8 @@
  */
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
+import { execSync as execSyncFn } from 'child_process';
 import { CONTAINER_IMAGE } from './config.js';
 import { resolveWorkspace } from './workspace.js';
 import { resolveAgentIdFromBindings } from './config-loader.js';
@@ -100,9 +102,13 @@ export function resolveGithubToken(): string | undefined {
     process.env.GITHUB_TOKEN;
   if (envToken) return envToken;
 
+  const home =
+    process.env.HOME || process.env.USERPROFILE || os.homedir();
+
+  // Check OpenClaw auth profiles
   try {
     const profilePath = path.join(
-      process.env.HOME || '/root',
+      home,
       '.openclaw/agents/main/agent/auth-profiles.json',
     );
     if (fs.existsSync(profilePath)) {
@@ -116,7 +122,115 @@ export function resolveGithubToken(): string | undefined {
     /* ignore */
   }
 
+  // Check ~/.copilot/ (GHC CLI's own auth storage from 'copilot auth login')
+  // Also check ~/.config/github-copilot/ (some CLI versions use this)
+  // NOTE: copilot CLI primarily stores tokens in the OS credential manager
+  // (Windows Credential Manager / macOS Keychain / Linux keyring).
+  // File-based storage is only used as fallback.
+  const copilotAuthDirs = [
+    path.join(home, '.copilot'),
+    path.join(home, '.config', 'github-copilot'),
+    path.join(home, 'AppData', 'Local', 'github-copilot'),
+    path.join(home, 'AppData', 'Roaming', 'github-copilot'),
+  ];
+  for (const copilotDir of copilotAuthDirs) {
+    try {
+      if (!fs.existsSync(copilotDir)) continue;
+      // Try config.json — copilot CLI stores tokens here
+      const configFile = path.join(copilotDir, 'config.json');
+      if (fs.existsSync(configFile)) {
+        const config = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
+        // copilot_tokens: { "https://github.com:user": "gho_xxx" }
+        if (
+          config.copilot_tokens &&
+          typeof config.copilot_tokens === 'object'
+        ) {
+          for (const [, token] of Object.entries(config.copilot_tokens)) {
+            if (typeof token === 'string' && token.length > 4) return token;
+          }
+        }
+        if (config.oauth_token) return config.oauth_token;
+        if (config.token) return config.token;
+        if (config.github_token) return config.github_token;
+      }
+      // Try hosts.json (older CLI versions)
+      const hostsFile = path.join(copilotDir, 'hosts.json');
+      if (fs.existsSync(hostsFile)) {
+        const hosts = JSON.parse(fs.readFileSync(hostsFile, 'utf-8'));
+        for (const [, hostData] of Object.entries(hosts)) {
+          const h = hostData as { oauth_token?: string; token?: string };
+          if (h.oauth_token) return h.oauth_token;
+          if (h.token) return h.token;
+        }
+      }
+      // Try apps.json (newer CLI versions)
+      const appsFile = path.join(copilotDir, 'apps.json');
+      if (fs.existsSync(appsFile)) {
+        const apps = JSON.parse(fs.readFileSync(appsFile, 'utf-8'));
+        for (const [, appData] of Object.entries(apps)) {
+          const a = appData as { oauth_token?: string; token?: string };
+          if (a.oauth_token) return a.oauth_token;
+          if (a.token) return a.token;
+        }
+      }
+      // Try any .json file that might contain a token
+      for (const file of fs.readdirSync(copilotDir)) {
+        if (!file.endsWith('.json')) continue;
+        if (['hosts.json', 'apps.json', 'config.json'].includes(file)) continue;
+        try {
+          const data = JSON.parse(
+            fs.readFileSync(path.join(copilotDir, file), 'utf-8'),
+          );
+          if (typeof data === 'object' && data !== null) {
+            for (const [, val] of Object.entries(data)) {
+              const v = val as any;
+              if (v?.oauth_token) return v.oauth_token;
+              if (
+                v?.token &&
+                typeof v.token === 'string' &&
+                v.token.startsWith('ghu_')
+              )
+                return v.token;
+            }
+          }
+        } catch {
+          /* skip unparseable files */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   return undefined;
+}
+
+/**
+ * Check if copilot CLI reports authenticated status.
+ * This detects tokens stored in OS credential manager that we can't read directly.
+ */
+export function isCopilotAuthenticated(): boolean {
+  // Try multiple CLI commands — different copilot versions use different subcommands
+  const commands = [
+    'copilot auth whoami',
+    'copilot auth status',
+    'copilot status',
+  ];
+  for (const cmd of commands) {
+    try {
+      const output = execSyncFn(cmd, {
+        encoding: 'utf-8',
+        timeout: 5000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      if (/logged in|authenticated|signed in|username|@/i.test(output)) {
+        return true;
+      }
+    } catch {
+      // command not found or failed — try next
+    }
+  }
+  return false;
 }
 
 // ─── Container provider configuration ────────────────────────────────────────────
@@ -206,6 +320,41 @@ export function buildProviderMounts(chatJid?: string): VolumeMount[] {
       readonly: true,
     });
   }
+
+  // Plugin directories — mount from 3 sources
+  const pluginDirs: string[] = [];
+  const pluginSources = [
+    path.join(ws, 'plugins'),
+    path.join(os.homedir(), '.copilot', 'plugins'),
+    path.join(os.homedir(), '.claude', 'plugins'),
+  ];
+  for (const src of pluginSources) {
+    if (fs.existsSync(src)) {
+      try {
+        for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+          if (entry.isDirectory()) {
+            const pluginPath = path.join(src, entry.name);
+            if (
+              fs.existsSync(path.join(pluginPath, 'plugin.json')) ||
+              fs.existsSync(
+                path.join(pluginPath, '.claude-plugin', 'plugin.json'),
+              )
+            ) {
+              pluginDirs.push(pluginPath);
+              mounts.push({
+                hostPath: pluginPath,
+                containerPath: `/workspace/plugins/${entry.name}`,
+                readonly: true,
+              });
+            }
+          }
+        }
+      } catch {
+        /* skip */
+      }
+    }
+  }
+
   return mounts;
 }
 

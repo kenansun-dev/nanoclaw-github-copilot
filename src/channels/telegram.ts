@@ -329,6 +329,10 @@ export class TelegramChannel implements Channel {
                 command: 'capabilities',
                 description: 'Show available tools and skills',
               },
+              {
+                command: 'wiki',
+                description: 'Knowledge base — ingest, query, or maintain',
+              },
               { command: 'help', description: 'Show available commands' },
             ]);
             logger.info('Telegram slash commands registered');

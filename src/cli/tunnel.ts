@@ -146,22 +146,33 @@ export async function setupTeamsTunnel(): Promise<void> {
     );
   }
 
-  // 6. Persistence (systemd or schtasks)
-  console.log('\n6. Checking persistence service...');
-  if (platform() === 'linux') {
-    setupSystemdService(tunnelId);
-  } else if (platform() === 'win32') {
-    setupSchedTask(tunnelId);
-  } else {
-    console.log(
-      `   ⚠️  Auto-persistence not supported on ${platform()}. Run manually:`,
-    );
-    console.log(`   devtunnel host ${tunnelId}`);
+  // 6. No auto-persistence — user starts manually
+  console.log('\n6. Tunnel ready. Start manually:');
+  console.log(`   devtunnel host ${tunnelId} --allow-anonymous`);
+
+  // 7. Register addon
+  console.log('\n7. Registering addon...');
+  const url = getTunnelUrl(tunnelId);
+  try {
+    const { registerAddon } = await import('./addon.js');
+    registerAddon('teams-tunnel', {
+      type: 'devtunnel',
+      channel: 'teams',
+      enabled: true,
+      config: {
+        tunnelId,
+        port: TUNNEL_PORT,
+        url: url ? `${url}/api/messages` : undefined,
+        taskName: 'NanoClaw-DevTunnel',
+      },
+    });
+    console.log('   ✅ Addon registered');
+  } catch {
+    /* best effort */
   }
 
-  // 7. Print URL
-  console.log('\n7. Tunnel URL:');
-  const url = getTunnelUrl(tunnelId);
+  // 8. Print URL
+  console.log('\n8. Tunnel URL:');
   if (url) {
     console.log(`\n   🌐 ${url}/api/messages`);
     console.log(
@@ -253,78 +264,4 @@ function getTunnelUrl(tunnelId: string): string | null {
   return null;
 }
 
-function setupSystemdService(tunnelId: string): void {
-  const serviceDir = join(homedir(), '.config', 'systemd', 'user');
-  const serviceFile = join(serviceDir, 'devtunnel-nanoclaw.service');
 
-  if (existsSync(serviceFile)) {
-    console.log('   ✅ systemd service already installed');
-    // Check if running
-    const status = run('systemctl --user is-active devtunnel-nanoclaw');
-    if (status.ok && status.output === 'active') {
-      console.log('   ✅ Service is running');
-    } else {
-      console.log('   Starting service...');
-      run('systemctl --user start devtunnel-nanoclaw');
-      console.log(
-        '   ✅ Started. Check: systemctl --user status devtunnel-nanoclaw',
-      );
-    }
-    return;
-  }
-
-  // Find devtunnel binary path
-  const whichResult = run('which devtunnel');
-  const devtunnelPath = whichResult.ok ? whichResult.output : 'devtunnel';
-
-  const unit = `[Unit]
-Description=DevTunnel for NanoClaw (${tunnelId})
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=${devtunnelPath} host ${tunnelId}
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=default.target
-`;
-
-  mkdirSync(serviceDir, { recursive: true });
-  writeFileSync(serviceFile, unit);
-  console.log(`   ✅ Created ${serviceFile}`);
-
-  run('systemctl --user daemon-reload');
-  run('systemctl --user enable devtunnel-nanoclaw');
-  run('systemctl --user start devtunnel-nanoclaw');
-  // Enable lingering so service runs without active login session
-  run(`loginctl enable-linger ${process.env.USER || ''}`);
-  console.log('   ✅ Service installed and started (auto-start on boot)');
-}
-
-function setupSchedTask(tunnelId: string): void {
-  const taskName = 'NanoClaw-DevTunnel';
-  const checkTask = run(`schtasks /Query /TN "${taskName}" /FO CSV /NH`);
-
-  if (checkTask.ok) {
-    console.log('   ✅ Scheduled task already exists');
-    return;
-  }
-
-  const createResult = run(
-    `schtasks /Create /TN "${taskName}" /TR "devtunnel host ${tunnelId}" /SC ONLOGON /RL HIGHEST /F`,
-  );
-  if (createResult.ok) {
-    console.log('   ✅ Scheduled task created (runs on logon)');
-    // Also start it now
-    run(`schtasks /Run /TN "${taskName}"`);
-    console.log('   ✅ Task started');
-  } else {
-    console.error(
-      `   ❌ Failed to create scheduled task: ${createResult.output}`,
-    );
-    console.error(`   Run manually: devtunnel host ${tunnelId}`);
-  }
-}

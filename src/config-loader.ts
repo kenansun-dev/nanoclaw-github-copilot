@@ -128,6 +128,16 @@ export interface NanoclawConfig {
       agentId?: string;
     }
   >;
+  addons?: Record<
+    string,
+    {
+      type: string; // 'devtunnel' | 'azure-app' | 'azure-bot' | 'scheduled-task'
+      channel?: string; // which channel this addon belongs to (e.g. 'teams')
+      enabled: boolean;
+      config: Record<string, unknown>;
+      createdAt?: string;
+    }
+  >;
   bindings?: Binding[];
   pairing: {
     mode: 'open' | 'prompt' | 'allowlist' | 'disabled';
@@ -193,6 +203,7 @@ const DEFAULTS: NanoclawConfig = {
     engine: 'node' as const,
   },
   chats: {},
+  addons: {},
   pairing: { mode: 'disabled' },
   credentialProxy: { port: 3001 },
   logLevel: 'info',

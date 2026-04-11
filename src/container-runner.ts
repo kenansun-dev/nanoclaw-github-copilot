@@ -4,6 +4,7 @@
  */
 import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import {
@@ -304,6 +305,42 @@ function buildContainerArgs(
   // Pass sandbox engine setting (node=compiled dist, tsx=self-modifying)
   const engine = getConfig().sandbox?.engine || 'node';
   args.push('-e', `NANOCLAW_ENGINE=${engine}`);
+
+  // Pass plugin directories as colon-separated env var for agent-runners
+  const ws = path.dirname(DATA_DIR); // ~/.nanoclaw
+  const pluginNames: string[] = [];
+  const pluginSources = [
+    path.join(ws, 'plugins'),
+    path.join(os.homedir(), '.copilot', 'plugins'),
+    path.join(os.homedir(), '.claude', 'plugins'),
+  ];
+  for (const src of pluginSources) {
+    if (fs.existsSync(src)) {
+      try {
+        for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+          if (entry.isDirectory()) {
+            const pluginPath = path.join(src, entry.name);
+            if (
+              fs.existsSync(path.join(pluginPath, 'plugin.json')) ||
+              fs.existsSync(
+                path.join(pluginPath, '.claude-plugin', 'plugin.json'),
+              )
+            ) {
+              pluginNames.push(entry.name);
+            }
+          }
+        }
+      } catch {
+        /* skip */
+      }
+    }
+  }
+  if (pluginNames.length > 0) {
+    const containerPluginDirs = [...new Set(pluginNames)]
+      .map((n) => `/workspace/plugins/${n}`)
+      .join(':');
+    args.push('-e', `NANOCLAW_PLUGIN_DIRS=${containerPluginDirs}`);
+  }
 
   // Provider-specific env vars (GHC token/model or CC credential proxy)
   args.push(

@@ -223,6 +223,10 @@ export async function setupManifest(
                 description: 'Show available tools and skills',
               },
               { title: 'help', description: 'Show available commands' },
+              {
+                title: 'wiki',
+                description: 'Knowledge base — ingest, query, or maintain',
+              },
             ],
           },
         ],

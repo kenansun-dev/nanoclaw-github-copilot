@@ -101,6 +101,16 @@ try {
     case 'channel':
       await runChannel(commandArgs);
       break;
+    case 'addon': {
+      const { runAddonCommand } = await import('./cli/addon.js');
+      await runAddonCommand(commandArgs);
+      break;
+    }
+    case 'plugin': {
+      const { runPluginCommand } = await import('./cli/plugin.js');
+      await runPluginCommand(commandArgs);
+      break;
+    }
     case 'chat':
       await runChat(commandArgs);
       break;
@@ -267,54 +277,58 @@ async function runService(action: string) {
           /* fall through to direct */
         }
       }
-      // Auto-install service if not installed (prefer service over raw process)
-      if (!hasSystemd && !hasSchedTask && !hasWindowsAutoStart) {
-        // Stop any existing PID-mode process first to avoid port conflicts
-        if (existsSync(pidFile)) {
-          const oldPid = fs.readFileSync(pidFile, 'utf-8').trim();
+      // Start devtunnel if Teams is enabled and a nanoclaw tunnel exists
+      try {
+        const { loadConfig: loadCfg } = await import('./config-loader.js');
+        const cfg = loadCfg();
+        if (cfg.channels?.teams?.enabled) {
+          const { execSync: ex, spawn: sp } = await import('child_process');
           try {
-            killProcess(parseInt(oldPid));
-            console.log(`Stopped existing process (pid: ${oldPid})`);
-            await new Promise((r) => setTimeout(r, 500));
-          } catch {
-            /* already dead */
-          }
-        }
-        if (process.platform === 'linux') {
-          try {
-            const { runServiceCommand } = await import('./cli/service.js');
-            console.log('Service not installed. Installing systemd service...');
-            await runServiceCommand(['install']);
-            execSync(`systemctl --user start ${SERVICE_NAME}`, {
-              stdio: 'pipe',
+            // Find nanoclaw tunnel
+            const listOut = ex('devtunnel list', {
+              encoding: 'utf-8',
+              stdio: ['pipe', 'pipe', 'pipe'],
+              timeout: 10000,
             });
-            await new Promise((r) => setTimeout(r, 2000));
-            const status = execSync(
-              `systemctl --user is-active ${SERVICE_NAME}`,
-              { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-            ).trim();
-            console.log(`Started via systemd (${status})`);
-            console.log(`Logs: journalctl --user -u ${SERVICE_NAME} -f`);
-            return;
+            const tunnelLine = listOut
+              .split('\n')
+              .find((l: string) => l.toLowerCase().includes('nanoclaw'));
+            if (tunnelLine) {
+              const idMatch = tunnelLine.match(/([a-zA-Z0-9._-]+)/);
+              if (idMatch) {
+                const tid = idMatch[1];
+                // Check if tunnel is already hosting
+                const showOut = ex(`devtunnel show ${tid}`, {
+                  encoding: 'utf-8',
+                  stdio: ['pipe', 'pipe', 'pipe'],
+                  timeout: 10000,
+                });
+                const hosting = showOut.includes('Host connections');
+                const hostCount = showOut.match(/Host connections\s*:\s*(\d+)/);
+                if (!hostCount || hostCount[1] === '0') {
+                  console.log(`Starting devtunnel: ${tid}...`);
+                  const dtProc = sp('devtunnel', ['host', tid, '--allow-anonymous'], {
+                    detached: true,
+                    stdio: 'ignore',
+                  });
+                  dtProc.unref();
+                  // Save PID so nanoclaw stop can kill it
+                  try {
+                    const dtPidFile = join(ws, 'devtunnel.pid');
+                    fs.writeFileSync(dtPidFile, String(dtProc.pid));
+                  } catch { /* */ }
+                  console.log(`DevTunnel started (pid: ${dtProc.pid})`);
+                } else {
+                  console.log(`DevTunnel already hosting: ${tid}`);
+                }
+              }
+            }
           } catch {
-            console.log(
-              'Service auto-install failed. Starting as foreground process instead.',
-            );
-          }
-        } else if (process.platform === 'win32') {
-          try {
-            const { runServiceCommand } = await import('./cli/service.js');
-            console.log('Service not installed. Installing scheduled task...');
-            await runServiceCommand(['install']);
-            execSync(`schtasks /Run /TN "${SERVICE_NAME}"`, { stdio: 'pipe' });
-            console.log('Started via Scheduled Task');
-            return;
-          } catch {
-            console.log(
-              'Service auto-install failed. Starting as foreground process instead.',
-            );
+            // devtunnel not installed or not logged in — skip silently
           }
         }
+      } catch {
+        /* config not available */
       }
       await startDirect();
       break;
@@ -381,6 +395,18 @@ async function runService(action: string) {
         /* */
       }
       console.log(`Stopped (pid: ${pid})`);
+      // Also stop devtunnel if we started it
+      try {
+        const dtPidFile = join(ws, 'devtunnel.pid');
+        if (existsSync(dtPidFile)) {
+          const dtPid = parseInt(fs.readFileSync(dtPidFile, 'utf-8').trim());
+          try {
+            killProcess(dtPid);
+            console.log(`Stopped devtunnel (pid: ${dtPid})`);
+          } catch { /* already dead */ }
+          fs.unlinkSync(dtPidFile);
+        }
+      } catch { /* */ }
       break;
     }
     case 'restart': {
@@ -442,10 +468,10 @@ async function runService(action: string) {
             /* uptime not available */
           }
           console.log(
-            `Status: \u2705 ${active} (pid: ${pid}${uptimeStr ? `, uptime: ${uptimeStr}` : ''})`,
+            `✅ Status:    ${active} (pid: ${pid}${uptimeStr ? `, uptime: ${uptimeStr}` : ''})`,
           );
         } catch {
-          console.log('Status: \u274c not running');
+          console.log('❌ Status:    not running');
         }
       } else if (hasSchedTask) {
         console.log('Service: Windows Scheduled Task');
@@ -456,14 +482,14 @@ async function runService(action: string) {
           ).trim();
           const status = out.includes('Running') ? 'running' : 'ready';
           console.log(
-            `Status: ${status === 'running' ? '\u2705' : '\u26a0\ufe0f'} ${status}`,
+            `${status === 'running' ? '✅' : '⚠️'} Status:    ${status}`,
           );
         } catch {
-          console.log('Status: \u274c not installed');
+          console.log('❌ Status:    not installed');
         }
       } else if (hasWindowsAutoStart) {
         console.log('Service: Windows AutoStart');
-        console.log('Status: ⚠️ installed via HKCU Run or Startup folder');
+        console.log('⚠️ Status:    installed via HKCU Run or Startup folder');
       } else if (existsSync(pidFile)) {
         const pid = fs.readFileSync(pidFile, 'utf-8').trim();
         try {
@@ -479,20 +505,20 @@ async function runService(action: string) {
             /* */
           }
           console.log(
-            `Status: \u2705 running (pid: ${pid}, PID mode${uptimeStr ? `, uptime: ${uptimeStr}` : ''})`,
+            `✅ Status:    running (pid: ${pid}, PID mode${uptimeStr ? `, uptime: ${uptimeStr}` : ''})`,
           );
         } catch {
-          console.log('Status: \u274c not running (stale pid file)');
+          console.log('❌ Status:    not running (stale pid file)');
         }
       } else {
-        console.log('Status: \u274c not running');
-        console.log('Run `nanoclaw start` to start.');
+        console.log('❌ Status:    not running');
+        console.log('  Run: nanoclaw start');
       }
 
       // Common info
-      console.log(`Workspace: ${ws}`);
-      console.log(`Config: ${join(ws, 'nanoclaw.json')}`);
-      console.log(`Logs: ${logFile}`);
+      console.log(`✅ Workspace: ${ws}`);
+      console.log(`✅ Config:    ${join(ws, 'nanoclaw.json')}`);
+      console.log(`${existsSync(logFile) ? '✅' : '❌'} Logs:      ${logFile}`);
 
       // Show config summary
       let provider = 'github-copilot';
@@ -513,17 +539,19 @@ async function runService(action: string) {
               ? 'CC'
               : provider;
         console.log(
-          `Agent: ${agent?.name || 'Andy'} | ${providerStr}/${modelShort} | mode: ${agent?.mode || 'sandbox'}`,
+          `✅ Agent:     ${agent?.name || 'Andy'} (${providerStr}/${modelShort}, ${agent?.mode || 'sandbox'})`,
         );
-        if (agent?.thinkLevel) console.log(`Think:    ${agent.thinkLevel}`);
+        if (agent?.thinkLevel) console.log(`✅ Think:     ${agent.thinkLevel}`);
         const channels = Object.entries(config.channels || {})
           .filter(([, v]: [string, any]) => v?.enabled)
           .map(([k]) => k);
         console.log(
-          `Channels: ${channels.length > 0 ? channels.join(', ') : 'none enabled'}`,
+          `${channels.length > 0 ? '✅' : '❌'} Channels:  ${channels.length > 0 ? channels.join(', ') : 'none enabled'}`,
         );
         const chatCount = Object.keys(config.chats || {}).length;
-        console.log(`Chats:    ${chatCount} registered`);
+        console.log(
+          `${chatCount > 0 ? '✅' : '⚠️'} Chats:     ${chatCount} registered`,
+        );
       } catch {
         /* config not available */
       }
@@ -532,23 +560,81 @@ async function runService(action: string) {
       try {
         const isCC = provider === 'claude' || provider === 'anthropic';
         if (isCC) {
-          // Check Claude credentials
-          const claudeCreds = join(
-            os.homedir(),
-            '.claude',
-            '.credentials.json',
-          );
-          const claudeDir = join(os.homedir(), '.claude');
-          const hasAuth = existsSync(claudeCreds) || existsSync(claudeDir);
+          // Check Claude Code auth: CLI first, then file fallback
+          let ccAuth = false;
+          let ccAuthInfo = '';
+          // 1. Try CLI (most accurate)
+          try {
+            const out = execSync('claude auth status --text', {
+              encoding: 'utf-8',
+              stdio: ['pipe', 'pipe', 'pipe'],
+              timeout: 5000,
+            }).trim();
+            ccAuth = true;
+            ccAuthInfo = out.split('\n')[0] || 'authenticated';
+          } catch {
+            // 2. Check env vars
+            const envToken =
+              process.env.ANTHROPIC_API_KEY ||
+              process.env.ANTHROPIC_AUTH_TOKEN ||
+              process.env.CLAUDE_CODE_OAUTH_TOKEN;
+            if (envToken) {
+              ccAuth = true;
+              ccAuthInfo = `env: ${envToken.substring(0, 4)}****`;
+            } else {
+              // 3. Check credentials file
+              const credsFile = join(
+                os.homedir(),
+                '.claude',
+                '.credentials.json',
+              );
+              try {
+                if (existsSync(credsFile)) {
+                  const creds = JSON.parse(fs.readFileSync(credsFile, 'utf-8'));
+                  const token = creds?.claudeAiOauth?.accessToken || '';
+                  if (token) {
+                    ccAuth = true;
+                    ccAuthInfo = `${token.substring(0, 6)}****`;
+                  }
+                }
+              } catch {
+                /* */
+              }
+              // 4. macOS Keychain
+              if (
+                !ccAuth &&
+                process.platform === 'darwin' &&
+                existsSync(join(os.homedir(), '.claude'))
+              ) {
+                ccAuth = true;
+                ccAuthInfo = 'macOS Keychain';
+              }
+            }
+          }
           console.log(
-            `Auth:     ${hasAuth ? '\u2705 Claude credentials found (~/.claude/)' : '\u274c No Claude auth — run: claude login'}`,
+            `${ccAuth ? '\u2705' : '\u274c'} Auth:      ${ccAuth ? `Claude Code (${ccAuthInfo})` : 'No Claude auth \u2014 run: claude login'}`,
           );
         } else {
-          const { resolveGithubToken } = await import('./config-extensions.js');
+          const { resolveGithubToken, isCopilotAuthenticated } =
+            await import('./config-extensions.js');
           const token = resolveGithubToken();
-          console.log(
-            `Auth:     ${token ? '\u2705 GitHub Copilot token found (' + token.substring(0, 4) + '****)' : '\u274c No token — run: copilot auth login  (or: nanoclaw provider login)'}`,
-          );
+          const cliAuth = !token ? isCopilotAuthenticated() : false;
+          if (token) {
+            console.log(
+              `✅ Auth:      GitHub Copilot (${token.substring(0, 4)}****)`,
+            );
+          } else if (cliAuth) {
+            console.log(
+              `✅ Auth:      GitHub Copilot (via CLI credential manager)`,
+            );
+          } else {
+            console.log(
+              `❌ Auth:      No token — run: copilot login  (or: nanoclaw provider login)`,
+            );
+            console.log(
+              '   Checked: env vars, ~/.openclaw auth, ~/.copilot/, credential manager',
+            );
+          }
         }
       } catch {
         /* */
@@ -566,11 +652,113 @@ async function runService(action: string) {
               : agoMins < 60
                 ? `${agoMins}m ago`
                 : `${Math.floor(agoMins / 60)}h ${agoMins % 60}m ago`;
-          console.log(`Activity: ${agoStr}`);
+          console.log(`✅ Activity:  ${agoStr}`);
         }
       } catch {
         /* */
       }
+
+      // Services & Addons detection
+      console.log('');
+      // Check nanoclaw service
+      if (hasSystemd) {
+        try {
+          const svcPid = execSync(
+            `systemctl --user show ${SERVICE_NAME} -p MainPID --value`,
+            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+          ).trim();
+          console.log(`✅ Service:   nanoclaw via systemd (pid: ${svcPid})`);
+        } catch {
+          console.log('✅ Service:   nanoclaw via systemd');
+        }
+        console.log(`   Logs: journalctl --user -u ${SERVICE_NAME} -f`);
+      } else if (hasSchedTask) {
+        let svcPid = '';
+        try {
+          const wmic = execSync(
+            'wmic process where "CommandLine like \'%nanoclaw%start%\'" get ProcessId /format:value',
+            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+          ).trim();
+          const m = wmic.match(/ProcessId=(\d+)/);
+          if (m) svcPid = m[1];
+        } catch {
+          /* */
+        }
+        console.log(
+          `✅ Service:   nanoclaw via scheduled task${svcPid ? ` (pid: ${svcPid})` : ''}`,
+        );
+        console.log(
+          `   Details: schtasks /Query /TN "${SERVICE_NAME}" /FO LIST /V`,
+        );
+      } else if (hasWindowsAutoStart) {
+        try {
+          execSync(
+            'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "nanoclaw"',
+            { stdio: 'pipe' },
+          );
+          console.log('✅ Service:   nanoclaw via HKCU Run key');
+        } catch {
+          console.log('✅ Service:   nanoclaw via Startup folder');
+        }
+      } else if (existsSync(pidFile)) {
+        const svcPid2 = fs.readFileSync(pidFile, 'utf-8').trim();
+        console.log(
+          `⚠️ Service:   nanoclaw PID mode (pid: ${svcPid2}, no auto-start)`,
+        );
+      } else {
+        console.log('❌ Service:   nanoclaw not installed');
+        console.log('   Install: nanoclaw service install');
+      }
+      // Check devtunnel service
+      const dtTaskName = 'NanoClaw-DevTunnel';
+      if (process.platform === 'linux') {
+        try {
+          const dtActive = execSync(
+            `systemctl --user is-active devtunnel-nanoclaw`,
+            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+          ).trim();
+          console.log(`✅ Service:   devtunnel via systemd (${dtActive})`);
+          console.log('   Logs: systemctl --user status devtunnel-nanoclaw');
+        } catch {
+          console.log('❌ Service:   devtunnel not installed');
+        }
+      } else if (process.platform === 'win32') {
+        try {
+          execSync(`schtasks /Query /TN "${dtTaskName}" /FO CSV /NH`, {
+            stdio: 'pipe',
+          });
+          console.log('✅ Service:   devtunnel via scheduled task');
+          console.log(
+            `   Details: schtasks /Query /TN "${dtTaskName}" /FO LIST /V`,
+          );
+        } catch {
+          try {
+            execSync(
+              `reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "${dtTaskName}"`,
+              { stdio: 'pipe' },
+            );
+            console.log('✅ Service:   devtunnel via HKCU Run key');
+          } catch {
+            const dtStartup = join(
+              os.homedir(),
+              'AppData',
+              'Roaming',
+              'Microsoft',
+              'Windows',
+              'Start Menu',
+              'Programs',
+              'Startup',
+              `${dtTaskName}.bat`,
+            );
+            if (existsSync(dtStartup)) {
+              console.log('✅ Service:   devtunnel via Startup folder');
+            } else {
+              console.log('❌ Service:   devtunnel not installed');
+            }
+          }
+        }
+      }
+
       break;
     }
   }
@@ -741,7 +929,7 @@ async function runProvider(args: string[]) {
         console.log('Starting GitHub Copilot login (device code flow)...');
         try {
           const { execSync } = await import('child_process');
-          execSync('copilot auth login', { stdio: 'inherit', timeout: 120000 });
+          execSync('copilot login', { stdio: 'inherit', timeout: 120000 });
           console.log('Login successful.');
         } catch {
           console.error(
@@ -823,7 +1011,7 @@ async function runChannel(args: string[]) {
     }
     case 'add': {
       const { runChannelCommand } = await import('./cli/channel.js');
-      await runChannelCommand(['add', args[1]]);
+      await runChannelCommand(['add', ...args.slice(1)]);
       break;
     }
     case 'remove': {

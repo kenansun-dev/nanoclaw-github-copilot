@@ -331,7 +331,22 @@ async function main(): Promise<void> {
 
   const githubToken = resolveGithubToken();
 
-  const client = new CopilotClient(githubToken ? { githubToken } : undefined);
+  // Plugin directories (passed from host-runner or set manually)
+  const pluginCliArgs: string[] = [];
+  if (process.env.NANOCLAW_PLUGIN_DIRS) {
+    for (const dir of process.env.NANOCLAW_PLUGIN_DIRS.split(path.delimiter)) {
+      if (dir && fs.existsSync(dir)) {
+        pluginCliArgs.push('--plugin-dir', dir);
+        log(`Plugin directory: ${dir}`);
+      }
+    }
+  }
+
+  const clientOpts: any = {};
+  if (githubToken) clientOpts.githubToken = githubToken;
+  if (pluginCliArgs.length > 0) clientOpts.cliArgs = pluginCliArgs;
+
+  const client = new CopilotClient(clientOpts);
 
   // Determine model: use container input model, env var, or default
   // Strip provider prefix if present (e.g. github-copilot/claude-sonnet-4 → claude-sonnet-4)

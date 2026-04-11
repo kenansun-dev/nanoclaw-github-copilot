@@ -189,8 +189,18 @@ function statusSystemd(): void {
 
 // ─── Windows: Scheduled Task ────────────────────────────────────────────────
 
-function installWindows(ws: string, tunnelId?: string): void {
-  const nanoclawBin = resolveNanoclawBin();
+// ─── Public: Windows AutoStart (shared by service.ts and tunnel.ts) ─────────
+
+/**
+ * Install a Windows auto-start entry with full fallback chain:
+ * schtasks → UAC → HKCU Run → Startup folder.
+ * Returns the method used: 'task' | 'run-key' | 'startup' | null.
+ */
+export function installWindowsAutoStart(
+  name: string,
+  command: string,
+  ws?: string,
+): 'task' | 'run-key' | 'startup' | null {
   const startupDir = path.join(
     os.homedir(),
     'AppData',
@@ -202,103 +212,126 @@ function installWindows(ws: string, tunnelId?: string): void {
     'Startup',
   );
   const runKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
-  const nanoclawCmd = `"${getNodePath()}" "${nanoclawBin}" start --foreground`;
+  const workDir = ws || os.homedir();
 
-  const writeLauncher = (name: string, command: string) => {
+  const writeBat = () => {
     fs.mkdirSync(startupDir, { recursive: true });
     const batFile = path.join(startupDir, `${name}.bat`);
-    const vbsFile = path.join(startupDir, `${name}.vbs`);
     fs.writeFileSync(
       batFile,
-      `@echo off\ncd /d "${ws}"\n${command}\n`,
+      `@echo off\r\ncd /d "${workDir}"\r\nstart /B "" ${command}\r\n`,
     );
-    fs.writeFileSync(
-      vbsFile,
-      `Set WshShell = CreateObject("WScript.Shell")\nWshShell.Run chr(34) & "${batFile.replace(/\\/g, '\\\\')}" & chr(34), 0, False\n`,
-    );
-    return { batFile, vbsFile };
+    return batFile;
   };
 
-  const createTask = (name: string, command: string, highest = false) => {
+  const trySchedTask = (highest = false) => {
     try {
       const rl = highest ? ' /RL HIGHEST' : '';
-      const cmd = `schtasks /Create /TN "${name}" /TR "${command}" /SC ONLOGON${rl} /F`;
+      const escaped = command.replace(/"/g, '\\"');
+      const cmd = `schtasks /Create /TN "${name}" /TR "${escaped}" /SC ONLOGON${rl} /F`;
       execSync(cmd, { stdio: 'pipe' });
       return { ok: true, err: '' };
     } catch (err: any) {
-      const msg = ((err.stderr || '') + '\n' + (err.stdout || '')).toString().trim();
+      const msg = ((err.stderr || '') + '\n' + (err.stdout || ''))
+        .toString()
+        .trim();
       return { ok: false, err: msg || err.message || 'unknown error' };
     }
   };
 
-  // NanoClaw task — runs at logon
-  let taskCreated = false;
+  // 1. Try schtasks
   let lastErr = '';
   for (const highest of [true, false]) {
-    const result = createTask(SERVICE_NAME, nanoclawCmd, highest);
+    const result = trySchedTask(highest);
     if (result.ok) {
-      console.log(`  ✅ ${SERVICE_NAME} scheduled task created (runs at logon)`);
-      taskCreated = true;
-      break;
+      console.log(`  \u2705 ${name} scheduled task created`);
+      return 'task' as const;
     }
     lastErr = result.err;
-    console.log(`  ⚠️  schtasks failed${highest ? ' (/RL HIGHEST)' : ''}: ${result.err}`);
+    console.log(
+      `  \u26a0\ufe0f  schtasks failed${highest ? ' (/RL HIGHEST)' : ''}: ${result.err}`,
+    );
   }
 
-  if (!taskCreated && /Access is denied/i.test(lastErr)) {
+  // 2. UAC elevation — use a temp script to avoid quote escaping hell
+  if (/Access is denied/i.test(lastErr)) {
     try {
-      const schtasksCmd = `schtasks /Create /TN "${SERVICE_NAME}" /TR "${nanoclawCmd}" /SC ONLOGON /RL HIGHEST /F`;
-      const psScript = `$cmd = '${schtasksCmd.replace(/'/g, "''")}'; Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList @('-NoProfile','-Command',$cmd)`;
-      const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
-      execSync(`powershell -NoProfile -EncodedCommand ${encoded}`, { stdio: 'inherit' });
-      console.log(`  ✅ ${SERVICE_NAME} scheduled task created via UAC`);
-      taskCreated = true;
-    } catch (err: any) {
-      const msg = ((err.stderr || '') + '\n' + (err.stdout || '')).toString().trim();
-      console.log(`  ⚠️  Elevated schtasks failed: ${msg || err.message || 'unknown error'}`);
-    }
-  }
-
-  if (!taskCreated) {
-    try {
-      const { vbsFile } = writeLauncher(SERVICE_NAME, nanoclawCmd);
-      execSync(
-        `reg add "${runKey}" /v "${SERVICE_NAME}" /t REG_SZ /d "wscript.exe \"${vbsFile}\"" /f`,
-        { stdio: 'pipe' },
+      // Write schtasks command to a temp bat file
+      const tmpBat = path.join(
+        os.tmpdir(),
+        `nanoclaw-schtask-${Date.now()}.bat`,
       );
-      console.log(`  ✅ Registered HKCU Run key for ${SERVICE_NAME}`);
-      console.log('  ℹ️  nanoclaw will start silently on next login');
-    } catch {
-      console.log('  ⚠️  HKCU Run registration failed, using Startup folder');
-      const { vbsFile } = writeLauncher(SERVICE_NAME, nanoclawCmd);
-      console.log(`  ✅ Created startup script: ${vbsFile}`);
+      fs.writeFileSync(
+        tmpBat,
+        `@echo off\nschtasks /Create /TN "${name}" /TR "${command}" /SC ONLOGON /RL HIGHEST /F\n`,
+      );
+      // Run the bat file elevated
+      const psScript = `Start-Process -FilePath '${tmpBat}' -Verb RunAs -Wait`;
+      const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+      execSync(`powershell -NoProfile -EncodedCommand ${encoded}`, {
+        stdio: 'inherit',
+        timeout: 30000,
+      });
+      // Clean up temp file
+      try {
+        fs.unlinkSync(tmpBat);
+      } catch {
+        /* */
+      }
+      // Verify the task actually exists
+      try {
+        execSync(`schtasks /Query /TN "${name}" /FO CSV /NH`, {
+          stdio: 'pipe',
+        });
+        console.log(`  \u2705 ${name} scheduled task created via UAC`);
+        return 'task' as const;
+      } catch {
+        console.log(
+          `  \u26a0\ufe0f  UAC completed but task not found — may need different task name`,
+        );
+      }
+    } catch (err: any) {
+      const msg = ((err.stderr || '') + '\n' + (err.stdout || ''))
+        .toString()
+        .trim();
+      console.log(
+        `  \u26a0\ufe0f  Elevated schtasks failed: ${msg || err.message || 'unknown'}`,
+      );
     }
   }
 
-  // DevTunnel persistence
+  // 3. HKCU Run key
+  try {
+    const batFile = writeBat();
+    execSync(
+      `reg add "${runKey}" /v "${name}" /t REG_SZ /d "\"${batFile}\"" /f`,
+      { stdio: 'pipe' },
+    );
+    console.log(`  \u2705 Registered HKCU Run key for ${name}`);
+    return 'run-key' as const;
+  } catch {
+    /* */
+  }
+
+  // 4. Startup folder (last resort)
+  const batFile = writeBat();
+  console.log(`  \u2705 Created startup script: ${batFile}`);
+  return 'startup' as const;
+}
+
+// ─── Windows: Scheduled Task ──────────────────────────────────────────────────
+
+function installWindows(ws: string, tunnelId?: string): void {
+  const nanoclawBin = resolveNanoclawBin();
+  const nanoclawCmd = `"${getNodePath()}" "${nanoclawBin}" start --foreground`;
+
+  console.log('  Installing NanoClaw auto-start...');
+  installWindowsAutoStart(SERVICE_NAME, nanoclawCmd, ws);
+
   if (tunnelId) {
     const devtunnelCmd = `devtunnel host ${tunnelId} --allow-anonymous`;
-    let dtCreated = false;
-    for (const highest of [true, false]) {
-      const result = createTask(DEVTUNNEL_SERVICE_NAME, devtunnelCmd, highest);
-      if (result.ok) {
-        console.log(`  ✅ ${DEVTUNNEL_SERVICE_NAME} scheduled task created`);
-        dtCreated = true;
-        break;
-      }
-    }
-    if (!dtCreated) {
-      try {
-        const { vbsFile } = writeLauncher(DEVTUNNEL_SERVICE_NAME, devtunnelCmd);
-        execSync(
-          `reg add "${runKey}" /v "${DEVTUNNEL_SERVICE_NAME}" /t REG_SZ /d "wscript.exe \"${vbsFile}\"" /f`,
-          { stdio: 'pipe' },
-        );
-        console.log(`  ✅ Registered HKCU Run key for ${DEVTUNNEL_SERVICE_NAME}`);
-      } catch {
-        console.log('  ⚠️  DevTunnel persistence fallback failed');
-      }
-    }
+    console.log('  Installing DevTunnel auto-start...');
+    installWindowsAutoStart(DEVTUNNEL_SERVICE_NAME, devtunnelCmd, ws);
   }
 }
 

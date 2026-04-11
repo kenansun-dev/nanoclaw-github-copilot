@@ -214,6 +214,7 @@ $manifest = @{
                 @{ title = "think"; description = "Set thinking level (low/medium/high/xhigh)" },
                 @{ title = "tasks"; description = "List scheduled tasks" },
                 @{ title = "capabilities"; description = "Show available tools and skills" },
+                @{ title = "wiki"; description = "Knowledge base — ingest, query, or maintain" },
                 @{ title = "help"; description = "Show available commands" }
             )
         })

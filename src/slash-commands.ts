@@ -69,6 +69,11 @@ export const COMMANDS: SlashCommand[] = [
     description: 'Show available commands',
     noArgs: true,
   },
+  {
+    name: 'wiki',
+    description: 'Knowledge base — ingest, query, or maintain your wiki',
+    args: '[topic|search <query>]',
+  },
 ];
 
 // ─── Command execution ───────────────────────────────────────────────────────
@@ -155,10 +160,33 @@ export async function handleSlashCommand(
     return { handled: true };
   }
 
-  // /tasks, /status, /capabilities — pass to agent as prompts
+  // /tasks, /status, /capabilities, /wiki — pass to agent as prompts
   // These are handled by the agent using its tools/skills, not by nanoclaw directly.
   // Returning handled: false lets them flow through to the agent.
   if (input === '/tasks' || input === '/status' || input === '/capabilities') {
+    return { handled: false };
+  }
+
+  // /wiki [topic|search <query>] — pass to agent with wiki skill context
+  if (input === '/wiki' || input.startsWith('/wiki ')) {
+    // Ensure wiki directory exists
+    const wikiDir = path.join(DATA_DIR, 'sessions', ctx.groupFolder, 'wiki');
+    if (!fs.existsSync(wikiDir)) {
+      fs.mkdirSync(path.join(wikiDir, 'wiki', 'entities'), { recursive: true });
+      fs.mkdirSync(path.join(wikiDir, 'wiki', 'concepts'), { recursive: true });
+      fs.mkdirSync(path.join(wikiDir, 'sources'), { recursive: true });
+      // Create initial index.md
+      fs.writeFileSync(
+        path.join(wikiDir, 'wiki', 'index.md'),
+        '# Wiki Index\n\n_No pages yet. Send a link, file, or topic to get started._\n',
+      );
+      // Create initial log.md
+      fs.writeFileSync(
+        path.join(wikiDir, 'wiki', 'log.md'),
+        `# Wiki Log\n\n## [${new Date().toISOString().split('T')[0]}] init\nWiki initialized.\n`,
+      );
+    }
+    // Pass through to agent — the wiki skill handles the rest
     return { handled: false };
   }
 
