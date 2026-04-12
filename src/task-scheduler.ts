@@ -3,6 +3,7 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { runAgentForChat, resolveAgentForChat } from './config-extensions.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -72,7 +73,12 @@ export interface SchedulerDependencies {
     containerName: string,
     groupFolder: string,
   ) => void;
-  sendMessage: (jid: string, text: string) => Promise<void>;
+  sendMessage: (jid: string, text: string) => Promise<string | void>;
+  editMessage?: (
+    jid: string,
+    messageId: string,
+    text: string,
+  ) => Promise<string | void>;
 }
 
 async function runTask(
@@ -170,7 +176,11 @@ async function runTask(
   };
 
   try {
-    const output = await runContainerAgent(
+    const agent = resolveAgentForChat(task.chat_jid);
+    // Progressive send state for delta streaming
+    let progressiveMsgId: string | undefined;
+    const output = await runAgentForChat(
+      task.chat_jid,
       group,
       {
         prompt: task.prompt,
@@ -179,21 +189,39 @@ async function runTask(
         chatJid: task.chat_jid,
         isMain,
         isScheduledTask: true,
-        assistantName: ASSISTANT_NAME,
+        assistantName: agent.name || ASSISTANT_NAME,
         script: task.script || undefined,
       },
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
-          result = streamedOutput.result;
-          // Forward result to user (sendMessage handles formatting)
-          await deps.sendMessage(task.chat_jid, streamedOutput.result);
-          scheduleClose();
+          const text = streamedOutput.result;
+          result = text;
+          if (streamedOutput.partial && deps.editMessage) {
+            if (!progressiveMsgId) {
+              const msgId = await deps.sendMessage(task.chat_jid, text + ' ◌');
+              progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;
+            } else {
+              await deps.editMessage(
+                task.chat_jid,
+                progressiveMsgId,
+                text + ' ◌',
+              );
+            }
+          } else {
+            if (progressiveMsgId && deps.editMessage) {
+              await deps.editMessage(task.chat_jid, progressiveMsgId, text);
+              progressiveMsgId = undefined;
+            } else {
+              await deps.sendMessage(task.chat_jid, text);
+            }
+            scheduleClose();
+          }
         }
         if (streamedOutput.status === 'success') {
           deps.queue.notifyIdle(task.chat_jid);
-          scheduleClose(); // Close promptly even when result is null (e.g. IPC-only tasks)
+          scheduleClose();
         }
         if (streamedOutput.status === 'error') {
           error = streamedOutput.error || 'Unknown error';

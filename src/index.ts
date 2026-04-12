@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { OneCLI } from '@onecli-sh/sdk';
 
@@ -7,13 +8,17 @@ import {
   ASSISTANT_NAME,
   DEFAULT_TRIGGER,
   getTriggerPattern,
+  DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   MAX_MESSAGES_PER_PROMPT,
   ONECLI_URL,
   POLL_INTERVAL,
   TIMEZONE,
+  TRIGGER_PATTERN,
+  getConfig,
 } from './config.js';
+import { runAgentForChat, IS_GHC_PROVIDER } from './config-extensions.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -21,7 +26,6 @@ import {
 } from './channels/registry.js';
 import {
   ContainerOutput,
-  runContainerAgent,
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './container-runner.js';
@@ -32,12 +36,14 @@ import {
 import {
   getAllChats,
   getAllRegisteredGroups,
+  getRecentConversation,
   getAllSessions,
   deleteSession,
   getAllTasks,
   getLastBotMessageTimestamp,
   getMessagesSince,
   getNewMessages,
+  getRegisteredGroup,
   getRouterState,
   initDatabase,
   setRegisteredGroup,
@@ -49,7 +55,12 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+import {
+  findChannel,
+  formatMessages,
+  formatOutbound,
+  formatConversationContext,
+} from './router.js';
 import {
   restoreRemoteControl,
   startRemoteControl,
@@ -78,19 +89,20 @@ let messageLoopRunning = false;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
-const onecli = new OneCLI({ url: ONECLI_URL });
+// OneCLI is only used for CC (Anthropic) provider
+const onecli = IS_GHC_PROVIDER ? null : new OneCLI({ url: ONECLI_URL });
 
 function ensureOneCLIAgent(jid: string, group: RegisteredGroup): void {
-  if (group.isMain) return;
+  if (!onecli || group.isMain) return;
   const identifier = group.folder.toLowerCase().replace(/_/g, '-');
-  onecli.ensureAgent({ name: group.name, identifier }).then(
-    (res) => {
+  onecli!.ensureAgent({ name: group.name, identifier }).then(
+    (res: any) => {
       logger.info(
         { jid, identifier, created: res.created },
         'OneCLI agent ensured',
       );
     },
-    (err) => {
+    (err: any) => {
       logger.debug(
         { jid, identifier, err: String(err) },
         'OneCLI agent ensure skipped',
@@ -146,7 +158,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   let groupDir: string;
   try {
     groupDir = resolveGroupFolderPath(group.folder);
-  } catch (err) {
+  } catch (err: any) {
     logger.warn(
       { jid, folder: group.folder, err },
       'Rejecting group registration with invalid folder',
@@ -165,6 +177,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   const groupMdFile = path.join(groupDir, 'CLAUDE.md');
   if (!fs.existsSync(groupMdFile)) {
     const templateFile = path.join(
+      DATA_DIR,
       GROUPS_DIR,
       group.isMain ? 'main' : 'global',
       'CLAUDE.md',
@@ -230,7 +243,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const isMainGroup = group.isMain === true;
 
-  const missedMessages = getMessagesSince(
+  let missedMessages = getMessagesSince(
     chatJid,
     getOrRecoverCursor(chatJid),
     ASSISTANT_NAME,
@@ -239,7 +252,35 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (missedMessages.length === 0) return true;
 
+  // Handle slash commands in ALL messages, not just the last one.
+  // Separate slash commands from regular messages to avoid swallowing.
+  const { normalizeSlashInput, handleSlashCommand } =
+    await import('./slash-commands.js');
+  const slashCtx = {
+    chatJid,
+    groupFolder: group.folder,
+    channel: findChannel(channels, chatJid),
+    clearSession: (folder: string) => delete sessions[folder],
+  };
+  const regularMessages: typeof missedMessages = [];
+  for (const msg of missedMessages) {
+    const slashInput = normalizeSlashInput(msg.content);
+    const slashResult = await handleSlashCommand(slashInput, slashCtx);
+    if (slashResult.handled) {
+      lastAgentTimestamp[chatJid] = msg.timestamp;
+    } else {
+      regularMessages.push(msg);
+    }
+  }
+  saveState();
+
+  if (regularMessages.length === 0) return true;
+
+  // Replace missedMessages with non-slash messages for further processing
+  missedMessages = regularMessages;
+
   // For non-main groups, check if trigger is required and present
+  // (after slash commands, so /think etc. work without @mention)
   if (!isMainGroup && group.requiresTrigger !== false) {
     const triggerPattern = getTriggerPattern(group.trigger);
     const allowlistCfg = loadSenderAllowlist();
@@ -251,7 +292,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(missedMessages, TIMEZONE);
+  // Include recent conversation history so model has context
+  const recentHistory = getRecentConversation(chatJid);
+  const historyPrefix = formatConversationContext(
+    recentHistory.filter((m) => !missedMessages.some((mm) => mm.id === m.id)),
+    TIMEZONE,
+    ASSISTANT_NAME,
+  );
+  const newMessages = formatMessages(missedMessages, TIMEZONE);
+  const prompt = historyPrefix
+    ? historyPrefix + '\n\n' + newMessages
+    : newMessages;
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -269,6 +320,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
   const resetIdleTimer = () => {
+    if (IDLE_TIMEOUT <= 0) return; // 0 = never timeout
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
       logger.debug(
@@ -282,22 +334,86 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
+  // Progressive send state: track message ID for editMessage on partial updates
+  let progressiveMsgId: string | undefined;
+  let progressiveText = '';
+  // Thinking message state (separate from answer progressive message)
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback — called for each agent result
+    // Streaming output callback
+
+    // Skip thinking-only deltas (will be merged into final result)
+    if (result.thinking && !result.result) {
+      return;
+    }
+
     if (result.result) {
+      // Merge thinking into result as one message (only if showThinking is enabled)
+      let thinkingParseMode: 'HTML' | 'Markdown' | undefined;
+      if (
+        result.thinking &&
+        !result.partial &&
+        getConfig().agents?.defaults?.showThinking
+      ) {
+        const tp = formatThinkingForChannel(result.thinking, chatJid);
+        if (tp) {
+          thinkingParseMode = tp.parseMode;
+          // Don't escape the answer — let Telegram fallback handle parse errors
+          result.result = tp.text + '\n\n' + result.result;
+        }
+      }
       const raw =
         typeof result.result === 'string'
           ? result.result
           : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
-      if (text) {
-        await channel.sendMessage(chatJid, text);
+      if (!text) {
+        if (result.status === 'success') queue.notifyIdle(chatJid);
+        return;
+      }
+
+      const sendOpts = thinkingParseMode
+        ? { parseMode: thinkingParseMode }
+        : undefined;
+
+      if (result.partial && channel.editMessage) {
+        // Delta/partial: accumulate and edit existing message
+        progressiveText = text; // delta buffer already accumulated in agent-runner
+        if (!progressiveMsgId) {
+          // First partial — send new message
+          await channel.setTyping?.(chatJid, false);
+          const msgId = await channel.sendMessage(
+            chatJid,
+            text + ' ◌',
+            sendOpts,
+          );
+          progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;
+        } else {
+          // Subsequent partial — edit existing message
+          await channel.editMessage(
+            chatJid,
+            progressiveMsgId,
+            text + ' ◌',
+            sendOpts,
+          );
+        }
+      } else {
+        // Final message (or channel doesn't support edit)
+        await channel.setTyping?.(chatJid, false);
+        if (progressiveMsgId && channel.editMessage) {
+          // Replace the progressive message with final content
+          await channel.editMessage(chatJid, progressiveMsgId, text, sendOpts);
+          progressiveMsgId = undefined;
+          progressiveText = '';
+        } else {
+          await channel.sendMessage(chatJid, text, sendOpts);
+        }
         outputSentToUser = true;
       }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
+      logger.info(
+        { group: group.name, partial: !!result.partial },
+        `Agent output: ${raw.length} chars`,
+      );
       resetIdleTimer();
     }
 
@@ -383,7 +499,8 @@ async function runAgent(
     : undefined;
 
   try {
-    const output = await runContainerAgent(
+    const output = await runAgentForChat(
+      chatJid,
       group,
       {
         prompt,
@@ -401,6 +518,11 @@ async function runAgent(
     if (output.newSessionId) {
       sessions[group.folder] = output.newSessionId;
       setSession(group.folder, output.newSessionId);
+    }
+
+    // Mark idle-waiting so GroupQueue keeps process alive for IPC reuse
+    if (output.status === 'success') {
+      queue.markIdle(chatJid);
     }
 
     if (output.status === 'error') {
@@ -428,12 +550,96 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
+
+      // Send error feedback to user (if enabled and not shutting down)
+      const sendErrors = getConfig().sendErrorToUser === true;
+      if (sendErrors && !queue.isShuttingDown()) {
+        try {
+          const errMsg = output.error || 'Unknown error';
+          let userMessage = '\u26a0\ufe0f Unable to process your message.';
+          if (errMsg.includes('docker') || errMsg.includes('Docker')) {
+            userMessage +=
+              ' Docker is not running or not installed. Run "nanoclaw doctor" to check.';
+          } else if (errMsg.includes('timeout')) {
+            userMessage += ' The agent timed out processing your request.';
+          } else if (
+            errMsg.includes('ERR_MODULE_NOT_FOUND') ||
+            errMsg.includes('Cannot find package')
+          ) {
+            userMessage +=
+              ' Container image may be outdated or wrong provider. Run "nanoclaw sandbox build" to rebuild.';
+          } else if (
+            errMsg.includes('No authentication info') ||
+            errMsg.includes('not created with authentication')
+          ) {
+            userMessage +=
+              ' Authentication failed. Check your GitHub token or API key configuration.';
+          } else if (
+            errMsg.includes('No such image') ||
+            errMsg.includes('image not found')
+          ) {
+            userMessage +=
+              ' Container image not found. Run "nanoclaw sandbox build" to build it.';
+          } else {
+            userMessage += ' Error: ' + errMsg.slice(0, 200);
+          }
+          const errChannel = findChannel(channels, chatJid);
+          if (errChannel) await errChannel.sendMessage(chatJid, userMessage);
+        } catch {
+          // best-effort
+        }
+      }
+
       return 'error';
     }
 
     return 'success';
-  } catch (err) {
+  } catch (err: any) {
     logger.error({ group: group.name, err }, 'Agent error');
+
+    // Send error feedback to user (if enabled and not shutting down)
+    const sendErrors2 = getConfig().sendErrorToUser === true;
+    if (sendErrors2 && !queue.isShuttingDown()) {
+      try {
+        const errMsg = err?.message || String(err);
+        let userMessage = '\u26a0\ufe0f Unable to process your message.';
+        if (
+          errMsg.includes('docker') ||
+          errMsg.includes('ENOENT') ||
+          errMsg.includes('spawn')
+        ) {
+          userMessage +=
+            ' Docker may not be running or installed. Run "nanoclaw doctor" to check.';
+        } else if (errMsg.includes('timeout')) {
+          userMessage += ' The agent timed out processing your request.';
+        } else if (
+          errMsg.includes('ERR_MODULE_NOT_FOUND') ||
+          errMsg.includes('Cannot find package')
+        ) {
+          userMessage +=
+            ' Container image may be outdated or wrong provider. Run "nanoclaw sandbox build" to rebuild.';
+        } else if (
+          errMsg.includes('No authentication info') ||
+          errMsg.includes('not created with authentication')
+        ) {
+          userMessage +=
+            ' Authentication failed. Check your GitHub token or API key configuration.';
+        } else if (
+          errMsg.includes('No such image') ||
+          errMsg.includes('image not found')
+        ) {
+          userMessage +=
+            ' Container image not found. Run "nanoclaw sandbox build" to build it.';
+        } else {
+          userMessage += ` Error: ${errMsg.slice(0, 200)}`;
+        }
+        const errChannel = findChannel(channels, chatJid);
+        if (errChannel) await errChannel.sendMessage(chatJid, userMessage);
+      } catch {
+        // best-effort
+      }
+    }
+
     return 'error';
   }
 }
@@ -510,11 +716,51 @@ async function startMessageLoop(): Promise<void> {
             ASSISTANT_NAME,
             MAX_MESSAGES_PER_PROMPT,
           );
-          const messagesToSend =
+          let messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
+
+          // Handle slash commands in ALL pending messages, not just the last
+          if (messagesToSend.length > 0) {
+            const { normalizeSlashInput, handleSlashCommand } =
+              await import('./slash-commands.js');
+            const slashCtx2 = {
+              chatJid,
+              groupFolder: group.folder,
+              channel: findChannel(channels, chatJid),
+              clearSession: (folder: string) => delete sessions[folder],
+            };
+            const nonSlash: typeof messagesToSend = [];
+            for (const msg of messagesToSend) {
+              const slashInput = normalizeSlashInput(msg.content);
+              const slashResult = await handleSlashCommand(
+                slashInput,
+                slashCtx2,
+              );
+              if (slashResult.handled) {
+                lastAgentTimestamp[chatJid] = msg.timestamp;
+              } else {
+                nonSlash.push(msg);
+              }
+            }
+            saveState();
+            messagesToSend = nonSlash;
+            if (messagesToSend.length === 0) continue;
+          }
+
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
-          if (queue.sendMessage(chatJid, formatted)) {
+          // Include recent conversation context so GHC model has history
+          const recentConversation = getRecentConversation(chatJid);
+          const contextPrefix = formatConversationContext(
+            recentConversation.slice(0, -messagesToSend.length), // exclude new messages
+            TIMEZONE,
+            ASSISTANT_NAME,
+          );
+          const fullPrompt = contextPrefix
+            ? contextPrefix + '\n\n' + formatted
+            : formatted;
+
+          if (queue.sendMessage(chatJid, fullPrompt)) {
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
@@ -525,7 +771,7 @@ async function startMessageLoop(): Promise<void> {
             // Show typing indicator while the container processes the piped message
             channel
               .setTyping?.(chatJid, true)
-              ?.catch((err) =>
+              ?.catch((err: any) =>
                 logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
               );
           } else {
@@ -534,7 +780,7 @@ async function startMessageLoop(): Promise<void> {
           }
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       logger.error({ err }, 'Error in message loop');
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
@@ -563,9 +809,89 @@ function recoverPendingMessages(): void {
   }
 }
 
+let containerRuntimeAvailable = false;
+
 function ensureContainerSystemRunning(): void {
-  ensureContainerRuntimeRunning();
-  cleanupOrphans();
+  const config = getConfig();
+
+  // Always cleanup orphaned containers, regardless of default mode.
+  // Other agents might use sandbox even when default is host.
+  // This matches upstream behavior where cleanupOrphans always runs.
+  try {
+    cleanupOrphans();
+  } catch {
+    // Container runtime might not be available — that’s OK for host-only setups
+  }
+
+  // Only check Docker runtime if any agent needs container mode
+  const needsContainers =
+    config.agents?.list?.some((a: any) => a.mode === 'sandbox') ||
+    config.agents?.defaults?.mode !== 'host';
+  if (!needsContainers) {
+    logger.info('No agents require containers — skipping runtime check');
+    return;
+  }
+  try {
+    ensureContainerRuntimeRunning();
+    containerRuntimeAvailable = true;
+    cleanupOrphans();
+  } catch (err: any) {
+    containerRuntimeAvailable = false;
+    logger.warn(
+      { err: err.message },
+      'Container runtime not available. Service will start but message processing will fail. Run "nanoclaw doctor" to diagnose.',
+    );
+    console.warn(
+      '\n  \u26a0\ufe0f  WARNING: Docker is not running or not installed.',
+    );
+    console.warn('  Messages will not be processed until Docker is available.');
+    console.warn('  Run "nanoclaw doctor" to check your setup.\n');
+  }
+}
+
+interface ThinkingFormat {
+  text: string;
+  parseMode?: 'HTML' | 'Markdown';
+}
+
+/**
+ * Format thinking/reasoning content for channel display.
+ * Returns structured data so callers can set parse mode correctly.
+ */
+function formatThinkingForChannel(
+  thinking: string,
+  chatJid: string,
+): ThinkingFormat | null {
+  const trimmed = thinking.trim();
+  if (!trimmed) return null;
+
+  // Truncate very long thinking to avoid flooding the channel
+  const maxLen = 2000;
+  const content =
+    trimmed.length > maxLen
+      ? trimmed.substring(0, maxLen) + '\n...(truncated)'
+      : trimmed;
+
+  const escapeHtml = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  if (chatJid.startsWith('tg:')) {
+    // Telegram: expandable blockquote (collapsed by default, tap to expand)
+    return {
+      text: `<blockquote expandable>🧠 Thinking:\n${escapeHtml(content)}</blockquote>`,
+      parseMode: 'HTML',
+    };
+  } else {
+    // Teams, Discord, TUI, etc.: standard blockquote
+    return {
+      text:
+        '🧠 Thinking:\n' +
+        content
+          .split('\n')
+          .map((l) => `> ${l}`)
+          .join('\n'),
+    };
+  }
 }
 
 async function main(): Promise<void> {
@@ -573,6 +899,28 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+
+  // Clear stale agent PIDs from previous run
+  try {
+    const { clearAgentPids } = await import('./host-runner.js');
+    clearAgentPids();
+  } catch {
+    /* */
+  }
+
+  // Sync chats from nanoclaw.json config into DB
+  try {
+    const { loadConfig } = await import('./config-loader.js');
+    const { syncChatsFromConfig } = await import('./chat-manager.js');
+    const config = loadConfig();
+    syncChatsFromConfig(config);
+    // Refresh in-memory groups after sync
+    registeredGroups = getAllRegisteredGroups();
+  } catch (err: any) {
+    logger.debug({ err }, 'Chat sync from config skipped');
+  }
+
+  restoreRemoteControl();
 
   // Ensure OneCLI agents exist for all registered groups.
   // Recovers from missed creates (e.g. OneCLI was down at registration time).
@@ -611,11 +959,8 @@ async function main(): Promise<void> {
     if (!channel) return;
 
     if (command === '/remote-control') {
-      const result = await startRemoteControl(
-        msg.sender,
-        chatJid,
-        process.cwd(),
-      );
+      const { resolveWorkspace: rw } = await import('./workspace.js');
+      const result = await startRemoteControl(msg.sender, chatJid, rw());
       if (result.ok) {
         await channel.sendMessage(chatJid, result.url);
       } else {
@@ -640,10 +985,39 @@ async function main(): Promise<void> {
       // Remote control commands — intercept before storage
       const trimmed = msg.content.trim();
       if (trimmed === '/remote-control' || trimmed === '/remote-control-end') {
-        handleRemoteControl(trimmed, chatJid, msg).catch((err) =>
+        handleRemoteControl(trimmed, chatJid, msg).catch((err: any) =>
           logger.error({ err, chatJid }, 'Remote control command error'),
         );
         return;
+      }
+
+      // Unified pair instructions for unregistered chats
+      if (!msg.is_from_me && !registeredGroups[chatJid]) {
+        // Check DB in case a channel (e.g. TUI) auto-registered
+        const freshGroups = getAllRegisteredGroups();
+        if (freshGroups[chatJid]) {
+          registeredGroups = freshGroups;
+        } else {
+          const pairChannel = findChannel(channels, chatJid);
+          if (pairChannel) {
+            const senderName = msg.sender || 'chat';
+            const safeName = senderName
+              .replace(/[^a-zA-Z0-9_-]/g, '-')
+              .substring(0, 40);
+            pairChannel
+              .sendMessage(
+                chatJid,
+                `👋 This chat isn't paired yet.\n\nTo pair, run on your server:\n\`nanoclaw pair ${chatJid} --name "${safeName}"\`\n\`nanoclaw restart\``,
+              )
+              .catch((err: any) =>
+                logger.debug(
+                  { err, chatJid },
+                  'Failed to send pair instructions',
+                ),
+              );
+          }
+          return;
+        }
       }
 
       // Sender allowlist drop mode: discard messages from denied senders before storing
@@ -672,27 +1046,65 @@ async function main(): Promise<void> {
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
+    registerGroup,
   };
 
   // Create and connect all registered channels.
   // Each channel self-registers via the barrel import above.
   // Factories return null when credentials are missing, so unconfigured channels are skipped.
+  // Multi-account: iterate accounts{} if present, creating one instance per account.
   for (const channelName of getRegisteredChannelNames()) {
     const factory = getChannelFactory(channelName)!;
-    const channel = factory(channelOpts);
-    if (!channel) {
-      logger.warn(
-        { channel: channelName },
-        'Channel installed but credentials missing — skipping. Check .env or re-run the channel skill.',
-      );
-      continue;
-    }
-    channels.push(channel);
-    await channel.connect();
+    const channelConfig = (getConfig().channels as any)?.[channelName];
+    const accounts = channelConfig?.accounts as Record<string, any> | undefined;
+
+    // Build list of (accountId, opts) pairs to instantiate
+    const accountEntries: Array<{ accountId?: string }> = accounts
+      ? Object.keys(accounts).map((id) => ({ accountId: id }))
+      : [{ accountId: undefined }]; // single instance (no accounts)
+
+    for (const { accountId } of accountEntries) {
+      const opts = { ...channelOpts, ...(accountId ? { accountId } : {}) };
+      const channel = factory(opts);
+      if (!channel) {
+        logger.warn(
+          { channel: channelName, accountId },
+          'Channel installed but credentials missing — skipping.',
+        );
+        continue;
+      }
+      channels.push(channel);
+      await channel.connect();
+
+      // Register slash commands with platform-native menus (non-invasive)
+      try {
+        const { registerTelegramCommands } =
+          await import('./slash-commands.js');
+        if (channelName === 'telegram') {
+          // Multi-account: register for each account's bot token
+          const tgConfig = getConfig().channels?.telegram;
+          const accts = tgConfig?.accounts;
+          if (accts && accountId && accts[accountId]?.botToken) {
+            await registerTelegramCommands(accts[accountId].botToken!);
+            logger.info(
+              { accountId },
+              'Telegram slash command menu registered',
+            );
+          } else if (tgConfig?.botToken) {
+            await registerTelegramCommands(tgConfig.botToken);
+            logger.info('Telegram slash command menu registered');
+          }
+        }
+      } catch (err) {
+        logger.debug(
+          { err, channel: channelName },
+          'Slash command registration skipped',
+        );
+      }
+    } // end accountEntries loop
   }
   if (channels.length === 0) {
-    logger.fatal('No channels connected');
-    process.exit(1);
+    logger.warn('No channels connected — service running for TUI/IPC only');
   }
 
   // Start subsystems (independently of connection handler)
@@ -709,7 +1121,13 @@ async function main(): Promise<void> {
         return;
       }
       const text = formatOutbound(rawText);
-      if (text) await channel.sendMessage(jid, text);
+      if (text) return await channel.sendMessage(jid, text);
+    },
+    editMessage: async (jid, messageId, rawText) => {
+      const channel = findChannel(channels, jid);
+      if (!channel?.editMessage) return;
+      const text = formatOutbound(rawText);
+      if (text) return await channel.editMessage(jid, messageId, text);
     },
   });
   startIpcWatcher({
@@ -717,6 +1135,25 @@ async function main(): Promise<void> {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       return channel.sendMessage(jid, text);
+    },
+    reactToMessage: async (jid, emoji, messageId) => {
+      const channel = findChannel(channels, jid);
+      if (channel?.reactToMessage) {
+        await channel.reactToMessage(jid, emoji, messageId);
+      } else {
+        logger.debug({ jid, emoji }, 'Channel does not support reactions');
+      }
+    },
+    sendFile: async (jid, filePath, filename) => {
+      const channel = findChannel(channels, jid);
+      if (channel?.sendFile) {
+        await channel.sendFile(jid, filePath, filename);
+      } else {
+        logger.debug(
+          { jid, filePath },
+          'Channel does not support file sending',
+        );
+      }
     },
     registeredGroups: () => registeredGroups,
     registerGroup,
@@ -750,7 +1187,7 @@ async function main(): Promise<void> {
   startSessionCleanup();
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
-  startMessageLoop().catch((err) => {
+  startMessageLoop().catch((err: any) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);
   });
@@ -759,11 +1196,10 @@ async function main(): Promise<void> {
 // Guard: only run when executed directly, not when imported by tests
 const isDirectRun =
   process.argv[1] &&
-  new URL(import.meta.url).pathname ===
-    new URL(`file://${process.argv[1]}`).pathname;
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 
 if (isDirectRun) {
-  main().catch((err) => {
+  main().catch((err: any) => {
     logger.error({ err }, 'Failed to start NanoClaw');
     process.exit(1);
   });

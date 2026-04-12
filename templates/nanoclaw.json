@@ -1,0 +1,44 @@
+{
+  "agents": {
+    "defaults": {
+      "model": "github-copilot/claude-sonnet-4",
+      "name": "Andy",
+      "mode": "sandbox"
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": false
+    },
+    "teams": {
+      "enabled": false
+    }
+  },
+  "chats": {
+    "telegram": [],
+    "teams": []
+  },
+  "mcp": {
+    "servers": {}
+  },
+  "skills": {
+    "directories": [
+      "./skills"
+    ],
+    "disabled": []
+  },
+  "sandbox": {
+    "runtime": "docker",
+    "image": "nanoclaw-agent:latest",
+    "timeout": 1800000,
+    "maxConcurrent": 5,
+    "idleTimeout": 0
+  },
+  "security": {
+    "autoApproveChats": false
+  },
+  "credentialProxy": {
+    "port": 3001
+  },
+  "logLevel": "info"
+}

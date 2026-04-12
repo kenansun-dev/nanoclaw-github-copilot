@@ -1,4 +1,4 @@
-import { ChildProcess } from 'child_process';
+import { ChildProcess, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -139,6 +139,52 @@ export class GroupQueue {
     state.process = proc;
     state.containerName = containerName;
     if (groupFolder) state.groupFolder = groupFolder;
+
+    // When process exits externally (Docker stop, kill, crash), release active
+    // state and drain pending work. Without this, host-mode early-resolve leaves
+    // state.active=true after the process dies, swallowing pending messages.
+    proc.on('exit', () => {
+      if (state.active && state.idleWaiting) {
+        logger.info(
+          { groupJid },
+          'Process exited while idle-waiting, releasing active state',
+        );
+        // Clean up stale IPC files that were written for this now-dead process
+        if (state.groupFolder) {
+          const inputDir = path.join(
+            DATA_DIR,
+            'ipc',
+            state.groupFolder,
+            'input',
+          );
+          try {
+            const files = fs
+              .readdirSync(inputDir)
+              .filter((f) => f.endsWith('.json'));
+            for (const f of files) {
+              fs.unlinkSync(path.join(inputDir, f));
+            }
+            if (files.length > 0) {
+              logger.info(
+                { groupJid, count: files.length },
+                'Cleaned stale IPC files',
+              );
+              // Re-set pendingMessages so drainGroup picks them up from DB
+              state.pendingMessages = true;
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+        state.active = false;
+        state.idleWaiting = false;
+        state.process = null;
+        state.containerName = null;
+        state.groupFolder = null;
+        this.activeCount--;
+        this.drainGroup(groupJid);
+      }
+    });
   }
 
   /**
@@ -157,11 +203,34 @@ export class GroupQueue {
    * Send a follow-up message to the active container via IPC file.
    * Returns true if the message was written, false if no active container.
    */
+  markIdle(groupJid: string): void {
+    const state = this.getGroup(groupJid);
+    state.idleWaiting = true;
+  }
+
   sendMessage(groupJid: string, text: string): boolean {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder || state.isTaskContainer)
+    if (!state.active || !state.groupFolder || state.isTaskContainer) {
+      logger.info(
+        {
+          groupJid,
+          active: state.active,
+          hasFolder: !!state.groupFolder,
+          isTask: state.isTaskContainer,
+        },
+        'sendMessage: rejected (no active container or wrong state)',
+      );
       return false;
-    state.idleWaiting = false; // Agent is about to receive work, no longer idle
+    }
+    // Check process is actually alive — prevents piping to dead process's IPC dir
+    if (state.process && state.process.exitCode !== null) {
+      logger.info(
+        { groupJid, exitCode: state.process.exitCode },
+        'sendMessage: rejected (process already exited)',
+      );
+      return false;
+    }
+    state.idleWaiting = false;
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
@@ -171,8 +240,10 @@ export class GroupQueue {
       const tempPath = `${filepath}.tmp`;
       fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
       fs.renameSync(tempPath, filepath);
+      logger.info({ groupJid, file: filename }, 'sendMessage: piped to IPC');
       return true;
-    } catch {
+    } catch (err) {
+      logger.info({ groupJid, err }, 'sendMessage: IPC write failed');
       return false;
     }
   }
@@ -222,11 +293,21 @@ export class GroupQueue {
       logger.error({ groupJid, err }, 'Error processing messages for group');
       this.scheduleRetry(groupJid, state);
     } finally {
-      state.active = false;
-      state.process = null;
-      state.containerName = null;
-      state.groupFolder = null;
-      this.activeCount--;
+      // Check if the process is truly alive — Docker stop doesn't set process.killed,
+      // but exitCode becomes non-null when the process exits.
+      const processAlive =
+        state.process &&
+        state.process.exitCode === null &&
+        !state.process.killed;
+      if (processAlive && state.idleWaiting) {
+        logger.debug({ groupJid }, 'Agent idle-waiting for IPC');
+      } else {
+        state.active = false;
+        state.process = null;
+        state.containerName = null;
+        state.groupFolder = null;
+        this.activeCount--;
+      }
       this.drainGroup(groupJid);
     }
   }
@@ -302,6 +383,28 @@ export class GroupQueue {
 
     // Then pending messages
     if (state.pendingMessages) {
+      // If process is idle-waiting, close it and re-enqueue
+      // so a fresh processGroupMessages picks up new messages
+      if (
+        state.active &&
+        state.idleWaiting &&
+        state.process &&
+        !state.process.killed
+      ) {
+        // Process is alive and idle — pipe new messages via IPC instead of killing.
+        // processMessagesFn will read from DB and call sendMessage() which writes
+        // IPC files that the idle agent reads.
+        state.pendingMessages = false;
+        if (this.processMessagesFn) {
+          this.processMessagesFn(groupJid).catch((err) =>
+            logger.error(
+              { groupJid, err },
+              'Error piping messages to idle agent',
+            ),
+          );
+        }
+        return;
+      }
       this.runForGroup(groupJid, 'drain').catch((err) =>
         logger.error(
           { groupJid, err },
@@ -344,22 +447,73 @@ export class GroupQueue {
     }
   }
 
-  async shutdown(_gracePeriodMs: number): Promise<void> {
+  isShuttingDown(): boolean {
+    return this.shuttingDown;
+  }
+
+  async shutdown(gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
 
-    // Count active containers but don't kill them — they'll finish on their own
-    // via idle timeout or container timeout. The --rm flag cleans them up on exit.
-    // This prevents WhatsApp reconnection restarts from killing working agents.
-    const activeContainers: string[] = [];
-    for (const [_jid, state] of this.groups) {
-      if (state.process && !state.process.killed && state.containerName) {
-        activeContainers.push(state.containerName);
+    // Kill all active agent processes on shutdown.
+    // Host-mode agents are spawned with detached:true, so they survive parent exit
+    // unless explicitly killed. Without this, restart leaves orphaned agents.
+    const killed: string[] = [];
+    for (const [jid, state] of this.groups) {
+      if (state.process && !state.process.killed) {
+        const name = state.containerName || jid;
+        try {
+          this.killProcess(state.process, 'SIGTERM');
+          killed.push(name);
+        } catch {
+          // Process already dead
+        }
+      }
+    }
+
+    if (killed.length > 0) {
+      // Give agents a moment to clean up, then force kill
+      await new Promise((r) => setTimeout(r, Math.min(gracePeriodMs, 3000)));
+      for (const [, state] of this.groups) {
+        if (state.process && !state.process.killed) {
+          try {
+            this.killProcess(state.process, 'SIGKILL');
+          } catch {
+            /* already dead */
+          }
+        }
       }
     }
 
     logger.info(
-      { activeCount: this.activeCount, detachedContainers: activeContainers },
-      'GroupQueue shutting down (containers detached, not killed)',
+      { activeCount: this.activeCount, killed },
+      'GroupQueue shutting down (agents terminated)',
     );
+  }
+
+  /** Cross-platform process kill. Windows uses taskkill /T for tree kill. */
+  private killProcess(
+    proc: ChildProcess,
+    signal: NodeJS.Signals = 'SIGTERM',
+  ): void {
+    if (!proc.pid) {
+      proc.kill(signal);
+      return;
+    }
+    if (process.platform === 'win32') {
+      // Windows: taskkill /T kills the process tree (equivalent to -pid on Unix)
+      const flag = signal === 'SIGKILL' ? '/F' : '';
+      try {
+        execSync(`taskkill ${flag} /T /PID ${proc.pid}`, { stdio: 'pipe' });
+      } catch {
+        proc.kill(signal);
+      }
+    } else {
+      // Unix: kill the process group
+      try {
+        process.kill(-proc.pid, signal);
+      } catch {
+        proc.kill(signal);
+      }
+    }
   }
 }

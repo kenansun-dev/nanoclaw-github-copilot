@@ -11,6 +11,7 @@ describe('database migrations', () => {
 
     try {
       process.chdir(tempDir);
+      process.env.NANOCLAW_WORKSPACE = tempDir;
       fs.mkdirSync(path.join(tempDir, 'store'), { recursive: true });
 
       const dbPath = path.join(tempDir, 'store', 'messages.db');
@@ -62,6 +63,7 @@ describe('database migrations', () => {
       _closeDatabase();
     } finally {
       process.chdir(repoRoot);
+      delete process.env.NANOCLAW_WORKSPACE;
     }
   });
 });

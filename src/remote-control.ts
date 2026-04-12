@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR } from './config.js';
+import { IS_GHC_PROVIDER } from './config-extensions.js';
 import { logger } from './logger.js';
 
 interface RemoteControlSession {

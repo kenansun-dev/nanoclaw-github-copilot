@@ -11,7 +11,17 @@ import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
-  sendMessage: (jid: string, text: string) => Promise<void>;
+  sendMessage: (jid: string, text: string) => Promise<string | void>;
+  sendFile?: (
+    jid: string,
+    filePath: string,
+    filename?: string,
+  ) => Promise<void>;
+  reactToMessage?: (
+    jid: string,
+    emoji: string,
+    messageId?: string,
+  ) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -92,6 +102,56 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     'Unauthorized IPC message attempt blocked',
                   );
                 }
+              }
+              // Handle react IPC
+              if (
+                data.type === 'react' &&
+                data.chatJid &&
+                data.emoji &&
+                deps.reactToMessage
+              ) {
+                const targetGroup = registeredGroups[data.chatJid];
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  await deps.reactToMessage(
+                    data.chatJid,
+                    data.emoji,
+                    data.messageId,
+                  );
+                  logger.info(
+                    { chatJid: data.chatJid, emoji: data.emoji },
+                    'IPC reaction sent',
+                  );
+                }
+              }
+              // Handle send_file IPC
+              if (
+                data.type === 'send_file' &&
+                data.chatJid &&
+                data.filePath &&
+                deps.sendFile
+              ) {
+                const targetGroup = registeredGroups[data.chatJid];
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  await deps.sendFile(
+                    data.chatJid,
+                    data.filePath,
+                    data.filename,
+                  );
+                  logger.info(
+                    { chatJid: data.chatJid, file: data.filePath },
+                    'IPC file sent',
+                  );
+                }
+              }
+              // Handle nanoclaw_control IPC (restart, config changes)
+              if (data.type === 'control' && isMain) {
+                await handleControlIpc(data, deps);
               }
               fs.unlinkSync(filePath);
             } catch (err) {
@@ -464,5 +524,83 @@ export async function processTaskIpc(
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
+  }
+}
+
+/**
+ * Handle nanoclaw_control IPC commands.
+ * Only allowed from main group for security.
+ * Whitelist of safe operations — no arbitrary command execution.
+ */
+async function handleControlIpc(data: any, deps: IpcDeps): Promise<void> {
+  const action = data.action;
+  logger.info({ action, configPath: data.configPath }, 'IPC control command');
+
+  switch (action) {
+    case 'restart': {
+      logger.info('IPC control: restarting nanoclaw...');
+      // Delay restart to allow current IPC cycle to complete
+      setTimeout(() => {
+        const { execSync } = require('child_process');
+        try {
+          execSync('nanoclaw restart', { stdio: 'pipe', timeout: 15000 });
+        } catch {
+          // restart kills current process, this catch may not run
+        }
+      }, 2000);
+      break;
+    }
+    case 'reload_config': {
+      logger.info('IPC control: reloading config...');
+      try {
+        const { reloadConfig } = await import('./config.js');
+        reloadConfig();
+        logger.info('Config reloaded via IPC control');
+      } catch (err) {
+        logger.error({ err }, 'Failed to reload config via IPC');
+      }
+      break;
+    }
+    case 'set_config': {
+      if (!data.configPath) {
+        logger.warn('IPC control set_config: missing configPath');
+        break;
+      }
+      try {
+        const { loadConfig, saveConfig } = await import('./config-loader.js');
+        const config = loadConfig();
+        // Navigate to the field and set it
+        const parts = data.configPath.split('.');
+        let obj: any = config;
+        for (let i = 0; i < parts.length - 1; i++) {
+          if (!obj[parts[i]]) obj[parts[i]] = {};
+          obj = obj[parts[i]];
+        }
+        // Parse JSON value if possible, otherwise use as string
+        let value: any = data.configValue;
+        try {
+          value = JSON.parse(value);
+        } catch {
+          /* use as string */
+        }
+        obj[parts[parts.length - 1]] = value;
+        saveConfig(config);
+        // Also reload in memory
+        const { reloadConfig } = await import('./config.js');
+        reloadConfig();
+        logger.info(
+          { path: data.configPath, value },
+          'Config updated via IPC control',
+        );
+      } catch (err) {
+        logger.error(
+          { err, path: data.configPath },
+          'Failed to set config via IPC',
+        );
+      }
+      break;
+    }
+    default:
+      logger.warn({ action }, 'Unknown IPC control action');
   }
 }
