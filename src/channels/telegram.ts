@@ -336,7 +336,10 @@ export class TelegramChannel implements Channel {
               { command: 'status', description: 'Show agent status' },
               { command: 'new', description: 'Start a new conversation' },
               { command: 'think', description: 'Set reasoning level' },
-              { command: 'reasoning', description: 'Show/hide reasoning output' },
+              {
+                command: 'reasoning',
+                description: 'Show/hide reasoning output',
+              },
               { command: 'tasks', description: 'List scheduled tasks' },
               {
                 command: 'capabilities',
