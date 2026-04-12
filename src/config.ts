@@ -1,67 +1,43 @@
+/**
+ * Config module for nanoclaw.
+ *
+ * Reads from nanoclaw.json (via config-loader) with env var overrides.
+ * All hardcoded defaults are in config-loader.ts.
+ */
+
 import os from 'os';
 import path from 'path';
 
-import { readEnvFile } from './env.js';
-import { isValidTimezone } from './timezone.js';
+import { fileURLToPath } from 'url';
+import { loadConfig, NanoclawConfig } from './config-loader.js';
+import { workspacePath, resolveWorkspace } from './workspace.js';
 
-// Read config values from .env (falls back to process.env).
-const envConfig = readEnvFile([
-  'ASSISTANT_NAME',
-  'ASSISTANT_HAS_OWN_NUMBER',
-  'ONECLI_URL',
-  'TZ',
-]);
+// Load config once at module init. Can be refreshed by calling reloadConfig().
+let _config: NanoclawConfig = loadConfig();
 
-export const ASSISTANT_NAME =
-  process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
-export const ASSISTANT_HAS_OWN_NUMBER =
-  (process.env.ASSISTANT_HAS_OWN_NUMBER ||
-    envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
+export function reloadConfig(): void {
+  _config = loadConfig();
+}
+
+export function getConfig(): NanoclawConfig {
+  return _config;
+}
+
+// ─── Derived values (backwards compatible exports) ───────────────────────────
+
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
-// Absolute paths needed for container mounts
-const PROJECT_ROOT = process.cwd();
-const HOME_DIR = process.env.HOME || os.homedir();
-
-// Mount security: allowlist stored OUTSIDE project root, never mounted into containers
-export const MOUNT_ALLOWLIST_PATH = path.join(
-  HOME_DIR,
-  '.config',
-  'nanoclaw',
-  'mount-allowlist.json',
-);
-export const SENDER_ALLOWLIST_PATH = path.join(
-  HOME_DIR,
-  '.config',
-  'nanoclaw',
-  'sender-allowlist.json',
-);
-export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
-export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
-export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
-
-export const CONTAINER_IMAGE =
-  process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
-export const CONTAINER_TIMEOUT = parseInt(
-  process.env.CONTAINER_TIMEOUT || '1800000',
-  10,
-);
-export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
-  process.env.CONTAINER_MAX_OUTPUT_SIZE || '10485760',
-  10,
-); // 10MB default
-export const ONECLI_URL = process.env.ONECLI_URL || envConfig.ONECLI_URL;
-export const MAX_MESSAGES_PER_PROMPT = Math.max(
-  1,
-  parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10,
-);
 export const IPC_POLL_INTERVAL = 1000;
-export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
-export const MAX_CONCURRENT_CONTAINERS = Math.max(
-  1,
-  parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
-);
+
+// These are getters so they reflect config changes
+export function getAssistantName(): string {
+  return _config.agents.defaults.name;
+}
+
+// Keep backward compat as constants (evaluated at import time)
+export const ASSISTANT_NAME = _config.agents.defaults.name;
+export const ASSISTANT_HAS_OWN_NUMBER = _config.agents.defaults.hasOwnNumber;
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -71,6 +47,52 @@ export function buildTriggerPattern(trigger: string): RegExp {
   return new RegExp(`^${escapeRegex(trigger.trim())}\\b`, 'i');
 }
 
+// ─── Paths ───────────────────────────────────────────────────────────────────
+
+// Package root — where nanoclaw is installed (for bundled assets like agent-runner)
+export const PACKAGE_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+);
+const HOME_DIR = process.env.HOME || os.homedir();
+
+// Security allowlists — in workspace
+export const MOUNT_ALLOWLIST_PATH = workspacePath('mount-allowlist.json');
+export const SENDER_ALLOWLIST_PATH = workspacePath('sender-allowlist.json');
+
+// Data directories — use workspace (set NANOCLAW_WORKSPACE env to override)
+export const STORE_DIR = path.resolve(resolveWorkspace(), 'store');
+export const GROUPS_DIR = path.resolve(resolveWorkspace(), 'groups');
+export const DATA_DIR = path.resolve(resolveWorkspace(), 'data');
+
+// ─── Container / Sandbox ─────────────────────────────────────────────────────
+
+// Container image — extensions may override via config-extensions.ts
+export const CONTAINER_IMAGE = _config.sandbox.image;
+
+export const CONTAINER_TIMEOUT = _config.sandbox.timeout;
+export const CONTAINER_MAX_OUTPUT_SIZE = _config.sandbox.maxOutputSize;
+export const MAX_CONCURRENT_CONTAINERS = Math.max(
+  1,
+  _config.sandbox.maxConcurrent,
+);
+export const IDLE_TIMEOUT = _config.sandbox.idleTimeout;
+
+// ─── Credential Proxy ────────────────────────────────────────────────────────
+
+export const CREDENTIAL_PROXY_PORT = _config.credentialProxy.port;
+
+// ─── Timezone ────────────────────────────────────────────────────────────────
+
+export const TIMEZONE = _config.timezone;
+
+// --- Upstream compat exports ---
+export const ONECLI_URL = process.env.ONECLI_URL || 'http://localhost:10254';
+
+export const MAX_MESSAGES_PER_PROMPT = Math.max(
+  parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10,
+  1,
+);
 export const DEFAULT_TRIGGER = `@${ASSISTANT_NAME}`;
 
 export function getTriggerPattern(trigger?: string): RegExp {
@@ -78,19 +100,5 @@ export function getTriggerPattern(trigger?: string): RegExp {
   return buildTriggerPattern(normalizedTrigger || DEFAULT_TRIGGER);
 }
 
+export const CONTAINER_HOST_GATEWAY = 'host.docker.internal';
 export const TRIGGER_PATTERN = buildTriggerPattern(DEFAULT_TRIGGER);
-
-// Timezone for scheduled tasks, message formatting, etc.
-// Validates each candidate is a real IANA identifier before accepting.
-function resolveConfigTimezone(): string {
-  const candidates = [
-    process.env.TZ,
-    envConfig.TZ,
-    Intl.DateTimeFormat().resolvedOptions().timeZone,
-  ];
-  for (const tz of candidates) {
-    if (tz && isValidTimezone(tz)) return tz;
-  }
-  return 'UTC';
-}
-export const TIMEZONE = resolveConfigTimezone();
