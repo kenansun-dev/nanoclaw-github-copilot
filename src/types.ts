@@ -87,13 +87,31 @@ export interface TaskRunLog {
 export interface Channel {
   name: string;
   connect(): Promise<void>;
-  sendMessage(jid: string, text: string): Promise<void>;
+  sendMessage(
+    jid: string,
+    text: string,
+    options?: { parseMode?: 'HTML' | 'Markdown' },
+  ): Promise<string | void>;
+  /** Send a rich card (Adaptive Card on Teams, falls back to text on others) */
+  sendCard?(jid: string, card: object, fallbackText: string): Promise<void>;
+  /** Send a file to a chat */
+  sendFile?(jid: string, filePath: string, filename?: string): Promise<void>;
+  /** Edit a previously sent message */
+  editMessage?(
+    jid: string,
+    messageId: string,
+    text: string,
+    options?: { parseMode?: 'HTML' | 'Markdown' },
+  ): Promise<string | void>;
+  reactToMessage?(
+    jid: string,
+    emoji: string,
+    messageId?: string,
+  ): Promise<void>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   disconnect(): Promise<void>;
-  // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
-  // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
 }
 

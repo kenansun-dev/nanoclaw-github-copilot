@@ -36,10 +36,12 @@ interface ContainerInput {
 }
 
 interface ContainerOutput {
-  status: 'success' | 'error';
+  status: 'success' | 'error' | 'thinking';
   result: string | null;
   newSessionId?: string;
   error?: string;
+  partial?: boolean;
+  thinking?: string;
 }
 
 interface SessionEntry {
@@ -60,7 +62,7 @@ interface SDKUserMessage {
   session_id: string;
 }
 
-const IPC_INPUT_DIR = '/workspace/ipc/input';
+const IPC_INPUT_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 
@@ -182,7 +184,7 @@ function createPreCompactHook(assistantName?: string): HookCallback {
       const summary = getSessionSummary(sessionId, transcriptPath);
       const name = summary ? sanitizeFilename(summary) : generateFallbackName();
 
-      const conversationsDir = '/workspace/group/conversations';
+      const conversationsDir = path.join(process.env.NANOCLAW_WORK_DIR || '/workspace/group', 'conversations');
       fs.mkdirSync(conversationsDir, { recursive: true });
 
       const date = new Date().toISOString().split('T')[0];
@@ -409,11 +411,12 @@ async function runQuery(
 
   let newSessionId: string | undefined;
   let lastAssistantUuid: string | undefined;
+  let lastThinking: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
-  const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
+  const globalClaudeMdPath = process.env.NANOCLAW_GLOBAL_CLAUDE_MD || '/workspace/global/CLAUDE.md';
   let globalClaudeMd: string | undefined;
   if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
@@ -435,11 +438,32 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  // Plugin directories — add plugin skill dirs to extraDirs
+  if (process.env.NANOCLAW_PLUGIN_DIRS) {
+    for (const dir of process.env.NANOCLAW_PLUGIN_DIRS.split(path.delimiter)) {
+      if (dir && fs.existsSync(dir)) {
+        // Add skills/ subdir if it exists
+        const skillsPath = path.join(dir, 'skills');
+        if (fs.existsSync(skillsPath)) {
+          extraDirs.push(skillsPath);
+          log(`Plugin skills: ${skillsPath}`);
+        }
+        // Also add agents/ subdir if it exists
+        const agentsPath = path.join(dir, 'agents');
+        if (fs.existsSync(agentsPath)) {
+          extraDirs.push(agentsPath);
+          log(`Plugin agents: ${agentsPath}`);
+        }
+      }
+    }
+  }
+
   for await (const message of query({
     prompt: stream,
     options: {
-      cwd: '/workspace/group',
+      cwd: process.env.NANOCLAW_WORK_DIR || '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
+      model: process.env.CLAUDE_MODEL || undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
       systemPrompt: globalClaudeMd
@@ -501,6 +525,17 @@ async function runQuery(
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+      // Extract thinking content from assistant message content blocks
+      const msg = message as { message?: { content?: any[] } };
+      if (msg.message?.content && Array.isArray(msg.message.content)) {
+        const thinkingBlocks = msg.message.content
+          .filter((b: any) => b.type === 'thinking' && b.thinking)
+          .map((b: any) => b.thinking);
+        if (thinkingBlocks.length > 0) {
+          lastThinking = thinkingBlocks.join('\n');
+          log(`Captured thinking: ${lastThinking.slice(0, 100)}...`);
+        }
+      }
     }
 
     if (message.type === 'system' && message.subtype === 'init') {
@@ -529,11 +564,25 @@ async function runQuery(
       log(
         `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
       );
+      // Parse <thinking> tags from result text if no thinking from assistant message
+      let thinking = lastThinking;
+      let visibleResult = textResult;
+      if (!thinking && textResult) {
+        const tagMatch = textResult.match(
+          /^\s*<\s*(?:think(?:ing)?|thought)\s*>([\s\S]*?)<\s*\/\s*(?:think(?:ing)?|thought)\s*>/i
+        );
+        if (tagMatch) {
+          thinking = tagMatch[1].trim();
+          visibleResult = textResult.slice(tagMatch[0].length).trim();
+        }
+      }
       writeOutput({
         status: 'success',
-        result: textResult || null,
+        result: visibleResult || null,
         newSessionId,
+        ...(thinking ? { thinking } : {}),
       });
+      lastThinking = undefined; // Reset after use
     }
   }
 

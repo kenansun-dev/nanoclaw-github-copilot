@@ -9,6 +9,8 @@ export interface ChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  registerGroup?: (jid: string, group: RegisteredGroup) => void;
+  accountId?: string; // Multi-account: which account this instance serves
 }
 
 export type ChannelFactory = (opts: ChannelOpts) => Channel | null;

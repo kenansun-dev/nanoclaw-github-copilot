@@ -7,6 +7,7 @@ import {
   getAllChats,
   getAllRegisteredGroups,
   getLastBotMessageTimestamp,
+  getMessageById,
   getMessagesSince,
   getNewMessages,
   getTaskById,
@@ -466,6 +467,121 @@ describe('getNewMessages', () => {
   });
 });
 
+// --- getMessageById (reply/quote context for Teams #164) ---
+
+describe('getMessageById', () => {
+  it('returns message content and sender_name by ID and chat_jid', () => {
+    storeChatMetadata('teams:conv-1', '2024-01-01T00:00:00.000Z');
+    store({
+      id: 'msg-100',
+      chat_jid: 'teams:conv-1',
+      sender: 'user1',
+      sender_name: 'Alice',
+      content: 'Hello world',
+      timestamp: '2024-01-01T10:00:00.000Z',
+    });
+
+    const result = getMessageById('teams:conv-1', 'msg-100');
+    expect(result).toBeDefined();
+    expect(result!.content).toBe('Hello world');
+    expect(result!.sender_name).toBe('Alice');
+  });
+
+  it('returns undefined for non-existent message ID', () => {
+    storeChatMetadata('teams:conv-1', '2024-01-01T00:00:00.000Z');
+    const result = getMessageById('teams:conv-1', 'non-existent');
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined for wrong chat_jid (cross-chat isolation)', () => {
+    storeChatMetadata('teams:conv-1', '2024-01-01T00:00:00.000Z');
+    storeChatMetadata('teams:conv-2', '2024-01-01T00:00:00.000Z');
+    store({
+      id: 'msg-200',
+      chat_jid: 'teams:conv-1',
+      sender: 'user1',
+      sender_name: 'Bob',
+      content: 'Secret message',
+      timestamp: '2024-01-01T10:00:00.000Z',
+    });
+
+    // Same message ID but different chat — should not leak
+    const result = getMessageById('teams:conv-2', 'msg-200');
+    expect(result).toBeUndefined();
+  });
+
+  it('works with Telegram JID format', () => {
+    storeChatMetadata('tg:123456', '2024-01-01T00:00:00.000Z');
+    store({
+      id: 'tg-msg-1',
+      chat_jid: 'tg:123456',
+      sender: 'user1',
+      sender_name: 'Charlie',
+      content: 'Reply target',
+      timestamp: '2024-01-01T10:00:00.000Z',
+    });
+
+    const result = getMessageById('tg:123456', 'tg-msg-1');
+    expect(result).toBeDefined();
+    expect(result!.content).toBe('Reply target');
+  });
+
+  it('works with multi-account Telegram JID format', () => {
+    storeChatMetadata('tg:daily:789', '2024-01-01T00:00:00.000Z');
+    store({
+      id: 'daily-msg-1',
+      chat_jid: 'tg:daily:789',
+      sender: 'user1',
+      sender_name: 'Dave',
+      content: 'Multi-account message',
+      timestamp: '2024-01-01T10:00:00.000Z',
+    });
+
+    const result = getMessageById('tg:daily:789', 'daily-msg-1');
+    expect(result).toBeDefined();
+    expect(result!.content).toBe('Multi-account message');
+    // Should not find it under default account JID
+    expect(getMessageById('tg:789', 'daily-msg-1')).toBeUndefined();
+  });
+
+  it('returns message with empty content (falsy but defined)', () => {
+    storeChatMetadata('teams:conv-3', '2024-01-01T00:00:00.000Z');
+    store({
+      id: 'msg-empty',
+      chat_jid: 'teams:conv-3',
+      sender: 'user1',
+      sender_name: 'Eve',
+      content: '',
+      timestamp: '2024-01-01T10:00:00.000Z',
+    });
+
+    const result = getMessageById('teams:conv-3', 'msg-empty');
+    // DB returns the row — content is empty string, not undefined
+    // Teams handler checks `quoted?.content` which is falsy for "" → skips quote
+    // This documents the behavior: DB returns it, handler ignores it
+    expect(result).toBeDefined();
+    expect(result!.content).toBe('');
+  });
+
+  it('returns bot messages (is_from_me) — quote context includes bot replies', () => {
+    storeChatMetadata('teams:conv-4', '2024-01-01T00:00:00.000Z');
+    store({
+      id: 'bot-msg-1',
+      chat_jid: 'teams:conv-4',
+      sender: 'bot',
+      sender_name: 'NanoClaw',
+      content: 'I am the bot reply',
+      timestamp: '2024-01-01T10:00:00.000Z',
+      is_from_me: true,
+    });
+
+    const result = getMessageById('teams:conv-4', 'bot-msg-1');
+    expect(result).toBeDefined();
+    expect(result!.content).toBe('I am the bot reply');
+    expect(result!.sender_name).toBe('NanoClaw');
+  });
+});
+
 // --- storeChatMetadata ---
 
 describe('storeChatMetadata', () => {
@@ -648,5 +764,87 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+// --- getMessageById (reply context) ---
+
+describe('getMessageById', () => {
+  it('returns message content and sender_name', () => {
+    storeChatMetadata(
+      'tg:123',
+      new Date().toISOString(),
+      'test',
+      'telegram',
+      false,
+    );
+    storeMessage({
+      id: 'msg-100',
+      chat_jid: 'tg:123',
+      sender: 'user1',
+      sender_name: 'Alice',
+      content: 'Hello world',
+      timestamp: new Date().toISOString(),
+      is_from_me: false,
+    });
+
+    const result = getMessageById('tg:123', 'msg-100');
+    expect(result).toBeDefined();
+    expect(result!.content).toBe('Hello world');
+    expect(result!.sender_name).toBe('Alice');
+  });
+
+  it('returns undefined for non-existent message', () => {
+    expect(getMessageById('tg:123', 'does-not-exist')).toBeUndefined();
+  });
+
+  it('returns undefined for wrong chat_jid', () => {
+    storeChatMetadata(
+      'tg:999',
+      new Date().toISOString(),
+      'test2',
+      'telegram',
+      false,
+    );
+    storeMessage({
+      id: 'msg-200',
+      chat_jid: 'tg:999',
+      sender: 'user1',
+      sender_name: 'Bob',
+      content: 'Secret',
+      timestamp: new Date().toISOString(),
+      is_from_me: false,
+    });
+
+    // Same message ID but different chat — should not find it
+    expect(getMessageById('tg:123', 'msg-200')).toBeUndefined();
+    // Correct chat — should find it
+    expect(getMessageById('tg:999', 'msg-200')).toBeDefined();
+  });
+
+  it('works with multi-account JIDs', () => {
+    storeChatMetadata(
+      'tg:daily:8731187021',
+      new Date().toISOString(),
+      'daily',
+      'telegram',
+      false,
+    );
+    storeMessage({
+      id: 'msg-300',
+      chat_jid: 'tg:daily:8731187021',
+      sender: 'user1',
+      sender_name: 'kenan',
+      content: 'Daily message',
+      timestamp: new Date().toISOString(),
+      is_from_me: false,
+    });
+
+    const result = getMessageById('tg:daily:8731187021', 'msg-300');
+    expect(result).toBeDefined();
+    expect(result!.content).toBe('Daily message');
+
+    // Different account — should not find it
+    expect(getMessageById('tg:8731187021', 'msg-300')).toBeUndefined();
   });
 });

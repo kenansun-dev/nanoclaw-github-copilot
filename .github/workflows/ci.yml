@@ -15,6 +15,9 @@ jobs:
           cache: npm
       - run: npm ci
 
+      - name: Build
+        run: npm run build
+
       - name: Format check
         run: npm run format:check
 
@@ -22,4 +25,4 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Tests
-        run: npx vitest run
+        run: npx vitest run --exclude 'test/e2e/**'

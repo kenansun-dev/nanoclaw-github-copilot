@@ -7,15 +7,56 @@ const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
 // Mock config
+vi.mock('./config-extensions.js', () => ({
+  resolveAgentForChat: () => ({
+    mode: 'sandbox',
+    model: 'anthropic/claude-sonnet-4',
+    name: 'Andy',
+    triggerWord: '@Andy',
+    hasOwnNumber: false,
+    sandboxBackend: 'docker',
+  }),
+  isAgentGHC: () => false,
+  getAgentSessionDir: () => '.claude',
+  getAgentImage: () => 'nanoclaw-agent:latest',
+  getAgentModelName: () => 'claude-sonnet-4',
+  resolveGithubToken: () => undefined,
+  resolveSessionDir: () => '.claude',
+  resolveContainerImage: () => 'nanoclaw-agent:latest',
+  resolveRunnerDir: () => 'agent-runner',
+  buildProviderEnvArgs: () => ['-e', 'ANTHROPIC_API_KEY=placeholder'],
+  buildProviderMounts: () => [],
+  IS_GHC_PROVIDER: false,
+  PROVIDER_SESSION_DIR: '.claude',
+}));
+
 vi.mock('./config.js', () => ({
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
+  ONECLI_URL: 'http://localhost:10254',
+  CONTAINER_HOST_GATEWAY: 'host.docker.internal',
+  CREDENTIAL_PROXY_PORT: 3001,
+  DEFAULT_TRIGGER: '@Andy',
+  getTriggerPattern: () => /^@Andy/i,
+  TRIGGER_PATTERN: /^@Andy/i,
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
   CONTAINER_TIMEOUT: 1800000, // 30min
   DATA_DIR: '/tmp/nanoclaw-test-data',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
+  PACKAGE_ROOT: '/tmp/nanoclaw-test-pkg',
   IDLE_TIMEOUT: 1800000, // 30min
-  ONECLI_URL: 'http://localhost:10254',
+  IS_GHC_PROVIDER: false,
+  PROVIDER_SESSION_DIR: '.claude',
   TIMEZONE: 'America/Los_Angeles',
+  getConfig: () => ({ providers: {} }),
+  resolveAgentForChat: () => ({
+    model: 'github-copilot/claude-sonnet-4',
+    name: 'Andy',
+    mode: 'sandbox',
+    sandboxBackend: 'docker',
+  }),
+  isAgentGHC: () => false,
+  getAgentSessionDir: () => '.claude',
+  getAgentImage: () => 'nanoclaw-agent:latest',
 }));
 
 // Mock logger

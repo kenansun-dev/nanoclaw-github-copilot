@@ -40,7 +40,7 @@ describe('GroupQueue', () => {
     let concurrentCount = 0;
     let maxConcurrent = 0;
 
-    const processMessages = vi.fn(async (_groupJid: string) => {
+    const processMessages = vi.fn(async (groupJid: string) => {
       concurrentCount++;
       maxConcurrent = Math.max(maxConcurrent, concurrentCount);
       // Simulate async work
@@ -69,7 +69,7 @@ describe('GroupQueue', () => {
     let maxActive = 0;
     const completionCallbacks: Array<() => void> = [];
 
-    const processMessages = vi.fn(async (_groupJid: string) => {
+    const processMessages = vi.fn(async (groupJid: string) => {
       activeCount++;
       maxActive = Math.max(maxActive, activeCount);
       await new Promise<void>((resolve) => completionCallbacks.push(resolve));
@@ -104,7 +104,7 @@ describe('GroupQueue', () => {
     const executionOrder: string[] = [];
     let resolveFirst: () => void;
 
-    const processMessages = vi.fn(async (_groupJid: string) => {
+    const processMessages = vi.fn(async (groupJid: string) => {
       if (executionOrder.length === 0) {
         // First call: block until we release it
         await new Promise<void>((resolve) => {
@@ -300,7 +300,7 @@ describe('GroupQueue', () => {
     // Register a process so closeStdin has a groupFolder
     queue.registerProcess(
       'group1@g.us',
-      {} as any,
+      { on: () => {}, exitCode: null, killed: false } as any,
       'container-1',
       'test-group',
     );
@@ -340,7 +340,7 @@ describe('GroupQueue', () => {
     // Register process and mark idle
     queue.registerProcess(
       'group1@g.us',
-      {} as any,
+      { on: () => {}, exitCode: null, killed: false } as any,
       'container-1',
       'test-group',
     );
@@ -379,7 +379,7 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
     queue.registerProcess(
       'group1@g.us',
-      {} as any,
+      { on: () => {}, exitCode: null, killed: false } as any,
       'container-1',
       'test-group',
     );
@@ -420,7 +420,7 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
     queue.registerProcess(
       'group1@g.us',
-      {} as any,
+      { on: () => {}, exitCode: null, killed: false } as any,
       'container-1',
       'test-group',
     );
@@ -453,7 +453,7 @@ describe('GroupQueue', () => {
     // Register process and enqueue a task (no idle yet — no preemption)
     queue.registerProcess(
       'group1@g.us',
-      {} as any,
+      { on: () => {}, exitCode: null, killed: false } as any,
       'container-1',
       'test-group',
     );
@@ -480,5 +480,53 @@ describe('GroupQueue', () => {
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
+  });
+
+  // --- Tests for #188/#189 process liveness + IPC queue ---
+
+  it('sendMessage rejects when process exitCode is not null', async () => {
+    vi.useRealTimers();
+    const queue = new GroupQueue();
+    queue.setProcessMessagesFn(async () => true);
+
+    queue.registerProcess(
+      'group1@g.us',
+      { on: () => {}, exitCode: null, killed: false } as any,
+      'c1',
+      'folder1',
+    );
+    const state = (queue as any).getGroup('group1@g.us');
+    state.active = true;
+
+    // Simulate process death
+    state.process.exitCode = 1;
+    expect(queue.sendMessage('group1@g.us', 'hello')).toBe(false);
+  });
+
+  it('drainGroup pipes messages to idle agent via processMessagesFn', async () => {
+    vi.useRealTimers();
+    const queue = new GroupQueue();
+    let pipeCalled = false;
+    queue.setProcessMessagesFn(async () => {
+      pipeCalled = true;
+      return true;
+    });
+
+    queue.registerProcess(
+      'group1@g.us',
+      { on: () => {}, exitCode: null, killed: false } as any,
+      'c1',
+      'folder1',
+    );
+    const state = (queue as any).getGroup('group1@g.us');
+    state.active = true;
+    state.idleWaiting = true;
+    state.pendingMessages = true;
+    (queue as any).activeCount = 1;
+
+    (queue as any).drainGroup('group1@g.us');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(pipeCalled).toBe(true);
+    expect(state.pendingMessages).toBe(false);
   });
 });

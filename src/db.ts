@@ -365,6 +365,24 @@ export function getNewMessages(
   return { messages: rows, newTimestamp };
 }
 
+/**
+ * Get a single message by its ID and chat JID.
+ * Used for resolving reply/quote context (e.g. Teams replyToId).
+ */
+export function getMessageById(
+  chatJid: string,
+  messageId: string,
+): { content: string; sender_name: string } | undefined {
+  const row = db
+    .prepare(
+      'SELECT content, sender_name FROM messages WHERE id = ? AND chat_jid = ?',
+    )
+    .get(messageId, chatJid) as
+    | { content: string; sender_name: string }
+    | undefined;
+  return row;
+}
+
 export function getMessagesSince(
   chatJid: string,
   sinceTimestamp: string,
@@ -389,6 +407,45 @@ export function getMessagesSince(
   return db
     .prepare(sql)
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+}
+
+/**
+ * Get recent conversation messages (both user and agent) for context.
+ */
+/**
+ * Get recent conversation messages (both user and agent) for context.
+ * Fetches up to maxMessages, then truncates to fit within maxTokens.
+ * Token estimate: ~4 characters per token.
+ */
+export function getRecentConversation(
+  chatJid: string,
+  maxMessages: number = 500,
+  maxTokens: number = 150000,
+): NewMessage[] {
+  const sql = `
+    SELECT * FROM (
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message
+      FROM messages
+      WHERE chat_jid = ?
+        AND content != '' AND content IS NOT NULL
+      ORDER BY timestamp DESC
+      LIMIT ?
+    ) ORDER BY timestamp
+  `;
+  const messages = db.prepare(sql).all(chatJid, maxMessages) as NewMessage[];
+
+  // Truncate from oldest to fit within token budget
+  let totalChars = 0;
+  let startIdx = 0;
+  // Calculate total chars
+  for (const m of messages) totalChars += (m.content?.length || 0) + 50; // +50 for envelope
+  // Remove oldest messages until we fit
+  const maxChars = maxTokens * 4; // ~4 chars per token
+  while (startIdx < messages.length && totalChars > maxChars) {
+    totalChars -= (messages[startIdx].content?.length || 0) + 50;
+    startIdx++;
+  }
+  return messages.slice(startIdx);
 }
 
 export function getLastBotMessageTimestamp(

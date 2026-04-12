@@ -1,0 +1,38 @@
+# Runtime data — never publish
+groups/
+store/
+data/
+.env
+*.log
+nohup.out
+
+# Dev/test files
+src/
+test/
+*.test.ts
+vitest.config.ts
+vitest.skills.config.ts
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# Teams app (user-specific)
+teams-app/
+teams-app.zip
+
+# User workspace
+.nanoclaw/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node dev
+node_modules/
+.husky/
+coverage/
