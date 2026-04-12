@@ -344,7 +344,9 @@ function syncPluginsToConfig(): void {
   config.skills.directories = existingDirs.filter((d: string) => {
     if (d.includes('/plugins/') || d.includes('./plugins/')) {
       // Resolve relative path against workspace to check existence
-      const resolved = d.startsWith('./') ? path.join(resolveWorkspace(), d) : d;
+      const resolved = d.startsWith('./')
+        ? path.join(resolveWorkspace(), d)
+        : d;
       return fs.existsSync(resolved);
     }
     return true;

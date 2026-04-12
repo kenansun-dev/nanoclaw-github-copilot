@@ -17,6 +17,20 @@ const SOCK_NAME =
   process.platform === 'win32' ? '\\\\.\\pipe\\nanoclaw-tui' : 'tui.sock';
 
 export async function runTui(_args: string[]): Promise<void> {
+  // Parse --ask flag for non-interactive single query
+  const askIdx = _args.indexOf('--ask');
+  if (askIdx !== -1) {
+    const query = _args
+      .slice(askIdx + 1)
+      .join(' ')
+      .trim();
+    if (!query) {
+      console.error('Usage: nanoclaw tui --ask "your question"');
+      process.exit(1);
+    }
+    return runTuiAsk(query);
+  }
+
   const config = loadConfig();
   const agent = config.agents?.defaults || {};
   const tuiCfg = (config as any).tui || {};
@@ -236,4 +250,12 @@ function connectToService(sockPath: string): Promise<net.Socket> {
       reject(new Error('Connection timeout'));
     });
   });
+}
+
+// ─── Non-interactive single query mode ───────────────────────────────────────
+
+async function runTuiAsk(query: string): Promise<void> {
+  // Always use direct mode for --ask (skip socket)
+  const { runTuiDirect } = await import('./tui-direct.js');
+  return runTuiDirect(['--query', query]);
 }

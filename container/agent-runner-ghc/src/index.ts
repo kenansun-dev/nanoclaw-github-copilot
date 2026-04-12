@@ -31,11 +31,12 @@ interface ContainerInput {
 }
 
 interface ContainerOutput {
-  status: 'success' | 'error';
+  status: 'success' | 'error' | 'thinking';
   result: string | null;
   newSessionId?: string;
   error?: string;
   partial?: boolean;
+  thinking?: string;
 }
 
 const IPC_INPUT_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc/input';
@@ -610,6 +611,45 @@ async function main(): Promise<void> {
           }
         }));
 
+        // Reasoning events (SDK 0.2.2+) — stream thinking content
+        let thinkingBuffer = '';
+        let thinkingDeltaTimer: ReturnType<typeof setTimeout> | null = null;
+        const flushThinkingDelta = () => {
+          if (thinkingBuffer) {
+            writeOutput({
+              status: 'thinking' as any,
+              result: null,
+              thinking: thinkingBuffer,
+              partial: true,
+              newSessionId: sessionId,
+            });
+          }
+        };
+        cleanups.push(session.on('assistant.reasoning_delta' as any, (event: any) => {
+          const delta = event.data?.content || event.data?.deltaContent || '';
+          if (delta) {
+            thinkingBuffer += delta;
+            // Throttle thinking delta output (every 500ms)
+            if (!thinkingDeltaTimer) {
+              thinkingDeltaTimer = setTimeout(() => {
+                thinkingDeltaTimer = null;
+                flushThinkingDelta();
+              }, 500);
+            }
+          }
+        }));
+
+        cleanups.push(session.on('assistant.reasoning' as any, (event: any) => {
+          const content = event.data?.content || '';
+          if (content) {
+            thinkingBuffer = content;
+          }
+          // Flush final thinking
+          if (thinkingDeltaTimer) { clearTimeout(thinkingDeltaTimer); thinkingDeltaTimer = null; }
+          flushThinkingDelta();
+          log(`Reasoning complete: ${thinkingBuffer.slice(0, 100)}...`);
+        }));
+
         // Full message: send complete result (replaces any partial)
         cleanups.push(session.on('assistant.message' as any, (event: any) => {
           if (event.data?.content) {
@@ -617,14 +657,35 @@ async function main(): Promise<void> {
             // Cancel pending delta flush — full message supersedes it
             if (deltaTimer) { clearTimeout(deltaTimer); deltaTimer = null; }
             deltaBuffer = '';
-            // Write final (non-partial) output
+
+            // Extract thinking from multiple sources:
+            // 1. Reasoning events (thinkingBuffer)
+            // 2. assistant.message.reasoningText field
+            // 3. <thinking> tags in content
+            let thinking = thinkingBuffer || event.data.reasoningText || '';
+            let visibleContent = event.data.content;
+
+            // Parse <thinking> tags from content if no other source
+            if (!thinking) {
+              const tagMatch = visibleContent.match(
+                /^\s*<\s*(?:think(?:ing)?|thought)\s*>([\s\S]*?)<\s*\/\s*(?:think(?:ing)?|thought)\s*>/i
+              );
+              if (tagMatch) {
+                thinking = tagMatch[1].trim();
+                visibleContent = visibleContent.slice(tagMatch[0].length).trim();
+              }
+            }
+
+            // Write final output with thinking separated
             writeOutput({
               status: 'success',
-              result: event.data.content,
+              result: visibleContent,
               newSessionId: sessionId,
+              ...(thinking ? { thinking } : {}),
             });
+            thinkingBuffer = '';
             streamedChunks++;
-            log(`Streamed result #${streamedChunks}: ${event.data.content.slice(0, 100)}...`);
+            log(`Streamed result #${streamedChunks}: ${visibleContent.slice(0, 100)}...${thinking ? ` (thinking: ${thinking.slice(0, 50)}...)` : ''}`);
           }
         }));
 

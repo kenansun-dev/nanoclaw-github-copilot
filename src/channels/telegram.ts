@@ -28,17 +28,29 @@ async function sendTelegramMessage(
   api: { sendMessage: Api['sendMessage'] },
   chatId: string | number,
   text: string,
-  options: { message_thread_id?: number } = {},
+  options: {
+    message_thread_id?: number;
+    parseMode?: 'HTML' | 'Markdown';
+  } = {},
 ): Promise<any> {
+  const parseMode = options.parseMode || 'Markdown';
+
   try {
     return await api.sendMessage(chatId, text, {
-      ...options,
-      parse_mode: 'Markdown',
+      message_thread_id: options.message_thread_id,
+      parse_mode: parseMode,
     });
   } catch (err: any) {
-    // Fallback: send as plain text if Markdown parsing fails
-    logger.debug({ err }, 'Markdown send failed, falling back to plain text');
-    return await api.sendMessage(chatId, text, options);
+    // Fallback: send as plain text if parsing fails
+    logger.debug(
+      { err },
+      `${parseMode} send failed, falling back to plain text`,
+    );
+    const plainText =
+      parseMode === 'HTML' ? text.replace(/<[^>]*>/g, '') : text;
+    return await api.sendMessage(chatId, plainText, {
+      message_thread_id: options.message_thread_id,
+    });
   }
 }
 
@@ -324,6 +336,7 @@ export class TelegramChannel implements Channel {
               { command: 'status', description: 'Show agent status' },
               { command: 'new', description: 'Start a new conversation' },
               { command: 'think', description: 'Set reasoning level' },
+              { command: 'reasoning', description: 'Show/hide reasoning output' },
               { command: 'tasks', description: 'List scheduled tasks' },
               {
                 command: 'capabilities',
@@ -349,7 +362,11 @@ export class TelegramChannel implements Channel {
     });
   }
 
-  async sendMessage(jid: string, text: string): Promise<string | void> {
+  async sendMessage(
+    jid: string,
+    text: string,
+    options?: { parseMode?: 'HTML' | 'Markdown' },
+  ): Promise<string | void> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
       return;
@@ -360,7 +377,9 @@ export class TelegramChannel implements Channel {
       const MAX_LENGTH = 4096;
       let lastMsgId: string | undefined;
       if (text.length <= MAX_LENGTH) {
-        const sent = await sendTelegramMessage(this.bot.api, numericId, text);
+        const sent = await sendTelegramMessage(this.bot.api, numericId, text, {
+          parseMode: options?.parseMode,
+        });
         lastMsgId = sent?.message_id?.toString();
       } else {
         for (let i = 0; i < text.length; i += MAX_LENGTH) {
@@ -368,6 +387,7 @@ export class TelegramChannel implements Channel {
             this.bot.api,
             numericId,
             text.slice(i, i + MAX_LENGTH),
+            { parseMode: options?.parseMode },
           );
           lastMsgId = sent?.message_id?.toString();
         }
@@ -460,21 +480,26 @@ export class TelegramChannel implements Channel {
     jid: string,
     messageId: string,
     text: string,
+    options?: { parseMode?: 'HTML' | 'Markdown' },
   ): Promise<string | void> {
     if (!this.bot) return;
     const numericId = jid.split(':').pop()!;
     const msgId = parseInt(messageId);
+    const parseMode = options?.parseMode || 'Markdown';
+
     try {
       await this.bot.api.editMessageText(numericId, msgId, text, {
-        parse_mode: 'Markdown',
+        parse_mode: parseMode,
       });
       return messageId;
     } catch (err: any) {
       if (err?.description?.includes('message is not modified'))
         return messageId;
-      // Fallback: try without Markdown
+      // Fallback: try without parse mode
       try {
-        await this.bot.api.editMessageText(numericId, msgId, text);
+        const plainText =
+          parseMode === 'HTML' ? text.replace(/<[^>]*>/g, '') : text;
+        await this.bot.api.editMessageText(numericId, msgId, plainText);
         return messageId;
       } catch (err2: any) {
         if (err2?.description?.includes('message is not modified'))

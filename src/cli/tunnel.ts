@@ -263,5 +263,3 @@ function getTunnelUrl(tunnelId: string): string | null {
 
   return null;
 }
-
-

@@ -19,6 +19,7 @@ export interface AgentConfig {
   hasOwnNumber: boolean;
   mode: 'host' | 'sandbox';
   thinkLevel?: 'low' | 'medium' | 'high' | 'xhigh'; // GHC: --effort flag; CC: --thinking flag
+  showThinking?: boolean; // Show thinking/reasoning in channel messages (default: false)
   githubMcp?: boolean; // GHC: register GitHub MCP server (web_search, issues, PRs, etc.)
 }
 

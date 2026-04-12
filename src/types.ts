@@ -87,7 +87,11 @@ export interface TaskRunLog {
 export interface Channel {
   name: string;
   connect(): Promise<void>;
-  sendMessage(jid: string, text: string): Promise<string | void>;
+  sendMessage(
+    jid: string,
+    text: string,
+    options?: { parseMode?: 'HTML' | 'Markdown' },
+  ): Promise<string | void>;
   /** Send a rich card (Adaptive Card on Teams, falls back to text on others) */
   sendCard?(jid: string, card: object, fallbackText: string): Promise<void>;
   /** Send a file to a chat */
@@ -97,6 +101,7 @@ export interface Channel {
     jid: string,
     messageId: string,
     text: string,
+    options?: { parseMode?: 'HTML' | 'Markdown' },
   ): Promise<string | void>;
   reactToMessage?(
     jid: string,

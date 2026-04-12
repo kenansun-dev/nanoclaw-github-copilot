@@ -36,10 +36,12 @@ interface ContainerInput {
 }
 
 interface ContainerOutput {
-  status: 'success' | 'error';
+  status: 'success' | 'error' | 'thinking';
   result: string | null;
   newSessionId?: string;
   error?: string;
+  partial?: boolean;
+  thinking?: string;
 }
 
 interface SessionEntry {
@@ -409,6 +411,7 @@ async function runQuery(
 
   let newSessionId: string | undefined;
   let lastAssistantUuid: string | undefined;
+  let lastThinking: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
 
@@ -522,6 +525,17 @@ async function runQuery(
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+      // Extract thinking content from assistant message content blocks
+      const msg = message as { message?: { content?: any[] } };
+      if (msg.message?.content && Array.isArray(msg.message.content)) {
+        const thinkingBlocks = msg.message.content
+          .filter((b: any) => b.type === 'thinking' && b.thinking)
+          .map((b: any) => b.thinking);
+        if (thinkingBlocks.length > 0) {
+          lastThinking = thinkingBlocks.join('\n');
+          log(`Captured thinking: ${lastThinking.slice(0, 100)}...`);
+        }
+      }
     }
 
     if (message.type === 'system' && message.subtype === 'init') {
@@ -550,11 +564,25 @@ async function runQuery(
       log(
         `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
       );
+      // Parse <thinking> tags from result text if no thinking from assistant message
+      let thinking = lastThinking;
+      let visibleResult = textResult;
+      if (!thinking && textResult) {
+        const tagMatch = textResult.match(
+          /^\s*<\s*(?:think(?:ing)?|thought)\s*>([\s\S]*?)<\s*\/\s*(?:think(?:ing)?|thought)\s*>/i
+        );
+        if (tagMatch) {
+          thinking = tagMatch[1].trim();
+          visibleResult = textResult.slice(tagMatch[0].length).trim();
+        }
+      }
       writeOutput({
         status: 'success',
-        result: textResult || null,
+        result: visibleResult || null,
         newSessionId,
+        ...(thinking ? { thinking } : {}),
       });
+      lastThinking = undefined; // Reset after use
     }
   }
 

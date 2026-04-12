@@ -102,8 +102,7 @@ export function resolveGithubToken(): string | undefined {
     process.env.GITHUB_TOKEN;
   if (envToken) return envToken;
 
-  const home =
-    process.env.HOME || process.env.USERPROFILE || os.homedir();
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
 
   // Check OpenClaw auth profiles
   try {

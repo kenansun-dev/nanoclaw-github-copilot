@@ -337,10 +337,31 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Progressive send state: track message ID for editMessage on partial updates
   let progressiveMsgId: string | undefined;
   let progressiveText = '';
+  // Thinking message state (separate from answer progressive message)
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback — called for each agent result
+    // Streaming output callback
+
+    // Skip thinking-only deltas (will be merged into final result)
+    if (result.thinking && !result.result) {
+      return;
+    }
+
     if (result.result) {
+      // Merge thinking into result as one message (only if showThinking is enabled)
+      let thinkingParseMode: 'HTML' | 'Markdown' | undefined;
+      if (
+        result.thinking &&
+        !result.partial &&
+        getConfig().agents?.defaults?.showThinking
+      ) {
+        const tp = formatThinkingForChannel(result.thinking, chatJid);
+        if (tp) {
+          thinkingParseMode = tp.parseMode;
+          // Don't escape the answer — let Telegram fallback handle parse errors
+          result.result = tp.text + '\n\n' + result.result;
+        }
+      }
       const raw =
         typeof result.result === 'string'
           ? result.result
@@ -351,28 +372,41 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         return;
       }
 
+      const sendOpts = thinkingParseMode
+        ? { parseMode: thinkingParseMode }
+        : undefined;
+
       if (result.partial && channel.editMessage) {
         // Delta/partial: accumulate and edit existing message
         progressiveText = text; // delta buffer already accumulated in agent-runner
         if (!progressiveMsgId) {
           // First partial — send new message
           await channel.setTyping?.(chatJid, false);
-          const msgId = await channel.sendMessage(chatJid, text + ' ◌');
+          const msgId = await channel.sendMessage(
+            chatJid,
+            text + ' ◌',
+            sendOpts,
+          );
           progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;
         } else {
           // Subsequent partial — edit existing message
-          await channel.editMessage(chatJid, progressiveMsgId, text + ' ◌');
+          await channel.editMessage(
+            chatJid,
+            progressiveMsgId,
+            text + ' ◌',
+            sendOpts,
+          );
         }
       } else {
         // Final message (or channel doesn't support edit)
         await channel.setTyping?.(chatJid, false);
         if (progressiveMsgId && channel.editMessage) {
           // Replace the progressive message with final content
-          await channel.editMessage(chatJid, progressiveMsgId, text);
+          await channel.editMessage(chatJid, progressiveMsgId, text, sendOpts);
           progressiveMsgId = undefined;
           progressiveText = '';
         } else {
-          await channel.sendMessage(chatJid, text);
+          await channel.sendMessage(chatJid, text, sendOpts);
         }
         outputSentToUser = true;
       }
@@ -812,6 +846,51 @@ function ensureContainerSystemRunning(): void {
     );
     console.warn('  Messages will not be processed until Docker is available.');
     console.warn('  Run "nanoclaw doctor" to check your setup.\n');
+  }
+}
+
+interface ThinkingFormat {
+  text: string;
+  parseMode?: 'HTML' | 'Markdown';
+}
+
+/**
+ * Format thinking/reasoning content for channel display.
+ * Returns structured data so callers can set parse mode correctly.
+ */
+function formatThinkingForChannel(
+  thinking: string,
+  chatJid: string,
+): ThinkingFormat | null {
+  const trimmed = thinking.trim();
+  if (!trimmed) return null;
+
+  // Truncate very long thinking to avoid flooding the channel
+  const maxLen = 2000;
+  const content =
+    trimmed.length > maxLen
+      ? trimmed.substring(0, maxLen) + '\n...(truncated)'
+      : trimmed;
+
+  const escapeHtml = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  if (chatJid.startsWith('tg:')) {
+    // Telegram: expandable blockquote (collapsed by default, tap to expand)
+    return {
+      text: `<blockquote expandable>🧠 Thinking:\n${escapeHtml(content)}</blockquote>`,
+      parseMode: 'HTML',
+    };
+  } else {
+    // Teams, Discord, TUI, etc.: standard blockquote
+    return {
+      text:
+        '🧠 Thinking:\n' +
+        content
+          .split('\n')
+          .map((l) => `> ${l}`)
+          .join('\n'),
+    };
   }
 }
 

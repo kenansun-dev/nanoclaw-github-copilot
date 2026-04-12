@@ -45,6 +45,15 @@ export const COMMANDS: SlashCommand[] = [
     ],
   },
   {
+    name: 'reasoning',
+    description: 'Show or hide reasoning/thinking in messages',
+    args: 'on|off',
+    choices: [
+      { title: 'On — show reasoning', value: 'on' },
+      { title: 'Off — hide reasoning (default)', value: 'off' },
+    ],
+  },
+  {
     name: 'new',
     description: 'Reset session — start fresh conversation',
     noArgs: true,
@@ -152,6 +161,14 @@ export async function handleSlashCommand(
     return { handled: true };
   }
 
+  // /reasoning [on|off] — show/hide thinking output in messages
+  const reasoningMatch = input.match(/^\/reasoning(?:\s+(on|off))?$/);
+  if (reasoningMatch) {
+    const mode = reasoningMatch[1] as 'on' | 'off' | undefined;
+    await handleReasoning(mode, ctx);
+    return { handled: true };
+  }
+
   // /help — show available commands
   if (input === '/help') {
     if (ctx.channel) {
@@ -191,6 +208,54 @@ export async function handleSlashCommand(
   }
 
   return { handled: false };
+}
+
+// ─── /reasoning implementation ───────────────────────────────────────────────
+
+async function handleReasoning(
+  mode: 'on' | 'off' | undefined,
+  ctx: SlashCommandContext,
+): Promise<void> {
+  const { loadConfig, saveConfig } = await import('./config-loader.js');
+  const config = loadConfig();
+
+  if (!mode) {
+    // Show current state
+    const current = config.agents?.defaults?.showThinking ? 'on' : 'off';
+    if (ctx.channel) {
+      if (ctx.channel.sendCard) {
+        const cmd = COMMANDS.find((c) => c.name === 'reasoning')!;
+        const card = ctx.chatJid.startsWith('teams:')
+          ? buildTeamsAdaptiveCard(cmd, current)
+          : { command: 'reasoning', choices: cmd.choices };
+        await ctx.channel.sendCard(
+          ctx.chatJid,
+          card,
+          `🧠 Reasoning display: **${current}**\nUsage: /reasoning on|off`,
+        );
+      } else {
+        await ctx.channel.sendMessage(
+          ctx.chatJid,
+          `🧠 Reasoning display: **${current}**\nUsage: /reasoning on|off`,
+        );
+      }
+    }
+    return;
+  }
+
+  if (!config.agents) config.agents = {} as any;
+  if (!config.agents.defaults) config.agents.defaults = {} as any;
+  config.agents.defaults.showThinking = mode === 'on';
+  saveConfig(config);
+  reloadConfig();
+  if (ctx.channel) {
+    await ctx.channel.sendMessage(
+      ctx.chatJid,
+      mode === 'on'
+        ? '🧠 Reasoning is now **visible** in messages. Use `/reasoning off` to hide.'
+        : '🧠 Reasoning is now **hidden**. Use `/reasoning on` to show.',
+    );
+  }
 }
 
 // ─── /think implementation ───────────────────────────────────────────────────

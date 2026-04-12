@@ -62,12 +62,14 @@ export interface ContainerInput {
 }
 
 export interface ContainerOutput {
-  status: 'success' | 'error';
+  status: 'success' | 'error' | 'thinking';
   result: string | null;
   newSessionId?: string;
   error?: string;
   /** true if this is a partial/delta result (more content coming) */
   partial?: boolean;
+  /** Extended thinking / reasoning content (displayed separately from result) */
+  thinking?: string;
 }
 
 interface VolumeMount {

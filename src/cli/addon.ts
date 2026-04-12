@@ -9,7 +9,7 @@
  *   nanoclaw addon start <name>            — start a stopped addon
  */
 
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import { loadConfig, saveConfig } from '../config-loader.js';
 import { logger } from '../logger.js';
 
@@ -185,12 +185,12 @@ export async function startAddon(name: string): Promise<void> {
 
   if (addon.type === 'devtunnel' && addon.config.tunnelId) {
     try {
-      const { spawn } = await import('child_process');
-      const dt = spawn('devtunnel', ['host', addon.config.tunnelId, '--allow-anonymous'], {
+      const tid = String(addon.config.tunnelId);
+      const dt = spawn('devtunnel', ['host', tid, '--allow-anonymous'], {
         detached: true,
         stdio: 'ignore',
       });
-      dt.unref();
+      if (dt.pid) dt.unref();
       console.log(`✅ Started ${name} (pid: ${dt.pid})`);
     } catch {
       console.log(`⚠️  Could not start ${name}`);

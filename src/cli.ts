@@ -307,16 +307,22 @@ async function runService(action: string) {
                 const hostCount = showOut.match(/Host connections\s*:\s*(\d+)/);
                 if (!hostCount || hostCount[1] === '0') {
                   console.log(`Starting devtunnel: ${tid}...`);
-                  const dtProc = sp('devtunnel', ['host', tid, '--allow-anonymous'], {
-                    detached: true,
-                    stdio: 'ignore',
-                  });
+                  const dtProc = sp(
+                    'devtunnel',
+                    ['host', tid, '--allow-anonymous'],
+                    {
+                      detached: true,
+                      stdio: 'ignore',
+                    },
+                  );
                   dtProc.unref();
                   // Save PID so nanoclaw stop can kill it
                   try {
                     const dtPidFile = join(ws, 'devtunnel.pid');
                     fs.writeFileSync(dtPidFile, String(dtProc.pid));
-                  } catch { /* */ }
+                  } catch {
+                    /* */
+                  }
                   console.log(`DevTunnel started (pid: ${dtProc.pid})`);
                 } else {
                   console.log(`DevTunnel already hosting: ${tid}`);
@@ -403,10 +409,14 @@ async function runService(action: string) {
           try {
             killProcess(dtPid);
             console.log(`Stopped devtunnel (pid: ${dtPid})`);
-          } catch { /* already dead */ }
+          } catch {
+            /* already dead */
+          }
           fs.unlinkSync(dtPidFile);
         }
-      } catch { /* */ }
+      } catch {
+        /* */
+      }
       break;
     }
     case 'restart': {

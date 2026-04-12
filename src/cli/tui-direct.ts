@@ -28,10 +28,11 @@ interface ContainerInput {
 }
 
 interface ContainerOutput {
-  status: 'success' | 'error';
+  status: 'success' | 'error' | 'thinking';
   result: string | null;
   newSessionId?: string;
   error?: string;
+  thinking?: string;
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -39,6 +40,16 @@ const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const QUERY_TIMEOUT_MS = 5 * 60 * 1000; // 5 min per query
 
 export async function runTuiDirect(_args: string[]): Promise<void> {
+  // Check for --query (non-interactive single query)
+  const queryIdx = _args.indexOf('--query');
+  const singleQuery =
+    queryIdx !== -1
+      ? _args
+          .slice(queryIdx + 1)
+          .join(' ')
+          .trim()
+      : '';
+
   const config = loadConfig();
   const agent = config.agents.defaults;
   const tuiCfg = config.tui || {};
@@ -58,16 +69,21 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
   const thinkLevel = tuiCfg.thinkLevel || agent.thinkLevel;
   const mode = tuiCfg.mode || agent.mode || 'host';
 
-  console.log(`\n  ${assistantName} — Terminal Chat`);
-  console.log(
-    `  Model: ${model}${thinkLevel ? ` (think: ${thinkLevel})` : ''} [${mode}]`,
-  );
-  console.log(`  Commands: /new /think <level> /quit\n`);
+  if (!singleQuery) {
+    console.log(`\n  ${assistantName} — Terminal Chat`);
+    console.log(
+      `  Model: ${model}${thinkLevel ? ` (think: ${thinkLevel})` : ''} [${mode}]`,
+    );
+    console.log(`  Commands: /new /think <level> /quit\n`);
+  }
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
+  // Only create readline for interactive mode
+  const rl = singleQuery
+    ? null
+    : readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
 
   let sessionId: string | undefined;
   let activeChild: ChildProcess | null = null;
@@ -84,15 +100,47 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
       activeChild = null;
     } else {
       console.log('\nBye 👋\n');
-      rl.close();
+      rl?.close();
       process.exit(0);
     }
   });
 
   const prompt = (): Promise<string> =>
     new Promise((resolve) => {
-      rl.question('\x1b[36myou>\x1b[0m ', (answer) => resolve(answer));
+      rl!.question('\x1b[36myou>\x1b[0m ', (answer) => resolve(answer));
     });
+
+  // Single query mode: skip interactive loop
+  if (singleQuery) {
+    const result = await runQuery({
+      prompt: singleQuery,
+      sessionId,
+      model,
+      thinkLevel,
+      mode,
+      groupDir,
+      ipcDir,
+      groupFolder: 'tui-ask',
+      assistantName: 'Nanoclaw',
+      onChild: () => {},
+    });
+    if (result.result) {
+      // Show thinking if present
+      if (result.thinking) {
+        console.log('\n\x1b[90m\ud83e\udde0 Thinking:\x1b[0m');
+        for (const line of result.thinking.split('\n')) {
+          console.log(`\x1b[90m> ${line}\x1b[0m`);
+        }
+        console.log('');
+      }
+      console.log(result.result);
+    }
+    if (result.error) {
+      console.error(`Error: ${result.error}`);
+    }
+    rl?.close();
+    return;
+  }
 
   while (true) {
     const userInput = await prompt();
@@ -102,7 +150,7 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
 
     if (trimmed === '/quit' || trimmed === '/exit') {
       console.log('\nBye 👋\n');
-      rl.close();
+      rl?.close();
       process.exit(0);
     }
 
@@ -189,6 +237,7 @@ interface QueryOptions {
   ipcDir: string;
   assistantName: string;
   model: string;
+  thinkLevel?: string;
   mode: 'host' | 'sandbox';
   onChild: (child: ChildProcess) => void;
 }
@@ -306,7 +355,6 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
       env,
       cwd: cmdCwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      detached: true,
     });
 
     opts.onChild(child);
@@ -360,6 +408,14 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
         fs.writeFileSync(closeSentinel, '');
       } catch {
         /* ignore */
+      }
+      // Kill child process (needed for --ask single-query mode)
+      try {
+        if (child && !child.killed) {
+          child.kill('SIGTERM');
+        }
+      } catch {
+        /* */
       }
       resolve(output);
     };
