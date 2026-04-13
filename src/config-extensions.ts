@@ -96,18 +96,16 @@ export function getAgentProvider(agent: AgentConfig): string {
 // ─── Token resolution ────────────────────────────────────────────────────────
 
 export function resolveGithubToken(): string | undefined {
-  // 1. Explicit environment variables (highest priority)
+  // 1. Explicit env vars (highest priority)
   const envToken =
     process.env.COPILOT_GITHUB_TOKEN ||
     process.env.GH_TOKEN ||
     process.env.GITHUB_TOKEN;
   if (envToken) return envToken;
 
+  // 2. GHC CLI config.json → copilot_tokens field
+  // Only read from CLI directories, NOT VS Code extension directories
   const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
-
-  // 2. ~/.copilot/config.json copilot_tokens (CLI's file-based token storage)
-  //    Only scan CLI-specific paths. Do NOT scan AppData directories
-  //    (those contain VS Code/VS Copilot extension tokens which are incompatible).
   const copilotConfigPaths = [
     path.join(home, '.copilot', 'config.json'),
     path.join(home, '.config', 'github-copilot', 'config.json'),
@@ -116,7 +114,6 @@ export function resolveGithubToken(): string | undefined {
     try {
       if (!fs.existsSync(configFile)) continue;
       const config = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
-      // copilot_tokens: { "https://github.com:user": "gho_xxx" }
       if (
         config.copilot_tokens &&
         typeof config.copilot_tokens === 'object'
@@ -130,8 +127,7 @@ export function resolveGithubToken(): string | undefined {
     }
   }
 
-  // 3. Return undefined — let SDK handle auth via useLoggedInUser (CLI managed auth / OS credential manager)
-
+  // 3. Return undefined → let SDK use CLI managed auth (OS credential manager)
   return undefined;
 }
 
