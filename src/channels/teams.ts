@@ -181,7 +181,7 @@ export class TeamsChannel implements Channel {
     if (certThumbprint && certPrivateKeyPath) {
       const resolvedPath = certPrivateKeyPath.replace(
         /^~/,
-        process.env.HOME || '/root',
+        process.env.HOME || process.env.USERPROFILE || require('os').homedir(),
       );
       adapterSettings.certificateThumbprint = certThumbprint;
       adapterSettings.certificatePrivateKey = fs.readFileSync(

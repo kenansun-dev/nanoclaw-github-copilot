@@ -5,6 +5,7 @@
  * Uses the same ContainerInput/Output protocol as host-runner.
  */
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import readline from 'readline';
 import { spawn, ChildProcess } from 'child_process';
@@ -300,7 +301,7 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
     NANOCLAW_HOST_MODE: '1',
     NANOCLAW_IPC_DIR: path.join(opts.ipcDir, 'input'),
     NANOCLAW_WORK_DIR: opts.groupDir,
-    HOME: process.env.HOME || '/root',
+    HOME: process.env.HOME || process.env.USERPROFILE || os.homedir(),
   };
 
   if (isGHC) {
