@@ -486,32 +486,47 @@ async function main(): Promise<void> {
           }
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
-          log(`Failed to resume session ${sessionId}, creating new: ${errMsg}`);
-          // If model doesn't support reasoningEffort, retry without it
-          const createConfig = errMsg.includes('reasoning') || errMsg.includes('reasoningEffort')
-            ? { ...sessionConfig, reasoningEffort: undefined }
-            : sessionConfig;
-          try {
-            session = await client.createSession({
-              ...createConfig,
-              sessionId: randomUUID(),
-            });
-          } catch (createErr) {
-            // Retry without reasoningEffort as last resort
-            const createErrMsg = createErr instanceof Error ? createErr.message : String(createErr);
-            if (createErrMsg.includes('reasoning') && createConfig.reasoningEffort) {
-              log(`Model does not support reasoningEffort, retrying without it`);
+          // If reasoningEffort caused the resume failure, retry without it
+          if ((errMsg.includes('reasoning') || errMsg.includes('reasoningEffort')) && sessionConfig.reasoningEffort) {
+            log(`Resume failed due to reasoningEffort, retrying without it`);
+            try {
+              session = await client.resumeSession(sessionId, { ...sessionConfig, reasoningEffort: undefined });
+              try { await session.rpc.mcp.reload(); } catch {}
+              log(`Resumed session without reasoningEffort: ${sessionId}`);
+            } catch (retryErr) {
+              const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+              log(`Failed to resume session ${sessionId}, creating new: ${retryMsg}`);
+              session = null;
+              sessionId = undefined;
+            }
+          } else {
+            log(`Failed to resume session ${sessionId}, creating new: ${errMsg}`);
+            // If model doesn't support reasoningEffort, retry without it
+            const createConfig = errMsg.includes('reasoning') || errMsg.includes('reasoningEffort')
+              ? { ...sessionConfig, reasoningEffort: undefined }
+              : sessionConfig;
+            try {
               session = await client.createSession({
-                ...sessionConfig,
-                reasoningEffort: undefined,
+                ...createConfig,
                 sessionId: randomUUID(),
               });
-            } else {
-              throw createErr;
+            } catch (createErr) {
+              // Retry without reasoningEffort as last resort
+              const createErrMsg = createErr instanceof Error ? createErr.message : String(createErr);
+              if (createErrMsg.includes('reasoning') && createConfig.reasoningEffort) {
+                log(`Model does not support reasoningEffort, retrying without it`);
+                session = await client.createSession({
+                  ...sessionConfig,
+                  reasoningEffort: undefined,
+                  sessionId: randomUUID(),
+                });
+              } else {
+                throw createErr;
+              }
             }
+            sessionId = session.sessionId;
+            log(`New session created: ${sessionId}`);
           }
-          sessionId = session.sessionId;
-          log(`New session created: ${sessionId}`);
         }
       } else {
                 // Create new session (first time)
