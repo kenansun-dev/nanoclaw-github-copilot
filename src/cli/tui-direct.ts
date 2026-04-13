@@ -32,6 +32,7 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  partial?: boolean;
   thinking?: string;
 }
 
@@ -443,6 +444,10 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
 
         try {
           const output: ContainerOutput = JSON.parse(jsonStr);
+          // Skip partial/thinking-only outputs — wait for final result
+          if (output.partial || (output.status === 'thinking' && !output.result)) {
+            continue;
+          }
           hadOutput = true;
           finish(output);
         } catch {
