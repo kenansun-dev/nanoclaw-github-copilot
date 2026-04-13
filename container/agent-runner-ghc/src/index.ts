@@ -303,29 +303,7 @@ async function main(): Promise<void> {
       return envToken;
     }
 
-    // 2. OpenClaw auth profile (no keychain needed)
-    const openclawPaths = [
-      path.join(process.env.HOME || '/root', '.openclaw/agents/main/agent/auth-profiles.json'),
-    ];
-    for (const profilePath of openclawPaths) {
-      try {
-        if (fs.existsSync(profilePath)) {
-          const profiles = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
-          // Find any github-copilot profile with a token
-          for (const [key, profile] of Object.entries(profiles.profiles || {})) {
-            const p = profile as { type?: string; provider?: string; token?: string };
-            if (p.provider === 'github-copilot' && p.token) {
-              log(`Using GitHub token from OpenClaw auth profile: ${key}`);
-              return p.token;
-            }
-          }
-        }
-      } catch (err) {
-        log(`Failed to read OpenClaw auth profile at ${profilePath}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-
-    // 3. Fall back to useLoggedInUser (CLI managed auth)
+        // 2. Fall back to useLoggedInUser (CLI managed auth)
     log('No explicit token found, falling back to CLI managed auth');
     return undefined;
   }

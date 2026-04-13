@@ -104,23 +104,6 @@ export function resolveGithubToken(): string | undefined {
 
   const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
 
-  // Check OpenClaw auth profiles
-  try {
-    const profilePath = path.join(
-      home,
-      '.openclaw/agents/main/agent/auth-profiles.json',
-    );
-    if (fs.existsSync(profilePath)) {
-      const profiles = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
-      for (const [, profile] of Object.entries(profiles.profiles || {})) {
-        const p = profile as { provider?: string; token?: string };
-        if (p.provider === 'github-copilot' && p.token) return p.token;
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-
   // Check ~/.copilot/ (GHC CLI's own auth storage from 'copilot auth login')
   // Also check ~/.config/github-copilot/ (some CLI versions use this)
   // NOTE: copilot CLI primarily stores tokens in the OS credential manager
