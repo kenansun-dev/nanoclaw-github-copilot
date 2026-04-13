@@ -1,15 +1,14 @@
 # NanoClaw
 
-Personal AI assistant supporting two provider backends: **GitHub Copilot SDK (GHC)** and **Claude Code / Anthropic SDK (CC)**. See [README.md](README.md) for philosophy and setup.
+Personal AI assistant supporting multiple provider backends. See [README.md](README.md) for philosophy and setup.
 
 ## Quick Context
 
-Single Node.js process with channel system. Channels (Telegram, Teams, Discord) self-register at startup. Messages route to agents via the configured provider. Two runtime modes:
+Single Node.js process with channel system. Channels (Telegram, Teams, Discord) self-register at startup. Two runtime modes:
 - **Host mode**: agent-runner runs as child process on host
 - **Sandbox mode**: agent-runner runs in Docker container
 
 Provider is set per-agent via `agents.defaults.provider` or `agents.list[].provider`.
-
 Each group has isolated filesystem and memory.
 
 ## Key Files
@@ -26,23 +25,8 @@ Each group has isolated filesystem and memory.
 | `src/config-loader.ts` | Config schema and persistence |
 | `container/agent-runner-ghc/` | GHC SDK agent runner |
 | `container/agent-runner/` | CC SDK agent runner |
-| `groups/{name}/COPILOT.md` | Per-group memory (isolated) |
-
-## Auth
-
-**GHC (GitHub Copilot) mode:**
-1. Environment variables: `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`
-2. `~/.copilot/config.json` — copilot CLI file storage
-3. SDK `useLoggedInUser` — OS credential manager (keychain/Windows Credential Manager)
-
-Login: `nanoclaw provider login github-copilot`
-
-**CC (Claude Code / Anthropic) mode:**
-1. Environment variable: `ANTHROPIC_API_KEY`
-2. Credential proxy on host (port 18080 by default) — proxies auth to container
-3. `~/.claude/credentials.json` or `.env` file
-
-Login: `nanoclaw provider login anthropic` or set `ANTHROPIC_API_KEY` in `~/.nanoclaw/.env`
+| `groups/{name}/COPILOT.md` | Per-group memory (GHC mode) |
+| `groups/{name}/CLAUDE.md` | Per-group memory (CC mode) |
 
 ## Slash Commands
 
@@ -61,9 +45,7 @@ Login: `nanoclaw provider login anthropic` or set `ANTHROPIC_API_KEY` in `~/.nan
 nanoclaw start / stop / restart / dev / status / logs
 nanoclaw tui                          # Interactive terminal chat
 nanoclaw tui --ask "question"          # Single query
-nanoclaw tui --ask "q" --model claude-sonnet-4.6 --think high
-nanoclaw provider login github-copilot # Auth login
-nanoclaw channel teams --setup         # Teams setup
+nanoclaw tui --ask "q" --model <model> --think <level>
 nanoclaw doctor                        # Health check
 ```
 
@@ -104,4 +86,3 @@ nanoclaw service install                        # Install as service
 
 - GitHub: https://github.com/kenansun-dev/nanoclaw-github-copilot
 - Upstream: https://github.com/qwibitai/nanoclaw
-- Push via GitHub App token (App ID: 3347459)
