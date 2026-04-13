@@ -112,8 +112,8 @@ export function resolveGithubToken(): string | undefined {
   const copilotAuthDirs = [
     path.join(home, '.copilot'),
     path.join(home, '.config', 'github-copilot'),
-    path.join(home, 'AppData', 'Local', 'github-copilot'),
-    path.join(home, 'AppData', 'Roaming', 'github-copilot'),
+    // NOTE: Do NOT scan AppData\Local\github-copilot or AppData\Roaming\github-copilot
+    // — those contain VS Code/VS Copilot extension tokens which are incompatible with CLI SDK
   ];
   for (const copilotDir of copilotAuthDirs) {
     try {
