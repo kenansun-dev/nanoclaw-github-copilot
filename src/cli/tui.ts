@@ -184,12 +184,23 @@ export async function runTui(_args: string[]): Promise<void> {
     }
   }
 
-  // Ctrl+C
+  // Ctrl+C — first press cancels waiting, second press exits
+  let sigintCount = 0;
   process.on('SIGINT', () => {
+    sigintCount++;
+    if (sigintCount >= 2) {
+      // Force exit on double Ctrl-C
+      console.log('\nForce exit.\n');
+      socket?.destroy();
+      rl.close();
+      process.exit(0);
+    }
     if (waitingForReply) {
       stopSpinner();
       waitingForReply = false;
       console.log('\n⏹ Cancelled.\n');
+      // Reset count after cancel so next single Ctrl-C exits cleanly
+      setTimeout(() => { sigintCount = 0; }, 1000);
     } else {
       console.log('\nBye 👋\n');
       socket?.destroy();

@@ -108,8 +108,15 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
   let sessionId: string | undefined;
   let activeChild: ChildProcess | null = null;
 
-  // Ctrl+C: kill active query or exit
+  // Ctrl+C: kill active query or exit. Double Ctrl-C force exits.
+  let sigintCount = 0;
   process.on('SIGINT', () => {
+    sigintCount++;
+    if (sigintCount >= 2) {
+      console.log('\nForce exit.\n');
+      rl?.close();
+      process.exit(0);
+    }
     if (activeChild && !activeChild.killed) {
       console.log('\n⏹ Cancelled.');
       try {
@@ -118,6 +125,7 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
         activeChild.kill('SIGTERM');
       }
       activeChild = null;
+      setTimeout(() => { sigintCount = 0; }, 1000);
     } else {
       console.log('\nBye 👋\n');
       rl?.close();
