@@ -198,6 +198,9 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
       continue;
     }
 
+    // Pause readline during query (spinner interferes with readline prompt)
+    rl?.pause();
+
     // Send to agent
     const result = await runQuery({
       prompt: trimmed,
@@ -214,6 +217,9 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
     });
 
     activeChild = null;
+
+    // Resume readline
+    rl?.resume();
 
     if (result.newSessionId) {
       sessionId = result.newSessionId;
