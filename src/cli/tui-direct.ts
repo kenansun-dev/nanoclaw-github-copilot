@@ -47,9 +47,20 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
     queryIdx !== -1
       ? _args
           .slice(queryIdx + 1)
+          .filter((a) => a !== '--model' && a !== '--think')
+          .filter(
+            (a, i, arr) =>
+              !(i > 0 && (arr[i - 1] === '--model' || arr[i - 1] === '--think')),
+          )
           .join(' ')
           .trim()
       : '';
+
+  // Parse --model and --think overrides
+  const modelIdx = _args.indexOf('--model');
+  const modelOverride = modelIdx !== -1 ? _args[modelIdx + 1] : undefined;
+  const thinkIdx = _args.indexOf('--think');
+  const thinkOverride = thinkIdx !== -1 ? _args[thinkIdx + 1] : undefined;
 
   const config = loadConfig();
   const agent = config.agents.defaults;
@@ -64,10 +75,12 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
   const ipcDir = path.join(ws, 'ipc', groupFolder);
   fs.mkdirSync(path.join(ipcDir, 'input'), { recursive: true });
 
-  // TUI config overrides agent defaults
+  // TUI config overrides agent defaults; CLI args override everything
   const assistantName = tuiCfg.name || agent.name || 'Nanoclaw';
-  const model = tuiCfg.model || agent.model || 'github-copilot/claude-sonnet-4';
-  const thinkLevel = tuiCfg.thinkLevel || agent.thinkLevel;
+  const model =
+    modelOverride || tuiCfg.model || agent.model || 'github-copilot/claude-sonnet-4';
+  const thinkLevel =
+    thinkOverride || tuiCfg.thinkLevel || agent.thinkLevel;
   const mode = tuiCfg.mode || agent.mode || 'host';
 
   if (!singleQuery) {
