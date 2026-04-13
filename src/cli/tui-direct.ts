@@ -126,7 +126,8 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
 
   const prompt = (): Promise<string> =>
     new Promise((resolve) => {
-      rl!.question('\x1b[36myou>\x1b[0m ', (answer) => resolve(answer));
+      process.stdout.write('\x1b[36myou>\x1b[0m ');
+      rl!.once('line', (answer) => resolve(answer));
     });
 
   // Single query mode: skip interactive loop
