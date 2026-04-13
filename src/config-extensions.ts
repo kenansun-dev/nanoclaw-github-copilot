@@ -102,6 +102,16 @@ export function resolveGithubToken(): string | undefined {
     process.env.GITHUB_TOKEN;
   if (envToken) return envToken;
 
+  // Check workspace .env file
+  try {
+    const { readWorkspaceEnv } = require('./config-loader.js') as { readWorkspaceEnv: () => Record<string, string> };
+    const wsEnv = readWorkspaceEnv();
+    const wsToken = wsEnv.COPILOT_GITHUB_TOKEN || wsEnv.GH_TOKEN || wsEnv.GITHUB_TOKEN;
+    if (wsToken) return wsToken;
+  } catch {
+    /* config-loader not available */
+  }
+
   const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
 
   // Check OpenClaw auth profiles
