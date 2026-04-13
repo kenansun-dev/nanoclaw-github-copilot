@@ -238,9 +238,6 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
 
     activeChild = null;
 
-    // Resume readline
-    rl?.resume();
-
     if (result.newSessionId) {
       sessionId = result.newSessionId;
     }
@@ -252,6 +249,9 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
     } else {
       console.log(''); // blank line after no-result success
     }
+
+    // Resume readline AFTER printing result
+    rl?.resume();
   }
 }
 
