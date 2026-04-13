@@ -50,7 +50,10 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
           .filter((a) => a !== '--model' && a !== '--think')
           .filter(
             (a, i, arr) =>
-              !(i > 0 && (arr[i - 1] === '--model' || arr[i - 1] === '--think')),
+              !(
+                i > 0 &&
+                (arr[i - 1] === '--model' || arr[i - 1] === '--think')
+              ),
           )
           .join(' ')
           .trim()
@@ -78,9 +81,11 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
   // TUI config overrides agent defaults; CLI args override everything
   const assistantName = tuiCfg.name || agent.name || 'Nanoclaw';
   const model =
-    modelOverride || tuiCfg.model || agent.model || 'github-copilot/claude-sonnet-4';
-  const thinkLevel =
-    thinkOverride || tuiCfg.thinkLevel || agent.thinkLevel;
+    modelOverride ||
+    tuiCfg.model ||
+    agent.model ||
+    'github-copilot/claude-sonnet-4';
+  const thinkLevel = thinkOverride || tuiCfg.thinkLevel || agent.thinkLevel;
   const mode = tuiCfg.mode || agent.mode || 'host';
 
   if (!singleQuery) {
@@ -458,7 +463,10 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
         try {
           const output: ContainerOutput = JSON.parse(jsonStr);
           // Skip partial/thinking-only outputs — wait for final result
-          if (output.partial || (output.status === 'thinking' && !output.result)) {
+          if (
+            output.partial ||
+            (output.status === 'thinking' && !output.result)
+          ) {
             continue;
           }
           hadOutput = true;
