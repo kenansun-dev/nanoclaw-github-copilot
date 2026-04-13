@@ -210,8 +210,9 @@ export async function runHostAgent(
     if (agent.thinkLevel) {
       env.COPILOT_THINK_LEVEL = agent.thinkLevel;
     }
-    // Point GHC CLI to nanoclaw-managed config directory
-    env.COPILOT_HOME = sessionDir;
+    // Pass session config dir without overriding COPILOT_HOME
+    // (COPILOT_HOME would make CLI look for credentials in sessionDir instead of ~/.copilot)
+    env.NANOCLAW_CONFIG_DIR = sessionDir;
     // Enable GitHub MCP server (web_search, issues, PRs, etc.) — default true for GHC
     if (agent.githubMcp !== false) {
       env.NANOCLAW_GITHUB_MCP = '1';
