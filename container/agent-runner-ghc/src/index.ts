@@ -348,9 +348,9 @@ async function main(): Promise<void> {
       const sessionConfig = {
         model,
         ...(thinkLevel ? { reasoningEffort: thinkLevel as any } : {}),
-        // Use nanoclaw-managed config directory (set via NANOCLAW_CONFIG_DIR env)
-        ...(process.env.NANOCLAW_CONFIG_DIR ? { configDir: process.env.NANOCLAW_CONFIG_DIR } : 
-            process.env.COPILOT_HOME ? { configDir: process.env.COPILOT_HOME } : {}),
+        // Don't pass configDir — it makes the CLI look for credentials in sessionDir
+        // instead of ~/.copilot/, breaking auth on Windows.
+        // webSearch is enabled via the copilot config.json that host-runner copies to sessionDir.
         systemMessage,
         workingDirectory: process.env.NANOCLAW_WORK_DIR || '/workspace/group',
         onPermissionRequest: approveAll,
