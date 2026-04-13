@@ -250,7 +250,19 @@ export async function runTui(_args: string[]): Promise<void> {
 
     // Send message to service
     waitingForReply = true;
+    rl.pause();
     socket.write(JSON.stringify({ type: 'message', text: trimmed }) + '\n');
+
+    // Wait for reply before showing next prompt
+    await new Promise<void>((resolve) => {
+      const check = setInterval(() => {
+        if (!waitingForReply) {
+          clearInterval(check);
+          rl.resume();
+          resolve();
+        }
+      }, 100);
+    });
   }
 }
 
