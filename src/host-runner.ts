@@ -162,7 +162,7 @@ export async function runHostAgent(
     const configFile = path.join(sessionDir, 'config.json');
     if (!fs.existsSync(configFile)) {
       const hostCopilotConfig = path.join(
-        process.env.HOME || '/root',
+        process.env.HOME || process.env.USERPROFILE || os.homedir(),
         '.copilot',
         'config.json',
       );
@@ -194,7 +194,7 @@ export async function runHostAgent(
     TZ: TIMEZONE,
     // Override paths that agent-runner expects (container paths → host paths)
     NANOCLAW_HOST_MODE: '1',
-    HOME: process.env.HOME || '/root',
+    HOME: process.env.HOME || process.env.USERPROFILE || os.homedir(),
   };
 
   // Auth token
