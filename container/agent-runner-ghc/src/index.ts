@@ -292,7 +292,7 @@ async function main(): Promise<void> {
   }
 
   // Initialize Copilot SDK client with explicit token if available.
-  // Priority: env vars > OpenClaw auth profile > useLoggedInUser (CLI managed auth).
+  // Priority: env vars > useLoggedInUser (CLI managed auth).
   function resolveGithubToken(): string | undefined {
     // 1. Explicit env vars (highest priority)
     const envToken = process.env.COPILOT_GITHUB_TOKEN
@@ -303,7 +303,7 @@ async function main(): Promise<void> {
       return envToken;
     }
 
-        // 2. Fall back to useLoggedInUser (CLI managed auth)
+    // 2. Fall back to useLoggedInUser (CLI managed auth)
     log('No explicit token found, falling back to CLI managed auth');
     return undefined;
   }
