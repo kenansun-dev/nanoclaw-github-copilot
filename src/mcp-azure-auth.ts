@@ -255,7 +255,7 @@ async function tryAzLogin(
         // Kill the az login process — LLM will guide user, not us
         try { child.kill(); } catch { /* */ }
       }
-    }, 5000);
+    }, 10000);
   });
 }
 
