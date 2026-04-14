@@ -1,91 +1,76 @@
 ---
 name: capabilities
-description: Show what this NanoClaw instance can do — installed skills, available tools, and system info. Read-only. Use when the user asks what the bot can do, what's installed, or runs /capabilities.
+description: Show what this NanoClaw instance can do — installed skills, available tools, and system info. Use when the user asks what the bot can do or runs /capabilities.
 ---
 
 # /capabilities — System Capabilities Report
 
-Generate a structured read-only report of what this NanoClaw instance can do.
+Generate a report of what this NanoClaw instance can do.
 
-This command works in **all chats** (main and non-main). Adapt the report based on what's available.
-
-## How to gather the information
-
-Run these commands and compile the results into the report format below.
-
-### 1. Installed skills
-
-List skill directories available to you:
+## 1. Detect environment
 
 ```bash
-ls -1 /home/node/.claude/skills/ 2>/dev/null || echo "No skills found"
+# Host or container?
+if [ "$NANOCLAW_HOST_MODE" = "1" ]; then
+  echo "Mode: Host"
+else
+  echo "Mode: Container"
+fi
+
+# Provider
+if [ -n "$COPILOT_MODEL" ] || [ -d "$HOME/.copilot" ]; then
+  echo "Provider: GitHub Copilot (GHC)"
+elif command -v claude &>/dev/null; then
+  echo "Provider: Claude Code (CC)"
+else
+  echo "Provider: unknown"
+fi
+
+echo "Model: ${COPILOT_MODEL:-default}"
+echo "Node: $(node --version 2>/dev/null || echo 'N/A')"
 ```
 
-Each directory is an installed skill. The directory name is the skill name (e.g., `agent-browser` → `/agent-browser`).
-
-### 2. Available tools
-
-Read the allowed tools from your SDK configuration. You always have access to:
-- **Core:** Bash, Read, Write, Edit, Glob, Grep
-- **Web:** WebSearch, WebFetch
-- **Orchestration:** Task, TaskOutput, TaskStop, TeamCreate, TeamDelete, SendMessage
-- **Other:** TodoWrite, ToolSearch, Skill, NotebookEdit
-- **MCP:** mcp__nanoclaw__* (messaging, tasks, group management)
-
-### 3. MCP server tools
-
-The NanoClaw MCP server exposes these tools (via `mcp__nanoclaw__*` prefix):
-- `send_message` — send a message to the user/group
-- `schedule_task` — schedule a recurring or one-time task
-- `list_tasks` — list scheduled tasks
-- `pause_task` — pause a scheduled task
-- `resume_task` — resume a paused task
-- `cancel_task` — cancel and delete a task
-- `update_task` — update an existing task
-- `register_group` — register a new chat/group (main only)
-
-### 4. Container skills (Bash tools)
-
-Check for executable tools in the container:
+## 2. Installed skills
 
 ```bash
-which agent-browser 2>/dev/null && echo "agent-browser: available" || echo "agent-browser: not found"
+# Host mode: check workspace and package skills
+SKILLS_FOUND=0
+for DIR in \
+  "${NANOCLAW_SKILLS_DIR:-}" \
+  "$HOME/.nanoclaw/skills" \
+  "$(npm root -g 2>/dev/null)/nanoclaw-github-copilot/container/skills" \
+  "/workspace/skills" \
+  ; do
+  if [ -d "$DIR" ] && [ "$(ls -A "$DIR" 2>/dev/null)" ]; then
+    echo "Skills directory: $DIR"
+    ls -1 "$DIR" 2>/dev/null
+    SKILLS_FOUND=1
+  fi
+done
+[ "$SKILLS_FOUND" = "0" ] && echo "No skills found"
 ```
 
-### 5. Group info
+## 3. Available tools
 
-```bash
-ls /workspace/group/CLAUDE.md 2>/dev/null && echo "Group memory: yes" || echo "Group memory: no"
-ls /workspace/extra/ 2>/dev/null && echo "Extra mounts: $(ls /workspace/extra/ 2>/dev/null | wc -l | tr -d ' ')" || echo "Extra mounts: none"
-```
+You always have access to:
+- **Core**: Bash, Read, Write, Edit, Glob, Grep
+- **Web** (if GitHub MCP enabled): WebSearch, WebFetch
+- **NanoClaw MCP**: send_message, send_file, schedule_task, list_tasks, react, register_group, pdf-read_pdf
+- **GitHub MCP** (if enabled): issues, PRs, code search, repos, actions
 
-## Report format
+## 4. Slash commands
 
-Present the report as a clean, readable message. Example:
+| Command | Description |
+|---------|-------------|
+| `/think [level]` | Set reasoning effort |
+| `/reasoning [on\|off]` | Show/hide thinking |
+| `/new` | Reset session |
+| `/status` | Health check |
+| `/capabilities` | This report |
+| `/tasks` | List scheduled tasks |
+| `/wiki [topic]` | Knowledge base |
+| `/help` | All commands |
 
-```
-📋 *NanoClaw Capabilities*
+## 5. Output format
 
-*Installed Skills:*
-• /agent-browser — Browse the web, fill forms, extract data
-• /capabilities — This report
-(list all found skills)
-
-*Tools:*
-• Core: Bash, Read, Write, Edit, Glob, Grep
-• Web: WebSearch, WebFetch
-• Orchestration: Task, TeamCreate, SendMessage
-• MCP: send_message, schedule_task, list_tasks, pause/resume/cancel/update_task, register_group
-
-*Container Tools:*
-• agent-browser: ✓
-
-*System:*
-• Group memory: yes/no
-• Extra mounts: N directories
-• Main channel: yes
-```
-
-Adapt the output based on what you actually find — don't list things that aren't installed.
-
-**See also:** `/status` for a quick health check of session, workspace, and tasks.
+Compile the above into a clean report for the user. Keep it concise.
