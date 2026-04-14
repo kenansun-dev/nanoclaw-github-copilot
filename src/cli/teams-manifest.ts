@@ -240,7 +240,8 @@ export async function setupManifest(
     ],
     permissions: ['identity', 'messageTeamMembers'],
     validDomains: [],
-    webApplicationInfo: { id: appId, resource: '' },
+    // webApplicationInfo omitted — not needed for basic bot, and causes
+    // "must come from same organization" error in cross-tenant installs
     authorization: {
       permissions: {
         resourceSpecific: [
