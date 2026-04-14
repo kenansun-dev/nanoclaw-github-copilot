@@ -7,8 +7,10 @@
  */
 
 import { resolve, dirname, join } from 'path';
+import path from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync } from 'fs';
+import fs, { existsSync } from 'fs';
+import os from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
@@ -483,7 +485,28 @@ async function runService(action: string) {
 
       // Auth status
       const token = resolveGithubToken();
-      const hasAuth = !!token || isCopilotAuthenticated();
+      let hasAuth = !!token;
+      let authLabel = '';
+      if (token) {
+        authLabel = `${provider} (${token.substring(0, 4)}****)`;
+      } else {
+        // Check if copilot CLI has logged-in users (useLoggedInUser will work)
+        try {
+          const copilotConfig = path.join(os.homedir(), '.copilot', 'config.json');
+          if (fs.existsSync(copilotConfig)) {
+            const cc = JSON.parse(fs.readFileSync(copilotConfig, 'utf-8'));
+            if (cc.logged_in_users?.length > 0 || cc.last_logged_in_user) {
+              hasAuth = true;
+              const user = cc.last_logged_in_user?.login || cc.logged_in_users?.[0]?.login || '';
+              authLabel = `${provider} (CLI: ${user})`;
+            }
+          }
+        } catch { /* ignore */ }
+        if (!hasAuth) {
+          hasAuth = isCopilotAuthenticated();
+          if (hasAuth) authLabel = provider;
+        }
+      }
       const authPrefix = token ? token.substring(0, 4) + '****' : '';
 
       // Channels
@@ -523,7 +546,7 @@ async function runService(action: string) {
       );
       console.log(`👤 Agent:     ${name} (${provider})`);
       console.log(
-        `🔑 Auth:      ${hasAuth ? `✅ ${provider}${authPrefix ? ` (${authPrefix})` : ''}` : '❌ not configured'}`,
+        `🔑 Auth:      ${hasAuth ? `✅ ${authLabel}` : '❌ not configured'}`,
       );
       console.log(
         `📡 Channels:  ${channels.length > 0 ? channels.join(', ') : 'none'}`,
