@@ -7,8 +7,11 @@
 import fs from 'fs';
 import path from 'path';
 import { createWriteStream } from 'fs';
+import { fileURLToPath } from 'url';
 import { deflateSync } from 'zlib';
 import { paths } from '../workspace.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Generate a simple solid-color PNG image.
@@ -250,14 +253,19 @@ export async function setupManifest(
 
   // Icons: use custom icons from workspace if available, otherwise generate placeholders
   const wsPaths = paths;
-  const customColorIcon = path.join(path.dirname(wsPaths.config), 'teams-color.png');
-  const customOutlineIcon = path.join(path.dirname(wsPaths.config), 'teams-outline.png');
+  // Icons priority: ~/.nanoclaw/ custom > bundled nanoclaw icon > generated placeholder
+  const wsCfgDir = path.dirname(wsPaths.config);
+  const customColorIcon = path.join(wsCfgDir, 'teams-color.png');
+  const customOutlineIcon = path.join(wsCfgDir, 'teams-outline.png');
+  const bundledIcon = path.join(__dirname, '..', '..', 'container', 'assets', 'teams-color-icon.png');
   const colorIcon = fs.existsSync(customColorIcon)
     ? fs.readFileSync(customColorIcon)
-    : generatePng(192, 192, 79, 70, 229); // indigo placeholder
+    : fs.existsSync(bundledIcon)
+      ? fs.readFileSync(bundledIcon)
+      : generatePng(192, 192, 79, 70, 229);
   const outlineIcon = fs.existsSync(customOutlineIcon)
     ? fs.readFileSync(customOutlineIcon)
-    : generatePng(32, 32, 255, 255, 255); // white placeholder
+    : generatePng(32, 32, 255, 255, 255);
 
   const manifestJson = JSON.stringify(manifest, null, 2);
 

@@ -511,7 +511,9 @@ async function runService(action: string) {
       }
 
       // Output
-      const pkg = JSON.parse(fs.readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
+      const pkg = JSON.parse(
+        fs.readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'),
+      );
       console.log(`\n🤖 NanoClaw ${pkg.version}`);
       console.log(
         `${running ? '✅' : '❌'} Status:    ${running ? `running (pid: ${pid}, uptime: ${uptimeStr})` : 'not running'}`,
