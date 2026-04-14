@@ -202,15 +202,16 @@ export function installWindowsAutoStart(
 ): 'task' | null {
   try {
     const escaped = command.replace(/"/g, '\\"');
-    execSync(
-      `schtasks /Create /TN "${name}" /TR "${escaped}" /SC ONLOGON /F`,
-      { stdio: 'pipe' },
-    );
+    execSync(`schtasks /Create /TN "${name}" /TR "${escaped}" /SC ONLOGON /F`, {
+      stdio: 'pipe',
+    });
     console.log(`  ✅ ${name} scheduled task created`);
     return 'task' as const;
   } catch (err: any) {
     const msg = ((err.stderr || '') + (err.stdout || '')).toString().trim();
-    console.error(`  ❌ Failed to create scheduled task: ${msg || err.message}`);
+    console.error(
+      `  ❌ Failed to create scheduled task: ${msg || err.message}`,
+    );
     return null;
   }
 }
