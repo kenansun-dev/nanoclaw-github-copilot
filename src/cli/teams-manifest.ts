@@ -217,6 +217,10 @@ export async function setupManifest(
                 title: 'think',
                 description: 'Set thinking level (low/medium/high/xhigh)',
               },
+              {
+                title: 'reasoning',
+                description: 'Show or hide reasoning output (on/off)',
+              },
               { title: 'tasks', description: 'List scheduled tasks' },
               {
                 title: 'capabilities',
