@@ -202,7 +202,7 @@ export async function setupManifest(
       {
         botId: appId,
         scopes: ['personal', 'team', 'groupChat'],
-        supportsFiles: false,
+        supportsFiles: true,
         isNotificationOnly: false,
         commandLists: [
           {
