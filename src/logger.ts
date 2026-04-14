@@ -44,6 +44,7 @@ const TOKEN_PATTERNS = [
 ];
 
 function scrubTokens(text: string): string {
+  if (!text) return text || '';
   let result = text;
   for (const pattern of TOKEN_PATTERNS) {
     result = result.replace(pattern, (match, prefix) => {
@@ -72,7 +73,7 @@ function formatData(data: Record<string, unknown>, useColor: boolean): string {
         ? `\n    ${KEY_COLOR}err${RESET}: ${errText}`
         : `\n    err: ${errText}`;
     } else {
-      const raw = typeof v === 'string' ? v : JSON.stringify(v);
+      const raw = typeof v === 'string' ? v : (JSON.stringify(v) ?? 'undefined');
       const val = scrubTokens(raw);
       out += useColor
         ? ` ${KEY_COLOR}${k}${RESET}=${val}`
