@@ -201,7 +201,9 @@ export async function runTui(_args: string[]): Promise<void> {
       rl.resume();
       console.log('\n⏹ Cancelled.\n');
       // Reset count after cancel so next single Ctrl-C exits cleanly
-      setTimeout(() => { sigintCount = 0; }, 1000);
+      setTimeout(() => {
+        sigintCount = 0;
+      }, 1000);
     } else {
       console.log('\nBye 👋\n');
       socket?.destroy();

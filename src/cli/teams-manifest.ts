@@ -7,6 +7,7 @@
 import fs from 'fs';
 import path from 'path';
 import { createWriteStream } from 'fs';
+import { deflateSync } from 'zlib';
 import { paths } from '../workspace.js';
 
 /**
@@ -21,7 +22,6 @@ function generatePng(
   b: number,
 ): Buffer {
   // Minimal PNG: IHDR + IDAT (uncompressed) + IEND
-  const { deflateSync } = require('zlib') as typeof import('zlib');
 
   // Raw image data: filter byte (0) + RGB pixels per row
   const rawRows: Buffer[] = [];
@@ -41,7 +41,6 @@ function generatePng(
   const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
   function makeChunk(type: string, data: Buffer): Buffer {
-    const { crc32 } = require('buffer') as any;
     const typeBytes = Buffer.from(type, 'ascii');
     const len = Buffer.alloc(4);
     len.writeUInt32BE(data.length);

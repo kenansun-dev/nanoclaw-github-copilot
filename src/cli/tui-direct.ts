@@ -125,7 +125,9 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
         activeChild.kill('SIGTERM');
       }
       activeChild = null;
-      setTimeout(() => { sigintCount = 0; }, 1000);
+      setTimeout(() => {
+        sigintCount = 0;
+      }, 1000);
     } else {
       console.log('\nBye 👋\n');
       rl?.close();

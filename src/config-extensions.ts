@@ -114,10 +114,7 @@ export function resolveGithubToken(): string | undefined {
     try {
       if (!fs.existsSync(configFile)) continue;
       const config = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
-      if (
-        config.copilot_tokens &&
-        typeof config.copilot_tokens === 'object'
-      ) {
+      if (config.copilot_tokens && typeof config.copilot_tokens === 'object') {
         for (const [, token] of Object.entries(config.copilot_tokens)) {
           if (typeof token === 'string' && token.length > 4) return token;
         }
