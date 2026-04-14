@@ -183,7 +183,7 @@ export async function setupManifest(
     $schema:
       'https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json',
     manifestVersion: '1.17',
-    version: `1.0.${Math.floor(Date.now() / 1000) % 100000}`,
+    version: '1.0.0',
     id: appId,
     developer: {
       name: 'NanoClaw',
@@ -238,8 +238,8 @@ export async function setupManifest(
         ],
       },
     ],
-    // Keep manifest minimal for cross-tenant compatibility
-    // webApplicationInfo, permissions, validDomains, authorization omitted
+    permissions: ['identity', 'messageTeamMembers'],
+    validDomains: [],
   };
 
   // Icons: use custom icons from workspace if available, otherwise generate placeholders
@@ -276,8 +276,7 @@ export async function setupManifest(
 
   // Write to ~/.nanoclaw/teams-manifest.zip
   const wsDir = path.dirname(paths.config);
-  const safeName = botName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-  const zipPath = path.join(wsDir, `${safeName}-teams-manifest.zip`);
+  const zipPath = path.join(wsDir, 'teams-manifest.zip');
   fs.mkdirSync(wsDir, { recursive: true });
   fs.writeFileSync(zipPath, zipBuffer);
 
