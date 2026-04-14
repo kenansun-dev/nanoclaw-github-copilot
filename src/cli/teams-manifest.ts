@@ -257,7 +257,14 @@ export async function setupManifest(
   const wsCfgDir = path.dirname(wsPaths.config);
   const customColorIcon = path.join(wsCfgDir, 'teams-color.png');
   const customOutlineIcon = path.join(wsCfgDir, 'teams-outline.png');
-  const bundledIcon = path.join(__dirname, '..', '..', 'container', 'assets', 'teams-color-icon.png');
+  const bundledIcon = path.join(
+    __dirname,
+    '..',
+    '..',
+    'container',
+    'assets',
+    'teams-color-icon.png',
+  );
   const colorIcon = fs.existsSync(customColorIcon)
     ? fs.readFileSync(customColorIcon)
     : fs.existsSync(bundledIcon)

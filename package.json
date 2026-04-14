@@ -78,6 +78,7 @@
     "bin/",
     "container/Dockerfile",
     "container/Dockerfile.ghc",
+    "container/assets/",
     "container/agent-runner-ghc/dist/",
     "container/agent-runner-ghc/mcp-servers/",
     "container/agent-runner-ghc/package-lock.json",
