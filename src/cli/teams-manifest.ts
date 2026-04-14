@@ -238,8 +238,6 @@ export async function setupManifest(
         ],
       },
     ],
-    permissions: ['identity', 'messageTeamMembers'],
-    validDomains: [],
   };
 
   // Icons: use custom icons from workspace if available, otherwise generate placeholders
