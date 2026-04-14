@@ -27,7 +27,20 @@ else
 fi
 
 echo "Model: ${COPILOT_MODEL:-default}"
+echo "OS: $(uname -s 2>/dev/null || echo Windows) $(uname -r 2>/dev/null || ver 2>nul)"
+echo "Arch: $(uname -m 2>/dev/null || echo unknown)"
+echo "Shell: $SHELL ($(basename "$SHELL" 2>/dev/null || echo unknown))"
 echo "Node: $(node --version 2>/dev/null || echo 'N/A')"
+echo "User: $(whoami 2>/dev/null || echo unknown)"
+echo "Working dir: $(pwd)"
+```
+
+On Windows (PowerShell), use:
+```powershell
+echo "OS: Windows $([System.Environment]::OSVersion.Version)"
+echo "Shell: PowerShell $($PSVersionTable.PSVersion)"
+echo "Node: $(node --version)"
+echo "User: $env:USERNAME"
 ```
 
 ## 2. Installed skills
