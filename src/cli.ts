@@ -492,16 +492,25 @@ async function runService(action: string) {
       } else {
         // Check if copilot CLI has logged-in users (useLoggedInUser will work)
         try {
-          const copilotConfig = path.join(os.homedir(), '.copilot', 'config.json');
+          const copilotConfig = path.join(
+            os.homedir(),
+            '.copilot',
+            'config.json',
+          );
           if (fs.existsSync(copilotConfig)) {
             const cc = JSON.parse(fs.readFileSync(copilotConfig, 'utf-8'));
             if (cc.logged_in_users?.length > 0 || cc.last_logged_in_user) {
               hasAuth = true;
-              const user = cc.last_logged_in_user?.login || cc.logged_in_users?.[0]?.login || '';
+              const user =
+                cc.last_logged_in_user?.login ||
+                cc.logged_in_users?.[0]?.login ||
+                '';
               authLabel = `${provider} (CLI: ${user})`;
             }
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
         if (!hasAuth) {
           hasAuth = isCopilotAuthenticated();
           if (hasAuth) authLabel = provider;

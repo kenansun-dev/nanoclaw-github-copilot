@@ -255,11 +255,15 @@ export async function runHostAgent(
       );
       if (hasAzureAuth) {
         const { resolveAllMcpTokens } = await import('./mcp-azure-auth.js');
-        const { headers: authHeaders, errors } = await resolveAllMcpTokens(servers);
+        const { headers: authHeaders, errors } =
+          await resolveAllMcpTokens(servers);
         // Inject auth headers into server configs
         for (const [name, hdrs] of Object.entries(authHeaders)) {
           if (servers[name]) {
-            servers[name].headers = { ...(servers[name].headers || {}), ...hdrs };
+            servers[name].headers = {
+              ...(servers[name].headers || {}),
+              ...hdrs,
+            };
           }
         }
         // Log errors for servers that need auth but couldn't get tokens

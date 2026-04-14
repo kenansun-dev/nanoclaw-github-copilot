@@ -86,11 +86,16 @@ export async function getAzureToken(
   if (cached?.refresh_token) {
     logger.info({ serverName }, 'Refreshing MCP token');
     try {
-      const refreshed = await refreshToken(cached.refresh_token, tenantId, scope);
+      const refreshed = await refreshToken(
+        cached.refresh_token,
+        tenantId,
+        scope,
+      );
       cache[serverName] = {
         access_token: refreshed.access_token,
         refresh_token: refreshed.refresh_token || cached.refresh_token,
-        expires_at: Math.floor(Date.now() / 1000) + (refreshed.expires_in || 3600),
+        expires_at:
+          Math.floor(Date.now() / 1000) + (refreshed.expires_in || 3600),
         resource,
         tenant_id: tenantId,
       };
@@ -118,11 +123,19 @@ export async function getAzureToken(
     const azLoginResult = await tryAzLogin(resource, tenantId);
     if (azLoginResult.token) {
       logger.info({ serverName }, 'Got MCP token after az login');
-      return { token: azLoginResult.token, method: 'az-login', loginPrompt: azLoginResult.loginPrompt };
+      return {
+        token: azLoginResult.token,
+        method: 'az-login',
+        loginPrompt: azLoginResult.loginPrompt,
+      };
     }
     if (azLoginResult.loginPrompt) {
       // az login started but needs user interaction — return prompt for LLM
-      return { token: null, method: 'az-login', loginPrompt: azLoginResult.loginPrompt };
+      return {
+        token: null,
+        method: 'az-login',
+        loginPrompt: azLoginResult.loginPrompt,
+      };
     }
   }
 
@@ -138,7 +151,10 @@ export async function getAzureToken(
       tenant_id: tenantId,
     };
     saveTokenCache(cache);
-    logger.info({ serverName }, 'MCP token acquired via built-in device code flow');
+    logger.info(
+      { serverName },
+      'MCP token acquired via built-in device code flow',
+    );
     return { token: result.access_token, method: 'device-code' };
   } catch (err) {
     logger.error(
@@ -147,7 +163,8 @@ export async function getAzureToken(
     );
     return {
       token: null,
-      loginPrompt: `MCP server "${serverName}" requires Azure AD authentication for resource "${resource}". ` +
+      loginPrompt:
+        `MCP server "${serverName}" requires Azure AD authentication for resource "${resource}". ` +
         `Please install Azure CLI and run: az login --use-device-code`,
     };
   }
@@ -158,8 +175,14 @@ export async function getAzureToken(
  * Returns a map of server name → headers with Authorization.
  */
 export async function resolveAllMcpTokens(
-  servers: Record<string, { auth?: McpAzureAuthConfig; headers?: Record<string, string> }>,
-): Promise<{ headers: Record<string, Record<string, string>>; errors: Record<string, string> }> {
+  servers: Record<
+    string,
+    { auth?: McpAzureAuthConfig; headers?: Record<string, string> }
+  >,
+): Promise<{
+  headers: Record<string, Record<string, string>>;
+  errors: Record<string, string>;
+}> {
   const headers: Record<string, Record<string, string>> = {};
   const errors: Record<string, string> = {};
 
@@ -225,7 +248,10 @@ async function tryAzLogin(
       output += data.toString();
 
       // Check if device code prompt appeared
-      if (!resolved && output.includes('devicelogin') || output.includes('device')) {
+      if (
+        (!resolved && output.includes('devicelogin')) ||
+        output.includes('device')
+      ) {
         // Don't resolve yet — wait for login to complete or timeout
       }
     };
@@ -243,7 +269,10 @@ async function tryAzLogin(
         resolve({ token, loginPrompt: output.trim() || undefined });
       } else {
         // Login failed or user didn't complete — return prompt for LLM
-        resolve({ token: null, loginPrompt: output.trim() || 'az login failed' });
+        resolve({
+          token: null,
+          loginPrompt: output.trim() || 'az login failed',
+        });
       }
     });
 
@@ -253,7 +282,11 @@ async function tryAzLogin(
         resolved = true;
         resolve({ token: null, loginPrompt: output.trim() });
         // Kill the az login process — LLM will guide user, not us
-        try { child.kill(); } catch { /* */ }
+        try {
+          child.kill();
+        } catch {
+          /* */
+        }
       }
     }, 10000);
   });
@@ -264,7 +297,11 @@ async function tryAzLogin(
 async function builtinDeviceCodeFlow(
   tenantId: string,
   scope: string,
-): Promise<{ access_token: string; refresh_token?: string; expires_in?: number }> {
+): Promise<{
+  access_token: string;
+  refresh_token?: string;
+  expires_in?: number;
+}> {
   const deviceAuthUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/devicecode`;
   const tokenUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
 
@@ -275,16 +312,19 @@ async function builtinDeviceCodeFlow(
   });
 
   if (!deviceResp.device_code) {
-    throw new Error(`Device code request failed: ${JSON.stringify(deviceResp)}`);
+    throw new Error(
+      `Device code request failed: ${JSON.stringify(deviceResp)}`,
+    );
   }
 
   // Print prompt (for CLI/TUI mode)
   logger.info('MCP Auth Required');
-  logger.info({ code: deviceResp.user_code, url: deviceResp.verification_uri }, 'MCP device code flow started');
+  logger.info(
+    { code: deviceResp.user_code, url: deviceResp.verification_uri },
+    'MCP device code flow started',
+  );
   if (deviceResp.verification_uri_complete) {
   }
-  ;
-
   // Poll for token
   const interval = (deviceResp.interval || 5) * 1000;
   const deadline = Date.now() + deviceResp.expires_in * 1000;
@@ -309,9 +349,14 @@ async function builtinDeviceCodeFlow(
       }
 
       if (tokenResp.error === 'authorization_pending') continue;
-      if (tokenResp.error === 'slow_down') { await sleep(5000); continue; }
-      if (tokenResp.error === 'authorization_declined') throw new Error('User declined');
-      if (tokenResp.error === 'expired_token') throw new Error('Device code expired');
+      if (tokenResp.error === 'slow_down') {
+        await sleep(5000);
+        continue;
+      }
+      if (tokenResp.error === 'authorization_declined')
+        throw new Error('User declined');
+      if (tokenResp.error === 'expired_token')
+        throw new Error('Device code expired');
       throw new Error(`${tokenResp.error}: ${tokenResp.error_description}`);
     } catch (err) {
       if (err instanceof Error && err.message.includes('pending')) continue;
@@ -328,7 +373,11 @@ async function refreshToken(
   refreshTokenStr: string,
   tenantId: string,
   scope: string,
-): Promise<{ access_token: string; refresh_token?: string; expires_in?: number }> {
+): Promise<{
+  access_token: string;
+  refresh_token?: string;
+  expires_in?: number;
+}> {
   const tokenUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
 
   const resp = await httpPost(tokenUrl, {
@@ -339,7 +388,9 @@ async function refreshToken(
   });
 
   if (!resp.access_token) {
-    throw new Error(`Token refresh failed: ${resp.error}: ${resp.error_description}`);
+    throw new Error(
+      `Token refresh failed: ${resp.error}: ${resp.error_description}`,
+    );
   }
 
   return {
@@ -356,16 +407,23 @@ function loadTokenCache(): TokenCache {
     if (fs.existsSync(TOKEN_CACHE_FILE)) {
       return JSON.parse(fs.readFileSync(TOKEN_CACHE_FILE, 'utf-8'));
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return {};
 }
 
 function saveTokenCache(cache: TokenCache): void {
   try {
     fs.mkdirSync(CREDENTIALS_DIR, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), { mode: 0o600 });
+    fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), {
+      mode: 0o600,
+    });
   } catch (err) {
-    logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'Failed to save MCP token cache');
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      'Failed to save MCP token cache',
+    );
   }
 }
 
@@ -393,13 +451,19 @@ function httpPost(url: string, params: Record<string, string>): Promise<any> {
         let data = '';
         res.on('data', (chunk) => (data += chunk));
         res.on('end', () => {
-          try { resolve(JSON.parse(data)); }
-          catch { reject(new Error(`Invalid JSON: ${data.substring(0, 200)}`)); }
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            reject(new Error(`Invalid JSON: ${data.substring(0, 200)}`));
+          }
         });
       },
     );
     req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('HTTP timeout')); });
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('HTTP timeout'));
+    });
     req.write(body);
     req.end();
   });
@@ -427,7 +491,9 @@ export async function testMcpAuth(serverName: string): Promise<void> {
   const auth = (server as any).auth as McpAzureAuthConfig | undefined;
   if (!auth || auth.provider !== 'azure') {
     console.error(`MCP server "${serverName}" has no azure auth configured`);
-    console.error('Add auth config: { "auth": { "provider": "azure", "resource": "https://..." } }');
+    console.error(
+      'Add auth config: { "auth": { "provider": "azure", "resource": "https://..." } }',
+    );
     process.exit(1);
   }
 
@@ -441,7 +507,9 @@ export async function testMcpAuth(serverName: string): Promise<void> {
 
   if (result.token) {
     console.log(`✅ Token acquired via ${result.method}`);
-    console.log(`   Token: ${result.token.substring(0, 8) + '****'}... (${result.token.length} chars)`);
+    console.log(
+      `   Token: ${result.token.substring(0, 8) + '****'}... (${result.token.length} chars)`,
+    );
   } else {
     console.log(`❌ Token not acquired`);
     if (result.loginPrompt) {

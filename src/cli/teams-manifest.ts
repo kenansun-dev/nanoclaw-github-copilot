@@ -183,7 +183,7 @@ export async function setupManifest(
     $schema:
       'https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json',
     manifestVersion: '1.17',
-    version: '1.0.0',
+    version: `1.0.${Math.floor(Date.now() / 1000) % 100000}`,
     id: appId,
     developer: {
       name: 'NanoClaw',
@@ -285,7 +285,8 @@ export async function setupManifest(
 
   // Write to ~/.nanoclaw/teams-manifest.zip
   const wsDir = path.dirname(paths.config);
-  const zipPath = path.join(wsDir, 'teams-manifest.zip');
+  const safeName = botName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  const zipPath = path.join(wsDir, `${safeName}-teams-manifest.zip`);
   fs.mkdirSync(wsDir, { recursive: true });
   fs.writeFileSync(zipPath, zipBuffer);
 

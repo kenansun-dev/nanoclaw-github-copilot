@@ -73,11 +73,10 @@ function formatData(data: Record<string, unknown>, useColor: boolean): string {
         ? `\n    ${KEY_COLOR}err${RESET}: ${errText}`
         : `\n    err: ${errText}`;
     } else {
-      const raw = v == null ? '' : typeof v === 'string' ? v : JSON.stringify(v);
+      const raw =
+        v == null ? '' : typeof v === 'string' ? v : JSON.stringify(v);
       const val = scrubTokens(raw);
-      out += useColor
-        ? ` ${KEY_COLOR}${k}${RESET}=${val}`
-        : ` ${k}=${val}`;
+      out += useColor ? ` ${KEY_COLOR}${k}${RESET}=${val}` : ` ${k}=${val}`;
     }
   }
   return out;
@@ -185,8 +184,7 @@ function log(
   // Write to console (with colors if TTY)
   const consoleStream =
     LEVELS[level] >= LEVELS.warn ? process.stderr : process.stdout;
-  const useColor =
-    consoleStream === process.stderr ? stderrIsTTY : stdoutIsTTY;
+  const useColor = consoleStream === process.stderr ? stderrIsTTY : stdoutIsTTY;
 
   if (useColor) {
     const tag = `${COLORS[level]}${levelTag}${level === 'fatal' ? FULL_RESET : RESET}`;
