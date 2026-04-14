@@ -248,9 +248,16 @@ export async function setupManifest(
     },
   };
 
-  // Generate placeholder icons
-  const colorIcon = generatePng(192, 192, 79, 70, 229); // indigo
-  const outlineIcon = generatePng(32, 32, 255, 255, 255); // white
+  // Icons: use custom icons from workspace if available, otherwise generate placeholders
+  const wsPaths = paths;
+  const customColorIcon = path.join(path.dirname(wsPaths.config), 'teams-color.png');
+  const customOutlineIcon = path.join(path.dirname(wsPaths.config), 'teams-outline.png');
+  const colorIcon = fs.existsSync(customColorIcon)
+    ? fs.readFileSync(customColorIcon)
+    : generatePng(192, 192, 79, 70, 229); // indigo placeholder
+  const outlineIcon = fs.existsSync(customOutlineIcon)
+    ? fs.readFileSync(customOutlineIcon)
+    : generatePng(32, 32, 255, 255, 255); // white placeholder
 
   const manifestJson = JSON.stringify(manifest, null, 2);
 

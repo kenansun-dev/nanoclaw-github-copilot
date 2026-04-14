@@ -450,7 +450,8 @@ async function runService(action: string) {
     case 'status': {
       // Fast, deterministic status — read files only, no execSync
       const { loadConfig: loadCfg } = await import('./config-loader.js');
-      const { resolveGithubToken, isGHCProvider, isCopilotAuthenticated } = await import('./config-extensions.js');
+      const { resolveGithubToken, isGHCProvider, isCopilotAuthenticated } =
+        await import('./config-extensions.js');
       const cfg = loadCfg();
       const agent = cfg.agents?.defaults || ({} as any);
       const provider = agent.provider || 'github-copilot';
@@ -504,16 +505,26 @@ async function runService(action: string) {
         try {
           process.kill(parseInt(fs.readFileSync(dtPidFile, 'utf-8').trim()), 0);
           tunnelRunning = true;
-        } catch { /* dead */ }
+        } catch {
+          /* dead */
+        }
       }
 
       // Output
       console.log(`\n🤖 NanoClaw ${require('../package.json').version}`);
-      console.log(`${running ? '✅' : '❌'} Status:    ${running ? `running (pid: ${pid}, uptime: ${uptimeStr})` : 'not running'}`);
-      console.log(`🧠 Model:     ${model}${thinkLevel ? ` (think: ${thinkLevel})` : ''}${showThinking ? ' [reasoning visible]' : ''} [${mode}]`);
+      console.log(
+        `${running ? '✅' : '❌'} Status:    ${running ? `running (pid: ${pid}, uptime: ${uptimeStr})` : 'not running'}`,
+      );
+      console.log(
+        `🧠 Model:     ${model}${thinkLevel ? ` (think: ${thinkLevel})` : ''}${showThinking ? ' [reasoning visible]' : ''} [${mode}]`,
+      );
       console.log(`👤 Agent:     ${name} (${provider})`);
-      console.log(`🔑 Auth:      ${hasAuth ? `✅ ${provider}${authPrefix ? ` (${authPrefix})` : ''}` : '❌ not configured'}`);
-      console.log(`📡 Channels:  ${channels.length > 0 ? channels.join(', ') : 'none'}`);
+      console.log(
+        `🔑 Auth:      ${hasAuth ? `✅ ${provider}${authPrefix ? ` (${authPrefix})` : ''}` : '❌ not configured'}`,
+      );
+      console.log(
+        `📡 Channels:  ${channels.length > 0 ? channels.join(', ') : 'none'}`,
+      );
       console.log(`💬 Chats:     ${chatCount} registered`);
       if (tunnelRunning) {
         console.log(`🌐 Tunnel:    running`);
@@ -522,7 +533,7 @@ async function runService(action: string) {
       console.log(`📝 Logs:      ${logFile}`);
       console.log('');
 
-            break;
+      break;
     }
   }
 

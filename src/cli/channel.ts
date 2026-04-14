@@ -320,8 +320,7 @@ async function channelAdd(
       return;
     }
     const agent = resolveAgent(cfg, agentId);
-    const agentName = agent.name || agentId || 'default';
-    const botName = `nanoclaw-${agentName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
+    const botName = agent.name || cfg.agents?.defaults?.name || 'Nanoclaw';
     await setupManifest(appId, botName);
     return;
   }
