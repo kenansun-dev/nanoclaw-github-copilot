@@ -209,28 +209,28 @@ export async function setupManifest(
             scopes: ['personal'],
             commands: [
               {
-                title: 'chatid',
+                title: '/chatid',
                 description: 'Get this chat registration ID',
               },
-              { title: 'ping', description: 'Check if bot is online' },
-              { title: 'new', description: 'Start a new conversation' },
-              { title: 'status', description: 'Show system status' },
+              { title: '/ping', description: 'Check if bot is online' },
+              { title: '/new', description: 'Start a new conversation' },
+              { title: '/status', description: 'Show system status' },
               {
-                title: 'think',
+                title: '/think',
                 description: 'Set thinking level (low/medium/high/xhigh)',
               },
               {
-                title: 'reasoning',
+                title: '/reasoning',
                 description: 'Show or hide reasoning output (on/off)',
               },
-              { title: 'tasks', description: 'List scheduled tasks' },
+              { title: '/tasks', description: 'List scheduled tasks' },
               {
-                title: 'capabilities',
+                title: '/capabilities',
                 description: 'Show available tools and skills',
               },
-              { title: 'help', description: 'Show available commands' },
+              { title: '/help', description: 'Show available commands' },
               {
-                title: 'wiki',
+                title: '/wiki',
                 description: 'Knowledge base — ingest, query, or maintain',
               },
             ],
