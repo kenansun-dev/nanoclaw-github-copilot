@@ -448,328 +448,81 @@ async function runService(action: string) {
       break;
     }
     case 'status': {
-      // Service backend info
+      // Fast, deterministic status — read files only, no execSync
+      const { loadConfig: loadCfg } = await import('./config-loader.js');
+      const { resolveGithubToken, isGHCProvider, isCopilotAuthenticated } = await import('./config-extensions.js');
+      const cfg = loadCfg();
+      const agent = cfg.agents?.defaults || ({} as any);
+      const provider = agent.provider || 'github-copilot';
+      const model = agent.model || 'default';
+      const mode = agent.mode || 'host';
+      const name = agent.name || 'NanoClaw';
+      const thinkLevel = agent.thinkLevel;
+      const showThinking = agent.showThinking;
+
+      // Running status from PID file
+      let running = false;
+      let pid = '';
       let uptimeStr = '';
-      if (hasSystemd) {
-        console.log('Service: systemd (user)');
-        try {
-          const active = execSync(
-            `systemctl --user is-active ${SERVICE_NAME}`,
-            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-          ).trim();
-          const pid = execSync(
-            `systemctl --user show ${SERVICE_NAME} --property=MainPID --value`,
-            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-          ).trim();
-          // Get uptime
-          try {
-            const since = execSync(
-              `systemctl --user show ${SERVICE_NAME} --property=ActiveEnterTimestamp --value`,
-              { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-            ).trim();
-            if (since) {
-              const startTime = new Date(since).getTime();
-              const elapsed = Date.now() - startTime;
-              const hours = Math.floor(elapsed / 3600000);
-              const mins = Math.floor((elapsed % 3600000) / 60000);
-              uptimeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
-            }
-          } catch {
-            /* uptime not available */
-          }
-          console.log(
-            `✅ Status:    ${active} (pid: ${pid}${uptimeStr ? `, uptime: ${uptimeStr}` : ''})`,
-          );
-        } catch {
-          console.log('❌ Status:    not running');
-        }
-      } else if (hasSchedTask) {
-        console.log('Service: Windows Scheduled Task');
-        try {
-          const out = execSync(
-            `schtasks /Query /TN "${SERVICE_NAME}" /FO CSV /NH`,
-            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-          ).trim();
-          const status = out.includes('Running') ? 'running' : 'ready';
-          console.log(
-            `${status === 'running' ? '✅' : '⚠️'} Status:    ${status}`,
-          );
-        } catch {
-          console.log('❌ Status:    not installed');
-        }
-      } else if (hasWindowsAutoStart) {
-        console.log('Service: Windows AutoStart');
-        console.log('⚠️ Status:    installed via HKCU Run or Startup folder');
-      } else if (existsSync(pidFile)) {
-        const pid = fs.readFileSync(pidFile, 'utf-8').trim();
+      if (existsSync(pidFile)) {
+        pid = fs.readFileSync(pidFile, 'utf-8').trim();
         try {
           process.kill(parseInt(pid), 0);
-          // Get uptime from pid file mtime
-          try {
-            const pidStat = fs.statSync(pidFile);
-            const elapsed = Date.now() - pidStat.mtimeMs;
-            const hours = Math.floor(elapsed / 3600000);
-            const mins = Math.floor((elapsed % 3600000) / 60000);
-            uptimeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
-          } catch {
-            /* */
-          }
-          console.log(
-            `✅ Status:    running (pid: ${pid}, PID mode${uptimeStr ? `, uptime: ${uptimeStr}` : ''})`,
-          );
+          running = true;
+          // Uptime from PID file mtime
+          const pidStat = fs.statSync(pidFile);
+          const elapsed = Date.now() - pidStat.mtimeMs;
+          const hours = Math.floor(elapsed / 3600000);
+          const mins = Math.floor((elapsed % 3600000) / 60000);
+          uptimeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
         } catch {
-          console.log('❌ Status:    not running (stale pid file)');
+          running = false;
         }
-      } else {
-        console.log('❌ Status:    not running');
-        console.log('  Run: nanoclaw start');
       }
 
-      // Common info
-      console.log(`✅ Workspace: ${ws}`);
-      console.log(`✅ Config:    ${join(ws, 'nanoclaw.json')}`);
-      console.log(`${existsSync(logFile) ? '✅' : '❌'} Logs:      ${logFile}`);
+      // Auth status
+      const token = resolveGithubToken();
+      const hasAuth = !!token || isCopilotAuthenticated();
+      const authPrefix = token ? token.substring(0, 4) + '****' : '';
 
-      // Show config summary
-      let provider = 'github-copilot';
-      try {
-        const { loadConfig } = await import('./config-loader.js');
-        const config = loadConfig();
-        const agent = config.agents?.defaults;
-        provider =
-          (agent as any)?.provider ||
-          (agent?.model?.includes('/')
-            ? agent.model.split('/')[0]
-            : 'github-copilot');
-        const modelShort = agent?.model || 'unknown';
-        const providerStr =
-          provider === 'github-copilot'
-            ? 'GHC'
-            : provider === 'claude'
-              ? 'CC'
-              : provider;
-        console.log(
-          `✅ Agent:     ${agent?.name || 'Andy'} (${providerStr}/${modelShort}, ${agent?.mode || 'sandbox'})`,
-        );
-        if (agent?.thinkLevel) console.log(`✅ Think:     ${agent.thinkLevel}`);
-        const channels = Object.entries(config.channels || {})
-          .filter(([, v]: [string, any]) => v?.enabled)
-          .map(([k]) => k);
-        console.log(
-          `${channels.length > 0 ? '✅' : '❌'} Channels:  ${channels.length > 0 ? channels.join(', ') : 'none enabled'}`,
-        );
-        const chatCount = Object.keys(config.chats || {}).length;
-        console.log(
-          `${chatCount > 0 ? '✅' : '⚠️'} Chats:     ${chatCount} registered`,
-        );
-      } catch {
-        /* config not available */
+      // Channels
+      const channels: string[] = [];
+      if (cfg.channels?.telegram?.enabled) channels.push('telegram');
+      if (cfg.channels?.teams?.enabled) channels.push('teams');
+      if (cfg.channels?.discord?.enabled) channels.push('discord');
+
+      // Chat count
+      const chatCount = Object.values(cfg.chats || {}).reduce(
+        (sum: number, arr: any) => sum + (Array.isArray(arr) ? arr.length : 0),
+        0,
+      );
+
+      // DevTunnel
+      const dtPidFile = join(ws, 'devtunnel.pid');
+      let tunnelRunning = false;
+      if (existsSync(dtPidFile)) {
+        try {
+          process.kill(parseInt(fs.readFileSync(dtPidFile, 'utf-8').trim()), 0);
+          tunnelRunning = true;
+        } catch { /* dead */ }
       }
 
-      // Auth status — provider-aware
-      try {
-        const isCC = provider === 'claude' || provider === 'anthropic';
-        if (isCC) {
-          // Check Claude Code auth: CLI first, then file fallback
-          let ccAuth = false;
-          let ccAuthInfo = '';
-          // 1. Try CLI (most accurate)
-          try {
-            const out = execSync('claude auth status --text', {
-              encoding: 'utf-8',
-              stdio: ['pipe', 'pipe', 'pipe'],
-              timeout: 5000,
-            }).trim();
-            ccAuth = true;
-            ccAuthInfo = out.split('\n')[0] || 'authenticated';
-          } catch {
-            // 2. Check env vars
-            const envToken =
-              process.env.ANTHROPIC_API_KEY ||
-              process.env.ANTHROPIC_AUTH_TOKEN ||
-              process.env.CLAUDE_CODE_OAUTH_TOKEN;
-            if (envToken) {
-              ccAuth = true;
-              ccAuthInfo = `env: ${envToken.substring(0, 4)}****`;
-            } else {
-              // 3. Check credentials file
-              const credsFile = join(
-                os.homedir(),
-                '.claude',
-                '.credentials.json',
-              );
-              try {
-                if (existsSync(credsFile)) {
-                  const creds = JSON.parse(fs.readFileSync(credsFile, 'utf-8'));
-                  const token = creds?.claudeAiOauth?.accessToken || '';
-                  if (token) {
-                    ccAuth = true;
-                    ccAuthInfo = `${token.substring(0, 6)}****`;
-                  }
-                }
-              } catch {
-                /* */
-              }
-              // 4. macOS Keychain
-              if (
-                !ccAuth &&
-                process.platform === 'darwin' &&
-                existsSync(join(os.homedir(), '.claude'))
-              ) {
-                ccAuth = true;
-                ccAuthInfo = 'macOS Keychain';
-              }
-            }
-          }
-          console.log(
-            `${ccAuth ? '\u2705' : '\u274c'} Auth:      ${ccAuth ? `Claude Code (${ccAuthInfo})` : 'No Claude auth \u2014 run: claude login'}`,
-          );
-        } else {
-          const { resolveGithubToken, isCopilotAuthenticated } =
-            await import('./config-extensions.js');
-          const token = resolveGithubToken();
-          const cliAuth = !token ? isCopilotAuthenticated() : false;
-          if (token) {
-            console.log(
-              `✅ Auth:      GitHub Copilot (${token.substring(0, 4)}****)`,
-            );
-          } else if (cliAuth) {
-            console.log(
-              `✅ Auth:      GitHub Copilot (via CLI credential manager)`,
-            );
-          } else {
-            console.log(
-              `❌ Auth:      No token — run: copilot login  (or: nanoclaw provider login)`,
-            );
-            console.log(
-              '   Checked: env vars, ~/.openclaw auth, ~/.copilot/, credential manager',
-            );
-          }
-        }
-      } catch {
-        /* */
+      // Output
+      console.log(`\n🤖 NanoClaw ${require('../package.json').version}`);
+      console.log(`${running ? '✅' : '❌'} Status:    ${running ? `running (pid: ${pid}, uptime: ${uptimeStr})` : 'not running'}`);
+      console.log(`🧠 Model:     ${model}${thinkLevel ? ` (think: ${thinkLevel})` : ''}${showThinking ? ' [reasoning visible]' : ''} [${mode}]`);
+      console.log(`👤 Agent:     ${name} (${provider})`);
+      console.log(`🔑 Auth:      ${hasAuth ? `✅ ${provider}${authPrefix ? ` (${authPrefix})` : ''}` : '❌ not configured'}`);
+      console.log(`📡 Channels:  ${channels.length > 0 ? channels.join(', ') : 'none'}`);
+      console.log(`💬 Chats:     ${chatCount} registered`);
+      if (tunnelRunning) {
+        console.log(`🌐 Tunnel:    running`);
       }
-
-      // Last log activity
-      try {
-        if (existsSync(logFile)) {
-          const logStat = fs.statSync(logFile);
-          const ago = Date.now() - logStat.mtimeMs;
-          const agoMins = Math.floor(ago / 60000);
-          const agoStr =
-            agoMins < 1
-              ? 'just now'
-              : agoMins < 60
-                ? `${agoMins}m ago`
-                : `${Math.floor(agoMins / 60)}h ${agoMins % 60}m ago`;
-          console.log(`✅ Activity:  ${agoStr}`);
-        }
-      } catch {
-        /* */
-      }
-
-      // Services & Addons detection
+      console.log(`📁 Workspace: ${ws}`);
+      console.log(`📝 Logs:      ${logFile}`);
       console.log('');
-      // Check nanoclaw service
-      if (hasSystemd) {
-        try {
-          const svcPid = execSync(
-            `systemctl --user show ${SERVICE_NAME} -p MainPID --value`,
-            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-          ).trim();
-          console.log(`✅ Service:   nanoclaw via systemd (pid: ${svcPid})`);
-        } catch {
-          console.log('✅ Service:   nanoclaw via systemd');
-        }
-        console.log(`   Logs: journalctl --user -u ${SERVICE_NAME} -f`);
-      } else if (hasSchedTask) {
-        let svcPid = '';
-        try {
-          const wmic = execSync(
-            'wmic process where "CommandLine like \'%nanoclaw%start%\'" get ProcessId /format:value',
-            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-          ).trim();
-          const m = wmic.match(/ProcessId=(\d+)/);
-          if (m) svcPid = m[1];
-        } catch {
-          /* */
-        }
-        console.log(
-          `✅ Service:   nanoclaw via scheduled task${svcPid ? ` (pid: ${svcPid})` : ''}`,
-        );
-        console.log(
-          `   Details: schtasks /Query /TN "${SERVICE_NAME}" /FO LIST /V`,
-        );
-      } else if (hasWindowsAutoStart) {
-        try {
-          execSync(
-            'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "nanoclaw"',
-            { stdio: 'pipe' },
-          );
-          console.log('✅ Service:   nanoclaw via HKCU Run key');
-        } catch {
-          console.log('✅ Service:   nanoclaw via Startup folder');
-        }
-      } else if (existsSync(pidFile)) {
-        const svcPid2 = fs.readFileSync(pidFile, 'utf-8').trim();
-        console.log(
-          `⚠️ Service:   nanoclaw PID mode (pid: ${svcPid2}, no auto-start)`,
-        );
-      } else {
-        console.log('ℹ️ Service:   nanoclaw not installed as service');
-        console.log('   Install: nanoclaw service install');
-      }
-      // Check devtunnel service
-      const dtTaskName = 'NanoClaw-DevTunnel';
-      if (process.platform === 'linux') {
-        try {
-          const dtActive = execSync(
-            `systemctl --user is-active devtunnel-nanoclaw`,
-            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-          ).trim();
-          console.log(`✅ Service:   devtunnel via systemd (${dtActive})`);
-          console.log('   Logs: systemctl --user status devtunnel-nanoclaw');
-        } catch {
-          console.log('ℹ️ Service:   devtunnel not installed');
-        }
-      } else if (process.platform === 'win32') {
-        try {
-          execSync(`schtasks /Query /TN "${dtTaskName}" /FO CSV /NH`, {
-            stdio: 'pipe',
-          });
-          console.log('✅ Service:   devtunnel via scheduled task');
-          console.log(
-            `   Details: schtasks /Query /TN "${dtTaskName}" /FO LIST /V`,
-          );
-        } catch {
-          try {
-            execSync(
-              `reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "${dtTaskName}"`,
-              { stdio: 'pipe' },
-            );
-            console.log('✅ Service:   devtunnel via HKCU Run key');
-          } catch {
-            const dtStartup = join(
-              os.homedir(),
-              'AppData',
-              'Roaming',
-              'Microsoft',
-              'Windows',
-              'Start Menu',
-              'Programs',
-              'Startup',
-              `${dtTaskName}.bat`,
-            );
-            if (existsSync(dtStartup)) {
-              console.log('✅ Service:   devtunnel via Startup folder');
-            } else {
-              console.log('ℹ️ Service:   devtunnel not installed');
-            }
-          }
-        }
-      }
 
-      break;
+            break;
     }
   }
 
