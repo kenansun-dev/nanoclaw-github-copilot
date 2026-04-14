@@ -5,7 +5,7 @@ set -euo pipefail
 # NanoClaw Copilot Edition — One-line Installer
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/kenansun-dev/nanoclaw-github-copilot/main/install.sh | bash
 #   # With local package:
 #   bash <(curl -fsSL https://raw.githubusercontent.com/.../install.sh) --package ./file.tgz
 #   # Or with local package:
@@ -22,7 +22,7 @@ set -euo pipefail
 PACKAGE_NAME="nanoclaw-github-copilot"
 LOCAL_PACKAGE=""
 MIN_NODE_VERSION=20
-REPO_URL="https://github.com/kenans/nanoclaw-github-copilot"
+REPO_URL="https://github.com/kenansun-dev/nanoclaw-github-copilot"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do

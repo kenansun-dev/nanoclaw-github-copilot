@@ -1,9 +1,9 @@
 # NanoClaw one-line installer for Windows
-# Usage: irm https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/install.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/kenansun-dev/nanoclaw-github-copilot/main/install.ps1 | iex
 #
 $Package = ""
 $Source = "auto"
-$REPO = "kenans/nanoclaw-github-copilot"
+$REPO = "kenansun-dev/nanoclaw-github-copilot"
 
 $ErrorActionPreference = "Stop"
 
