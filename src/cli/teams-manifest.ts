@@ -238,18 +238,8 @@ export async function setupManifest(
         ],
       },
     ],
-    permissions: ['identity', 'messageTeamMembers'],
-    validDomains: [],
-    // webApplicationInfo omitted — not needed for basic bot, and causes
-    // "must come from same organization" error in cross-tenant installs
-    authorization: {
-      permissions: {
-        resourceSpecific: [
-          { name: 'ChatMessage.Read.Chat', type: 'Application' },
-          { name: 'ChannelMessage.Read.Group', type: 'Application' },
-        ],
-      },
-    },
+    // Keep manifest minimal for cross-tenant compatibility
+    // webApplicationInfo, permissions, validDomains, authorization omitted
   };
 
   // Icons: use custom icons from workspace if available, otherwise generate placeholders
