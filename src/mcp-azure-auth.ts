@@ -248,13 +248,12 @@ async function tryAzLogin(
     });
 
     // After 5 seconds, if we have device code output, return it for LLM
-    // while keeping az login running in background
     setTimeout(() => {
       if (!resolved && output.includes('http')) {
         resolved = true;
-        // Return the prompt to LLM, az login continues in background
         resolve({ token: null, loginPrompt: output.trim() });
-        // When child completes later, we ignore it (resolved = true)
+        // Kill the az login process — LLM will guide user, not us
+        try { child.kill(); } catch { /* */ }
       }
     }, 5000);
   });
@@ -280,13 +279,11 @@ async function builtinDeviceCodeFlow(
   }
 
   // Print prompt (for CLI/TUI mode)
-  console.log(`\n🔑 MCP Auth Required`);
-  console.log(`   Code: ${deviceResp.user_code}`);
-  console.log(`   URL:  ${deviceResp.verification_uri}`);
+  logger.info('MCP Auth Required');
+  logger.info({ code: deviceResp.user_code, url: deviceResp.verification_uri }, 'MCP device code flow started');
   if (deviceResp.verification_uri_complete) {
-    console.log(`   Or:   ${deviceResp.verification_uri_complete}`);
   }
-  console.log(`   Waiting for authorization...\n`);
+  ;
 
   // Poll for token
   const interval = (deviceResp.interval || 5) * 1000;
@@ -303,7 +300,7 @@ async function builtinDeviceCodeFlow(
       });
 
       if (tokenResp.access_token) {
-        console.log('   ✅ Authorized!\n');
+        logger.info('MCP auth authorized');
         return {
           access_token: tokenResp.access_token,
           refresh_token: tokenResp.refresh_token,
@@ -444,7 +441,7 @@ export async function testMcpAuth(serverName: string): Promise<void> {
 
   if (result.token) {
     console.log(`✅ Token acquired via ${result.method}`);
-    console.log(`   Token: ${result.token.substring(0, 20)}... (${result.token.length} chars)`);
+    console.log(`   Token: ${result.token.substring(0, 8) + '****'}... (${result.token.length} chars)`);
   } else {
     console.log(`❌ Token not acquired`);
     if (result.loginPrompt) {
