@@ -311,16 +311,23 @@ async function channelAdd(
   // Teams with --setup-manifest: only generate Teams App manifest zip
   if (channelName === 'teams' && flags.setupManifest) {
     const cfg = loadConfig();
-    const appId =
-      cfg.channels.teams.accounts?.default?.appId || cfg.channels.teams.appId;
+    const teamsAccounts = cfg.channels?.teams?.accounts || {};
+    const accountKey = accountId || 'default';
+    const account = teamsAccounts[accountKey] || teamsAccounts.default;
+    const appId = account?.appId || cfg.channels?.teams?.appId;
     if (!appId) {
       console.error(
         'Error: appId required. Run --setup-app first or set it in config.',
       );
       return;
     }
+    // Name priority: account.name → agent.name → agents.defaults.name → 'Nanoclaw'
     const agent = resolveAgent(cfg, agentId);
-    const botName = agent.name || cfg.agents?.defaults?.name || 'Nanoclaw';
+    const botName =
+      (account as any)?.name ||
+      agent.name ||
+      cfg.agents?.defaults?.name ||
+      'Nanoclaw';
     await setupManifest(appId, botName);
     return;
   }
