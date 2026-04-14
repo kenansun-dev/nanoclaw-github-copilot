@@ -73,7 +73,7 @@ function formatData(data: Record<string, unknown>, useColor: boolean): string {
         ? `\n    ${KEY_COLOR}err${RESET}: ${errText}`
         : `\n    err: ${errText}`;
     } else {
-      const raw = typeof v === 'string' ? v : (JSON.stringify(v) ?? 'undefined');
+      const raw = v == null ? '' : typeof v === 'string' ? v : JSON.stringify(v);
       const val = scrubTokens(raw);
       out += useColor
         ? ` ${KEY_COLOR}${k}${RESET}=${val}`
