@@ -76,20 +76,65 @@ External MCP servers loaded by the agent.
 ```json
 "mcp": {
   "servers": {
-    "my-server": {
+    "my-local-server": {
       "type": "local",
       "command": "node",
       "args": ["path/to/server.js"],
+      "tools": ["*"]
+    },
+    "my-remote-server": {
+      "type": "http",
+      "url": "https://my-server.com/mcp",
+      "headers": { "X-Custom": "value" },
       "tools": ["*"]
     }
   }
 }
 ```
 
+**Server types:**
+- `local` — stdio subprocess (command + args)
+- `http` — remote HTTP/SSE server (url + headers)
+
 Built-in MCP servers (auto-discovered from `mcp-servers/` directory):
 - `nanoclaw` — IPC tools (send_message, send_file, react, schedule_task, etc.)
 - `nanoclaw-pdf` — PDF reader (read_pdf)
 - GitHub MCP — web_search, issues, PRs (enabled via `githubMcp: true`)
+
+#### Remote MCP with Azure AD auth
+
+For remote MCP servers that require Azure AD (Entra ID) authentication, add an `auth` block:
+
+```json
+"mcp": {
+  "servers": {
+    "devbox": {
+      "type": "http",
+      "url": "https://devbox.microsoft.com/mcp",
+      "auth": {
+        "provider": "azure",
+        "resource": "https://devbox.microsoft.com"
+      }
+    }
+  }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `auth.provider` | (required) | Only `"azure"` supported |
+| `auth.resource` | (required) | AAD resource identifier |
+| `auth.tenantId` | `"organizations"` | AAD tenant (optional) |
+| `auth.scope` | `"{resource}/.default"` | OAuth scope (optional) |
+
+**Token acquisition priority:**
+1. Cached valid token (`~/.nanoclaw/credentials/mcp-tokens.json`)
+2. Refresh token (automatic renewal)
+3. `az account get-access-token` (if `az` CLI installed and logged in)
+4. `az login --use-device-code` (output returned to agent/user)
+5. Built-in device code flow (fallback when `az` not installed)
+
+Test auth: `node -e "import('./dist/mcp-azure-auth.js').then(m => m.testMcpAuth('devbox'))"`
 
 ### chats
 

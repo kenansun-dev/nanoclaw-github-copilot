@@ -127,6 +127,25 @@ NanoClaw resolves GitHub tokens in this priority:
 
 To login: `nanoclaw provider login` or `copilot auth login`
 
+## Remote MCP with Azure AD auth
+
+Remote MCP servers that require Azure AD authentication can be configured with an `auth` block in `nanoclaw.json` or `mcp.json`:
+
+```json
+"devbox": {
+  "type": "http",
+  "url": "https://devbox.microsoft.com/mcp",
+  "auth": {
+    "provider": "azure",
+    "resource": "https://devbox.microsoft.com"
+  }
+}
+```
+
+Token acquisition: cached token → refresh → `az account get-access-token` → `az login --use-device-code` → built-in device code flow.
+
+If auth is needed and the user hasn't logged in, the agent will receive a `loginPrompt` with instructions to guide the user.
+
 ## Plugin system
 
 NanoClaw supports plugins (dual manifest for GHC + CC compatibility):
