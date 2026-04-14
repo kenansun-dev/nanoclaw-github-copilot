@@ -716,7 +716,7 @@ async function runService(action: string) {
           `⚠️ Service:   nanoclaw PID mode (pid: ${svcPid2}, no auto-start)`,
         );
       } else {
-        console.log('❌ Service:   nanoclaw not installed');
+        console.log('ℹ️ Service:   nanoclaw not installed as service');
         console.log('   Install: nanoclaw service install');
       }
       // Check devtunnel service
@@ -730,7 +730,7 @@ async function runService(action: string) {
           console.log(`✅ Service:   devtunnel via systemd (${dtActive})`);
           console.log('   Logs: systemctl --user status devtunnel-nanoclaw');
         } catch {
-          console.log('❌ Service:   devtunnel not installed');
+          console.log('ℹ️ Service:   devtunnel not installed');
         }
       } else if (process.platform === 'win32') {
         try {
@@ -763,7 +763,7 @@ async function runService(action: string) {
             if (existsSync(dtStartup)) {
               console.log('✅ Service:   devtunnel via Startup folder');
             } else {
-              console.log('❌ Service:   devtunnel not installed');
+              console.log('ℹ️ Service:   devtunnel not installed');
             }
           }
         }

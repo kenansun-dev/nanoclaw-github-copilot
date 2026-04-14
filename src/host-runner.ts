@@ -162,7 +162,7 @@ export async function runHostAgent(
     const configFile = path.join(sessionDir, 'config.json');
     if (!fs.existsSync(configFile)) {
       const hostCopilotConfig = path.join(
-        process.env.HOME || '/root',
+        process.env.HOME || process.env.USERPROFILE || os.homedir(),
         '.copilot',
         'config.json',
       );
@@ -194,7 +194,7 @@ export async function runHostAgent(
     TZ: TIMEZONE,
     // Override paths that agent-runner expects (container paths → host paths)
     NANOCLAW_HOST_MODE: '1',
-    HOME: process.env.HOME || '/root',
+    HOME: process.env.HOME || process.env.USERPROFILE || os.homedir(),
   };
 
   // Auth token
@@ -210,8 +210,9 @@ export async function runHostAgent(
     if (agent.thinkLevel) {
       env.COPILOT_THINK_LEVEL = agent.thinkLevel;
     }
-    // Point GHC CLI to nanoclaw-managed config directory
-    env.COPILOT_HOME = sessionDir;
+    // Pass session config dir without overriding COPILOT_HOME
+    // (COPILOT_HOME would make CLI look for credentials in sessionDir instead of ~/.copilot)
+    env.NANOCLAW_CONFIG_DIR = sessionDir;
     // Enable GitHub MCP server (web_search, issues, PRs, etc.) — default true for GHC
     if (agent.githubMcp !== false) {
       env.NANOCLAW_GITHUB_MCP = '1';

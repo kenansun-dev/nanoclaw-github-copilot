@@ -20,15 +20,34 @@ export async function runTui(_args: string[]): Promise<void> {
   // Parse --ask flag for non-interactive single query
   const askIdx = _args.indexOf('--ask');
   if (askIdx !== -1) {
-    const query = _args
-      .slice(askIdx + 1)
-      .join(' ')
-      .trim();
+    // Extract --model and --think from all args
+    let model: string | undefined;
+    let think: string | undefined;
+    const filtered: string[] = [];
+    let foundAsk = false;
+    for (let i = 0; i < _args.length; i++) {
+      if (_args[i] === '--ask') {
+        foundAsk = true;
+        continue;
+      }
+      if (_args[i] === '--model' && i + 1 < _args.length) {
+        model = _args[++i];
+        continue;
+      }
+      if (_args[i] === '--think' && i + 1 < _args.length) {
+        think = _args[++i];
+        continue;
+      }
+      if (foundAsk) filtered.push(_args[i]);
+    }
+    const query = filtered.join(' ').trim();
     if (!query) {
-      console.error('Usage: nanoclaw tui --ask "your question"');
+      console.error(
+        'Usage: nanoclaw tui --ask "your question" [--model <model>] [--think <level>]',
+      );
       process.exit(1);
     }
-    return runTuiAsk(query);
+    return runTuiAsk(query, { model, think });
   }
 
   const config = loadConfig();
@@ -165,12 +184,24 @@ export async function runTui(_args: string[]): Promise<void> {
     }
   }
 
-  // Ctrl+C
+  // Ctrl+C — first press cancels waiting, second press exits
+  let sigintCount = 0;
   process.on('SIGINT', () => {
+    sigintCount++;
+    if (sigintCount >= 2) {
+      // Force exit on double Ctrl-C
+      console.log('\nForce exit.\n');
+      socket?.destroy();
+      rl.close();
+      process.exit(0);
+    }
     if (waitingForReply) {
       stopSpinner();
       waitingForReply = false;
+      rl.resume();
       console.log('\n⏹ Cancelled.\n');
+      // Reset count after cancel so next single Ctrl-C exits cleanly
+      setTimeout(() => { sigintCount = 0; }, 1000);
     } else {
       console.log('\nBye 👋\n');
       socket?.destroy();
@@ -231,7 +262,19 @@ export async function runTui(_args: string[]): Promise<void> {
 
     // Send message to service
     waitingForReply = true;
+    rl.pause();
     socket.write(JSON.stringify({ type: 'message', text: trimmed }) + '\n');
+
+    // Wait for reply before showing next prompt
+    await new Promise<void>((resolve) => {
+      const check = setInterval(() => {
+        if (!waitingForReply) {
+          clearInterval(check);
+          rl.resume();
+          resolve();
+        }
+      }, 100);
+    });
   }
 }
 
@@ -254,8 +297,14 @@ function connectToService(sockPath: string): Promise<net.Socket> {
 
 // ─── Non-interactive single query mode ───────────────────────────────────────
 
-async function runTuiAsk(query: string): Promise<void> {
+async function runTuiAsk(
+  query: string,
+  opts?: { model?: string; think?: string },
+): Promise<void> {
   // Always use direct mode for --ask (skip socket)
   const { runTuiDirect } = await import('./tui-direct.js');
-  return runTuiDirect(['--query', query]);
+  const args = ['--query', query];
+  if (opts?.model) args.push('--model', opts.model);
+  if (opts?.think) args.push('--think', opts.think);
+  return runTuiDirect(args);
 }

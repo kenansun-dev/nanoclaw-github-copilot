@@ -96,104 +96,30 @@ export function getAgentProvider(agent: AgentConfig): string {
 // ─── Token resolution ────────────────────────────────────────────────────────
 
 export function resolveGithubToken(): string | undefined {
+  // 1. Explicit env vars (highest priority)
   const envToken =
     process.env.COPILOT_GITHUB_TOKEN ||
     process.env.GH_TOKEN ||
     process.env.GITHUB_TOKEN;
   if (envToken) return envToken;
 
+  // 2. GHC CLI config.json → copilot_tokens field
+  // Only read from CLI directories, NOT VS Code extension directories
   const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
-
-  // Check OpenClaw auth profiles
-  try {
-    const profilePath = path.join(
-      home,
-      '.openclaw/agents/main/agent/auth-profiles.json',
-    );
-    if (fs.existsSync(profilePath)) {
-      const profiles = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
-      for (const [, profile] of Object.entries(profiles.profiles || {})) {
-        const p = profile as { provider?: string; token?: string };
-        if (p.provider === 'github-copilot' && p.token) return p.token;
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-
-  // Check ~/.copilot/ (GHC CLI's own auth storage from 'copilot auth login')
-  // Also check ~/.config/github-copilot/ (some CLI versions use this)
-  // NOTE: copilot CLI primarily stores tokens in the OS credential manager
-  // (Windows Credential Manager / macOS Keychain / Linux keyring).
-  // File-based storage is only used as fallback.
-  const copilotAuthDirs = [
-    path.join(home, '.copilot'),
-    path.join(home, '.config', 'github-copilot'),
-    path.join(home, 'AppData', 'Local', 'github-copilot'),
-    path.join(home, 'AppData', 'Roaming', 'github-copilot'),
+  const copilotConfigPaths = [
+    path.join(home, '.copilot', 'config.json'),
+    path.join(home, '.config', 'github-copilot', 'config.json'),
   ];
-  for (const copilotDir of copilotAuthDirs) {
+  for (const configFile of copilotConfigPaths) {
     try {
-      if (!fs.existsSync(copilotDir)) continue;
-      // Try config.json — copilot CLI stores tokens here
-      const configFile = path.join(copilotDir, 'config.json');
-      if (fs.existsSync(configFile)) {
-        const config = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
-        // copilot_tokens: { "https://github.com:user": "gho_xxx" }
-        if (
-          config.copilot_tokens &&
-          typeof config.copilot_tokens === 'object'
-        ) {
-          for (const [, token] of Object.entries(config.copilot_tokens)) {
-            if (typeof token === 'string' && token.length > 4) return token;
-          }
-        }
-        if (config.oauth_token) return config.oauth_token;
-        if (config.token) return config.token;
-        if (config.github_token) return config.github_token;
-      }
-      // Try hosts.json (older CLI versions)
-      const hostsFile = path.join(copilotDir, 'hosts.json');
-      if (fs.existsSync(hostsFile)) {
-        const hosts = JSON.parse(fs.readFileSync(hostsFile, 'utf-8'));
-        for (const [, hostData] of Object.entries(hosts)) {
-          const h = hostData as { oauth_token?: string; token?: string };
-          if (h.oauth_token) return h.oauth_token;
-          if (h.token) return h.token;
-        }
-      }
-      // Try apps.json (newer CLI versions)
-      const appsFile = path.join(copilotDir, 'apps.json');
-      if (fs.existsSync(appsFile)) {
-        const apps = JSON.parse(fs.readFileSync(appsFile, 'utf-8'));
-        for (const [, appData] of Object.entries(apps)) {
-          const a = appData as { oauth_token?: string; token?: string };
-          if (a.oauth_token) return a.oauth_token;
-          if (a.token) return a.token;
-        }
-      }
-      // Try any .json file that might contain a token
-      for (const file of fs.readdirSync(copilotDir)) {
-        if (!file.endsWith('.json')) continue;
-        if (['hosts.json', 'apps.json', 'config.json'].includes(file)) continue;
-        try {
-          const data = JSON.parse(
-            fs.readFileSync(path.join(copilotDir, file), 'utf-8'),
-          );
-          if (typeof data === 'object' && data !== null) {
-            for (const [, val] of Object.entries(data)) {
-              const v = val as any;
-              if (v?.oauth_token) return v.oauth_token;
-              if (
-                v?.token &&
-                typeof v.token === 'string' &&
-                v.token.startsWith('ghu_')
-              )
-                return v.token;
-            }
-          }
-        } catch {
-          /* skip unparseable files */
+      if (!fs.existsSync(configFile)) continue;
+      const config = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
+      if (
+        config.copilot_tokens &&
+        typeof config.copilot_tokens === 'object'
+      ) {
+        for (const [, token] of Object.entries(config.copilot_tokens)) {
+          if (typeof token === 'string' && token.length > 4) return token;
         }
       }
     } catch {
@@ -201,6 +127,7 @@ export function resolveGithubToken(): string | undefined {
     }
   }
 
+  // 3. Return undefined → let SDK use CLI managed auth (OS credential manager)
   return undefined;
 }
 

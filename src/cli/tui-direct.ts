@@ -5,6 +5,7 @@
  * Uses the same ContainerInput/Output protocol as host-runner.
  */
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import readline from 'readline';
 import { spawn, ChildProcess } from 'child_process';
@@ -32,6 +33,7 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  partial?: boolean;
   thinking?: string;
 }
 
@@ -46,9 +48,23 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
     queryIdx !== -1
       ? _args
           .slice(queryIdx + 1)
+          .filter((a) => a !== '--model' && a !== '--think')
+          .filter(
+            (a, i, arr) =>
+              !(
+                i > 0 &&
+                (arr[i - 1] === '--model' || arr[i - 1] === '--think')
+              ),
+          )
           .join(' ')
           .trim()
       : '';
+
+  // Parse --model and --think overrides
+  const modelIdx = _args.indexOf('--model');
+  const modelOverride = modelIdx !== -1 ? _args[modelIdx + 1] : undefined;
+  const thinkIdx = _args.indexOf('--think');
+  const thinkOverride = thinkIdx !== -1 ? _args[thinkIdx + 1] : undefined;
 
   const config = loadConfig();
   const agent = config.agents.defaults;
@@ -63,10 +79,14 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
   const ipcDir = path.join(ws, 'ipc', groupFolder);
   fs.mkdirSync(path.join(ipcDir, 'input'), { recursive: true });
 
-  // TUI config overrides agent defaults
+  // TUI config overrides agent defaults; CLI args override everything
   const assistantName = tuiCfg.name || agent.name || 'Nanoclaw';
-  const model = tuiCfg.model || agent.model || 'github-copilot/claude-sonnet-4';
-  const thinkLevel = tuiCfg.thinkLevel || agent.thinkLevel;
+  const model =
+    modelOverride ||
+    tuiCfg.model ||
+    agent.model ||
+    'github-copilot/claude-sonnet-4';
+  const thinkLevel = thinkOverride || tuiCfg.thinkLevel || agent.thinkLevel;
   const mode = tuiCfg.mode || agent.mode || 'host';
 
   if (!singleQuery) {
@@ -88,8 +108,15 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
   let sessionId: string | undefined;
   let activeChild: ChildProcess | null = null;
 
-  // Ctrl+C: kill active query or exit
+  // Ctrl+C: kill active query or exit. Double Ctrl-C force exits.
+  let sigintCount = 0;
   process.on('SIGINT', () => {
+    sigintCount++;
+    if (sigintCount >= 2) {
+      console.log('\nForce exit.\n');
+      rl?.close();
+      process.exit(0);
+    }
     if (activeChild && !activeChild.killed) {
       console.log('\n⏹ Cancelled.');
       try {
@@ -98,6 +125,7 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
         activeChild.kill('SIGTERM');
       }
       activeChild = null;
+      setTimeout(() => { sigintCount = 0; }, 1000);
     } else {
       console.log('\nBye 👋\n');
       rl?.close();
@@ -107,7 +135,8 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
 
   const prompt = (): Promise<string> =>
     new Promise((resolve) => {
-      rl!.question('\x1b[36myou>\x1b[0m ', (answer) => resolve(answer));
+      process.stdout.write('\x1b[36myou>\x1b[0m ');
+      rl!.once('line', (answer) => resolve(answer));
     });
 
   // Single query mode: skip interactive loop
@@ -198,6 +227,9 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
       continue;
     }
 
+    // Pause readline during query (spinner interferes with readline prompt)
+    rl?.pause();
+
     // Send to agent
     const result = await runQuery({
       prompt: trimmed,
@@ -226,6 +258,9 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
     } else {
       console.log(''); // blank line after no-result success
     }
+
+    // Resume readline AFTER printing result
+    rl?.resume();
   }
 }
 
@@ -274,7 +309,7 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
     NANOCLAW_HOST_MODE: '1',
     NANOCLAW_IPC_DIR: path.join(opts.ipcDir, 'input'),
     NANOCLAW_WORK_DIR: opts.groupDir,
-    HOME: process.env.HOME || '/root',
+    HOME: process.env.HOME || process.env.USERPROFILE || os.homedir(),
   };
 
   if (isGHC) {
@@ -437,6 +472,13 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
 
         try {
           const output: ContainerOutput = JSON.parse(jsonStr);
+          // Skip partial/thinking-only outputs — wait for final result
+          if (
+            output.partial ||
+            (output.status === 'thinking' && !output.result)
+          ) {
+            continue;
+          }
           hadOutput = true;
           finish(output);
         } catch {

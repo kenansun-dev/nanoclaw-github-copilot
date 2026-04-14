@@ -57,9 +57,8 @@ const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
 function writeOutput(output: ContainerOutput): void {
-  console.log(OUTPUT_START_MARKER);
-  console.log(JSON.stringify(output));
-  console.log(OUTPUT_END_MARKER);
+  const text = `${OUTPUT_START_MARKER}\n${JSON.stringify(output)}\n${OUTPUT_END_MARKER}\n`;
+  process.stdout.write(text);
 }
 
 function log(message: string): void {
@@ -292,7 +291,7 @@ async function main(): Promise<void> {
   }
 
   // Initialize Copilot SDK client with explicit token if available.
-  // Priority: env vars > OpenClaw auth profile > useLoggedInUser (CLI managed auth).
+  // Priority: env vars > useLoggedInUser (CLI managed auth).
   function resolveGithubToken(): string | undefined {
     // 1. Explicit env vars (highest priority)
     const envToken = process.env.COPILOT_GITHUB_TOKEN
@@ -303,29 +302,7 @@ async function main(): Promise<void> {
       return envToken;
     }
 
-    // 2. OpenClaw auth profile (no keychain needed)
-    const openclawPaths = [
-      path.join(process.env.HOME || '/root', '.openclaw/agents/main/agent/auth-profiles.json'),
-    ];
-    for (const profilePath of openclawPaths) {
-      try {
-        if (fs.existsSync(profilePath)) {
-          const profiles = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
-          // Find any github-copilot profile with a token
-          for (const [key, profile] of Object.entries(profiles.profiles || {})) {
-            const p = profile as { type?: string; provider?: string; token?: string };
-            if (p.provider === 'github-copilot' && p.token) {
-              log(`Using GitHub token from OpenClaw auth profile: ${key}`);
-              return p.token;
-            }
-          }
-        }
-      } catch (err) {
-        log(`Failed to read OpenClaw auth profile at ${profilePath}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-
-    // 3. Fall back to useLoggedInUser (CLI managed auth)
+    // 2. Fall back to useLoggedInUser (CLI managed auth)
     log('No explicit token found, falling back to CLI managed auth');
     return undefined;
   }
@@ -371,8 +348,9 @@ async function main(): Promise<void> {
       const sessionConfig = {
         model,
         ...(thinkLevel ? { reasoningEffort: thinkLevel as any } : {}),
-        // Use nanoclaw-managed config directory (set via COPILOT_HOME env)
-        ...(process.env.COPILOT_HOME ? { configDir: process.env.COPILOT_HOME } : {}),
+        // Don't pass configDir — it makes the CLI look for credentials in sessionDir
+        // instead of ~/.copilot/, breaking auth on Windows.
+        // webSearch is enabled via the copilot config.json that host-runner copies to sessionDir.
         systemMessage,
         workingDirectory: process.env.NANOCLAW_WORK_DIR || '/workspace/group',
         onPermissionRequest: approveAll,
@@ -486,32 +464,47 @@ async function main(): Promise<void> {
           }
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
-          log(`Failed to resume session ${sessionId}, creating new: ${errMsg}`);
-          // If model doesn't support reasoningEffort, retry without it
-          const createConfig = errMsg.includes('reasoning') || errMsg.includes('reasoningEffort')
-            ? { ...sessionConfig, reasoningEffort: undefined }
-            : sessionConfig;
-          try {
-            session = await client.createSession({
-              ...createConfig,
-              sessionId: randomUUID(),
-            });
-          } catch (createErr) {
-            // Retry without reasoningEffort as last resort
-            const createErrMsg = createErr instanceof Error ? createErr.message : String(createErr);
-            if (createErrMsg.includes('reasoning') && createConfig.reasoningEffort) {
-              log(`Model does not support reasoningEffort, retrying without it`);
+          // If reasoningEffort caused the resume failure, retry without it
+          if ((errMsg.includes('reasoning') || errMsg.includes('reasoningEffort')) && sessionConfig.reasoningEffort) {
+            log(`Resume failed due to reasoningEffort, retrying without it`);
+            try {
+              session = await client.resumeSession(sessionId, { ...sessionConfig, reasoningEffort: undefined });
+              try { await session.rpc.mcp.reload(); } catch {}
+              log(`Resumed session without reasoningEffort: ${sessionId}`);
+            } catch (retryErr) {
+              const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+              log(`Failed to resume session ${sessionId}, creating new: ${retryMsg}`);
+              session = null;
+              sessionId = undefined;
+            }
+          } else {
+            log(`Failed to resume session ${sessionId}, creating new: ${errMsg}`);
+            // If model doesn't support reasoningEffort, retry without it
+            const createConfig = errMsg.includes('reasoning') || errMsg.includes('reasoningEffort')
+              ? { ...sessionConfig, reasoningEffort: undefined }
+              : sessionConfig;
+            try {
               session = await client.createSession({
-                ...sessionConfig,
-                reasoningEffort: undefined,
+                ...createConfig,
                 sessionId: randomUUID(),
               });
-            } else {
-              throw createErr;
+            } catch (createErr) {
+              // Retry without reasoningEffort as last resort
+              const createErrMsg = createErr instanceof Error ? createErr.message : String(createErr);
+              if (createErrMsg.includes('reasoning') && createConfig.reasoningEffort) {
+                log(`Model does not support reasoningEffort, retrying without it`);
+                session = await client.createSession({
+                  ...sessionConfig,
+                  reasoningEffort: undefined,
+                  sessionId: randomUUID(),
+                });
+              } else {
+                throw createErr;
+              }
             }
+            sessionId = session.sessionId;
+            log(`New session created: ${sessionId}`);
           }
-          sessionId = session.sessionId;
-          log(`New session created: ${sessionId}`);
         }
       } else {
                 // Create new session (first time)

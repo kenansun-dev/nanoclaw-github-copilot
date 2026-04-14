@@ -173,7 +173,7 @@ function buildVolumeMounts(
     if (!fs.existsSync(configFile)) {
       // Copy auth credentials from host's ~/.copilot/config.json if available
       const hostCopilotConfig = path.join(
-        process.env.HOME || '/root',
+        process.env.HOME || process.env.USERPROFILE || os.homedir(),
         '.copilot',
         'config.json',
       );
