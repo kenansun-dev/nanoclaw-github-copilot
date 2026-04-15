@@ -123,19 +123,19 @@ function readWindowsCredential(): string | null {
 }
 
 /**
- * Read a single credential value from Windows Credential Manager using PowerShell.
+ * Read a single credential value from Windows Credential Manager.
+ * Uses the bundled read-credential.ps1 script.
  */
 function readSingleCredential(target: string): string | null {
   try {
-    // Use .NET interop via PowerShell to read credential blob
-    const psScript = `
-$code = 'using System; using System.Runtime.InteropServices; using System.Text; public class NcCR { [DllImport("advapi32.dll", SetLastError=true, CharSet=CharSet.Unicode)] static extern bool CredRead(string t, int ty, int f, out IntPtr c); [DllImport("advapi32.dll")] static extern void CredFree(IntPtr b); [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct CRED { public int F; public int T; public string TN; public string C; public long LW; public int CBS; public IntPtr CB; public int P; public int AC; public IntPtr A; public string TA; public string UN; } public static string Read(string t) { IntPtr p; if(!CredRead(t,1,0,out p)) return ""; var c=Marshal.PtrToStructure<CRED>(p); byte[] b=new byte[c.CBS]; Marshal.Copy(c.CB,b,0,c.CBS); CredFree(p); return Encoding.UTF8.GetString(b); } }'
-try { Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue } catch {}
-[NcCR]::Read('${target.replace(/'/g, "''")}')
-`.trim();
+    const scriptPath = path.join(
+      path.dirname(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'))),
+      'scripts',
+      'read-credential.ps1',
+    );
 
     const result = execSync(
-      `powershell -NoProfile -NonInteractive -Command "${psScript.replace(/"/g, '\\"')}"`,
+      `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" "${target}"`,
       {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
