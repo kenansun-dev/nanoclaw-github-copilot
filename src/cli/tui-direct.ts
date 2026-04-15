@@ -323,6 +323,12 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
 
     const thinkLevel = config.agents?.defaults?.thinkLevel;
     if (thinkLevel) env.COPILOT_THINK_LEVEL = thinkLevel;
+
+    // Enable GitHub MCP server (web_search, issues, PRs, etc.)
+    const agentConfig = config.agents?.defaults;
+    if (agentConfig?.githubMcp !== false) {
+      env.NANOCLAW_GITHUB_MCP = '1';
+    }
   }
 
   // Skills
