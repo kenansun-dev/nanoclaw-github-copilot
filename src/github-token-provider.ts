@@ -91,6 +91,7 @@ function readWindowsCredential(): string | null {
     // Discover available copilot-cli credentials
     try {
       const listOutput = execSync('cmdkey /list', {
+        windowsHide: true,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         timeout: 5000,
@@ -153,6 +154,7 @@ function readSingleCredential(target: string): string | null {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         timeout: 10000,
+        windowsHide: true,
       },
     ).trim();
 
