@@ -476,10 +476,15 @@ export function loadConfig(): NanoclawConfig {
       userConfig = JSON.parse(raw);
     }
   } catch (err) {
-    logger.warn(
+    logger.error(
       { err: err instanceof Error ? err.message : String(err) },
-      'Failed to read nanoclaw.json, using defaults',
+      'Failed to parse nanoclaw.json — refusing to start with corrupt config',
     );
+    console.error(
+      '\n  ❌ nanoclaw.json is invalid JSON. Fix the file manually before starting.\n' +
+        `  File: ${paths.config}\n`,
+    );
+    process.exit(1);
   }
 
   // Run config migrations

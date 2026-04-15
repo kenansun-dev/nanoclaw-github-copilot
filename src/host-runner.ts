@@ -218,7 +218,8 @@ export async function runHostAgent(
       env.NANOCLAW_GITHUB_MCP = '1';
     }
     // Enable MCP config discovery (reads ~/.mcp.json etc.)
-    const mcpDiscovery = (getConfig() as any).mcp?.enableConfigDiscovery ?? false;
+    const mcpDiscovery =
+      (getConfig() as any).mcp?.enableConfigDiscovery ?? false;
     if (mcpDiscovery) {
       env.NANOCLAW_MCP_DISCOVERY = '1';
     }
