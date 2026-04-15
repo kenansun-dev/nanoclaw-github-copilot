@@ -350,7 +350,8 @@ async function main(): Promise<void> {
         ...(thinkLevel ? { reasoningEffort: thinkLevel as any } : {}),
         // Don't pass configDir — it makes the CLI look for credentials in sessionDir
         // instead of ~/.copilot/, breaking auth on Windows.
-        // webSearch is enabled via the copilot config.json that host-runner copies to sessionDir.
+        // Enable config discovery so CLI reads ~/.mcp.json and other MCP configs
+        enableConfigDiscovery: true,
         systemMessage,
         workingDirectory: process.env.NANOCLAW_WORK_DIR || '/workspace/group',
         onPermissionRequest: approveAll,
