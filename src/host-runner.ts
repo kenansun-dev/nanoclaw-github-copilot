@@ -217,6 +217,11 @@ export async function runHostAgent(
     if (agent.githubMcp !== false) {
       env.NANOCLAW_GITHUB_MCP = '1';
     }
+    // Enable MCP config discovery (reads ~/.mcp.json etc.)
+    const mcpDiscovery = (getConfig() as any).mcp?.enableConfigDiscovery ?? false;
+    if (mcpDiscovery) {
+      env.NANOCLAW_MCP_DISCOVERY = '1';
+    }
   } else {
     // CC mode: uses Claude Agent SDK with native host auth (~/.claude/)
     // No token injection needed — CLI handles its own auth

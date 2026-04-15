@@ -351,7 +351,7 @@ async function main(): Promise<void> {
         // Don't pass configDir — it makes the CLI look for credentials in sessionDir
         // instead of ~/.copilot/, breaking auth on Windows.
         // Enable config discovery so CLI reads ~/.mcp.json and other MCP configs
-        enableConfigDiscovery: true,
+        enableConfigDiscovery: process.env.NANOCLAW_MCP_DISCOVERY === '1',
         systemMessage,
         workingDirectory: process.env.NANOCLAW_WORK_DIR || '/workspace/group',
         onPermissionRequest: approveAll,
