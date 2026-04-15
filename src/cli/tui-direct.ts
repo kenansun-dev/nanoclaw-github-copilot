@@ -125,7 +125,9 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
         activeChild.kill('SIGTERM');
       }
       activeChild = null;
-      setTimeout(() => { sigintCount = 0; }, 1000);
+      setTimeout(() => {
+        sigintCount = 0;
+      }, 1000);
     } else {
       console.log('\nBye 👋\n');
       rl?.close();
@@ -321,6 +323,12 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
 
     const thinkLevel = config.agents?.defaults?.thinkLevel;
     if (thinkLevel) env.COPILOT_THINK_LEVEL = thinkLevel;
+
+    // Enable GitHub MCP server (web_search, issues, PRs, etc.)
+    const agentConfig = config.agents?.defaults;
+    if (agentConfig?.githubMcp !== false) {
+      env.NANOCLAW_GITHUB_MCP = '1';
+    }
   }
 
   // Skills

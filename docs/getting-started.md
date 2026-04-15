@@ -4,12 +4,12 @@
 
 ### Windows (PowerShell)
 ```powershell
-irm https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/kenansun-dev/nanoclaw-github-copilot/main/install.ps1 | iex
 ```
 
 ### Linux / macOS / WSL
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kenans/nanoclaw-github-copilot/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kenansun-dev/nanoclaw-github-copilot/main/install.sh | bash
 ```
 
 The installer will:

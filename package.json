@@ -78,6 +78,7 @@
     "bin/",
     "container/Dockerfile",
     "container/Dockerfile.ghc",
+    "container/assets/",
     "container/agent-runner-ghc/dist/",
     "container/agent-runner-ghc/mcp-servers/",
     "container/agent-runner-ghc/package-lock.json",
@@ -95,6 +96,7 @@
     "install.ps1",
     "install.sh",
     "scripts/postinstall.mjs",
+    "scripts/read-credential.ps1",
     "scripts/setup-teams.ps1",
     "scripts/setup-teams.sh",
     "templates/"

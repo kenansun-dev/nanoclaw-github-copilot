@@ -245,9 +245,45 @@ export async function runHostAgent(
     env.NANOCLAW_SKILLS_DIR = containerSkills;
   }
 
-  // MCP config
+  // MCP config — resolve Azure AD tokens for remote servers
   if (fs.existsSync(wsPaths.mcpConfig)) {
-    env.NANOCLAW_MCP_CONFIG = wsPaths.mcpConfig;
+    try {
+      const mcpJson = JSON.parse(fs.readFileSync(wsPaths.mcpConfig, 'utf-8'));
+      const servers = mcpJson.mcpServers || mcpJson;
+      const hasAzureAuth = Object.values(servers).some(
+        (s: any) => s.auth?.provider === 'azure',
+      );
+      if (hasAzureAuth) {
+        const { resolveAllMcpTokens } = await import('./mcp-azure-auth.js');
+        const { headers: authHeaders, errors } =
+          await resolveAllMcpTokens(servers);
+        // Inject auth headers into server configs
+        for (const [name, hdrs] of Object.entries(authHeaders)) {
+          if (servers[name]) {
+            servers[name].headers = {
+              ...(servers[name].headers || {}),
+              ...hdrs,
+            };
+          }
+        }
+        // Log errors for servers that need auth but couldn't get tokens
+        for (const [name, err] of Object.entries(errors)) {
+          logger.warn({ server: name }, `MCP auth: ${err}`);
+        }
+        // Write augmented config to session dir
+        const augmentedPath = path.join(sessionDir, 'mcp.json');
+        fs.writeFileSync(augmentedPath, JSON.stringify(mcpJson, null, 2));
+        env.NANOCLAW_MCP_CONFIG = augmentedPath;
+      } else {
+        env.NANOCLAW_MCP_CONFIG = wsPaths.mcpConfig;
+      }
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        'MCP auth resolution failed, using original config',
+      );
+      env.NANOCLAW_MCP_CONFIG = wsPaths.mcpConfig;
+    }
   }
 
   // Plugin directories — collect from 3 sources:

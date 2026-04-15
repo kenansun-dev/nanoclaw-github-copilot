@@ -7,7 +7,11 @@
 import fs from 'fs';
 import path from 'path';
 import { createWriteStream } from 'fs';
+import { fileURLToPath } from 'url';
+import { deflateSync } from 'zlib';
 import { paths } from '../workspace.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Generate a simple solid-color PNG image.
@@ -21,7 +25,6 @@ function generatePng(
   b: number,
 ): Buffer {
   // Minimal PNG: IHDR + IDAT (uncompressed) + IEND
-  const { deflateSync } = require('zlib') as typeof import('zlib');
 
   // Raw image data: filter byte (0) + RGB pixels per row
   const rawRows: Buffer[] = [];
@@ -41,7 +44,6 @@ function generatePng(
   const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
   function makeChunk(type: string, data: Buffer): Buffer {
-    const { crc32 } = require('buffer') as any;
     const typeBytes = Buffer.from(type, 'ascii');
     const len = Buffer.alloc(4);
     len.writeUInt32BE(data.length);
@@ -200,35 +202,35 @@ export async function setupManifest(
       {
         botId: appId,
         scopes: ['personal', 'team', 'groupChat'],
-        supportsFiles: false,
+        supportsFiles: true,
         isNotificationOnly: false,
         commandLists: [
           {
             scopes: ['personal'],
             commands: [
               {
-                title: 'chatid',
+                title: '/chatid',
                 description: 'Get this chat registration ID',
               },
-              { title: 'ping', description: 'Check if bot is online' },
-              { title: 'new', description: 'Start a new conversation' },
-              { title: 'status', description: 'Show system status' },
+              { title: '/ping', description: 'Check if bot is online' },
+              { title: '/new', description: 'Start a new conversation' },
+              { title: '/status', description: 'Show system status' },
               {
-                title: 'think',
+                title: '/think',
                 description: 'Set thinking level (low/medium/high/xhigh)',
               },
               {
-                title: 'reasoning',
+                title: '/reasoning',
                 description: 'Show or hide reasoning output (on/off)',
               },
-              { title: 'tasks', description: 'List scheduled tasks' },
+              { title: '/tasks', description: 'List scheduled tasks' },
               {
-                title: 'capabilities',
+                title: '/capabilities',
                 description: 'Show available tools and skills',
               },
-              { title: 'help', description: 'Show available commands' },
+              { title: '/help', description: 'Show available commands' },
               {
-                title: 'wiki',
+                title: '/wiki',
                 description: 'Knowledge base — ingest, query, or maintain',
               },
             ],
@@ -236,22 +238,30 @@ export async function setupManifest(
         ],
       },
     ],
-    permissions: ['identity', 'messageTeamMembers'],
-    validDomains: [],
-    webApplicationInfo: { id: appId, resource: '' },
-    authorization: {
-      permissions: {
-        resourceSpecific: [
-          { name: 'ChatMessage.Read.Chat', type: 'Application' },
-          { name: 'ChannelMessage.Read.Group', type: 'Application' },
-        ],
-      },
-    },
   };
 
-  // Generate placeholder icons
-  const colorIcon = generatePng(192, 192, 79, 70, 229); // indigo
-  const outlineIcon = generatePng(32, 32, 255, 255, 255); // white
+  // Icons: use custom icons from workspace if available, otherwise generate placeholders
+  const wsPaths = paths;
+  // Icons priority: ~/.nanoclaw/ custom > bundled nanoclaw icon > generated placeholder
+  const wsCfgDir = path.dirname(wsPaths.config);
+  const customColorIcon = path.join(wsCfgDir, 'teams-color.png');
+  const customOutlineIcon = path.join(wsCfgDir, 'teams-outline.png');
+  const bundledIcon = path.join(
+    __dirname,
+    '..',
+    '..',
+    'container',
+    'assets',
+    'teams-color-icon.png',
+  );
+  const colorIcon = fs.existsSync(customColorIcon)
+    ? fs.readFileSync(customColorIcon)
+    : fs.existsSync(bundledIcon)
+      ? fs.readFileSync(bundledIcon)
+      : generatePng(192, 192, 79, 70, 229);
+  const outlineIcon = fs.existsSync(customOutlineIcon)
+    ? fs.readFileSync(customOutlineIcon)
+    : generatePng(32, 32, 255, 255, 255);
 
   const manifestJson = JSON.stringify(manifest, null, 2);
 

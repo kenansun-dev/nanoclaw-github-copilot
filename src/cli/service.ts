@@ -192,133 +192,29 @@ function statusSystemd(): void {
 // ─── Public: Windows AutoStart (shared by service.ts and tunnel.ts) ─────────
 
 /**
- * Install a Windows auto-start entry with full fallback chain:
- * schtasks → UAC → HKCU Run → Startup folder.
- * Returns the method used: 'task' | 'run-key' | 'startup' | null.
+ * Install a Windows auto-start entry via schtasks.
+ * Uses /SC ONLOGON to run at user login.
  */
 export function installWindowsAutoStart(
   name: string,
   command: string,
-  ws?: string,
-): 'task' | 'run-key' | 'startup' | null {
-  const startupDir = path.join(
-    os.homedir(),
-    'AppData',
-    'Roaming',
-    'Microsoft',
-    'Windows',
-    'Start Menu',
-    'Programs',
-    'Startup',
-  );
-  const runKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
-  const workDir = ws || os.homedir();
-
-  const writeBat = () => {
-    fs.mkdirSync(startupDir, { recursive: true });
-    const batFile = path.join(startupDir, `${name}.bat`);
-    fs.writeFileSync(
-      batFile,
-      `@echo off\r\ncd /d "${workDir}"\r\nstart /B "" ${command}\r\n`,
-    );
-    return batFile;
-  };
-
-  const trySchedTask = (highest = false) => {
-    try {
-      const rl = highest ? ' /RL HIGHEST' : '';
-      const escaped = command.replace(/"/g, '\\"');
-      const cmd = `schtasks /Create /TN "${name}" /TR "${escaped}" /SC ONLOGON${rl} /F`;
-      execSync(cmd, { stdio: 'pipe' });
-      return { ok: true, err: '' };
-    } catch (err: any) {
-      const msg = ((err.stderr || '') + '\n' + (err.stdout || ''))
-        .toString()
-        .trim();
-      return { ok: false, err: msg || err.message || 'unknown error' };
-    }
-  };
-
-  // 1. Try schtasks
-  let lastErr = '';
-  for (const highest of [true, false]) {
-    const result = trySchedTask(highest);
-    if (result.ok) {
-      console.log(`  \u2705 ${name} scheduled task created`);
-      return 'task' as const;
-    }
-    lastErr = result.err;
-    console.log(
-      `  \u26a0\ufe0f  schtasks failed${highest ? ' (/RL HIGHEST)' : ''}: ${result.err}`,
-    );
-  }
-
-  // 2. UAC elevation — use a temp script to avoid quote escaping hell
-  if (/Access is denied/i.test(lastErr)) {
-    try {
-      // Write schtasks command to a temp bat file
-      const tmpBat = path.join(
-        os.tmpdir(),
-        `nanoclaw-schtask-${Date.now()}.bat`,
-      );
-      fs.writeFileSync(
-        tmpBat,
-        `@echo off\nschtasks /Create /TN "${name}" /TR "${command}" /SC ONLOGON /RL HIGHEST /F\n`,
-      );
-      // Run the bat file elevated
-      const psScript = `Start-Process -FilePath '${tmpBat}' -Verb RunAs -Wait`;
-      const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
-      execSync(`powershell -NoProfile -EncodedCommand ${encoded}`, {
-        stdio: 'inherit',
-        timeout: 30000,
-      });
-      // Clean up temp file
-      try {
-        fs.unlinkSync(tmpBat);
-      } catch {
-        /* */
-      }
-      // Verify the task actually exists
-      try {
-        execSync(`schtasks /Query /TN "${name}" /FO CSV /NH`, {
-          stdio: 'pipe',
-        });
-        console.log(`  \u2705 ${name} scheduled task created via UAC`);
-        return 'task' as const;
-      } catch {
-        console.log(
-          `  \u26a0\ufe0f  UAC completed but task not found — may need different task name`,
-        );
-      }
-    } catch (err: any) {
-      const msg = ((err.stderr || '') + '\n' + (err.stdout || ''))
-        .toString()
-        .trim();
-      console.log(
-        `  \u26a0\ufe0f  Elevated schtasks failed: ${msg || err.message || 'unknown'}`,
-      );
-    }
-  }
-
-  // 3. HKCU Run key
+  _ws?: string,
+): 'task' | null {
   try {
-    const batFile = writeBat();
-    execSync(
-      `reg add "${runKey}" /v "${name}" /t REG_SZ /d "\"${batFile}\"" /f`,
-      { stdio: 'pipe' },
+    const escaped = command.replace(/"/g, '\\"');
+    execSync(`schtasks /Create /TN "${name}" /TR "${escaped}" /SC ONLOGON /F`, {
+      stdio: 'pipe',
+    });
+    console.log(`  ✅ ${name} scheduled task created`);
+    return 'task' as const;
+  } catch (err: any) {
+    const msg = ((err.stderr || '') + (err.stdout || '')).toString().trim();
+    console.error(
+      `  ❌ Failed to create scheduled task: ${msg || err.message}`,
     );
-    console.log(`  \u2705 Registered HKCU Run key for ${name}`);
-    return 'run-key' as const;
-  } catch {
-    /* */
+    return null;
   }
-
-  // 4. Startup folder (last resort)
-  const batFile = writeBat();
-  console.log(`  \u2705 Created startup script: ${batFile}`);
-  return 'startup' as const;
 }
-
 // ─── Windows: Scheduled Task ──────────────────────────────────────────────────
 
 function installWindows(ws: string, tunnelId?: string): void {
@@ -336,41 +232,12 @@ function installWindows(ws: string, tunnelId?: string): void {
 }
 
 function uninstallWindows(): void {
-  const runKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
-  const startupDir = path.join(
-    os.homedir(),
-    'AppData',
-    'Roaming',
-    'Microsoft',
-    'Windows',
-    'Start Menu',
-    'Programs',
-    'Startup',
-  );
-
   for (const name of [SERVICE_NAME, DEVTUNNEL_SERVICE_NAME]) {
     try {
       execSync(`schtasks /Delete /TN "${name}" /F`, { stdio: 'pipe' });
       console.log(`  Removed scheduled task: ${name}`);
     } catch {
-      /* */
-    }
-    try {
-      execSync(`reg delete "${runKey}" /v "${name}" /f`, { stdio: 'pipe' });
-      console.log(`  Removed HKCU Run key: ${name}`);
-    } catch {
-      /* */
-    }
-
-    const batFile = path.join(startupDir, `${name}.bat`);
-    const vbsFile = path.join(startupDir, `${name}.vbs`);
-    if (fs.existsSync(batFile)) {
-      fs.unlinkSync(batFile);
-      console.log(`  Removed: ${batFile}`);
-    }
-    if (fs.existsSync(vbsFile)) {
-      fs.unlinkSync(vbsFile);
-      console.log(`  Removed: ${vbsFile}`);
+      /* task may not exist */
     }
   }
   console.log('  ✅ Services uninstalled');

@@ -95,41 +95,8 @@ export function getAgentProvider(agent: AgentConfig): string {
 
 // ─── Token resolution ────────────────────────────────────────────────────────
 
-export function resolveGithubToken(): string | undefined {
-  // 1. Explicit env vars (highest priority)
-  const envToken =
-    process.env.COPILOT_GITHUB_TOKEN ||
-    process.env.GH_TOKEN ||
-    process.env.GITHUB_TOKEN;
-  if (envToken) return envToken;
-
-  // 2. GHC CLI config.json → copilot_tokens field
-  // Only read from CLI directories, NOT VS Code extension directories
-  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
-  const copilotConfigPaths = [
-    path.join(home, '.copilot', 'config.json'),
-    path.join(home, '.config', 'github-copilot', 'config.json'),
-  ];
-  for (const configFile of copilotConfigPaths) {
-    try {
-      if (!fs.existsSync(configFile)) continue;
-      const config = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
-      if (
-        config.copilot_tokens &&
-        typeof config.copilot_tokens === 'object'
-      ) {
-        for (const [, token] of Object.entries(config.copilot_tokens)) {
-          if (typeof token === 'string' && token.length > 4) return token;
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  // 3. Return undefined → let SDK use CLI managed auth (OS credential manager)
-  return undefined;
-}
+export { resolveGithubToken } from './github-token-provider.js';
+import { resolveGithubToken } from './github-token-provider.js';
 
 /**
  * Check if copilot CLI reports authenticated status.

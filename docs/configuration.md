@@ -29,6 +29,7 @@ Located at `~/.nanoclaw/nanoclaw.json`.
 | `hasOwnNumber` | boolean | `false` | Whether bot has its own phone number |
 | `mode` | `host` \| `sandbox` | `sandbox` (Linux), `host` (Windows) | Agent execution mode |
 | `thinkLevel` | `low` \| `medium` \| `high` \| `xhigh` | (none) | Reasoning effort level. Set via `/think` command |
+| `showThinking` | boolean | `false` | Show reasoning/thinking in channel messages. Set via `/reasoning on\|off` |
 | `githubMcp` | boolean | `true` | Register GitHub MCP server (web_search, issues, PRs) |
 
 **Mode:**
@@ -75,20 +76,65 @@ External MCP servers loaded by the agent.
 ```json
 "mcp": {
   "servers": {
-    "my-server": {
+    "my-local-server": {
       "type": "local",
       "command": "node",
       "args": ["path/to/server.js"],
+      "tools": ["*"]
+    },
+    "my-remote-server": {
+      "type": "http",
+      "url": "https://my-server.com/mcp",
+      "headers": { "X-Custom": "value" },
       "tools": ["*"]
     }
   }
 }
 ```
 
+**Server types:**
+- `local` — stdio subprocess (command + args)
+- `http` — remote HTTP/SSE server (url + headers)
+
 Built-in MCP servers (auto-discovered from `mcp-servers/` directory):
 - `nanoclaw` — IPC tools (send_message, send_file, react, schedule_task, etc.)
 - `nanoclaw-pdf` — PDF reader (read_pdf)
 - GitHub MCP — web_search, issues, PRs (enabled via `githubMcp: true`)
+
+#### Remote MCP with Azure AD auth
+
+For remote MCP servers that require Azure AD (Entra ID) authentication, add an `auth` block:
+
+```json
+"mcp": {
+  "servers": {
+    "devbox": {
+      "type": "http",
+      "url": "https://devbox.microsoft.com/mcp",
+      "auth": {
+        "provider": "azure",
+        "resource": "https://devbox.microsoft.com"
+      }
+    }
+  }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `auth.provider` | (required) | Only `"azure"` supported |
+| `auth.resource` | (required) | AAD resource identifier |
+| `auth.tenantId` | `"organizations"` | AAD tenant (optional) |
+| `auth.scope` | `"{resource}/.default"` | OAuth scope (optional) |
+
+**Token acquisition priority:**
+1. Cached valid token (`~/.nanoclaw/credentials/mcp-tokens.json`)
+2. Refresh token (automatic renewal)
+3. `az account get-access-token` (if `az` CLI installed and logged in)
+4. `az login --use-device-code` (output returned to agent/user)
+5. Built-in device code flow (fallback when `az` not installed)
+
+Test auth: `node -e "import('./dist/mcp-azure-auth.js').then(m => m.testMcpAuth('devbox'))"`
 
 ### chats
 
@@ -173,8 +219,35 @@ Available in all channels:
 | Command | Description |
 |---------|-------------|
 | `/think [off\|low\|medium\|high\|xhigh]` | Set reasoning effort level |
+| `/reasoning [on\|off]` | Show or hide reasoning/thinking output in messages |
 | `/new` | Reset session — start fresh conversation |
 | `/help` | Show available commands |
 | `/tasks` | List scheduled tasks |
 | `/status` | Show agent status |
 | `/capabilities` | Show available tools and skills |
+| `/wiki [topic]` | Knowledge base — ingest, query, or maintain your wiki |
+
+## CLI Commands
+
+```bash
+nanoclaw init                    # Initialize workspace
+nanoclaw start                   # Start (background daemon + devtunnel)
+nanoclaw stop                    # Stop all processes
+nanoclaw restart                 # Stop + start
+nanoclaw status                  # Quick health check
+nanoclaw doctor                  # Full dependency check
+nanoclaw logs [-f]               # View/follow logs
+nanoclaw tui                     # Interactive terminal chat
+nanoclaw tui --ask "question"    # Single query (non-interactive)
+nanoclaw tui --ask "q" --model claude-opus-4.6 --think high  # With overrides
+nanoclaw channel add telegram    # Set up Telegram
+nanoclaw channel add teams       # Set up Teams
+nanoclaw provider login          # Login to LLM provider
+nanoclaw plugin list             # List installed plugins
+nanoclaw config get [path]       # Read config
+nanoclaw config set <path> <val> # Set config
+```
+
+## Config Version
+
+Current: `configVersion: 3`. NanoClaw auto-migrates older configs on startup (v0→v1→v2→v3).

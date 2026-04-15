@@ -423,7 +423,9 @@ export class TeamsChannel implements Channel {
         )
           continue;
 
-        const fileName = att.name || 'attachment';
+        const fileName = (att.name || 'attachment')
+          .replace(/[\/\\:*?"<>|]/g, '_')
+          .replace(/\.\./g, '_');
         const group = this.opts.registeredGroups()[chatJid];
         if (group) {
           try {
@@ -439,8 +441,24 @@ export class TeamsChannel implements Channel {
             fs.default.mkdirSync(uploadsDir, { recursive: true });
             const localPath = pathMod.default.join(uploadsDir, fileName);
 
-            // Teams attachment contentUrl is typically a direct download link
-            const res = await fetch(att.contentUrl);
+            // Teams attachments may require bot auth token to download
+            const headers: Record<string, string> = {};
+            if (
+              att.contentUrl.includes('skype.com') ||
+              att.contentUrl.includes('botframework.com')
+            ) {
+              try {
+                const token = await (
+                  this.adapter as any
+                ).credentialsFactory?.createCredentials?.();
+                if (token?.token) {
+                  headers['Authorization'] = `Bearer ${token.token}`;
+                }
+              } catch {
+                /* proceed without auth */
+              }
+            }
+            const res = await fetch(att.contentUrl, { headers });
             if (res.ok) {
               const buffer = Buffer.from(await res.arrayBuffer());
               fs.default.writeFileSync(localPath, buffer);
