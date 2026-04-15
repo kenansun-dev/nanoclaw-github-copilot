@@ -119,6 +119,8 @@ These are your custom tools (provided by NanoClaw IPC MCP server):
 
 Plus GitHub MCP tools (when `githubMcp` enabled): `web_search`, `web_fetch`, `issue_read`, `search_code`, etc.
 
+**Note:** GitHub MCP tools are injected at runtime via code, NOT configured in `~/.mcp.json` or `~/.nanoclaw/mcp.json`. The `.mcp.json` file may be empty — that's normal. To check available tools at runtime, ask the agent to list its tools.
+
 ## Authentication
 
 NanoClaw resolves GitHub tokens in this priority:
