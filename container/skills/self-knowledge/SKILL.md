@@ -84,7 +84,8 @@ cat /workspace/project/nanoclaw.json 2>/dev/null
 | `nanoclaw tui --ask "question"` | Single query mode (non-interactive) |
 | `nanoclaw tui --ask "q" --model claude-opus-4.6 --think high` | With model/think overrides |
 | `nanoclaw channel add telegram` | Set up Telegram bot |
-| `nanoclaw channel add teams` | Set up Teams bot (manifest + credentials) |
+| `nanoclaw channel add teams --setup-manifest` | Generate Teams App manifest zip |
+| `nanoclaw channel add teams --setup-manifest --account daily` | Generate manifest for specific account |
 | `nanoclaw channel list` | List configured channels |
 | `nanoclaw provider login` | Login to LLM provider |
 | `nanoclaw provider list` | List available providers |
@@ -158,6 +159,21 @@ nanoclaw plugin info <name>
 ```
 
 Plugin directories: `~/.nanoclaw/plugins/`, `~/.copilot/plugins/`, `~/.claude/plugins/`
+
+## Logging
+
+- Logs written to `~/.nanoclaw/logs/nanoclaw-YYYY-MM-DD.log` (daily rotation)
+- Logs older than 7 days are gzip archived (`.log.gz`), not deleted
+- Format: `[timestamp] LEVEL message key=value key=value`
+- Tokens automatically scrubbed (`gho_****`, `Bearer ****`, etc.)
+- Stack traces (err) stay multi-line
+
+## File transfer (Teams)
+
+- Teams DM: FileConsentCard flow (user accepts → file uploaded to OneDrive)
+- Teams group: text notification with file path
+- Receiving files: attachments downloaded to `groups/{folder}/uploads/`
+- Requires `supportsFiles: true` in Teams manifest
 
 ## Where to find documentation and source code
 
