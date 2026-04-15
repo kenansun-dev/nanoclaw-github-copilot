@@ -55,7 +55,7 @@ Approach:
 
 ## Implementation Plan
 
-1. **Phase 1**: Add rollback support to `nanoclaw update` — backup before install, restore on failure
+1. **Phase 1**: Add rollback support to `nanoclaw update` — backup before install (npm package + config snapshot), restore on failure
 2. **Phase 2**: Add agent-triggered update — MCP tool or agent detects tgz file
 3. **Phase 3**: Post-update session notification
 4. **Phase 4**: Config hot reload via SIGUSR1/file watch

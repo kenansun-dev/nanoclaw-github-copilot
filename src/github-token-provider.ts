@@ -41,10 +41,7 @@ export function resolveGithubToken(): string | undefined {
     try {
       if (!fs.existsSync(configFile)) continue;
       const config = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
-      if (
-        config.copilot_tokens &&
-        typeof config.copilot_tokens === 'object'
-      ) {
+      if (config.copilot_tokens && typeof config.copilot_tokens === 'object') {
         for (const [, token] of Object.entries(config.copilot_tokens)) {
           if (typeof token === 'string' && token.length > 4) return token;
         }
@@ -79,7 +76,9 @@ function readWindowsCredential(): string | null {
         const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
         preferredUser = config.last_logged_in_user?.login || null;
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     // Build target — try preferred user first, then any copilot-cli entry
     const targets = preferredUser
@@ -103,13 +102,23 @@ function readWindowsCredential(): string | null {
           targets.push(match[0]);
         }
       }
-    } catch { /* cmdkey not available */ }
+    } catch {
+      /* cmdkey not available */
+    }
 
     // Try to read each credential
     for (const target of targets) {
       const token = readSingleCredential(target);
-      if (token && (token.startsWith('gho_') || token.startsWith('ghu_') || token.startsWith('ghp_'))) {
-        logger.debug({ target }, 'Read GitHub token from Windows Credential Manager');
+      if (
+        token &&
+        (token.startsWith('gho_') ||
+          token.startsWith('ghu_') ||
+          token.startsWith('ghp_'))
+      ) {
+        logger.debug(
+          { target },
+          'Read GitHub token from Windows Credential Manager',
+        );
         return token;
       }
     }
@@ -129,7 +138,11 @@ function readWindowsCredential(): string | null {
 function readSingleCredential(target: string): string | null {
   try {
     const scriptPath = path.join(
-      path.dirname(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'))),
+      path.dirname(
+        path.dirname(
+          new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'),
+        ),
+      ),
       'scripts',
       'read-credential.ps1',
     );
