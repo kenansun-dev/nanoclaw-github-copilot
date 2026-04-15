@@ -96,6 +96,7 @@
     "install.ps1",
     "install.sh",
     "scripts/postinstall.mjs",
+    "scripts/read-credential.ps1",
     "scripts/setup-teams.ps1",
     "scripts/setup-teams.sh",
     "templates/"
