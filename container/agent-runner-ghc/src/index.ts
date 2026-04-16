@@ -410,11 +410,10 @@ async function main(): Promise<void> {
               try {
                 const mcpConfig = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf-8'));
                 const servers = mcpConfig.mcpServers || mcpConfig;
-                // Ensure all servers have tools field (required by SDK)
-                for (const [name, srv] of Object.entries(servers) as any[]) {
-                  if (!srv.tools) srv.tools = ['*'];
-                  // Remove auth field (internal to nanoclaw, not recognized by SDK)
-                  delete srv.auth;
+                // Normalize: SDK requires tools[] (mandatory), strip nanoclaw-internal fields
+                for (const [, cfg] of Object.entries(servers) as any[]) {
+                  if (!cfg.tools) cfg.tools = ['*'];
+                  delete cfg.auth; // nanoclaw internal, SDK doesn't recognize
                 }
                 log(`Loaded ${Object.keys(servers).length} MCP server(s) from ${mcpConfigPath}`);
                 return servers;
