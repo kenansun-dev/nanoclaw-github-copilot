@@ -272,9 +272,10 @@ export async function setupManifest(
     { name: 'outline.png', data: outlineIcon },
   ]);
 
-  // Write to ~/.nanoclaw/teams-manifest.zip
+  // Write to ~/.nanoclaw/<botName>-teams-manifest.zip
   const wsDir = path.dirname(paths.config);
-  const zipPath = path.join(wsDir, 'teams-manifest.zip');
+  const safeName = botName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  const zipPath = path.join(wsDir, `${safeName}-teams-manifest.zip`);
   fs.mkdirSync(wsDir, { recursive: true });
   fs.writeFileSync(zipPath, zipBuffer);
 
