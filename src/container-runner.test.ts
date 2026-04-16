@@ -44,6 +44,7 @@ vi.mock('./config.js', () => ({
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   PACKAGE_ROOT: '/tmp/nanoclaw-test-pkg',
   IDLE_TIMEOUT: 1800000, // 30min
+  AGENT_RUN_TIMEOUT_MS: 600000, // 10min
   IS_GHC_PROVIDER: false,
   PROVIDER_SESSION_DIR: '.claude',
   TIMEZONE: 'America/Los_Angeles',

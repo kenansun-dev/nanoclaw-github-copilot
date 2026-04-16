@@ -75,8 +75,8 @@ describe('config-loader', () => {
     const saved = JSON.parse(
       fs.readFileSync(path.join(tmpDir, 'nanoclaw.json'), 'utf-8'),
     );
-    expect(saved.channels.telegram.botToken).toBeUndefined();
-    expect(saved.channels.teams.appPassword).toBeUndefined();
+    expect(saved.channels.telegram.botToken).toBe('${TELEGRAM_BOT_TOKEN}');
+    expect(saved.channels.teams.appPassword).toBe('${MSTEAMS_APP_PASSWORD}');
   });
 
   it('readWorkspaceEnv parses .env correctly', () => {

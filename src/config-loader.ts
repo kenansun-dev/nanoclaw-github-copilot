@@ -629,6 +629,8 @@ export function saveConfig(config: NanoclawConfig): void {
     }
     delete toSave.channels.teams.certThumbprint;
     delete toSave.channels.teams.certPrivateKeyPath;
+    // tenantId lives in accounts.default, not root level (v2→v3 migration)
+    delete toSave.channels.teams.tenantId;
   }
   // Per-account secrets → ${ENV_VAR} references
   for (const ch of ['telegram', 'teams'] as const) {
