@@ -45,6 +45,14 @@ if (workspaceOverride) {
   process.env.NANOCLAW_WORKSPACE = workspaceOverride;
 }
 
+// Disable logger console output for CLI commands (logger writes to file only).
+// Daemon mode (start, start-foreground) and TUI keep console output enabled.
+const daemonCommands = new Set(['start', 'start-foreground', 'tui']);
+if (!daemonCommands.has(command || '')) {
+  const { setConsoleOutput } = await import('./logger.js');
+  setConsoleOutput(false);
+}
+
 // Version
 if (globalArgs.includes('--version') || globalArgs.includes('-v')) {
   try {
