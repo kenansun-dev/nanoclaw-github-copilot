@@ -271,10 +271,28 @@ export function readWorkspaceEnv(): Record<string, string> {
  * Secrets from .env are merged into the appropriate config sections.
  */
 /**
- * Convert channel-grouped chats format to flat Record<jid, config> format.
- * Supports both old (flat) and new (grouped) formats.
+ * Derive channel name from a chat jid prefix.
  */
-function normalizeChats(raw: any): Record<
+function channelFromJid(jid: string): string {
+  if (jid.startsWith('tg:')) return 'telegram';
+  if (jid.startsWith('teams:')) return 'teams';
+  if (jid.startsWith('dc:')) return 'discord';
+  if (jid.startsWith('wa:')) return 'whatsapp';
+  if (jid.startsWith('slack:')) return 'slack';
+  return 'other';
+}
+
+/**
+ * Convert channel-grouped chats format to flat Record<jid, config> format.
+ * Supports:
+ * - Old top-level flat format: { "teams:xxx": { name: "..." } }
+ * - Grouped format (top-level chats): { telegram: [...], teams: [...] }
+ * - Channel-embedded format: read from channels.<name>.chats arrays
+ */
+function normalizeChats(
+  raw: any,
+  channels?: any,
+): Record<
   string,
   {
     name: string;
@@ -283,22 +301,16 @@ function normalizeChats(raw: any): Record<
     agentId?: string;
   }
 > {
-  if (!raw || typeof raw !== 'object') return {};
+  const result: Record<string, any> = {};
 
-  // Check if it's the new grouped format (has telegram/teams/discord arrays)
-  const channelKeys = ['telegram', 'teams', 'discord', 'slack', 'whatsapp'];
-  const isGrouped = Object.keys(raw).some(
-    (k) => channelKeys.includes(k) && Array.isArray(raw[k]),
-  );
-
-  if (isGrouped) {
-    const result: Record<string, any> = {};
-    for (const [, entries] of Object.entries(raw)) {
-      if (!Array.isArray(entries)) continue;
-      for (const entry of entries) {
-        if (entry.jid && entry.name) {
+  // 1. Read from channels.<name>.chats (new canonical format)
+  if (channels && typeof channels === 'object') {
+    for (const [, chDef] of Object.entries(channels) as any[]) {
+      if (!chDef || !Array.isArray(chDef.chats)) continue;
+      for (const entry of chDef.chats) {
+        if (entry.jid) {
           result[entry.jid] = {
-            name: entry.name,
+            name: entry.name || entry.jid,
             isMain: entry.isMain,
             requiresTrigger: entry.requiresTrigger,
             agentId: entry.agentId,
@@ -306,28 +318,66 @@ function normalizeChats(raw: any): Record<
         }
       }
     }
-    return result;
   }
 
-  // Old flat format — return as-is
-  return raw;
+  // 2. Also read from top-level chats (migration support)
+  if (raw && typeof raw === 'object') {
+    const channelKeys = [
+      'telegram',
+      'teams',
+      'discord',
+      'slack',
+      'whatsapp',
+      'other',
+    ];
+    const isGrouped = Object.keys(raw).some(
+      (k) => channelKeys.includes(k) && Array.isArray(raw[k]),
+    );
+
+    if (isGrouped) {
+      for (const [, entries] of Object.entries(raw)) {
+        if (!Array.isArray(entries)) continue;
+        for (const entry of entries) {
+          if (entry.jid && !result[entry.jid]) {
+            result[entry.jid] = {
+              name: entry.name || entry.jid,
+              isMain: entry.isMain,
+              requiresTrigger: entry.requiresTrigger,
+              agentId: entry.agentId,
+            };
+          }
+        }
+      }
+    } else {
+      // Old flat format
+      for (const [jid, cfg] of Object.entries(raw) as any[]) {
+        if (!result[jid]) {
+          result[jid] = cfg;
+        }
+      }
+    }
+  }
+
+  return result;
 }
 
 /**
- * Convert flat Record<jid, config> back to channel-grouped format for saving.
+ * Write chats into channels.<name>.chats arrays for saving.
+ * Removes top-level "chats" key.
  */
-function denormalizeChats(flat: Record<string, any>): ChannelChats {
-  const grouped: ChannelChats = {};
-  for (const [jid, config] of Object.entries(flat)) {
-    let channel = 'other';
-    if (jid.startsWith('tg:')) channel = 'telegram';
-    else if (jid.startsWith('teams:')) channel = 'teams';
-    else if (jid.startsWith('dc:')) channel = 'discord';
-    else if (jid.startsWith('wa:')) channel = 'whatsapp';
-    else if (jid.startsWith('slack:')) channel = 'slack';
+function distributeChatsToChannels(
+  toSave: any,
+  flat: Record<string, any>,
+): void {
+  // Remove top-level chats
+  delete toSave.chats;
 
-    if (!grouped[channel]) grouped[channel] = [];
-    grouped[channel]!.push({
+  // Group by channel
+  const byChannel: Record<string, any[]> = {};
+  for (const [jid, config] of Object.entries(flat)) {
+    const ch = channelFromJid(jid);
+    if (!byChannel[ch]) byChannel[ch] = [];
+    byChannel[ch].push({
       jid,
       name: config.name,
       isMain: config.isMain,
@@ -335,7 +385,19 @@ function denormalizeChats(flat: Record<string, any>): ChannelChats {
       agentId: config.agentId,
     });
   }
-  return grouped;
+
+  // Write into channels.<name>.chats
+  if (!toSave.channels) toSave.channels = {};
+  for (const [ch, entries] of Object.entries(byChannel)) {
+    if (!toSave.channels[ch]) toSave.channels[ch] = { enabled: false };
+    toSave.channels[ch].chats = entries;
+  }
+  // Clean up channels that no longer have chats
+  for (const [ch, chDef] of Object.entries(toSave.channels) as any[]) {
+    if (chDef.chats && !byChannel[ch]) {
+      delete chDef.chats;
+    }
+  }
 }
 
 // ─── Config Migration ────────────────────────────────────────────────────────
@@ -532,7 +594,7 @@ export function loadConfig(): NanoclawConfig {
   const config = deepMerge(DEFAULTS, userConfig) as NanoclawConfig;
 
   // Normalize chats: convert grouped format to flat Record<jid, config>
-  config.chats = normalizeChats(config.chats) as any;
+  config.chats = normalizeChats(config.chats, config.channels) as any;
 
   // Merge MCP servers from mcp.json if it exists
   if (fs.existsSync(paths.mcpConfig)) {
@@ -737,8 +799,8 @@ export function saveConfig(config: NanoclawConfig): void {
     }
   }
 
-  // Save chats in grouped format
-  toSave.chats = denormalizeChats(toSave.chats || {});
+  // Distribute chats into channels.<name>.chats
+  distributeChatsToChannels(toSave, toSave.chats || {});
   // Backup before writing
   backupConfig(paths.config);
   fs.writeFileSync(paths.config, JSON.stringify(toSave, null, 2) + '\n');
