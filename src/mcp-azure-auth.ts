@@ -207,7 +207,11 @@ export async function resolveAllMcpTokens(
 
 function isAzInstalled(): boolean {
   try {
-    execSync('az --version', { stdio: 'pipe', timeout: 5000, windowsHide: true });
+    execSync('az --version', {
+      stdio: 'pipe',
+      timeout: 5000,
+      windowsHide: true,
+    });
     return true;
   } catch {
     return false;
@@ -218,7 +222,12 @@ function tryAzGetToken(resource: string): string | null {
   try {
     const result = execSync(
       `az account get-access-token --resource ${resource} --query accessToken -o tsv`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000, windowsHide: true },
+      {
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 10000,
+        windowsHide: true,
+      },
     ).trim();
     if (result && result.length > 10) return result;
     return null;
@@ -242,7 +251,6 @@ async function tryAzLogin(
     const child = spawnChild('az', ['login', '--use-device-code'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 120000, // 2 min timeout
-      windowsHide: true,
     });
 
     const onOutput = (data: Buffer) => {

@@ -414,6 +414,7 @@ export async function runHostAgent(
     cwd: path.dirname(path.dirname(runnerPath)),
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: true,
+    windowsHide: true,
   });
 
   onProcess(child, processName);
