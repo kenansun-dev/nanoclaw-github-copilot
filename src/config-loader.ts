@@ -833,29 +833,41 @@ function migrateSecretsToEnv(config: any): void {
   const secrets: Record<string, string> = {};
   let found = false;
 
-  // Check top-level channel secrets
-  if (config.channels?.telegram?.botToken) {
+  // Check top-level channel secrets (skip ${ENV_VAR} references)
+  if (
+    config.channels?.telegram?.botToken &&
+    !config.channels.telegram.botToken.startsWith('${')
+  ) {
     secrets.TELEGRAM_BOT_TOKEN = config.channels.telegram.botToken;
     found = true;
   }
-  if (config.channels?.teams?.appPassword) {
+  if (
+    config.channels?.teams?.appPassword &&
+    !config.channels.teams.appPassword.startsWith('${')
+  ) {
     secrets.MSTEAMS_APP_PASSWORD = config.channels.teams.appPassword;
     found = true;
   }
-  if (config.channels?.teams?.appId) {
+  if (
+    config.channels?.teams?.appId &&
+    !String(config.channels.teams.appId).startsWith('${')
+  ) {
     secrets.MSTEAMS_APP_ID = config.channels.teams.appId;
     found = true;
   }
-  if (config.channels?.teams?.tenantId) {
+  if (
+    config.channels?.teams?.tenantId &&
+    !config.channels.teams.tenantId.startsWith('${')
+  ) {
     secrets.MSTEAMS_TENANT_ID = config.channels.teams.tenantId;
     found = true;
   }
 
-  // Check per-account secrets
+  // Check per-account secrets (skip ${ENV_VAR} references)
   for (const [accId, acc] of Object.entries(
     config.channels?.telegram?.accounts || {},
   ) as any[]) {
-    if (acc.botToken) {
+    if (acc.botToken && !acc.botToken.startsWith('${')) {
       const key =
         accId === 'default'
           ? 'TELEGRAM_BOT_TOKEN'
@@ -867,7 +879,7 @@ function migrateSecretsToEnv(config: any): void {
   for (const [accId, acc] of Object.entries(
     config.channels?.teams?.accounts || {},
   ) as any[]) {
-    if (acc.appPassword) {
+    if (acc.appPassword && !acc.appPassword.startsWith('${')) {
       const key =
         accId === 'default'
           ? 'MSTEAMS_APP_PASSWORD'
@@ -903,9 +915,9 @@ function migrateSecretsToEnv(config: any): void {
     logger.info(
       `Migrated ${lines.length} secret(s) from nanoclaw.json to .env`,
     );
-  }
 
-  // Save clean config (saveConfig strips secrets)
-  saveConfig(config);
-  logger.info('Stripped secrets from nanoclaw.json');
+    // Save clean config (saveConfig strips secrets)
+    saveConfig(config);
+    logger.info('Stripped secrets from nanoclaw.json');
+  }
 }
