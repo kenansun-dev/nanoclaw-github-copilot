@@ -88,6 +88,7 @@ export async function runTui(_args: string[]): Promise<void> {
 
   let currentAssistantName = assistantName;
   let waitingForReply = false;
+  let lastPartialLines = 0;
   let spinTimer: ReturnType<typeof setInterval> | null = null;
 
   // Handle server messages
@@ -137,18 +138,35 @@ export async function runTui(_args: string[]): Promise<void> {
 
       case 'partial':
         stopSpinner();
-        // Overwrite current line with partial text
-        process.stdout.write(
-          `\r\x1b[K\x1b[32m${currentAssistantName}>\x1b[0m ${msg.text}`,
-        );
+        // Clear previous partial output (multi-line aware)
+        if (lastPartialLines > 0) {
+          // Move cursor up and clear each line
+          for (let i = 0; i < lastPartialLines; i++) {
+            process.stdout.write('\x1b[A\x1b[K');
+          }
+        }
+        process.stdout.write('\r\x1b[K');
+        {
+          const display = `\x1b[32m${currentAssistantName}>\x1b[0m ${msg.text}`;
+          process.stdout.write(display);
+          // Count lines for next clear (rough: split by newline)
+          lastPartialLines = display.split('\n').length - 1;
+        }
         break;
 
       case 'reply':
         stopSpinner();
         waitingForReply = false;
+        // Clear previous partial output before final reply
+        if (lastPartialLines > 0) {
+          for (let i = 0; i < lastPartialLines; i++) {
+            process.stdout.write('\x1b[A\x1b[K');
+          }
+        }
         process.stdout.write(
           `\r\x1b[K\x1b[32m${currentAssistantName}>\x1b[0m ${msg.text}\n\n`,
         );
+        lastPartialLines = 0;
         break;
 
       case 'error':
