@@ -39,7 +39,50 @@ export function getModelName(model?: string): string {
   const config = loadConfig();
   const m = model || config.agents?.defaults?.model || '';
   const slash = m.indexOf('/');
-  return slash > 0 ? m.substring(slash + 1) : m;
+  const raw = slash > 0 ? m.substring(slash + 1) : m;
+  return normalizeModelForProvider(raw, getProvider(model));
+}
+
+/**
+ * Normalize model name for the target provider.
+ *
+ * GHC uses GitHub's catalog names: claude-sonnet-4, claude-sonnet-4.5
+ * CC uses Anthropic's names: claude-sonnet-4-6, claude-sonnet-4-5
+ * CC also accepts aliases: sonnet, opus, haiku
+ *
+ * This function translates between the two naming conventions so users
+ * can write either format in nanoclaw.json and it works with both providers.
+ */
+function normalizeModelForProvider(model: string, provider: string): string {
+  if (provider === 'github-copilot') {
+    // CC → GHC: claude-sonnet-4-6 → claude-sonnet-4, claude-sonnet-4-5 stays
+    // Aliases → full names
+    const ccToGhc: Record<string, string> = {
+      'claude-sonnet-4-6': 'claude-sonnet-4',
+      'claude-opus-4-6': 'claude-opus-4',
+      'claude-opus-4-5': 'claude-opus-4.5',
+      'claude-sonnet-4-5': 'claude-sonnet-4.5',
+      'claude-haiku-4-5': 'claude-haiku-4.5',
+      sonnet: 'claude-sonnet-4',
+      opus: 'claude-opus-4',
+      haiku: 'claude-haiku-4.5',
+    };
+    return ccToGhc[model.toLowerCase()] || model;
+  }
+
+  if (provider === 'anthropic') {
+    // GHC → CC: claude-sonnet-4 → claude-sonnet-4-6, claude-sonnet-4.5 → claude-sonnet-4-5
+    const ghcToCc: Record<string, string> = {
+      'claude-sonnet-4': 'claude-sonnet-4-6',
+      'claude-opus-4': 'claude-opus-4-6',
+      'claude-sonnet-4.5': 'claude-sonnet-4-5',
+      'claude-opus-4.5': 'claude-opus-4-5',
+      'claude-haiku-4.5': 'claude-haiku-4-5',
+    };
+    return ghcToCc[model.toLowerCase()] || model;
+  }
+
+  return model;
 }
 
 export function isGHCProvider(model?: string): boolean {
