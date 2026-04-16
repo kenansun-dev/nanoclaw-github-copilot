@@ -78,6 +78,12 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
 );
 export const IDLE_TIMEOUT = _config.sandbox.idleTimeout;
 
+// ─── Agent Run Timeout ───────────────────────────────────────────────────────
+
+/** Absolute max agent run duration in ms (0 = no timeout). Applies to both host and sandbox modes. */
+export const AGENT_RUN_TIMEOUT_MS =
+  (_config.agents.defaults.timeoutSeconds ?? 600) * 1000;
+
 // ─── Credential Proxy ────────────────────────────────────────────────────────
 
 export const CREDENTIAL_PROXY_PORT = _config.credentialProxy.port;

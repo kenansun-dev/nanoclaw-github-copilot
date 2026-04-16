@@ -12,6 +12,7 @@ import {
   CREDENTIAL_PROXY_PORT,
   CONTAINER_HOST_GATEWAY,
   CONTAINER_MAX_OUTPUT_SIZE,
+  AGENT_RUN_TIMEOUT_MS,
   CONTAINER_TIMEOUT,
   DATA_DIR,
   getConfig,
@@ -548,7 +549,23 @@ export async function runContainerAgent(
 
     let timeout = setTimeout(killOnTimeout, timeoutMs);
 
-    // Reset the timeout whenever there's activity (streaming output)
+    // Absolute timeout: hard cap on total run duration, never reset by output.
+    const absoluteTimeout: ReturnType<typeof setTimeout> | null =
+      AGENT_RUN_TIMEOUT_MS > 0
+        ? setTimeout(() => {
+            logger.error(
+              {
+                group: group.name,
+                containerName,
+                timeoutMs: AGENT_RUN_TIMEOUT_MS,
+              },
+              'Agent absolute timeout reached, killing container',
+            );
+            killOnTimeout();
+          }, AGENT_RUN_TIMEOUT_MS)
+        : null;
+
+    // Reset the idle timeout whenever there's activity (streaming output)
     const resetTimeout = () => {
       clearTimeout(timeout);
       timeout = setTimeout(killOnTimeout, timeoutMs);
@@ -556,6 +573,7 @@ export async function runContainerAgent(
 
     container.on('close', (code) => {
       clearTimeout(timeout);
+      if (absoluteTimeout) clearTimeout(absoluteTimeout);
       const duration = Date.now() - startTime;
 
       if (timedOut) {

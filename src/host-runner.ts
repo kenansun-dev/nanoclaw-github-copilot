@@ -13,6 +13,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import {
+  AGENT_RUN_TIMEOUT_MS,
   CONTAINER_TIMEOUT,
   IDLE_TIMEOUT,
   TIMEZONE,
@@ -463,6 +464,23 @@ export async function runHostAgent(
       ? null
       : setTimeout(killOnTimeout, timeoutMs);
 
+    // Absolute timeout: hard cap on total run duration, never reset by output.
+    // This prevents agent runs from hanging forever when tools are stuck.
+    const absoluteTimeout: ReturnType<typeof setTimeout> | null =
+      AGENT_RUN_TIMEOUT_MS > 0
+        ? setTimeout(() => {
+            logger.error(
+              {
+                group: group.name,
+                processName,
+                timeoutMs: AGENT_RUN_TIMEOUT_MS,
+              },
+              'Agent absolute timeout reached, killing',
+            );
+            killOnTimeout();
+          }, AGENT_RUN_TIMEOUT_MS)
+        : null;
+
     const resetTimeout = () => {
       if (neverTimeout) return;
       if (timeout) clearTimeout(timeout);
@@ -537,6 +555,7 @@ export async function runHostAgent(
 
     child.on('close', (code) => {
       if (timeout) clearTimeout(timeout);
+      if (absoluteTimeout) clearTimeout(absoluteTimeout);
       if (child.pid) unregisterAgentPid(child.pid);
       const duration = Date.now() - startTime;
 
@@ -620,6 +639,7 @@ export async function runHostAgent(
 
     child.on('error', (err) => {
       if (timeout) clearTimeout(timeout);
+      if (absoluteTimeout) clearTimeout(absoluteTimeout);
       logger.error(
         { group: group.name, processName, error: err },
         'Host agent spawn error',

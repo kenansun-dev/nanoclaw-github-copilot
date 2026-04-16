@@ -20,7 +20,7 @@ export interface AgentConfig {
   mode: 'host' | 'sandbox';
   thinkLevel?: 'low' | 'medium' | 'high' | 'xhigh'; // GHC: --effort flag; CC: --thinking flag
   showThinking?: boolean; // Show thinking/reasoning in channel messages (default: false)
-  timeoutSeconds?: number; // Per-query timeout in seconds (default: 300 = 5 min)
+  timeoutSeconds?: number; // Max agent run duration in seconds (default: 600 = 10 min). 0 = no timeout.
   githubMcp?: boolean; // GHC: register GitHub MCP server (web_search, issues, PRs, etc.)
 }
 
@@ -179,6 +179,7 @@ const DEFAULTS: NanoclawConfig = {
       triggerWord: '@Andy',
       hasOwnNumber: false,
       mode: process.platform === 'win32' ? 'host' : 'sandbox',
+      timeoutSeconds: 600, // 10 minutes default
     },
   },
   channels: {
