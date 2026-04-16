@@ -514,14 +514,8 @@ export class TeamsChannel implements Channel {
     this.conversationRefs.set(chatJid, ref as any);
 
     let content = activity.text;
-    // Teams sends links as HTML when textFormat is 'xml' — extract href before stripping
-    if (activity.textFormat === 'xml' && content) {
-      content = content
-        .replace(/<a\s+href="([^"]+)"[^>]*>([^<]*)<\/a>/gi, '$2 ($1)')
-        .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<[^>]+>/g, '')
-        .trim();
-    }
+    // Teams sends HTML when textFormat is 'xml' — pass through as-is
+    // LLM can understand HTML; stripping loses links and formatting
     const timestamp = activity.timestamp
       ? new Date(activity.timestamp).toISOString()
       : new Date().toISOString();
