@@ -99,6 +99,46 @@ cat /workspace/project/nanoclaw.json 2>/dev/null
 | `nanoclaw mcp` | Manage MCP servers |
 | `nanoclaw update` | Update nanoclaw to latest version |
 
+## Architecture
+
+### Processes
+
+NanoClaw runs as multiple processes:
+
+1. **Main process** (`node dist/index.js`) — always running
+   - Listens for messages from channels (Telegram, Teams, TUI)
+   - Manages sessions, groups, scheduled tasks
+   - Spawns agent processes on demand
+
+2. **Agent process** (child of main) — spawned per query
+   - Runs `agent-runner-ghc` (GHC SDK) or `agent-runner` (CC SDK)
+   - Agent-runner starts **Copilot CLI** as a subprocess (headless, stdio)
+   - CLI does the actual LLM inference, tool execution, MCP calls
+   - Communicates results back via stdout markers
+
+3. **DevTunnel** (optional, separate process) — for Teams webhook
+
+### Modes
+
+- **Host mode** (`mode: "host"`): agent-runner runs as direct child process on the host machine. Has access to host filesystem, tools, credential manager.
+- **Sandbox mode** (`mode: "sandbox"`): agent-runner runs inside a Docker container. Isolated filesystem, limited access. Needs token passed via env var.
+
+### Message flow
+
+```
+User → Channel (Telegram/Teams) → Main process → Spawn agent-runner → CLI subprocess → LLM
+                                                                     ← stdout markers ←
+                                 ← Send reply via channel ←
+```
+
+### Key directories
+
+- `~/.nanoclaw/` — workspace root
+- `~/.nanoclaw/data/sessions/{group}/` — per-group session data
+- `~/.nanoclaw/groups/{group}/` — per-group workspace (files, uploads)
+- `~/.nanoclaw/logs/` — daily log files
+- `~/.nanoclaw/credentials/` — MCP tokens, cached auth
+
 ## Your MCP tools
 
 These are your custom tools (provided by NanoClaw IPC MCP server):
