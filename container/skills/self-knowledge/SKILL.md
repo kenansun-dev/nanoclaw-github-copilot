@@ -326,3 +326,23 @@ nanoclaw doctor          # full health check
 nanoclaw logs -f         # live log tail
 nanoclaw chat list       # registered chats
 ```
+
+### Proactive troubleshooting
+
+When the user reports a problem (e.g. "Teams not replying", "bot stuck"), don't just describe possible causes — **run the diagnostic commands yourself** and report findings:
+
+```bash
+# Step 1: Check service status
+nanoclaw status
+
+# Step 2: Check recent errors in log
+cat ~/.nanoclaw/logs/nanoclaw*.log | grep -i 'error\|fatal\|retry\|failed' | tail -10
+
+# Step 3: Check if agent is spawning and completing
+cat ~/.nanoclaw/logs/nanoclaw*.log | grep -i 'spawning\|completed\|exited\|timeout' | tail -10
+
+# Step 4: Check auth
+cat ~/.nanoclaw/logs/nanoclaw*.log | grep -i 'token\|auth\|license' | tail -5
+```
+
+Report what you find, then suggest fixes. Don't ask the user to run commands — **you run them**.
