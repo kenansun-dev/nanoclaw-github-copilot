@@ -480,13 +480,24 @@ export function loadConfig(): NanoclawConfig {
   } catch (err) {
     logger.error(
       { err: err instanceof Error ? err.message : String(err) },
-      'Failed to parse nanoclaw.json — refusing to start with corrupt config',
+      'Failed to parse nanoclaw.json — attempting recovery from backup',
     );
-    console.error(
-      '\n  ❌ nanoclaw.json is invalid JSON. Fix the file manually before starting.\n' +
-        `  File: ${paths.config}\n`,
-    );
-    process.exit(1);
+    // Try to recover from .bak files
+    const recovered = recoverFromBackup(paths.config);
+    if (recovered) {
+      userConfig = recovered;
+      console.error(
+        '\n  ⚠️  nanoclaw.json was corrupt — recovered from backup.\n' +
+          `  File: ${paths.config}\n`,
+      );
+    } else {
+      console.error(
+        '\n  ❌ nanoclaw.json is invalid JSON and no backup found.\n' +
+          '  Fix the file manually before starting.\n' +
+          `  File: ${paths.config}\n`,
+      );
+      process.exit(1);
+    }
   }
 
   // Migrate secrets from nanoclaw.json to .env (one-time)
@@ -606,6 +617,67 @@ export function loadConfig(): NanoclawConfig {
   return config;
 }
 
+// ─── Config Backup ───────────────────────────────────────────────────────────
+
+const MAX_BACKUP_RING = 4;
+
+/** Rotate .bak ring: .bak → .bak.1, .bak.1 → .bak.2, ... up to .bak.4 */
+function rotateConfigBackups(configPath: string): void {
+  const bakBase = `${configPath}.bak`;
+  // Remove oldest
+  try {
+    fs.unlinkSync(`${bakBase}.${MAX_BACKUP_RING}`);
+  } catch {}
+  // Shift ring
+  for (let i = MAX_BACKUP_RING - 1; i >= 1; i--) {
+    try {
+      fs.renameSync(`${bakBase}.${i}`, `${bakBase}.${i + 1}`);
+    } catch {}
+  }
+  // Current .bak → .bak.1
+  try {
+    fs.renameSync(bakBase, `${bakBase}.1`);
+  } catch {}
+}
+
+/** Create a backup of the config file before writing. */
+function backupConfig(configPath: string): void {
+  if (!fs.existsSync(configPath)) return;
+  rotateConfigBackups(configPath);
+  try {
+    fs.copyFileSync(configPath, `${configPath}.bak`);
+    // Harden permissions (owner-only)
+    fs.chmodSync(`${configPath}.bak`, 0o600);
+  } catch {
+    /* best effort */
+  }
+}
+
+/** Try to recover config from .bak files when nanoclaw.json is corrupt. */
+function recoverFromBackup(configPath: string): Partial<NanoclawConfig> | null {
+  const candidates = [
+    `${configPath}.bak`,
+    ...Array.from(
+      { length: MAX_BACKUP_RING },
+      (_, i) => `${configPath}.bak.${i + 1}`,
+    ),
+  ];
+  for (const bakPath of candidates) {
+    try {
+      if (!fs.existsSync(bakPath)) continue;
+      const raw = fs.readFileSync(bakPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      logger.info({ bakPath }, 'Recovered config from backup');
+      // Restore the main config file from backup
+      fs.copyFileSync(bakPath, configPath);
+      return parsed;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 /**
  * Save config back to nanoclaw.json (for CLI commands like chat add).
  */
@@ -667,6 +739,8 @@ export function saveConfig(config: NanoclawConfig): void {
 
   // Save chats in grouped format
   toSave.chats = denormalizeChats(toSave.chats || {});
+  // Backup before writing
+  backupConfig(paths.config);
   fs.writeFileSync(paths.config, JSON.stringify(toSave, null, 2) + '\n');
 }
 
