@@ -487,6 +487,9 @@ export function loadConfig(): NanoclawConfig {
     process.exit(1);
   }
 
+  // Migrate secrets from nanoclaw.json to .env (one-time)
+  migrateSecretsToEnv(userConfig);
+
   // Run config migrations
   const migrated = migrateConfig(userConfig);
   if (migrated) {
@@ -607,15 +610,55 @@ export function loadConfig(): NanoclawConfig {
 export function saveConfig(config: NanoclawConfig): void {
   // Strip secrets before saving — they stay in .env
   const toSave = JSON.parse(JSON.stringify(config));
-  if (toSave.channels?.telegram) {
-    delete toSave.channels.telegram.botToken;
+  // Strip top-level channel secrets
+  // Replace secrets with ${ENV_VAR} references (explicit, visible in json)
+  if (
+    toSave.channels?.telegram?.botToken &&
+    !toSave.channels.telegram.botToken.startsWith('${')
+  ) {
+    toSave.channels.telegram.botToken = '${TELEGRAM_BOT_TOKEN}';
   }
   if (toSave.channels?.teams) {
-    delete toSave.channels.teams.appId;
-    delete toSave.channels.teams.appPassword;
-    delete toSave.channels.teams.tenantId;
+    if (
+      toSave.channels.teams.appPassword &&
+      !toSave.channels.teams.appPassword.startsWith('${')
+    ) {
+      toSave.channels.teams.appPassword = '${MSTEAMS_APP_PASSWORD}';
+    }
     delete toSave.channels.teams.certThumbprint;
     delete toSave.channels.teams.certPrivateKeyPath;
+  }
+  // Per-account secrets → ${ENV_VAR} references
+  for (const ch of ['telegram', 'teams'] as const) {
+    const accounts = toSave.channels?.[ch]?.accounts;
+    if (accounts && typeof accounts === 'object') {
+      for (const [accId, acc] of Object.entries(accounts) as any[]) {
+        if (
+          ch === 'telegram' &&
+          acc.botToken &&
+          !acc.botToken.startsWith('${')
+        ) {
+          const envKey =
+            accId === 'default'
+              ? 'TELEGRAM_BOT_TOKEN'
+              : `TELEGRAM_BOT_TOKEN_${accId.toUpperCase()}`;
+          acc.botToken = `\${${envKey}}`;
+        }
+        if (
+          ch === 'teams' &&
+          acc.appPassword &&
+          !acc.appPassword.startsWith('${')
+        ) {
+          const envKey =
+            accId === 'default'
+              ? 'MSTEAMS_APP_PASSWORD'
+              : `MSTEAMS_APP_PASSWORD_${accId.toUpperCase()}`;
+          acc.appPassword = `\${${envKey}}`;
+        }
+        delete acc.certThumbprint;
+        delete acc.certPrivateKeyPath;
+      }
+    }
   }
 
   // Save chats in grouped format
@@ -700,4 +743,91 @@ export function getDefaultAgent(config: NanoclawConfig): AgentConfig {
   return defaultAgent
     ? { ...config.agents.defaults, ...defaultAgent }
     : { ...config.agents.defaults, ...list[0] };
+}
+
+// ─── Secret Migration ────────────────────────────────────────────────────────
+
+/**
+ * One-time migration: move plaintext secrets from nanoclaw.json to .env.
+ * After moving, saves a clean nanoclaw.json without secrets.
+ */
+function migrateSecretsToEnv(config: any): void {
+  const secrets: Record<string, string> = {};
+  let found = false;
+
+  // Check top-level channel secrets
+  if (config.channels?.telegram?.botToken) {
+    secrets.TELEGRAM_BOT_TOKEN = config.channels.telegram.botToken;
+    found = true;
+  }
+  if (config.channels?.teams?.appPassword) {
+    secrets.MSTEAMS_APP_PASSWORD = config.channels.teams.appPassword;
+    found = true;
+  }
+  if (config.channels?.teams?.appId) {
+    secrets.MSTEAMS_APP_ID = config.channels.teams.appId;
+    found = true;
+  }
+  if (config.channels?.teams?.tenantId) {
+    secrets.MSTEAMS_TENANT_ID = config.channels.teams.tenantId;
+    found = true;
+  }
+
+  // Check per-account secrets
+  for (const [accId, acc] of Object.entries(
+    config.channels?.telegram?.accounts || {},
+  ) as any[]) {
+    if (acc.botToken) {
+      const key =
+        accId === 'default'
+          ? 'TELEGRAM_BOT_TOKEN'
+          : `TELEGRAM_BOT_TOKEN_${accId.toUpperCase()}`;
+      secrets[key] = acc.botToken;
+      found = true;
+    }
+  }
+  for (const [accId, acc] of Object.entries(
+    config.channels?.teams?.accounts || {},
+  ) as any[]) {
+    if (acc.appPassword) {
+      const key =
+        accId === 'default'
+          ? 'MSTEAMS_APP_PASSWORD'
+          : `MSTEAMS_APP_PASSWORD_${accId.toUpperCase()}`;
+      secrets[key] = acc.appPassword;
+      found = true;
+    }
+  }
+
+  if (!found) return;
+
+  // Append to .env
+  const envPath = paths.config.replace(/nanoclaw.json$/, '.env');
+  let envContent = '';
+  try {
+    envContent = fs.readFileSync(envPath, 'utf-8');
+  } catch {
+    /* no .env yet */
+  }
+
+  const lines: string[] = [];
+  for (const [k, v] of Object.entries(secrets)) {
+    // Only add if not already in .env
+    if (!envContent.includes(`${k}=`)) {
+      lines.push(`${k}=${v}`);
+    }
+  }
+
+  if (lines.length > 0) {
+    const append =
+      '\n# Migrated from nanoclaw.json\n' + lines.join('\n') + '\n';
+    fs.appendFileSync(envPath, append, { mode: 0o600 });
+    logger.info(
+      `Migrated ${lines.length} secret(s) from nanoclaw.json to .env`,
+    );
+  }
+
+  // Save clean config (saveConfig strips secrets)
+  saveConfig(config);
+  logger.info('Stripped secrets from nanoclaw.json');
 }
