@@ -252,10 +252,17 @@ export async function runHostAgent(
   }
 
   // MCP config — resolve Azure AD tokens for remote servers
-  if (fs.existsSync(wsPaths.mcpConfig)) {
+  // Read from both mcp.json AND nanoclaw.json mcp.servers (merged by config-loader)
+  const mergedMcpServers = getConfig().mcp?.servers || {};
+  const hasMcpConfig = fs.existsSync(wsPaths.mcpConfig) || Object.keys(mergedMcpServers).length > 0;
+  if (hasMcpConfig) {
     try {
-      const mcpJson = JSON.parse(fs.readFileSync(wsPaths.mcpConfig, 'utf-8'));
-      const servers = mcpJson.mcpServers || mcpJson;
+      // Start with mcp.json if it exists, then overlay nanoclaw.json servers
+      let mcpJson: any = {};
+      if (fs.existsSync(wsPaths.mcpConfig)) {
+        mcpJson = JSON.parse(fs.readFileSync(wsPaths.mcpConfig, 'utf-8'));
+      }
+      const servers = { ...(mcpJson.mcpServers || mcpJson), ...mergedMcpServers };
       const hasAzureAuth = Object.values(servers).some(
         (s: any) => s.auth?.provider === 'azure',
       );
@@ -278,10 +285,13 @@ export async function runHostAgent(
         }
         // Write augmented config to session dir
         const augmentedPath = path.join(sessionDir, 'mcp.json');
-        fs.writeFileSync(augmentedPath, JSON.stringify(mcpJson, null, 2));
+        fs.writeFileSync(augmentedPath, JSON.stringify({ mcpServers: servers }, null, 2));
         env.NANOCLAW_MCP_CONFIG = augmentedPath;
       } else {
-        env.NANOCLAW_MCP_CONFIG = wsPaths.mcpConfig;
+        // No azure auth needed, but still write merged config
+        const augmentedPath = path.join(sessionDir, 'mcp.json');
+        fs.writeFileSync(augmentedPath, JSON.stringify({ mcpServers: servers }, null, 2));
+        env.NANOCLAW_MCP_CONFIG = augmentedPath;
       }
     } catch (err) {
       logger.warn(
