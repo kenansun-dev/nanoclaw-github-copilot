@@ -427,11 +427,15 @@ export async function runHostAgent(
     let hadStreamingOutput = false;
 
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
-    // Host mode with idleTimeout 0: no hard timeout (agent stays alive forever)
-    // Container mode or explicit timeout: use configTimeout or idleTimeout + grace
+    // Per-query timeout: agents.defaults.timeoutSeconds (default 300s = 5 min)
+    const queryTimeoutSec = getConfig().agents?.defaults?.timeoutSeconds ?? 300;
+    const queryTimeoutMs = queryTimeoutSec * 1000;
+
+    // Host mode with idleTimeout 0: no hard timeout for idle (agent stays alive between queries)
+    // But per-query timeout always applies to prevent stuck queries
     const neverTimeout = IDLE_TIMEOUT <= 0;
     const timeoutMs = neverTimeout
-      ? 0 // 0 = no timeout
+      ? queryTimeoutMs // Use per-query timeout even in host mode
       : Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
     const killOnTimeout = () => {
