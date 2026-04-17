@@ -337,6 +337,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Progressive send state: track message ID for editMessage on partial updates
   let progressiveMsgId: string | undefined;
   let progressiveText = '';
+  let lastFinalMsgId: string | undefined;
   // Thinking message state (separate from answer progressive message)
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
@@ -403,11 +404,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (progressiveMsgId && channel.editMessage) {
           // Replace the progressive message with final content
           await channel.editMessage(chatJid, progressiveMsgId, text, sendOpts);
-          progressiveMsgId = undefined;
-          progressiveText = '';
+        } else if (outputSentToUser && lastFinalMsgId && channel.editMessage) {
+          // Multiple final outputs (e.g. tool call → new response): edit the last message
+          await channel.editMessage(chatJid, lastFinalMsgId, text, sendOpts);
         } else {
-          await channel.sendMessage(chatJid, text, sendOpts);
+          const msgId = await channel.sendMessage(chatJid, text, sendOpts);
+          lastFinalMsgId = typeof msgId === 'string' ? msgId : undefined;
         }
+        progressiveMsgId = undefined;
+        progressiveText = '';
         outputSentToUser = true;
       }
       logger.info(

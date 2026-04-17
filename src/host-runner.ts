@@ -13,6 +13,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import {
+  AGENT_RUN_TIMEOUT_MS,
   CONTAINER_TIMEOUT,
   IDLE_TIMEOUT,
   TIMEZONE,
@@ -217,6 +218,12 @@ export async function runHostAgent(
     if (agent.githubMcp !== false) {
       env.NANOCLAW_GITHUB_MCP = '1';
     }
+    // Enable MCP config discovery (reads ~/.mcp.json etc.)
+    const mcpDiscovery =
+      (getConfig() as any).mcp?.enableConfigDiscovery ?? false;
+    if (mcpDiscovery) {
+      env.NANOCLAW_MCP_DISCOVERY = '1';
+    }
   } else {
     // CC mode: uses Claude Agent SDK with native host auth (~/.claude/)
     // No token injection needed — CLI handles its own auth
@@ -246,10 +253,22 @@ export async function runHostAgent(
   }
 
   // MCP config — resolve Azure AD tokens for remote servers
-  if (fs.existsSync(wsPaths.mcpConfig)) {
+  // Read from both mcp.json AND nanoclaw.json mcp.servers (merged by config-loader)
+  const mergedMcpServers = getConfig().mcp?.servers || {};
+  const hasMcpConfig =
+    fs.existsSync(wsPaths.mcpConfig) ||
+    Object.keys(mergedMcpServers).length > 0;
+  if (hasMcpConfig) {
     try {
-      const mcpJson = JSON.parse(fs.readFileSync(wsPaths.mcpConfig, 'utf-8'));
-      const servers = mcpJson.mcpServers || mcpJson;
+      // Start with mcp.json if it exists, then overlay nanoclaw.json servers
+      let mcpJson: any = {};
+      if (fs.existsSync(wsPaths.mcpConfig)) {
+        mcpJson = JSON.parse(fs.readFileSync(wsPaths.mcpConfig, 'utf-8'));
+      }
+      const servers = {
+        ...(mcpJson.mcpServers || mcpJson),
+        ...mergedMcpServers,
+      };
       const hasAzureAuth = Object.values(servers).some(
         (s: any) => s.auth?.provider === 'azure',
       );
@@ -272,10 +291,19 @@ export async function runHostAgent(
         }
         // Write augmented config to session dir
         const augmentedPath = path.join(sessionDir, 'mcp.json');
-        fs.writeFileSync(augmentedPath, JSON.stringify(mcpJson, null, 2));
+        fs.writeFileSync(
+          augmentedPath,
+          JSON.stringify({ mcpServers: servers }, null, 2),
+        );
         env.NANOCLAW_MCP_CONFIG = augmentedPath;
       } else {
-        env.NANOCLAW_MCP_CONFIG = wsPaths.mcpConfig;
+        // No azure auth needed, but still write merged config
+        const augmentedPath = path.join(sessionDir, 'mcp.json');
+        fs.writeFileSync(
+          augmentedPath,
+          JSON.stringify({ mcpServers: servers }, null, 2),
+        );
+        env.NANOCLAW_MCP_CONFIG = augmentedPath;
       }
     } catch (err) {
       logger.warn(
@@ -386,6 +414,7 @@ export async function runHostAgent(
     cwd: path.dirname(path.dirname(runnerPath)),
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: true,
+    windowsHide: true,
   });
 
   onProcess(child, processName);
@@ -400,14 +429,19 @@ export async function runHostAgent(
     let hadStreamingOutput = false;
 
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
-    // Host mode with idleTimeout 0: no hard timeout (agent stays alive forever)
-    // Container mode or explicit timeout: use configTimeout or idleTimeout + grace
+    // Per-query timeout: agents.defaults.timeoutSeconds (default 300s = 5 min)
+    const queryTimeoutSec = getConfig().agents?.defaults?.timeoutSeconds ?? 300;
+    const queryTimeoutMs = queryTimeoutSec * 1000;
+
+    // Host mode with idleTimeout 0: no hard timeout for idle (agent stays alive between queries)
+    // But per-query timeout always applies to prevent stuck queries
     const neverTimeout = IDLE_TIMEOUT <= 0;
     const timeoutMs = neverTimeout
-      ? 0 // 0 = no timeout
+      ? queryTimeoutMs // Use per-query timeout even in host mode
       : Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
     const killOnTimeout = () => {
+      if (timedOut) return; // Guard against double-trigger from idle + absolute timeout
       timedOut = true;
       logger.error(
         { group: group.name, processName },
@@ -431,6 +465,23 @@ export async function runHostAgent(
     let timeout: ReturnType<typeof setTimeout> | null = neverTimeout
       ? null
       : setTimeout(killOnTimeout, timeoutMs);
+
+    // Absolute timeout: hard cap on total run duration, never reset by output.
+    // This prevents agent runs from hanging forever when tools are stuck.
+    const absoluteTimeout: ReturnType<typeof setTimeout> | null =
+      AGENT_RUN_TIMEOUT_MS > 0
+        ? setTimeout(() => {
+            logger.error(
+              {
+                group: group.name,
+                processName,
+                timeoutMs: AGENT_RUN_TIMEOUT_MS,
+              },
+              'Agent absolute timeout reached, killing',
+            );
+            killOnTimeout();
+          }, AGENT_RUN_TIMEOUT_MS)
+        : null;
 
     const resetTimeout = () => {
       if (neverTimeout) return;
@@ -506,6 +557,7 @@ export async function runHostAgent(
 
     child.on('close', (code) => {
       if (timeout) clearTimeout(timeout);
+      if (absoluteTimeout) clearTimeout(absoluteTimeout);
       if (child.pid) unregisterAgentPid(child.pid);
       const duration = Date.now() - startTime;
 
@@ -589,6 +641,7 @@ export async function runHostAgent(
 
     child.on('error', (err) => {
       if (timeout) clearTimeout(timeout);
+      if (absoluteTimeout) clearTimeout(absoluteTimeout);
       logger.error(
         { group: group.name, processName, error: err },
         'Host agent spawn error',

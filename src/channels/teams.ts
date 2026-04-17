@@ -127,10 +127,14 @@ export class TeamsChannel implements Channel {
       }
       const msg = (await res.json()) as any;
       const content = msg.body?.content || '';
-      // Strip HTML tags if contentType is html
+      // Convert HTML to text, preserving links
       const text =
         msg.body?.contentType === 'html'
-          ? content.replace(/<[^>]+>/g, '').trim()
+          ? content
+              .replace(/<a\s+href="([^"]+)"[^>]*>([^<]*)<\/a>/gi, '$2 ($1)')
+              .replace(/<br\s*\/?>/gi, '\n')
+              .replace(/<[^>]+>/g, '')
+              .trim()
           : content;
       const author = msg.from?.user?.displayName || 'Someone';
       return text ? { content: text, author } : null;
@@ -510,6 +514,8 @@ export class TeamsChannel implements Channel {
     this.conversationRefs.set(chatJid, ref as any);
 
     let content = activity.text;
+    // Teams sends HTML when textFormat is 'xml' — pass through as-is
+    // LLM can understand HTML; stripping loses links and formatting
     const timestamp = activity.timestamp
       ? new Date(activity.timestamp).toISOString()
       : new Date().toISOString();

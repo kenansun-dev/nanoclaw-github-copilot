@@ -20,6 +20,7 @@ export interface AgentConfig {
   mode: 'host' | 'sandbox';
   thinkLevel?: 'low' | 'medium' | 'high' | 'xhigh'; // GHC: --effort flag; CC: --thinking flag
   showThinking?: boolean; // Show thinking/reasoning in channel messages (default: false)
+  timeoutSeconds?: number; // Max agent run duration in seconds (default: 600 = 10 min). 0 = no timeout.
   githubMcp?: boolean; // GHC: register GitHub MCP server (web_search, issues, PRs, etc.)
 }
 
@@ -178,6 +179,7 @@ const DEFAULTS: NanoclawConfig = {
       triggerWord: '@Andy',
       hasOwnNumber: false,
       mode: process.platform === 'win32' ? 'host' : 'sandbox',
+      timeoutSeconds: 600, // 10 minutes default
     },
   },
   channels: {
@@ -269,10 +271,28 @@ export function readWorkspaceEnv(): Record<string, string> {
  * Secrets from .env are merged into the appropriate config sections.
  */
 /**
- * Convert channel-grouped chats format to flat Record<jid, config> format.
- * Supports both old (flat) and new (grouped) formats.
+ * Derive channel name from a chat jid prefix.
  */
-function normalizeChats(raw: any): Record<
+function channelFromJid(jid: string): string {
+  if (jid.startsWith('tg:')) return 'telegram';
+  if (jid.startsWith('teams:')) return 'teams';
+  if (jid.startsWith('dc:')) return 'discord';
+  if (jid.startsWith('wa:')) return 'whatsapp';
+  if (jid.startsWith('slack:')) return 'slack';
+  return 'other';
+}
+
+/**
+ * Convert channel-grouped chats format to flat Record<jid, config> format.
+ * Supports:
+ * - Old top-level flat format: { "teams:xxx": { name: "..." } }
+ * - Grouped format (top-level chats): { telegram: [...], teams: [...] }
+ * - Channel-embedded format: read from channels.<name>.chats arrays
+ */
+function normalizeChats(
+  raw: any,
+  channels?: any,
+): Record<
   string,
   {
     name: string;
@@ -281,22 +301,16 @@ function normalizeChats(raw: any): Record<
     agentId?: string;
   }
 > {
-  if (!raw || typeof raw !== 'object') return {};
+  const result: Record<string, any> = {};
 
-  // Check if it's the new grouped format (has telegram/teams/discord arrays)
-  const channelKeys = ['telegram', 'teams', 'discord', 'slack', 'whatsapp'];
-  const isGrouped = Object.keys(raw).some(
-    (k) => channelKeys.includes(k) && Array.isArray(raw[k]),
-  );
-
-  if (isGrouped) {
-    const result: Record<string, any> = {};
-    for (const [, entries] of Object.entries(raw)) {
-      if (!Array.isArray(entries)) continue;
-      for (const entry of entries) {
-        if (entry.jid && entry.name) {
+  // 1. Read from channels.<name>.chats (new canonical format)
+  if (channels && typeof channels === 'object') {
+    for (const [, chDef] of Object.entries(channels) as any[]) {
+      if (!chDef || !Array.isArray(chDef.chats)) continue;
+      for (const entry of chDef.chats) {
+        if (entry.jid) {
           result[entry.jid] = {
-            name: entry.name,
+            name: entry.name || entry.jid,
             isMain: entry.isMain,
             requiresTrigger: entry.requiresTrigger,
             agentId: entry.agentId,
@@ -304,28 +318,66 @@ function normalizeChats(raw: any): Record<
         }
       }
     }
-    return result;
   }
 
-  // Old flat format — return as-is
-  return raw;
+  // 2. Also read from top-level chats (migration support)
+  if (raw && typeof raw === 'object') {
+    const channelKeys = [
+      'telegram',
+      'teams',
+      'discord',
+      'slack',
+      'whatsapp',
+      'other',
+    ];
+    const isGrouped = Object.keys(raw).some(
+      (k) => channelKeys.includes(k) && Array.isArray(raw[k]),
+    );
+
+    if (isGrouped) {
+      for (const [, entries] of Object.entries(raw)) {
+        if (!Array.isArray(entries)) continue;
+        for (const entry of entries) {
+          if (entry.jid && !result[entry.jid]) {
+            result[entry.jid] = {
+              name: entry.name || entry.jid,
+              isMain: entry.isMain,
+              requiresTrigger: entry.requiresTrigger,
+              agentId: entry.agentId,
+            };
+          }
+        }
+      }
+    } else {
+      // Old flat format
+      for (const [jid, cfg] of Object.entries(raw) as any[]) {
+        if (!result[jid]) {
+          result[jid] = cfg;
+        }
+      }
+    }
+  }
+
+  return result;
 }
 
 /**
- * Convert flat Record<jid, config> back to channel-grouped format for saving.
+ * Write chats into channels.<name>.chats arrays for saving.
+ * Removes top-level "chats" key.
  */
-function denormalizeChats(flat: Record<string, any>): ChannelChats {
-  const grouped: ChannelChats = {};
-  for (const [jid, config] of Object.entries(flat)) {
-    let channel = 'other';
-    if (jid.startsWith('tg:')) channel = 'telegram';
-    else if (jid.startsWith('teams:')) channel = 'teams';
-    else if (jid.startsWith('dc:')) channel = 'discord';
-    else if (jid.startsWith('wa:')) channel = 'whatsapp';
-    else if (jid.startsWith('slack:')) channel = 'slack';
+function distributeChatsToChannels(
+  toSave: any,
+  flat: Record<string, any>,
+): void {
+  // Remove top-level chats
+  delete toSave.chats;
 
-    if (!grouped[channel]) grouped[channel] = [];
-    grouped[channel]!.push({
+  // Group by channel
+  const byChannel: Record<string, any[]> = {};
+  for (const [jid, config] of Object.entries(flat)) {
+    const ch = channelFromJid(jid);
+    if (!byChannel[ch]) byChannel[ch] = [];
+    byChannel[ch].push({
       jid,
       name: config.name,
       isMain: config.isMain,
@@ -333,7 +385,20 @@ function denormalizeChats(flat: Record<string, any>): ChannelChats {
       agentId: config.agentId,
     });
   }
-  return grouped;
+
+  // Write into channels.<name>.chats — but only for channels that already exist.
+  // Don't create stub entries for unknown channel names (e.g. 'other' from unrecognized jids).
+  if (!toSave.channels) toSave.channels = {};
+  for (const [ch, entries] of Object.entries(byChannel)) {
+    if (!toSave.channels[ch]) continue; // Unknown channel — skip
+    toSave.channels[ch].chats = entries;
+  }
+  // Clean up channels that no longer have chats
+  for (const [ch, chDef] of Object.entries(toSave.channels) as any[]) {
+    if (chDef && typeof chDef === 'object' && chDef.chats && !byChannel[ch]) {
+      delete chDef.chats;
+    }
+  }
 }
 
 // ─── Config Migration ────────────────────────────────────────────────────────
@@ -468,6 +533,7 @@ function resolveEnvVars(
 
 export function loadConfig(): NanoclawConfig {
   let userConfig: Partial<NanoclawConfig> = {};
+  let recoveredFromBackup = false;
 
   // Read nanoclaw.json
   try {
@@ -476,15 +542,38 @@ export function loadConfig(): NanoclawConfig {
       userConfig = JSON.parse(raw);
     }
   } catch (err) {
-    logger.warn(
+    logger.error(
       { err: err instanceof Error ? err.message : String(err) },
-      'Failed to read nanoclaw.json, using defaults',
+      'Failed to parse nanoclaw.json — attempting recovery from backup',
     );
+    // Try to recover from .bak files
+    const recovered = recoverFromBackup(paths.config);
+    if (recovered) {
+      userConfig = recovered;
+      recoveredFromBackup = true;
+      console.error(
+        '\n  ⚠️  nanoclaw.json was corrupt — recovered from backup.\n' +
+          `  File: ${paths.config}\n`,
+      );
+    } else {
+      console.error(
+        '\n  ❌ nanoclaw.json is invalid JSON and no backup found.\n' +
+          '  Fix the file manually before starting.\n' +
+          `  File: ${paths.config}\n`,
+      );
+      process.exit(1);
+    }
+  }
+
+  // Migrate secrets from nanoclaw.json to .env (one-time)
+  // Skip if we just recovered from backup to avoid circular corruption
+  if (!recoveredFromBackup) {
+    migrateSecretsToEnv(userConfig);
   }
 
   // Run config migrations
   const migrated = migrateConfig(userConfig);
-  if (migrated) {
+  if (migrated && !recoveredFromBackup) {
     try {
       fs.writeFileSync(
         paths.config,
@@ -511,7 +600,7 @@ export function loadConfig(): NanoclawConfig {
   const config = deepMerge(DEFAULTS, userConfig) as NanoclawConfig;
 
   // Normalize chats: convert grouped format to flat Record<jid, config>
-  config.chats = normalizeChats(config.chats) as any;
+  config.chats = normalizeChats(config.chats, config.channels) as any;
 
   // Merge MCP servers from mcp.json if it exists
   if (fs.existsSync(paths.mcpConfig)) {
@@ -596,25 +685,130 @@ export function loadConfig(): NanoclawConfig {
   return config;
 }
 
+// ─── Config Backup ───────────────────────────────────────────────────────────
+
+const MAX_BACKUP_RING = 4;
+
+/** Rotate .bak ring: .bak → .bak.1, .bak.1 → .bak.2, ... up to .bak.4 */
+function rotateConfigBackups(configPath: string): void {
+  const bakBase = `${configPath}.bak`;
+  // Remove oldest
+  try {
+    fs.unlinkSync(`${bakBase}.${MAX_BACKUP_RING}`);
+  } catch {}
+  // Shift ring
+  for (let i = MAX_BACKUP_RING - 1; i >= 1; i--) {
+    try {
+      fs.renameSync(`${bakBase}.${i}`, `${bakBase}.${i + 1}`);
+    } catch {}
+  }
+  // Current .bak → .bak.1
+  try {
+    fs.renameSync(bakBase, `${bakBase}.1`);
+  } catch {}
+}
+
+/** Create a backup of the config file before writing. */
+function backupConfig(configPath: string): void {
+  if (!fs.existsSync(configPath)) return;
+  rotateConfigBackups(configPath);
+  try {
+    fs.copyFileSync(configPath, `${configPath}.bak`);
+    // Harden permissions (owner-only)
+    fs.chmodSync(`${configPath}.bak`, 0o600);
+  } catch {
+    /* best effort */
+  }
+}
+
+/** Try to recover config from .bak files when nanoclaw.json is corrupt. */
+function recoverFromBackup(configPath: string): Partial<NanoclawConfig> | null {
+  const candidates = [
+    `${configPath}.bak`,
+    ...Array.from(
+      { length: MAX_BACKUP_RING },
+      (_, i) => `${configPath}.bak.${i + 1}`,
+    ),
+  ];
+  for (const bakPath of candidates) {
+    try {
+      if (!fs.existsSync(bakPath)) continue;
+      const raw = fs.readFileSync(bakPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      logger.info({ bakPath }, 'Recovered config from backup');
+      // Restore the main config file from backup
+      fs.copyFileSync(bakPath, configPath);
+      return parsed;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 /**
  * Save config back to nanoclaw.json (for CLI commands like chat add).
  */
 export function saveConfig(config: NanoclawConfig): void {
   // Strip secrets before saving — they stay in .env
   const toSave = JSON.parse(JSON.stringify(config));
-  if (toSave.channels?.telegram) {
-    delete toSave.channels.telegram.botToken;
+  // Strip top-level channel secrets
+  // Replace secrets with ${ENV_VAR} references (explicit, visible in json)
+  if (
+    toSave.channels?.telegram?.botToken &&
+    !toSave.channels.telegram.botToken.startsWith('${')
+  ) {
+    toSave.channels.telegram.botToken = '${TELEGRAM_BOT_TOKEN}';
   }
   if (toSave.channels?.teams) {
-    delete toSave.channels.teams.appId;
-    delete toSave.channels.teams.appPassword;
-    delete toSave.channels.teams.tenantId;
+    if (
+      toSave.channels.teams.appPassword &&
+      !toSave.channels.teams.appPassword.startsWith('${')
+    ) {
+      toSave.channels.teams.appPassword = '${MSTEAMS_APP_PASSWORD}';
+    }
     delete toSave.channels.teams.certThumbprint;
     delete toSave.channels.teams.certPrivateKeyPath;
+    // tenantId lives in accounts.default, not root level (v2→v3 migration)
+    delete toSave.channels.teams.tenantId;
+  }
+  // Per-account secrets → ${ENV_VAR} references
+  for (const ch of ['telegram', 'teams'] as const) {
+    const accounts = toSave.channels?.[ch]?.accounts;
+    if (accounts && typeof accounts === 'object') {
+      for (const [accId, acc] of Object.entries(accounts) as any[]) {
+        if (
+          ch === 'telegram' &&
+          acc.botToken &&
+          !acc.botToken.startsWith('${')
+        ) {
+          const envKey =
+            accId === 'default'
+              ? 'TELEGRAM_BOT_TOKEN'
+              : `TELEGRAM_BOT_TOKEN_${accId.toUpperCase()}`;
+          acc.botToken = `\${${envKey}}`;
+        }
+        if (
+          ch === 'teams' &&
+          acc.appPassword &&
+          !acc.appPassword.startsWith('${')
+        ) {
+          const envKey =
+            accId === 'default'
+              ? 'MSTEAMS_APP_PASSWORD'
+              : `MSTEAMS_APP_PASSWORD_${accId.toUpperCase()}`;
+          acc.appPassword = `\${${envKey}}`;
+        }
+        delete acc.certThumbprint;
+        delete acc.certPrivateKeyPath;
+      }
+    }
   }
 
-  // Save chats in grouped format
-  toSave.chats = denormalizeChats(toSave.chats || {});
+  // Distribute chats into channels.<name>.chats
+  distributeChatsToChannels(toSave, toSave.chats || {});
+  // Backup before writing
+  backupConfig(paths.config);
   fs.writeFileSync(paths.config, JSON.stringify(toSave, null, 2) + '\n');
 }
 
@@ -695,4 +889,98 @@ export function getDefaultAgent(config: NanoclawConfig): AgentConfig {
   return defaultAgent
     ? { ...config.agents.defaults, ...defaultAgent }
     : { ...config.agents.defaults, ...list[0] };
+}
+
+// ─── Secret Migration ────────────────────────────────────────────────────────
+
+/**
+ * One-time migration: move plaintext secrets from nanoclaw.json to .env.
+ * After moving, saves a clean nanoclaw.json without secrets.
+ */
+function migrateSecretsToEnv(config: any): void {
+  const secrets: Record<string, string> = {};
+  let found = false;
+
+  // Check top-level channel secrets (skip ${ENV_VAR} references)
+  if (
+    config.channels?.telegram?.botToken &&
+    !config.channels.telegram.botToken.startsWith('${')
+  ) {
+    secrets.TELEGRAM_BOT_TOKEN = config.channels.telegram.botToken;
+    found = true;
+  }
+  if (
+    config.channels?.teams?.appPassword &&
+    !config.channels.teams.appPassword.startsWith('${')
+  ) {
+    secrets.MSTEAMS_APP_PASSWORD = config.channels.teams.appPassword;
+    found = true;
+  }
+  // Note: appId is NOT a secret — it's a public Azure App Registration ID.
+  // It stays in nanoclaw.json, not in .env.
+  if (
+    config.channels?.teams?.tenantId &&
+    !config.channels.teams.tenantId.startsWith('${')
+  ) {
+    secrets.MSTEAMS_TENANT_ID = config.channels.teams.tenantId;
+    found = true;
+  }
+
+  // Check per-account secrets (skip ${ENV_VAR} references)
+  for (const [accId, acc] of Object.entries(
+    config.channels?.telegram?.accounts || {},
+  ) as any[]) {
+    if (acc.botToken && !acc.botToken.startsWith('${')) {
+      const key =
+        accId === 'default'
+          ? 'TELEGRAM_BOT_TOKEN'
+          : `TELEGRAM_BOT_TOKEN_${accId.toUpperCase()}`;
+      secrets[key] = acc.botToken;
+      found = true;
+    }
+  }
+  for (const [accId, acc] of Object.entries(
+    config.channels?.teams?.accounts || {},
+  ) as any[]) {
+    if (acc.appPassword && !acc.appPassword.startsWith('${')) {
+      const key =
+        accId === 'default'
+          ? 'MSTEAMS_APP_PASSWORD'
+          : `MSTEAMS_APP_PASSWORD_${accId.toUpperCase()}`;
+      secrets[key] = acc.appPassword;
+      found = true;
+    }
+  }
+
+  if (!found) return;
+
+  // Append to .env
+  const envPath = paths.config.replace(/nanoclaw.json$/, '.env');
+  let envContent = '';
+  try {
+    envContent = fs.readFileSync(envPath, 'utf-8');
+  } catch {
+    /* no .env yet */
+  }
+
+  const lines: string[] = [];
+  for (const [k, v] of Object.entries(secrets)) {
+    // Only add if not already in .env
+    if (!envContent.includes(`${k}=`)) {
+      lines.push(`${k}=${v}`);
+    }
+  }
+
+  if (lines.length > 0) {
+    const append =
+      '\n# Migrated from nanoclaw.json\n' + lines.join('\n') + '\n';
+    fs.appendFileSync(envPath, append, { mode: 0o600 });
+    logger.info(
+      `Migrated ${lines.length} secret(s) from nanoclaw.json to .env`,
+    );
+
+    // Save clean config (saveConfig strips secrets)
+    saveConfig(config);
+    logger.info('Stripped secrets from nanoclaw.json');
+  }
 }

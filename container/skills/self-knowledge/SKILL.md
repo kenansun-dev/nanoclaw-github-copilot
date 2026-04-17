@@ -99,6 +99,46 @@ cat /workspace/project/nanoclaw.json 2>/dev/null
 | `nanoclaw mcp` | Manage MCP servers |
 | `nanoclaw update` | Update nanoclaw to latest version |
 
+## Architecture
+
+### Processes
+
+NanoClaw runs as multiple processes:
+
+1. **Main process** (`node dist/index.js`) — always running
+   - Listens for messages from channels (Telegram, Teams, TUI)
+   - Manages sessions, groups, scheduled tasks
+   - Spawns agent processes on demand
+
+2. **Agent process** (child of main) — spawned per query
+   - Runs `agent-runner-ghc` (GHC SDK) or `agent-runner` (CC SDK)
+   - Agent-runner starts **Copilot CLI** as a subprocess (headless, stdio)
+   - CLI does the actual LLM inference, tool execution, MCP calls
+   - Communicates results back via stdout markers
+
+3. **DevTunnel** (optional, separate process) — for Teams webhook
+
+### Modes
+
+- **Host mode** (`mode: "host"`): agent-runner runs as direct child process on the host machine. Has access to host filesystem, tools, credential manager.
+- **Sandbox mode** (`mode: "sandbox"`): agent-runner runs inside a Docker container. Isolated filesystem, limited access. Needs token passed via env var.
+
+### Message flow
+
+```
+User → Channel (Telegram/Teams) → Main process → Spawn agent-runner → CLI subprocess → LLM
+                                                                     ← stdout markers ←
+                                 ← Send reply via channel ←
+```
+
+### Key directories
+
+- `~/.nanoclaw/` — workspace root
+- `~/.nanoclaw/data/sessions/{group}/` — per-group session data
+- `~/.nanoclaw/groups/{group}/` — per-group workspace (files, uploads)
+- `~/.nanoclaw/logs/` — daily log files
+- `~/.nanoclaw/credentials/` — MCP tokens, cached auth
+
 ## Your MCP tools
 
 These are your custom tools (provided by NanoClaw IPC MCP server):
@@ -118,6 +158,8 @@ These are your custom tools (provided by NanoClaw IPC MCP server):
 | `nanoclaw-pdf-read_pdf` | Extract text from a PDF file |
 
 Plus GitHub MCP tools (when `githubMcp` enabled): `web_search`, `web_fetch`, `issue_read`, `search_code`, etc.
+
+**Note:** GitHub MCP tools are injected at runtime via code, NOT configured in `~/.mcp.json` or `~/.nanoclaw/mcp.json`. The `.mcp.json` file may be empty — that's normal. To check available tools at runtime, ask the agent to list its tools.
 
 ## Authentication
 
@@ -283,3 +325,64 @@ cat ~/.nanoclaw/logs/nanoclaw.log | grep -i 'token\|auth\|license' | tail -10
 - **Restarting yourself**: Tell the user to run `nanoclaw restart`. Do NOT try to restart from within the agent process.
 - **Config changes**: Always validate JSON before writing. Bad config = nanoclaw won't start.
 - **In container mode**: You cannot run nanoclaw CLI commands — only MCP tools work.
+
+## Self-troubleshooting
+
+When something isn't working, diagnose it yourself before asking the user.
+
+### "Channel X not responding" (e.g. Teams works but Telegram doesn't, or vice versa)
+
+1. Check service is running: `nanoclaw status` or read PID file
+2. Read recent logs: `tail -50 ~/.nanoclaw/logs/nanoclaw-$(date +%Y-%m-%d).log`
+3. Look for: `ERROR`, `auth`, `retry`, `exit`, `crash`, `timeout`
+4. Check if messages are arriving: search logs for `Telegram message stored` or `Teams` + the chat JID
+5. Check if agent is spawning: search for `Spawning host agent`
+6. Check if agent is returning output: search for `Agent output`
+7. Common causes:
+   - **Retry backoff** — previous error left agent in retry loop (look for `Scheduling retry`)
+   - **devtunnel down** — Teams messages can't reach the bot (check `devtunnel` process)
+   - **Token expired** — auth failure prevents agent from starting
+   - **Session stuck** — `/new` to reset session
+
+### "Agent has no tools / MCP not working"
+
+1. Check GitHub MCP: search logs for `Using GitHub token` — if missing, token not found
+2. Check MCP config: read `~/.nanoclaw/mcp.json` and `nanoclaw.json` mcp.servers
+3. GitHub MCP tools are runtime-injected, NOT in `.mcp.json` — check by asking the agent to list tools
+4. If `enableConfigDiscovery` is on, CLI also reads `~/.mcp.json`
+
+### "Bot not replying in one channel but works in another"
+
+1. Check channel registration: `nanoclaw chat list`
+2. Check if the chat JID exists in logs
+3. TUI works independently — it doesn't go through the service if in direct mode
+4. Each channel has its own message processing — one can fail without affecting others
+
+### General diagnostic commands
+
+```bash
+nanoclaw status          # service + auth + channels
+nanoclaw doctor          # full health check
+nanoclaw logs -f         # live log tail
+nanoclaw chat list       # registered chats
+```
+
+### Proactive troubleshooting
+
+When the user reports a problem (e.g. "Teams not replying", "bot stuck"), don't just describe possible causes — **run the diagnostic commands yourself** and report findings:
+
+```bash
+# Step 1: Check service status
+nanoclaw status
+
+# Step 2: Check recent errors in log
+cat ~/.nanoclaw/logs/nanoclaw*.log | grep -i 'error\|fatal\|retry\|failed' | tail -10
+
+# Step 3: Check if agent is spawning and completing
+cat ~/.nanoclaw/logs/nanoclaw*.log | grep -i 'spawning\|completed\|exited\|timeout' | tail -10
+
+# Step 4: Check auth
+cat ~/.nanoclaw/logs/nanoclaw*.log | grep -i 'token\|auth\|license' | tail -5
+```
+
+Report what you find, then suggest fixes. Don't ask the user to run commands — **you run them**.

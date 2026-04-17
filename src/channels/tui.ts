@@ -210,6 +210,7 @@ export class TuiChannel implements Channel {
   ): Promise<string | void> {
     const client = this.getClientByJid(jid);
     if (!client) return;
+    // Track line count of last partial to clear properly
     this.sendJson(client.socket, { type: 'partial', text, messageId });
     return messageId;
   }

@@ -329,6 +329,10 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
     if (agentConfig?.githubMcp !== false) {
       env.NANOCLAW_GITHUB_MCP = '1';
     }
+    // Enable MCP config discovery (reads ~/.mcp.json etc.)
+    if ((config as any).mcp?.enableConfigDiscovery) {
+      env.NANOCLAW_MCP_DISCOVERY = '1';
+    }
   }
 
   // Skills

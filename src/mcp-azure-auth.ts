@@ -207,7 +207,11 @@ export async function resolveAllMcpTokens(
 
 function isAzInstalled(): boolean {
   try {
-    execSync('az --version', { stdio: 'pipe', timeout: 5000 });
+    execSync('az --version', {
+      stdio: 'pipe',
+      timeout: 5000,
+      windowsHide: true,
+    });
     return true;
   } catch {
     return false;
@@ -218,7 +222,12 @@ function tryAzGetToken(resource: string): string | null {
   try {
     const result = execSync(
       `az account get-access-token --resource ${resource} --query accessToken -o tsv`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000 },
+      {
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 10000,
+        windowsHide: true,
+      },
     ).trim();
     if (result && result.length > 10) return result;
     return null;

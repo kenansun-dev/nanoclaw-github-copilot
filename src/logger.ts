@@ -156,6 +156,17 @@ function archiveOldLogs(): void {
 // Run archive check once on startup
 setTimeout(archiveOldLogs, 5000);
 
+// ─── Console output control ─────────────────────────────────────────────────
+
+let consoleOutputEnabled = true;
+
+/** Enable or disable console (stdout/stderr) output from the logger.
+ *  File logging is always active regardless of this setting.
+ *  CLI commands should call setConsoleOutput(false) to avoid polluting stdout. */
+export function setConsoleOutput(enabled: boolean): void {
+  consoleOutputEnabled = enabled;
+}
+
 // ─── Main log function ───────────────────────────────────────────────────────
 
 function log(
@@ -181,7 +192,9 @@ function log(
   const stream = ensureLogStream();
   stream?.write(plainLine + '\n');
 
-  // Write to console (with colors if TTY)
+  // Write to console (only when enabled — CLI commands disable this)
+  if (!consoleOutputEnabled) return;
+
   const consoleStream =
     LEVELS[level] >= LEVELS.warn ? process.stderr : process.stdout;
   const useColor = consoleStream === process.stderr ? stderrIsTTY : stdoutIsTTY;

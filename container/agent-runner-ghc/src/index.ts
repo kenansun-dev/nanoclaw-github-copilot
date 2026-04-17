@@ -350,7 +350,8 @@ async function main(): Promise<void> {
         ...(thinkLevel ? { reasoningEffort: thinkLevel as any } : {}),
         // Don't pass configDir — it makes the CLI look for credentials in sessionDir
         // instead of ~/.copilot/, breaking auth on Windows.
-        // webSearch is enabled via the copilot config.json that host-runner copies to sessionDir.
+        // Enable config discovery so CLI reads ~/.mcp.json and other MCP configs
+        enableConfigDiscovery: process.env.NANOCLAW_MCP_DISCOVERY === '1',
         systemMessage,
         workingDirectory: process.env.NANOCLAW_WORK_DIR || '/workspace/group',
         onPermissionRequest: approveAll,
@@ -409,6 +410,11 @@ async function main(): Promise<void> {
               try {
                 const mcpConfig = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf-8'));
                 const servers = mcpConfig.mcpServers || mcpConfig;
+                // Normalize: SDK requires tools[] (mandatory), strip nanoclaw-internal fields
+                for (const [, cfg] of Object.entries(servers) as any[]) {
+                  if (!cfg.tools) cfg.tools = ['*'];
+                  delete cfg.auth; // nanoclaw internal, SDK doesn't recognize
+                }
                 log(`Loaded ${Object.keys(servers).length} MCP server(s) from ${mcpConfigPath}`);
                 return servers;
               } catch (err) {
