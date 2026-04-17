@@ -146,7 +146,7 @@ try {
       await runSandbox(commandArgs);
       break;
     case 'update':
-      await runUpdateCmd();
+      await runUpdateCmd(commandArgs);
       break;
     default:
       console.error(`Unknown command: ${command}`);
@@ -998,9 +998,9 @@ async function runSandbox(args: string[]) {
   }
 }
 
-async function runUpdateCmd() {
+async function runUpdateCmd(args: string[]) {
   const { runUpdate } = await import('./cli/update.js');
-  await runUpdate([]);
+  await runUpdate(args);
 }
 
 function printHelp() {
