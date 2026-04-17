@@ -907,9 +907,15 @@ export class TeamsChannel implements Channel {
             (ref as any).conversation?.conversationType === 'channel';
 
           if (!isGroup) {
-            // 1:1 DM: send FileConsentCard
+            // 1:1 DM: send FileConsentCard.
+            // CRITICAL: Attachment uses `contentType`, not `type`. Using `type`
+            // causes adapter error "ContentType of an attachment is not set"
+            // — FileConsentCard fails to render, user sees "Sorry, something
+            // went wrong", AND the bot conversation hangs because no
+            // fileConsent/invoke ever arrives back. Subsequent outbound sends
+            // on the same conversation also silently drop.
             const consentCard = {
-              type: 'application/vnd.microsoft.teams.card.file.consent',
+              contentType: 'application/vnd.microsoft.teams.card.file.consent',
               name,
               content: {
                 description: `File from NanoClaw: ${name}`,
