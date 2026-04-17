@@ -60,6 +60,7 @@ function normalizeModelForProvider(model: string, provider: string): string {
     const ccToGhc: Record<string, string> = {
       'claude-sonnet-4-6': 'claude-sonnet-4',
       'claude-opus-4-6': 'claude-opus-4',
+      'claude-opus-4-7': 'claude-opus-4.7',
       'claude-opus-4-5': 'claude-opus-4.5',
       'claude-opus-4-7': 'claude-opus-4.7',
       'claude-sonnet-4-5': 'claude-sonnet-4.5',
@@ -76,6 +77,7 @@ function normalizeModelForProvider(model: string, provider: string): string {
     const ghcToCc: Record<string, string> = {
       'claude-sonnet-4': 'claude-sonnet-4-6',
       'claude-opus-4': 'claude-opus-4-6',
+      'claude-opus-4.7': 'claude-opus-4-7',
       'claude-sonnet-4.5': 'claude-sonnet-4-5',
       'claude-opus-4.5': 'claude-opus-4-5',
       'claude-opus-4.7': 'claude-opus-4-7',
