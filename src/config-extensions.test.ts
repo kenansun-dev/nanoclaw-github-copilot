@@ -60,8 +60,9 @@ describe('getModelName', () => {
     expect(getModelName('openai/gpt-5.3')).toBe('gpt-5.3');
   });
 
-  it('returns full string when no slash', () => {
-    expect(getModelName('claude-sonnet-4.5')).toBe('claude-sonnet-4.5');
+  it('returns full string when no slash (maps via default provider)', () => {
+    // Default provider is anthropic (CC), so GHC-style name maps to CC form
+    expect(getModelName('claude-sonnet-4.5')).toBe('claude-sonnet-4-5');
   });
 });
 
