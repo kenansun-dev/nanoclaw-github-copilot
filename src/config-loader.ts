@@ -394,7 +394,7 @@ function distributeChatsToChannels(
   }
   // Clean up channels that no longer have chats
   for (const [ch, chDef] of Object.entries(toSave.channels) as any[]) {
-    if (chDef.chats && !byChannel[ch]) {
+    if (chDef && typeof chDef === 'object' && chDef.chats && !byChannel[ch]) {
       delete chDef.chats;
     }
   }
@@ -532,6 +532,7 @@ function resolveEnvVars(
 
 export function loadConfig(): NanoclawConfig {
   let userConfig: Partial<NanoclawConfig> = {};
+  let recoveredFromBackup = false;
 
   // Read nanoclaw.json
   try {
@@ -548,6 +549,7 @@ export function loadConfig(): NanoclawConfig {
     const recovered = recoverFromBackup(paths.config);
     if (recovered) {
       userConfig = recovered;
+      recoveredFromBackup = true;
       console.error(
         '\n  ⚠️  nanoclaw.json was corrupt — recovered from backup.\n' +
           `  File: ${paths.config}\n`,
@@ -563,7 +565,10 @@ export function loadConfig(): NanoclawConfig {
   }
 
   // Migrate secrets from nanoclaw.json to .env (one-time)
-  migrateSecretsToEnv(userConfig);
+  // Skip if we just recovered from backup to avoid circular corruption
+  if (!recoveredFromBackup) {
+    migrateSecretsToEnv(userConfig);
+  }
 
   // Run config migrations
   const migrated = migrateConfig(userConfig);
@@ -910,13 +915,8 @@ function migrateSecretsToEnv(config: any): void {
     secrets.MSTEAMS_APP_PASSWORD = config.channels.teams.appPassword;
     found = true;
   }
-  if (
-    config.channels?.teams?.appId &&
-    !String(config.channels.teams.appId).startsWith('${')
-  ) {
-    secrets.MSTEAMS_APP_ID = config.channels.teams.appId;
-    found = true;
-  }
+  // Note: appId is NOT a secret — it's a public Azure App Registration ID.
+  // It stays in nanoclaw.json, not in .env.
   if (
     config.channels?.teams?.tenantId &&
     !config.channels.teams.tenantId.startsWith('${')

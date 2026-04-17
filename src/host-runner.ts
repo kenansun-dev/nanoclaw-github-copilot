@@ -441,6 +441,7 @@ export async function runHostAgent(
       : Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
     const killOnTimeout = () => {
+      if (timedOut) return; // Guard against double-trigger from idle + absolute timeout
       timedOut = true;
       logger.error(
         { group: group.name, processName },
