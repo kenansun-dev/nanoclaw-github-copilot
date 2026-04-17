@@ -872,7 +872,15 @@ export class TeamsChannel implements Channel {
       );
       return messageId;
     } catch (err: any) {
-      logger.debug({ jid, messageId, err }, 'Failed to edit Teams message');
+      // Was `logger.debug` — which is silenced in production log levels.
+      // That silence combined with index.ts's `outputSentToUser && editMessage`
+      // code path meant failed edits (e.g. when the conversation is in a bad
+      // state after a prior onTurnError) produced ZERO log output, making
+      // outbound messages disappear invisibly. Log at warn so we can see it.
+      logger.warn(
+        { jid, messageId, err: err.message },
+        'Failed to edit Teams message',
+      );
     }
   }
 
