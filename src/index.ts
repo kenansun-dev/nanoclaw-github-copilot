@@ -53,6 +53,7 @@ import {
   storeMessage,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
+import { isAbortRequestText } from './abort-triggers.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import {
@@ -993,6 +994,24 @@ async function main(): Promise<void> {
         handleRemoteControl(trimmed, chatJid, msg).catch((err: any) =>
           logger.error({ err, chatJid }, 'Remote control command error'),
         );
+        return;
+      }
+
+      // Fast-abort: stop / cancel / 停 / etc. while agent is busy.
+      // Intercept BEFORE storage so the keyword isn't re-delivered to the LLM.
+      if (!msg.is_from_me && isAbortRequestText(msg.content)) {
+        const wasActive = queue.killActive(chatJid);
+        if (wasActive) {
+          logger.info({ chatJid, text: msg.content }, 'fast-abort triggered');
+          const abortChannel = findChannel(channels, chatJid);
+          abortChannel
+            ?.sendMessage(chatJid, '⚙️ Agent aborted.')
+            .catch((err: any) =>
+              logger.warn({ err, chatJid }, 'abort: failed to send ack'),
+            );
+        }
+        // Always return: we don't store abort keywords as regular messages,
+        // regardless of whether anything was actually running.
         return;
       }
 
