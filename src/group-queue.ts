@@ -249,6 +249,85 @@ export class GroupQueue {
   }
 
   /**
+   * Fast-abort: forcibly kill the active process for this group, clear any
+   * pending IPC messages, and drop pending tasks. Used by the abort-triggers
+   * path when a user sends 'stop' / 'cancel' / etc. while the agent is busy.
+   *
+   * Returns true if something was actually killed (active state was set).
+   */
+  killActive(groupJid: string): boolean {
+    const state = this.getGroup(groupJid);
+    if (!state.active) return false;
+
+    // 1) Clear pending IPC input files so a respawn won't replay them
+    if (state.groupFolder) {
+      const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
+      try {
+        if (fs.existsSync(inputDir)) {
+          const files = fs
+            .readdirSync(inputDir)
+            .filter((f) => f.endsWith('.json') || f === '_close');
+          for (const f of files) {
+            try {
+              fs.unlinkSync(path.join(inputDir, f));
+            } catch {
+              /* ignore */
+            }
+          }
+          if (files.length > 0) {
+            logger.info(
+              { groupJid, count: files.length },
+              'abort: cleared IPC backlog',
+            );
+          }
+        }
+      } catch (err) {
+        logger.warn({ groupJid, err }, 'abort: failed to clear IPC backlog');
+      }
+    }
+
+    // 2) Drop pending tasks (interactive prompts still in the queue)
+    state.pendingTasks = [];
+    state.pendingMessages = false;
+
+    // 3) Kill the process. The 'exit' handler registered in registerProcess()
+    //    will flip state.active=false and decrement activeCount.
+    const proc = state.process;
+    if (proc && !proc.killed) {
+      try {
+        proc.kill('SIGTERM');
+        logger.info({ groupJid, pid: proc.pid }, 'abort: SIGTERM sent to agent');
+      } catch (err) {
+        logger.warn({ groupJid, err }, 'abort: SIGTERM failed');
+      }
+      // Escalate if it doesn't die in 2s
+      setTimeout(() => {
+        if (proc && !proc.killed) {
+          try {
+            proc.kill('SIGKILL');
+            logger.warn({ groupJid, pid: proc.pid }, 'abort: SIGKILL escalation');
+          } catch {
+            /* ignore */
+          }
+        }
+      }, 2000).unref?.();
+    } else if (state.containerName) {
+      // Process handle lost but container name still set — try docker stop
+      try {
+        execSync(`docker kill ${state.containerName}`, { stdio: 'ignore' });
+        logger.info(
+          { groupJid, container: state.containerName },
+          'abort: docker kill sent',
+        );
+      } catch {
+        /* ignore */
+      }
+    }
+
+    return true;
+  }
+
+  /**
    * Signal the active container to wind down by writing a close sentinel.
    */
   closeStdin(groupJid: string): void {
