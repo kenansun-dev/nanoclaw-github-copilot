@@ -210,8 +210,13 @@ export class TuiChannel implements Channel {
   ): Promise<string | void> {
     const client = this.getClientByJid(jid);
     if (!client) return;
-    // Track line count of last partial to clear properly
-    this.sendJson(client.socket, { type: 'partial', text, messageId });
+    // Distinguish streaming partial (still accumulating, has ◌ marker)
+    // from final edit (replacing progressive message with final content).
+    // Final edits should emit as 'reply' so TUI renders a complete line
+    // with trailing newlines, not as an in-place overwrite.
+    const isStreaming = text.includes('◌');
+    const type = isStreaming ? 'partial' : 'reply';
+    this.sendJson(client.socket, { type, text, messageId });
     return messageId;
   }
 
