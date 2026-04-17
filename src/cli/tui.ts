@@ -149,8 +149,17 @@ export async function runTui(_args: string[]): Promise<void> {
         {
           const display = `\x1b[32m${currentAssistantName}>\x1b[0m ${msg.text}`;
           process.stdout.write(display);
-          // Count lines for next clear (rough: split by newline)
-          lastPartialLines = display.split('\n').length - 1;
+          // Count visual lines including terminal wrap.
+          // Strip ANSI escapes for width calc, then count each logical line
+          // divided by terminal columns (rounded up).
+          const cols = process.stdout.columns || 80;
+          const stripped = display.replace(/\x1b\[[0-9;]*m/g, '');
+          const logicalLines = stripped.split('\n');
+          let visualLines = 0;
+          for (const line of logicalLines) {
+            visualLines += Math.max(1, Math.ceil(line.length / cols));
+          }
+          lastPartialLines = Math.max(0, visualLines - 1);
         }
         break;
 

@@ -62,7 +62,6 @@ function normalizeModelForProvider(model: string, provider: string): string {
       'claude-opus-4-6': 'claude-opus-4',
       'claude-opus-4-7': 'claude-opus-4.7',
       'claude-opus-4-5': 'claude-opus-4.5',
-      'claude-opus-4-7': 'claude-opus-4.7',
       'claude-sonnet-4-5': 'claude-sonnet-4.5',
       'claude-haiku-4-5': 'claude-haiku-4.5',
       sonnet: 'claude-sonnet-4',
@@ -80,7 +79,6 @@ function normalizeModelForProvider(model: string, provider: string): string {
       'claude-opus-4.7': 'claude-opus-4-7',
       'claude-sonnet-4.5': 'claude-sonnet-4-5',
       'claude-opus-4.5': 'claude-opus-4-5',
-      'claude-opus-4.7': 'claude-opus-4-7',
       'claude-haiku-4.5': 'claude-haiku-4-5',
     };
     return ghcToCc[model.toLowerCase()] || model;
