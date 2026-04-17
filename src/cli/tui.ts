@@ -13,6 +13,39 @@ import { fileURLToPath } from 'url';
 import { loadConfig, saveConfig } from '../config-loader.js';
 import { resolveWorkspace } from '../workspace.js';
 
+/**
+ * Visual column width of a string. CJK wide chars take 2 columns.
+ * Covers common East Asian ranges: CJK Unified Ideographs, Hangul, Hiragana,
+ * Katakana, fullwidth forms. Approximation — doesn't handle zero-width,
+ * combining marks, or variation selectors.
+ */
+function visualWidth(s: string): number {
+  let w = 0;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) || 0;
+    if (
+      (cp >= 0x1100 && cp <= 0x115f) || // Hangul Jamo
+      (cp >= 0x2e80 && cp <= 0x303e) || // CJK Radicals / Kangxi
+      (cp >= 0x3041 && cp <= 0x33ff) || // Hiragana/Katakana/CJK Symbols
+      (cp >= 0x3400 && cp <= 0x4dbf) || // CJK Extension A
+      (cp >= 0x4e00 && cp <= 0x9fff) || // CJK Unified Ideographs
+      (cp >= 0xa000 && cp <= 0xa4cf) || // Yi
+      (cp >= 0xac00 && cp <= 0xd7a3) || // Hangul Syllables
+      (cp >= 0xf900 && cp <= 0xfaff) || // CJK Compatibility Ideographs
+      (cp >= 0xfe30 && cp <= 0xfe4f) || // CJK Compatibility Forms
+      (cp >= 0xff00 && cp <= 0xff60) || // Fullwidth Forms
+      (cp >= 0xffe0 && cp <= 0xffe6) ||
+      (cp >= 0x20000 && cp <= 0x2fffd) || // CJK Extensions B-F
+      (cp >= 0x30000 && cp <= 0x3fffd)
+    ) {
+      w += 2;
+    } else {
+      w += 1;
+    }
+  }
+  return w;
+}
+
 const SOCK_NAME =
   process.platform === 'win32' ? '\\\\.\\pipe\\nanoclaw-tui' : 'tui.sock';
 
@@ -149,15 +182,12 @@ export async function runTui(_args: string[]): Promise<void> {
         {
           const display = `\x1b[32m${currentAssistantName}>\x1b[0m ${msg.text}`;
           process.stdout.write(display);
-          // Count visual lines including terminal wrap.
-          // Strip ANSI escapes for width calc, then count each logical line
-          // divided by terminal columns (rounded up).
           const cols = process.stdout.columns || 80;
           const stripped = display.replace(/\x1b\[[0-9;]*m/g, '');
           const logicalLines = stripped.split('\n');
           let visualLines = 0;
           for (const line of logicalLines) {
-            visualLines += Math.max(1, Math.ceil(line.length / cols));
+            visualLines += Math.max(1, Math.ceil(visualWidth(line) / cols));
           }
           lastPartialLines = Math.max(0, visualLines - 1);
         }

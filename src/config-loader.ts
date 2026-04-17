@@ -386,26 +386,11 @@ function distributeChatsToChannels(
     });
   }
 
-  // Write into channels.<name>.chats — but only for real channels that already exist.
-  // Don't create fake channel entries for 'other'/unknown jids (avoids enabled:false stubs).
-  const knownChannels = new Set([
-    'discord',
-    'telegram',
-    'teams',
-    'whatsapp',
-    'signal',
-    'slack',
-    'matrix',
-    'feishu',
-    'tui',
-  ]);
+  // Write into channels.<name>.chats — but only for channels that already exist.
+  // Don't create stub entries for unknown channel names (e.g. 'other' from unrecognized jids).
   if (!toSave.channels) toSave.channels = {};
   for (const [ch, entries] of Object.entries(byChannel)) {
-    if (!knownChannels.has(ch) && !toSave.channels[ch]) {
-      // Unknown channel (e.g. 'other') — skip, don't create stub entry
-      continue;
-    }
-    if (!toSave.channels[ch]) toSave.channels[ch] = { enabled: false };
+    if (!toSave.channels[ch]) continue; // Unknown channel — skip
     toSave.channels[ch].chats = entries;
   }
   // Clean up channels that no longer have chats
