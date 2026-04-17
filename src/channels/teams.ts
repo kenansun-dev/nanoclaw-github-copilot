@@ -879,8 +879,22 @@ export class TeamsChannel implements Channel {
       // outbound messages disappear invisibly. Log at warn so we can see it.
       logger.warn(
         { jid, messageId, err: err.message },
-        'Failed to edit Teams message',
+        'Teams editMessage failed, falling back to new sendMessage',
       );
+      // Fallback: send as a new message so the user at least sees the reply.
+      // Duplicate-risk assessment for Teams 1:1/channel: updateActivity either
+      // succeeds and returns cleanly, or fails with the adapter error before
+      // the update is applied. Partial-success races haven't been observed in
+      // practice here; the cost of a rare duplicate is far lower than the
+      // current silent message loss.
+      try {
+        return await this.sendMessage(jid, text);
+      } catch (err2: any) {
+        logger.error(
+          { jid, err: err2.message },
+          'Teams editMessage fallback sendMessage also failed',
+        );
+      }
     }
   }
 
