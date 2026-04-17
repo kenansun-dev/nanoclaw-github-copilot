@@ -572,7 +572,7 @@ export function loadConfig(): NanoclawConfig {
 
   // Run config migrations
   const migrated = migrateConfig(userConfig);
-  if (migrated) {
+  if (migrated && !recoveredFromBackup) {
     try {
       fs.writeFileSync(
         paths.config,
