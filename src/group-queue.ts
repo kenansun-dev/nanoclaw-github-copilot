@@ -25,6 +25,15 @@ interface GroupState {
   containerName: string | null;
   groupFolder: string | null;
   retryCount: number;
+  /**
+   * Number of user messages piped into the active agent since it last produced
+   * output. Used to decide whether to send a "busy ack" so the user knows
+   * their follow-up landed while the agent is still chewing on the prior turn.
+   * Reset to 0 on agent output / new spawn / kill.
+   */
+  pipedSinceOutput: number;
+  /** True once the active agent has produced any reply for the current turn. */
+  agentHasOutput: boolean;
 }
 
 export class GroupQueue {
@@ -49,6 +58,8 @@ export class GroupQueue {
         containerName: null,
         groupFolder: null,
         retryCount: 0,
+        pipedSinceOutput: 0,
+        agentHasOutput: false,
       };
       this.groups.set(groupJid, state);
     }
@@ -240,12 +251,44 @@ export class GroupQueue {
       const tempPath = `${filepath}.tmp`;
       fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
       fs.renameSync(tempPath, filepath);
-      logger.info({ groupJid, file: filename }, 'sendMessage: piped to IPC');
+      state.pipedSinceOutput += 1;
+      logger.info(
+        { groupJid, file: filename, pipedSinceOutput: state.pipedSinceOutput },
+        'sendMessage: piped to IPC',
+      );
       return true;
     } catch (err) {
       logger.info({ groupJid, err }, 'sendMessage: IPC write failed');
       return false;
     }
+  }
+
+  /**
+   * Notify the queue that the active agent produced output for the user.
+   * Resets the busy-ack debounce so subsequent piped messages can be
+   * acked again if the agent goes silent for another long stretch.
+   */
+  notifyAgentOutput(groupJid: string): void {
+    const state = this.getGroup(groupJid);
+    state.pipedSinceOutput = 0;
+    state.agentHasOutput = true;
+  }
+
+  /**
+   * Should we send a "busy ack" to the user right now?
+   *
+   * Rule: ack only on the **2nd** piped message while the agent has not yet
+   * produced any output for this turn. The 1st message is covered by the
+   * typing indicator; 3rd+ messages are silent (the user already knows we
+   * received #2 and are working through them).
+   *
+   * Returns the queue depth to surface in the ack, or null if no ack needed.
+   */
+  shouldSendBusyAck(groupJid: string): number | null {
+    const state = this.getGroup(groupJid);
+    if (state.agentHasOutput) return null;
+    if (state.pipedSinceOutput === 2) return state.pipedSinceOutput;
+    return null;
   }
 
   /**
@@ -358,6 +401,8 @@ export class GroupQueue {
     state.idleWaiting = false;
     state.isTaskContainer = false;
     state.pendingMessages = false;
+    state.pipedSinceOutput = 0;
+    state.agentHasOutput = false;
     this.activeCount++;
 
     logger.debug(
