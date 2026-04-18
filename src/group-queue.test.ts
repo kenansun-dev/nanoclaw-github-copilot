@@ -529,4 +529,71 @@ describe('GroupQueue', () => {
     expect(pipeCalled).toBe(true);
     expect(state.pendingMessages).toBe(false);
   });
+
+  describe('busy ack (shouldSendBusyAck)', () => {
+    function setupActive(jid: string) {
+      const state = (queue as any).getGroup(jid);
+      state.active = true;
+      state.groupFolder = 'folder-busy';
+      state.process = { exitCode: null, killed: false } as any;
+      return state;
+    }
+
+    it('returns null on the first piped message (typing covers it)', () => {
+      setupActive('g@g.us');
+      expect(queue.sendMessage('g@g.us', 'first')).toBe(true);
+      expect(queue.shouldSendBusyAck('g@g.us')).toBeNull();
+    });
+
+    it('returns 2 on the second piped message before agent output', () => {
+      setupActive('g@g.us');
+      queue.sendMessage('g@g.us', 'first');
+      queue.sendMessage('g@g.us', 'second');
+      expect(queue.shouldSendBusyAck('g@g.us')).toBe(2);
+    });
+
+    it('returns null for 3rd, 4th piped messages (silent after first ack)', () => {
+      setupActive('g@g.us');
+      queue.sendMessage('g@g.us', 'first');
+      queue.sendMessage('g@g.us', 'second');
+      queue.sendMessage('g@g.us', 'third');
+      expect(queue.shouldSendBusyAck('g@g.us')).toBeNull();
+      queue.sendMessage('g@g.us', 'fourth');
+      expect(queue.shouldSendBusyAck('g@g.us')).toBeNull();
+    });
+
+    it('does not ack once the agent has produced output', () => {
+      setupActive('g@g.us');
+      queue.sendMessage('g@g.us', 'first');
+      queue.notifyAgentOutput('g@g.us');
+      queue.sendMessage('g@g.us', 'second');
+      expect(queue.shouldSendBusyAck('g@g.us')).toBeNull();
+    });
+
+    it('re-arms ack window after agent goes silent again', () => {
+      setupActive('g@g.us');
+      queue.sendMessage('g@g.us', 'first');
+      queue.notifyAgentOutput('g@g.us');
+      // Counter resets, but agentHasOutput stays true — so further messages
+      // in the SAME turn never re-trigger the ack. Verifying that intent.
+      queue.sendMessage('g@g.us', 'follow');
+      queue.sendMessage('g@g.us', 'follow2');
+      expect(queue.shouldSendBusyAck('g@g.us')).toBeNull();
+    });
+
+    it('resets on new container spawn (runForGroup)', async () => {
+      setupActive('g@g.us');
+      queue.sendMessage('g@g.us', 'first');
+      queue.sendMessage('g@g.us', 'second');
+      // Simulate respawn by clearing active and re-running runForGroup
+      const state = (queue as any).getGroup('g@g.us');
+      state.active = false;
+      (queue as any).activeCount = 0;
+      queue.setProcessMessagesFn(async () => true);
+      queue.enqueueMessageCheck('g@g.us');
+      await vi.advanceTimersByTimeAsync(10);
+      expect(state.pipedSinceOutput).toBe(0);
+      expect(state.agentHasOutput).toBe(false);
+    });
+  });
 });
