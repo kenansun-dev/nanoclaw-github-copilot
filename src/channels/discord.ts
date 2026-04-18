@@ -199,10 +199,7 @@ export class DiscordChannel implements Channel {
 
     const channelId = jid.replace(/^dc:/, '');
     const channel = await this.client.channels.fetch(channelId).catch((err) => {
-      logger.warn(
-        { jid, err: err?.message },
-        'Discord channel fetch failed',
-      );
+      logger.warn({ jid, err: err?.message }, 'Discord channel fetch failed');
       return null;
     });
 
