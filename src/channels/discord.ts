@@ -9,6 +9,7 @@ import {
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
+import { sendWithRetry } from './send-with-retry.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
   Channel,
@@ -196,29 +197,52 @@ export class DiscordChannel implements Channel {
       return;
     }
 
+    const channelId = jid.replace(/^dc:/, '');
+    const channel = await this.client.channels.fetch(channelId).catch((err) => {
+      logger.warn(
+        { jid, err: err?.message },
+        'Discord channel fetch failed',
+      );
+      return null;
+    });
+
+    if (!channel || !('send' in channel)) {
+      logger.warn({ jid }, 'Discord channel not found or not text-based');
+      return;
+    }
+
+    const textChannel = channel as TextChannel;
+
+    // Discord has a 2000 character limit per message — split if needed
+    const MAX_LENGTH = 2000;
+    const chunks: string[] =
+      text.length <= MAX_LENGTH
+        ? [text]
+        : Array.from({ length: Math.ceil(text.length / MAX_LENGTH) }, (_, i) =>
+            text.slice(i * MAX_LENGTH, (i + 1) * MAX_LENGTH),
+          );
+
     try {
-      const channelId = jid.replace(/^dc:/, '');
-      const channel = await this.client.channels.fetch(channelId);
-
-      if (!channel || !('send' in channel)) {
-        logger.warn({ jid }, 'Discord channel not found or not text-based');
-        return;
-      }
-
-      const textChannel = channel as TextChannel;
-
-      // Discord has a 2000 character limit per message — split if needed
-      const MAX_LENGTH = 2000;
-      if (text.length <= MAX_LENGTH) {
-        await textChannel.send(text);
-      } else {
-        for (let i = 0; i < text.length; i += MAX_LENGTH) {
-          await textChannel.send(text.slice(i, i + MAX_LENGTH));
-        }
+      for (const chunk of chunks) {
+        await sendWithRetry(() => textChannel.send(chunk), {
+          opName: 'discord.send',
+          jid,
+        });
       }
       logger.info({ jid, length: text.length }, 'Discord message sent');
-    } catch (err) {
-      logger.error({ jid, err }, 'Failed to send Discord message');
+    } catch (err: any) {
+      logger.error(
+        { jid, err: err?.message ?? String(err) },
+        'Discord sendMessage failed after retries',
+      );
+      // Best-effort user-visible notice — single attempt, no recursion.
+      try {
+        await textChannel.send(
+          '⚠️ 上条回复未送达 (send failed after 3 retries — check logs)',
+        );
+      } catch {
+        /* swallow — already failed once, don't loop */
+      }
     }
   }
 
