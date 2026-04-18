@@ -114,7 +114,7 @@ Integration plan for GHC:
 1. In `src/runners/ghc-runner.ts`, subscribe to compaction events
 2. Maintain `compactionCount` per session in nanoclaw process state
 3. Expose `Context: <currentTokens>/<tokenLimit>` and `Compactions: <n>` via status surface (sister proposal `features/status-cache-stats.md` / PR #12 renders them)
-4. Add `/compact` slash command — SDK exposes `session.compactHistory(): Promise<CompactionResult>` (verified in `@github/copilot@1.0.24`, `index.d.ts` lines 15818 / 19047 / 22222 — interface + class + abstract; line numbers will drift across SDK versions, the symbol name is stable). Wire `/compact` directly to this method, await result, surface `tokensRemoved` / `messagesRemoved` to user.
+4. Add `/compact` slash command — SDK exposes `compactHistory(): Promise<CompactionResult>` on `Session`, `RemoteSession`, and the abstract base in `@github/copilot/sdk/index.d.ts` (verified on `@github/copilot@1.0.24`; line numbers drift across versions, anchor by symbol). Wire `/compact` directly to this method, await result, surface `tokensRemoved` / `messagesRemoved` to user.
 ### Source-of-truth coordination with PR #12
 
 Per Rpi5's review nit: when both `CompactionResult.contextWindow.{tokenLimit,currentTokens}` and `assistant.usage` events emit context numbers, **prefer `CompactionResult.contextWindow`** (authoritative post-compaction snapshot from SDK), fallback to summing `assistant.usage` deltas, fallback to model registry static `tokenLimit`. PR #12 status renderer should use the same priority order to avoid `Context: N/M` mismatch between `nanoclaw status` and post-compact summary line.
