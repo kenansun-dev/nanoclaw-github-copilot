@@ -282,7 +282,15 @@ export class GroupQueue {
    * typing indicator; 3rd+ messages are silent (the user already knows we
    * received #2 and are working through them).
    *
-   * Returns the queue depth to surface in the ack, or null if no ack needed.
+   * Returns the queue depth (currently always literally `2` when triggered)
+   * to surface in the ack message — callers in `index.ts` interpolate it as
+   * "这是第 N 条". Return type kept as `number | null` (not `2 | null`) so the
+   * threshold can be raised without a type-signature change. Returns null if
+   * no ack needed.
+   *
+   * TODO(i18n): the ack text is hardcoded zh-CN in `index.ts`. Move both the
+   * ack and the abort-trigger normalization to a per-channel locale layer
+   * when we onboard non-zh groups.
    */
   shouldSendBusyAck(groupJid: string): number | null {
     const state = this.getGroup(groupJid);
