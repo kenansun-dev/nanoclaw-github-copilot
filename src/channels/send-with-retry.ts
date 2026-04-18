@@ -41,6 +41,15 @@ function isPermanentError(err: any): boolean {
   if (msg.includes('bot was blocked')) return true; // Telegram
   if (msg.includes('chat not found')) return true; // Telegram
   if (msg.includes('user is deactivated')) return true; // Telegram
+  // 'message is not modified' is technically an editMessage NO-OP SUCCESS,
+  // not a true failure. We list it here so callers using sendWithRetry around
+  // editMessage don't burn 3 retries + 7s on a successful no-op.
+  // ⚠️ Caveat: each channel's editMessage already locally catches this case
+  // and returns success, so today no caller actually relies on this branch.
+  // If a future caller does `sendWithRetry(() => api.editMessage(...))` raw,
+  // the call will THROW from here (treating no-op as failure) and the caller
+  // must handle it as success — otherwise it'll fall back to a duplicate send.
+  // See PR #9 review thread for context.
   if (msg.includes('message is not modified')) return true; // Telegram edit no-op
 
   return false;
