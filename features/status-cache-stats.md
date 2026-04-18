@@ -40,7 +40,7 @@ OpenClaw 把每次 turn 的 usage 累加到 session 总量，cache hit 算 `cach
 
 **结论：✅ 完全暴露**。
 
-GHC SDK (`@github/copilot-sdk` v0.2.0) 通过 `assistant.usage` 事件给出每次 model call 的完整指标。Schema 定义在 `node_modules/@github/copilot/sdk/index.d.ts:769` (`AssistantUsageEventSchema`)，关键字段：
+GHC SDK (bundled with `@github/copilot` — pin to a specific version when implementing; cross-checked against `1.0.14` and `1.0.24`) 通过 `assistant.usage` 事件给出每次 model call 的完整指标。Schema 定义在 `@github/copilot/sdk/index.d.ts` 的 `AssistantUsageEventSchema` symbol（line numbers drift across SDK releases — anchor by symbol, not line），关键字段：
 
 - `inputTokens` / `outputTokens` — 这次 turn 的 in/out tokens
 - `cacheReadTokens` — cache 命中的 tokens（对应 OpenClaw 的 "hit"）
