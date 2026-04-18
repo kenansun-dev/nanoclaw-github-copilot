@@ -25,6 +25,15 @@ interface GroupState {
   containerName: string | null;
   groupFolder: string | null;
   retryCount: number;
+  /**
+   * Number of user messages piped into the active agent since it last produced
+   * output. Used to decide whether to send a "busy ack" so the user knows
+   * their follow-up landed while the agent is still chewing on the prior turn.
+   * Reset to 0 on agent output / new spawn / kill.
+   */
+  pipedSinceOutput: number;
+  /** True once the active agent has produced any reply for the current turn. */
+  agentHasOutput: boolean;
 }
 
 export class GroupQueue {
@@ -49,6 +58,8 @@ export class GroupQueue {
         containerName: null,
         groupFolder: null,
         retryCount: 0,
+        pipedSinceOutput: 0,
+        agentHasOutput: false,
       };
       this.groups.set(groupJid, state);
     }
@@ -240,12 +251,137 @@ export class GroupQueue {
       const tempPath = `${filepath}.tmp`;
       fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
       fs.renameSync(tempPath, filepath);
-      logger.info({ groupJid, file: filename }, 'sendMessage: piped to IPC');
+      state.pipedSinceOutput += 1;
+      logger.info(
+        { groupJid, file: filename, pipedSinceOutput: state.pipedSinceOutput },
+        'sendMessage: piped to IPC',
+      );
       return true;
     } catch (err) {
       logger.info({ groupJid, err }, 'sendMessage: IPC write failed');
       return false;
     }
+  }
+
+  /**
+   * Notify the queue that the active agent produced output for the user.
+   * Resets the busy-ack debounce so subsequent piped messages can be
+   * acked again if the agent goes silent for another long stretch.
+   */
+  notifyAgentOutput(groupJid: string): void {
+    const state = this.getGroup(groupJid);
+    state.pipedSinceOutput = 0;
+    state.agentHasOutput = true;
+  }
+
+  /**
+   * Should we send a "busy ack" to the user right now?
+   *
+   * Rule: ack only on the **2nd** piped message while the agent has not yet
+   * produced any output for this turn. The 1st message is covered by the
+   * typing indicator; 3rd+ messages are silent (the user already knows we
+   * received #2 and are working through them).
+   *
+   * Returns the queue depth (currently always literally `2` when triggered)
+   * to surface in the ack message — callers in `index.ts` interpolate it as
+   * "这是第 N 条". Return type kept as `number | null` (not `2 | null`) so the
+   * threshold can be raised without a type-signature change. Returns null if
+   * no ack needed.
+   *
+   * TODO(i18n): the ack text is hardcoded zh-CN in `index.ts`. Move both the
+   * ack and the abort-trigger normalization to a per-channel locale layer
+   * when we onboard non-zh groups.
+   */
+  shouldSendBusyAck(groupJid: string): number | null {
+    const state = this.getGroup(groupJid);
+    if (state.agentHasOutput) return null;
+    if (state.pipedSinceOutput === 2) return state.pipedSinceOutput;
+    return null;
+  }
+
+  /**
+   * Fast-abort: forcibly kill the active process for this group, clear any
+   * pending IPC messages, and drop pending tasks. Used by the abort-triggers
+   * path when a user sends 'stop' / 'cancel' / etc. while the agent is busy.
+   *
+   * Returns true if something was actually killed (active state was set).
+   */
+  killActive(groupJid: string): boolean {
+    const state = this.getGroup(groupJid);
+    if (!state.active) return false;
+
+    // 1) Clear pending IPC input files so a respawn won't replay them
+    if (state.groupFolder) {
+      const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
+      try {
+        if (fs.existsSync(inputDir)) {
+          const files = fs
+            .readdirSync(inputDir)
+            .filter((f) => f.endsWith('.json') || f === '_close');
+          for (const f of files) {
+            try {
+              fs.unlinkSync(path.join(inputDir, f));
+            } catch {
+              /* ignore */
+            }
+          }
+          if (files.length > 0) {
+            logger.info(
+              { groupJid, count: files.length },
+              'abort: cleared IPC backlog',
+            );
+          }
+        }
+      } catch (err) {
+        logger.warn({ groupJid, err }, 'abort: failed to clear IPC backlog');
+      }
+    }
+
+    // 2) Drop pending tasks (interactive prompts still in the queue)
+    state.pendingTasks = [];
+    state.pendingMessages = false;
+
+    // 3) Kill the process. The 'exit' handler registered in registerProcess()
+    //    will flip state.active=false and decrement activeCount.
+    const proc = state.process;
+    if (proc && !proc.killed) {
+      try {
+        proc.kill('SIGTERM');
+        logger.info(
+          { groupJid, pid: proc.pid },
+          'abort: SIGTERM sent to agent',
+        );
+      } catch (err) {
+        logger.warn({ groupJid, err }, 'abort: SIGTERM failed');
+      }
+      // Escalate if it doesn't die in 2s
+      setTimeout(() => {
+        if (proc && !proc.killed) {
+          try {
+            proc.kill('SIGKILL');
+            logger.warn(
+              { groupJid, pid: proc.pid },
+              'abort: SIGKILL escalation',
+            );
+          } catch {
+            /* ignore */
+          }
+        }
+      }, 2000).unref?.();
+    } else if (state.containerName) {
+      // Process handle lost but container name still set — try docker stop
+      try {
+        execSync(`docker kill ${state.containerName}`, { stdio: 'ignore' });
+        logger.info(
+          { groupJid, container: state.containerName },
+          'abort: docker kill sent',
+        );
+      } catch {
+        /* ignore */
+      }
+    }
+
+    return true;
   }
 
   /**
@@ -273,6 +409,8 @@ export class GroupQueue {
     state.idleWaiting = false;
     state.isTaskContainer = false;
     state.pendingMessages = false;
+    state.pipedSinceOutput = 0;
+    state.agentHasOutput = false;
     this.activeCount++;
 
     logger.debug(

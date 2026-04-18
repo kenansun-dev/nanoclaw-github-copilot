@@ -110,6 +110,15 @@ nanoclaw update        Self-update
 | Telegram | ✅ | Create bot via @BotFather, add token |
 | Teams | ✅ | Azure Bot + App Registration ([guide](docs/getting-started.md#teams)) |
 
+## Reliability behaviors
+
+- **Fast-abort**: typing `stop` / `cancel` / `停` (etc.) kills the active agent without sending the word to the LLM.
+- **Busy ack**: a 2nd follow-up message before the agent replies gets a `📥 收到, 第 2 条排队中` ack; further messages are silent.
+- **Send retry**: outbound channel sends retry transient failures (`500ms / 2s / 5s`); permanent errors (401/403/404/blocked) fail fast.
+- **editMessage fallback**: if a partial-update edit fails, nanoclaw sends a new message instead so the user always sees the reply.
+
+Details: [docs/troubleshooting.md → Reliability & UX behaviors](docs/troubleshooting.md#reliability--ux-behaviors).
+
 ## Differences from original NanoClaw
 
 | | Original NanoClaw | This Fork |

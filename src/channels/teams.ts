@@ -11,6 +11,7 @@ import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { loadConfig } from '../config-loader.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
+import { sendWithRetry } from './send-with-retry.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
   Channel,
@@ -780,8 +781,8 @@ export class TeamsChannel implements Channel {
     }
 
     let lastActivityId: string | undefined;
-    try {
-      await this.adapter.continueConversation(
+    const sendOnce = () =>
+      this.adapter.continueConversation(
         ref as ConversationReference,
         async (context: TurnContext) => {
           const MAX_LENGTH = 25000;
@@ -798,10 +799,29 @@ export class TeamsChannel implements Channel {
           }
         },
       );
+
+    try {
+      await sendWithRetry(sendOnce, { opName: 'teams.send', jid });
       logger.info({ jid, length: text.length }, 'Teams message sent');
       return lastActivityId;
     } catch (err: any) {
-      logger.error({ jid, err }, 'Failed to send Teams message');
+      logger.error(
+        { jid, err: err?.message ?? String(err) },
+        'Teams sendMessage failed after retries',
+      );
+      // Best-effort user-visible notice — single attempt, no recursion.
+      try {
+        await this.adapter.continueConversation(
+          ref as ConversationReference,
+          async (context: TurnContext) => {
+            await context.sendActivity(
+              '⚠️ 上条回复未送达 (send failed after 3 retries — check logs)',
+            );
+          },
+        );
+      } catch {
+        /* swallow */
+      }
     }
   }
 
