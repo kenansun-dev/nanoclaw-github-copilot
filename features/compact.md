@@ -84,6 +84,48 @@ NanoClaw agent runner 是 SDK wrapper：
 
 ## 推荐路径
 
+## Research findings (2026-04-18)
+
+### GHC SDK — Plan A 已确认
+
+```ts
+// node_modules/@github/copilot/sdk/index.d.ts:1979
+export declare interface CompactionResult {
+  success: boolean;
+  tokensRemoved: number;
+  messagesRemoved: number;
+  summaryContent: string;
+  contextWindow?: {
+    tokenLimit: number;       // ← model context window
+    currentTokens: number;    // ← live usage → 'Context: N/M' status
+    messagesLength: number;
+    systemTokens?: number;
+    conversationTokens?: number;
+    toolDefinitionsTokens?: number;
+  };
+}
+
+// Events emitted by the SDK
+CompactionStartedEvent = { kind: 'compaction_started', turn, performedBy, ... }
+CompactionCompletedEvent = { kind: 'compaction_completed', compactionResult, ... }
+```
+
+Integration plan for GHC:
+1. In `src/runners/ghc-runner.ts`, subscribe to compaction events
+2. Maintain `compactionCount` per session in nanoclaw process state
+3. Expose `Context: <currentTokens>/<tokenLimit>` and `Compactions: <n>` via status surface (sister proposal `features/status-cache-stats.md` / PR #12 renders them)
+4. Add `/compact` slash command — events are read-only, need one more probe to find the public trigger API
+
+### CC SDK — pending probe
+
+Day 1 tasks:
+- grep `node_modules/@anthropic-ai/claude-code` for `compact|summari|context_window`
+- run a long CC session locally and watch for any compact events
+- check `claude-code` CLI for `/compact` slash entry
+- worst case: Plan B for CC, Plan A for GHC
+
+## Path forward
+
 1. **Day 1（半天）**：调研 — 跑 CC SDK 看 `/compact` 入口暴露在哪、跑 GHC SDK 找 token usage / compact API
 2. **Day 1（剩下时间）**：写一份 `RESEARCH-FINDINGS.md` 钉到这个 proposal 上
 3. **Day 2 决策点**：根据 findings 选 Plan A / B / C，更新 status: TODO → IN PROGRESS
