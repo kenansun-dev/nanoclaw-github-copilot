@@ -51,7 +51,9 @@ describe('isAbortRequestText', () => {
     // These are normal conversational phrases that should NOT abort
     expect(isAbortRequestText('wait a sec')).toBe(false);
     expect(isAbortRequestText('exit the function')).toBe(false);
-    expect(isAbortRequestText('please stop at the store on the way')).toBe(false);
+    expect(isAbortRequestText('please stop at the store on the way')).toBe(
+      false,
+    );
     expect(isAbortRequestText('can you cancel my subscription?')).toBe(false);
     expect(isAbortRequestText('I want to stop this feature')).toBe(false);
     expect(isAbortRequestText('stop words in NLP')).toBe(false);

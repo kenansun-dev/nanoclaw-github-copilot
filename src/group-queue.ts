@@ -296,7 +296,10 @@ export class GroupQueue {
     if (proc && !proc.killed) {
       try {
         proc.kill('SIGTERM');
-        logger.info({ groupJid, pid: proc.pid }, 'abort: SIGTERM sent to agent');
+        logger.info(
+          { groupJid, pid: proc.pid },
+          'abort: SIGTERM sent to agent',
+        );
       } catch (err) {
         logger.warn({ groupJid, err }, 'abort: SIGTERM failed');
       }
@@ -305,7 +308,10 @@ export class GroupQueue {
         if (proc && !proc.killed) {
           try {
             proc.kill('SIGKILL');
-            logger.warn({ groupJid, pid: proc.pid }, 'abort: SIGKILL escalation');
+            logger.warn(
+              { groupJid, pid: proc.pid },
+              'abort: SIGKILL escalation',
+            );
           } catch {
             /* ignore */
           }
