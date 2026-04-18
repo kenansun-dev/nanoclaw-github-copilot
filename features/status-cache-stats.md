@@ -45,6 +45,7 @@ GHC SDK (`@github/copilot-sdk` v0.2.0) 通过 `assistant.usage` 事件给出每�
 - `inputTokens` / `outputTokens` — 这次 turn 的 in/out tokens
 - `cacheReadTokens` — cache 命中的 tokens（对应 OpenClaw 的 "hit"）
 - `cacheWriteTokens` — cache 新写入的 tokens（对应 "new"）
+- `reasoningTokens` — thinking model 的 reasoning tokens（单独计费，値得在 status 里单独显示）
 - `cost` — 本次 turn 的成本
 - `duration` / `ttftMs` / `interTokenLatencyMs` — 延迟数据
 - `quotaSnapshots` — per-model 配额快照（`isUnlimitedEntitlement`、`entitlementRequests`、`usedRequests`、`remainingPercentage`、`resetDate`）
@@ -54,6 +55,8 @@ GHC SDK (`@github/copilot-sdk` v0.2.0) 通过 `assistant.usage` 事件给出每�
 SDK 注释原文："Emitted in app.tsx's `onModelCallSuccess` callback" — 即每次成功的 model call 后由 GHC CLI 主动 emit。
 
 我们的 `agent-runner-ghc` 已经在订阅 `assistant.message_delta` / `assistant.reasoning_delta`，加一行 `session.on('assistant.usage', ...)` 就能拿到。**0 处现存订阅，是 greenfield**。
+
+字段名是 **camelCase**（`cacheReadTokens` 而不是 Anthropic 原生的 `cache_read_input_tokens`）— SDK 帮我们 normalize 了。
 
 CC SDK（如果未来支持）也有类似 `usage` 字段在 message response 里（Anthropic SDK 标准 `usage` 对象），按同一套抽象统一。
 
@@ -83,7 +86,7 @@ $ nanoclaw status
 […现有字段…]
 
 🧮 Last turn (claude-opus-4.7)
-   Tokens: 4.2k in / 612 out · 38ms TTFT
+   Tokens: 4.2k in / 612 out / 1.8k reasoning · 38ms TTFT
    Cache: 92% hit · 1.2M lifetime cached · 320 new
    Cost: $0.034 (turn) · $1.27 (today) · $24.10 (month)
 
@@ -109,7 +112,7 @@ hit_pct = cacheReadTokens / (cacheReadTokens + inputTokens + cacheWriteTokens)
 
 - `compact.md` 做的是 **客户端 compact 实现**（如果 nanoclaw 自己 compact 而不依赖 GHC CLI 内部）
 - 本 proposal 做的是 **数据采集 + 展示**
-- 集成点：本 proposal 的 "Compactions: n" 计数器对接 compact proposal 的 counter；如果 compact proposal 不实现，本 proposal 显示 `Compactions: n/a (managed by GHC SDK)`
+- 集成点：GHC SDK 已经提供完整 first-class compaction API—`session.compactHistory()` method + `compaction_started` / `compaction_completed` events + `CompactionResult { tokensRemoved, messagesRemoved, summaryContent, contextWindow }` 接口 + `session.usage_info` event。本 proposal 的 "Compactions: n" 计数器直接订阅 `compaction_completed` event 增量。CC SDK 端起初未探测到等价符号，标 `Compactions: n (GHC) / n/a (CC pending SDK probe)`。
 
 ### 不做的（首版）
 
