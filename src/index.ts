@@ -374,6 +374,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         return;
       }
 
+      // Agent produced output for the user — reset busy-ack debounce so any
+      // future silent stretch on a follow-up message can be acked again.
+      queue.notifyAgentOutput(chatJid);
+
       const sendOpts = thinkingParseMode
         ? { parseMode: thinkingParseMode }
         : undefined;
@@ -780,6 +784,20 @@ async function startMessageLoop(): Promise<void> {
               ?.catch((err: any) =>
                 logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
               );
+            // Busy ack: if user piled on a 2nd message before the agent
+            // produced anything, let them know we received it and are still
+            // working. 1st message = typing indicator only; 3rd+ = silent.
+            const ackDepth = queue.shouldSendBusyAck(chatJid);
+            if (ackDepth !== null) {
+              channel
+                .sendMessage(
+                  chatJid,
+                  `📥 收到，正在处理上一条，这是第 ${ackDepth} 条，处理完会一起回复。`,
+                )
+                ?.catch((err: any) =>
+                  logger.warn({ chatJid, err }, 'Failed to send busy ack'),
+                );
+            }
           } else {
             // No active container — enqueue for a new one
             queue.enqueueMessageCheck(chatJid);
