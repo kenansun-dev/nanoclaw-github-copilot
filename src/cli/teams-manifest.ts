@@ -179,11 +179,22 @@ export async function setupManifest(
 ): Promise<string> {
   console.log('\n📄 Generating Teams App manifest...');
 
+  // Auto-increment version on every manifest generation.
+  // Format: 0.<YYMMDD>.<HHMMSS> — human-readable, always monotonically increasing,
+  // starts with 0 (not 1) per kenan. Teams requires MAJOR.MINOR.PATCH with each
+  // segment ≤ 32 bits (max 4294967295), YYMMDD/HHMMSS both fit.
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const yymmdd = `${pad(d.getFullYear() % 100)}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  const hhmmss = `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  // Strip leading zeros so Teams doesn't reject (segments must be plain ints).
+  const manifestVersion = `0.${parseInt(yymmdd, 10)}.${parseInt(hhmmss, 10)}`;
+
   const manifest = {
     $schema:
       'https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json',
     manifestVersion: '1.17',
-    version: '1.0.0',
+    version: manifestVersion,
     id: appId,
     developer: {
       name: 'NanoClaw',
