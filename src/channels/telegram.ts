@@ -4,6 +4,7 @@ import { Api, Bot } from 'grammy';
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
+import { sendWithRetry } from './send-with-retry.js';
 import { loadConfig } from '../config-loader.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
@@ -375,30 +376,43 @@ export class TelegramChannel implements Channel {
       return;
     }
 
-    try {
-      const numericId = jid.split(':').pop()!;
-      const MAX_LENGTH = 4096;
-      let lastMsgId: string | undefined;
-      if (text.length <= MAX_LENGTH) {
-        const sent = await sendTelegramMessage(this.bot.api, numericId, text, {
-          parseMode: options?.parseMode,
-        });
-        lastMsgId = sent?.message_id?.toString();
-      } else {
-        for (let i = 0; i < text.length; i += MAX_LENGTH) {
-          const sent = await sendTelegramMessage(
-            this.bot.api,
-            numericId,
-            text.slice(i, i + MAX_LENGTH),
-            { parseMode: options?.parseMode },
+    const numericId = jid.split(':').pop()!;
+    const MAX_LENGTH = 4096;
+    const chunks: string[] =
+      text.length <= MAX_LENGTH
+        ? [text]
+        : Array.from({ length: Math.ceil(text.length / MAX_LENGTH) }, (_, i) =>
+            text.slice(i * MAX_LENGTH, (i + 1) * MAX_LENGTH),
           );
-          lastMsgId = sent?.message_id?.toString();
-        }
+
+    let lastMsgId: string | undefined;
+    try {
+      for (const chunk of chunks) {
+        const sent = await sendWithRetry(
+          () =>
+            sendTelegramMessage(this.bot!.api, numericId, chunk, {
+              parseMode: options?.parseMode,
+            }),
+          { opName: 'telegram.send', jid },
+        );
+        lastMsgId = sent?.message_id?.toString();
       }
       logger.info({ jid, length: text.length }, 'Telegram message sent');
       return lastMsgId;
     } catch (err: any) {
-      logger.error({ jid, err }, 'Failed to send Telegram message');
+      logger.error(
+        { jid, err: err?.message ?? String(err) },
+        'Telegram sendMessage failed after retries',
+      );
+      // Best-effort user-visible notice — single attempt, no recursion.
+      try {
+        await this.bot!.api.sendMessage(
+          numericId,
+          '⚠️ 上条回复未送达 (send failed after 3 retries — check logs)',
+        );
+      } catch {
+        /* swallow */
+      }
     }
   }
 
@@ -507,10 +521,14 @@ export class TelegramChannel implements Channel {
       } catch (err2: any) {
         if (err2?.description?.includes('message is not modified'))
           return messageId;
-        logger.debug(
-          { jid, messageId, err: err2 },
-          'Failed to edit Telegram message',
+        // Was `logger.debug` — silenced in production. Same black-hole bug we
+        // just fixed in Teams. Log at warn + fallback to a fresh sendMessage so
+        // the user actually sees the agent's reply.
+        logger.warn(
+          { jid, messageId, err: err2?.message ?? String(err2) },
+          'Telegram editMessage failed, falling back to new sendMessage',
         );
+        return await this.sendMessage(jid, text, { parseMode });
       }
     }
   }
