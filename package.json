@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && cd container/agent-runner-ghc && npx tsc && cd mcp-servers/pdf && npx tsc && cd ../../../.. && cd container/agent-runner && npx tsc",
+    "build": "tsc && bash container/shared/sync.sh && cd container/agent-runner-ghc && npx tsc && cd mcp-servers/pdf && npx tsc && cd ../../../.. && cd container/agent-runner && npx tsc",
     "build:runners": "cd container/agent-runner-ghc && npx tsc && cd mcp-servers/pdf && npx tsc && cd ../../../.. && cd container/agent-runner && npx tsc",
     "prepack": "npm run build && npm run build:runners",
     "postinstall": "node scripts/postinstall.mjs",

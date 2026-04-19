@@ -30,6 +30,7 @@ import { TIMEZONE } from './../config.js';
 import { loadConfig } from './../config-loader.js';
 import { createTask, getTaskById, updateTask } from './../db.js';
 import { logger } from './../logger.js';
+// Need 'status' in the partial type now that we pause on disable.
 import type { ScheduledTask } from './../types.js';
 
 const DEFAULT_CRON = '45 23 * * *';
@@ -91,25 +92,58 @@ function nextRunFromCron(cron: string): string | null {
 }
 
 /**
- * Ensure a daily-summary scheduled task exists for the given chat
- * (and only this chat). Safe to call on every agent spawn.
+ * Ensure a daily-summary scheduled task is in sync with config.
+ * Safe to call on every agent spawn (idempotent + caches first-time log).
  *
- * - If `memory.dailySummary.enabled === false`: no-op (does not delete
- *   an existing task; user can manually `nanoclaw task cancel` it).
- * - If task missing: create with current cron + prompt.
- * - If task present but cron/prompt drifted: update in place.
+ * Source-of-truth model: config wins.
+ * - enabled=true,  no task        → create active
+ * - enabled=true,  task active    → sync cron/prompt drift in place
+ * - enabled=true,  task paused    → leave status alone (user paused manually)
+ *                                  but still sync cron/prompt drift
+ * - enabled=false, task active    → pause (don't delete; preserves history)
+ * - enabled=false, task paused    → no-op
+ * - enabled=false, no task        → no-op
+ *
+ * The pause-on-disable behaviour means flipping `enabled: false` in
+ * config takes effect on the next agent spawn (or process restart).
+ * Users can still resume manually with `nanoclaw task resume <id>` and
+ * we won't re-pause until the next config-disabled spawn after a
+ * user-initiated re-enable cycle. Pure resume is intentional: it lets
+ * an operator override the config switch without editing yaml.
  */
+// One-shot log dedup per process: don't spam every spawn.
+const loggedFirstRegistration = new Set<string>();
+
 export function ensureDailySummaryTask(opts: {
   chatJid: string;
   groupFolder: string;
 }): void {
   const { chatJid, groupFolder } = opts;
   const config = resolveDailySummaryConfig();
-  if (!config.enabled) return;
-
   const id = taskIdFor(chatJid);
   const existing = getTaskById(id) as ScheduledTask | undefined;
 
+  // Disabled path: pause active task, otherwise no-op. Never delete
+  // (preserves last_run/last_result for diagnostics).
+  if (!config.enabled) {
+    if (existing && existing.status === 'active') {
+      try {
+        updateTask(id, { status: 'paused' });
+        logger.info(
+          { id, chatJid },
+          'memory-daily-summary: paused (memory.dailySummary.enabled=false)',
+        );
+      } catch (err) {
+        logger.warn(
+          { id, err },
+          'memory-daily-summary: pause-on-disable failed (non-fatal)',
+        );
+      }
+    }
+    return;
+  }
+
+  // Enabled path: create if missing, sync drift if present.
   if (!existing) {
     const next = nextRunFromCron(config.cron);
     if (!next) return;
@@ -127,10 +161,16 @@ export function ensureDailySummaryTask(opts: {
         status: 'active',
         created_at: new Date().toISOString(),
       });
-      logger.info(
-        { id, chatJid, cron: config.cron, next, tz: TIMEZONE },
-        'memory-daily-summary: registered cron task',
-      );
+      // First-time-per-process log so users can discover the feature
+      // without grepping schema migrations. Subsequent spawns for the
+      // same chat are silent.
+      if (!loggedFirstRegistration.has(id)) {
+        loggedFirstRegistration.add(id);
+        logger.info(
+          { id, chatJid, cron: config.cron, next, tz: TIMEZONE },
+          `memory-daily-summary: registered for ${chatJid} at ${config.cron} (${TIMEZONE}). Disable with memory.dailySummary.enabled=false.`,
+        );
+      }
     } catch (err) {
       logger.warn(
         { id, err },
@@ -141,7 +181,7 @@ export function ensureDailySummaryTask(opts: {
   }
 
   // Drift check: if cron or prompt changed, update in place. Don't
-  // disturb status (user may have paused it) or last_run/last_result.
+  // disturb status (user may have paused it manually) or last_run.
   const driftedCron = existing.schedule_value !== config.cron;
   const driftedPrompt = existing.prompt !== config.prompt;
   if (driftedCron || driftedPrompt) {
