@@ -19,11 +19,15 @@ interface CheckResult {
 
 function check(
   name: string,
-  fn: () => { ok: boolean; msg: string },
+  fn: () => { ok: boolean; msg: string; status?: 'ok' | 'warn' | 'error' },
 ): CheckResult {
   try {
-    const { ok, msg } = fn();
-    return { name, status: ok ? 'ok' : 'error', message: msg };
+    const { ok, msg, status } = fn();
+    return {
+      name,
+      status: status ?? (ok ? 'ok' : 'error'),
+      message: msg,
+    };
   } catch (err) {
     return {
       name,
@@ -206,15 +210,32 @@ export function runDoctor(): CheckResult[] {
     }
 
     // Chats
+    // Canonical format: channels.<name>.chats[]; legacy: top-level chats
+    // (loadConfig normalizes both into config.chats). Surface a per-channel
+    // breakdown so empty deployments aren't flagged red — telegram bots and
+    // teams webhooks accept DMs/mentions without explicit chat registration,
+    // so "none" is a warning, not a failure.
     const chatCount = Object.keys(config.chats).length;
+    const enabledChannels = Object.entries(config.channels ?? {})
+      .filter(([, c]: any[]) => c?.enabled)
+      .map(([name]) => name);
     results.push(
-      check('Registered chats', () => ({
-        ok: chatCount > 0,
-        msg:
-          chatCount > 0
-            ? `${chatCount} chat(s)`
-            : 'none — add with: nanoclaw chat add',
-      })),
+      check('Registered chats', () => {
+        if (chatCount > 0) {
+          return { ok: true, msg: `${chatCount} chat(s)` };
+        }
+        if (enabledChannels.length > 0) {
+          return {
+            ok: false,
+            status: 'warn',
+            msg: `0 explicit — ${enabledChannels.join(', ')} accept incoming without registration; add with: nanoclaw chat add`,
+          };
+        }
+        return {
+          ok: false,
+          msg: 'none and no channels enabled — add with: nanoclaw chat add',
+        };
+      }),
     );
   } catch {
     /* ignore */
