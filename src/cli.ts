@@ -923,17 +923,22 @@ async function runChat(args: string[]) {
         console.error('Usage: nanoclaw chat set-main <id-or-jid>');
         process.exit(1);
       }
-      const { loadConfig, resolveChatHandle } = await import('./config-loader.js');
+      const { loadConfig, resolveChatHandle } =
+        await import('./config-loader.js');
       const { setMainChat } = await import('./chat-manager.js');
       const config = loadConfig();
       const jid = resolveChatHandle(config, handle);
       if (!jid) {
-        console.error(`No chat matches "${handle}". Run \`nanoclaw chat list\` to see ids.`);
+        console.error(
+          `No chat matches "${handle}". Run \`nanoclaw chat list\` to see ids.`,
+        );
         process.exit(1);
       }
       setMainChat(jid);
       const entry = config.chats[jid];
-      console.log(`Main chat set: #${entry?.id ?? '?'} ${jid} (${entry?.name ?? '?'})`);
+      console.log(
+        `Main chat set: #${entry?.id ?? '?'} ${jid} (${entry?.name ?? '?'})`,
+      );
       break;
     }
     case 'unset-main': {
@@ -948,12 +953,15 @@ async function runChat(args: string[]) {
         console.error('Usage: nanoclaw chat remove <id-or-jid>');
         process.exit(1);
       }
-      const { loadConfig, resolveChatHandle } = await import('./config-loader.js');
+      const { loadConfig, resolveChatHandle } =
+        await import('./config-loader.js');
       const { removeChat } = await import('./chat-manager.js');
       const config = loadConfig();
       const jid = resolveChatHandle(config, handle) ?? handle;
       const removed = removeChat(jid);
-      console.log(removed ? `Chat removed: ${jid}` : `Chat not found: ${handle}`);
+      console.log(
+        removed ? `Chat removed: ${jid}` : `Chat not found: ${handle}`,
+      );
       break;
     }
     default:

@@ -578,6 +578,34 @@ describe('config-loader / chat numeric ids', () => {
     expect(() => loadConfig()).not.toThrow();
   });
 
+  it('v3 → v4 dedupes isMain when v0→1 set it on multiple chats (regression: rpi5 review)', () => {
+    // Simulate post-v0→1 state: every chat has isMain:true (the v0→1 default).
+    // Without dedupe in v3→4, loadConfig() would throw "2 chats marked isMain"
+    // and break every multi-chat user on upgrade.
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 3,
+        channels: {
+          telegram: {
+            chats: [
+              { jid: 'tg:111', name: 'a', isMain: true },
+              { jid: 'tg:222', name: 'b', isMain: true },
+              { jid: 'tg:333', name: 'c', isMain: true },
+            ],
+          },
+        },
+      }),
+    );
+    // Should NOT throw.
+    const config = loadConfig();
+    // Lowest-id (first assigned) kept as main; rest cleared.
+    expect(config.chats['tg:111'].isMain).toBe(true);
+    expect(config.chats['tg:222'].isMain).toBeUndefined();
+    expect(config.chats['tg:333'].isMain).toBeUndefined();
+    expect(findExtraMainChats(config)).toEqual([]);
+  });
+
   it('findExtraMainChats returns empty when at most one isMain', () => {
     fs.writeFileSync(
       path.join(tmpDir, 'nanoclaw.json'),

@@ -42,7 +42,14 @@ vi.mock('./../db.js', () => ({
   ),
   getTaskById: vi.fn((id: string) => h.tasks.get(id)),
   updateTask: vi.fn(
-    (id: string, patch: Partial<{ status: 'active' | 'paused' | 'completed'; prompt: string; schedule_value: string }>) => {
+    (
+      id: string,
+      patch: Partial<{
+        status: 'active' | 'paused' | 'completed';
+        prompt: string;
+        schedule_value: string;
+      }>,
+    ) => {
       const t = h.tasks.get(id);
       if (!t) return;
       Object.assign(t, patch);

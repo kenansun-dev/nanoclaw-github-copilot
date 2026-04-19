@@ -250,9 +250,7 @@ export function runDoctor(): CheckResult[] {
       .filter(([, c]: any[]) => c?.enabled)
       .map(([name]) => name);
     results.push(
-      check('Registered chats', () =>
-        chatsCheck(chatCount, enabledChannels),
-      ),
+      check('Registered chats', () => chatsCheck(chatCount, enabledChannels)),
     );
   } catch {
     /* ignore */

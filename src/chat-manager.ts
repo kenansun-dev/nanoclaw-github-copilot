@@ -4,7 +4,12 @@
  * Reads/writes chats section of nanoclaw.json + syncs with SQLite DB.
  */
 
-import { loadConfig, saveConfig, NanoclawConfig, nextChatId } from './config-loader.js';
+import {
+  loadConfig,
+  saveConfig,
+  NanoclawConfig,
+  nextChatId,
+} from './config-loader.js';
 import { setRegisteredGroup, getAllRegisteredGroups } from './db.js';
 import { logger } from './logger.js';
 

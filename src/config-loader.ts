@@ -574,7 +574,14 @@ function migrateConfig(config: Record<string, any>): boolean {
     }
 
     if (config.chats && typeof config.chats === 'object') {
-      const channelKeys = ['telegram', 'teams', 'discord', 'slack', 'whatsapp', 'other'];
+      const channelKeys = [
+        'telegram',
+        'teams',
+        'discord',
+        'slack',
+        'whatsapp',
+        'other',
+      ];
       const isGrouped = Object.keys(config.chats).some(
         (k) => channelKeys.includes(k) && Array.isArray(config.chats[k]),
       );
@@ -594,10 +601,12 @@ function migrateConfig(config: Record<string, any>): boolean {
 
     const used = new Set<number>();
     for (const { entry } of grouped) {
-      if (entry && typeof entry.id === 'number' && entry.id > 0) used.add(entry.id);
+      if (entry && typeof entry.id === 'number' && entry.id > 0)
+        used.add(entry.id);
     }
     for (const { entry } of flat) {
-      if (entry && typeof entry.id === 'number' && entry.id > 0) used.add(entry.id);
+      if (entry && typeof entry.id === 'number' && entry.id > 0)
+        used.add(entry.id);
     }
     let next = 1;
     const nextFree = (): number => {
@@ -616,6 +625,30 @@ function migrateConfig(config: Record<string, any>): boolean {
         entry.id = nextFree();
         migrated = true;
       }
+    }
+
+    // Dedupe isMain: v0→1 migration set isMain:true on every grouped chat
+    // that lacked the field. With the v4 "at most one isMain" invariant, that
+    // would brick any pre-v1 multi-chat config on first launch. Keep the
+    // lowest-id main, clear the rest, and warn so the user can re-pick.
+    const allMains = [...grouped, ...flat]
+      .map(({ entry }) => entry)
+      .filter((e) => e && e.isMain);
+    if (allMains.length > 1) {
+      allMains.sort((a, b) => (a.id ?? 1e9) - (b.id ?? 1e9));
+      const kept = allMains[0];
+      const cleared: number[] = [];
+      for (let i = 1; i < allMains.length; i++) {
+        delete allMains[i].isMain;
+        if (typeof allMains[i].id === 'number') cleared.push(allMains[i].id);
+        migrated = true;
+      }
+      logger.warn(
+        { kept: kept.id, cleared, total: allMains.length },
+        `v3→4 migration: ${allMains.length} chats had isMain:true (likely from v0→1 default). ` +
+          `Kept #${kept.id} as main; cleared #${cleared.join(', #')}. ` +
+          `Run \`nanoclaw chat set-main <id>\` to choose a different main.`,
+      );
     }
 
     config.configVersion = 4;
