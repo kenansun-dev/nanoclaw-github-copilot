@@ -14,11 +14,6 @@ import {
 
 let db: Database.Database;
 
-/** @internal — fork extensions consume the live db handle through this. */
-export function _getDb(): Database.Database {
-  return db;
-}
-
 function createSchema(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS chats (
