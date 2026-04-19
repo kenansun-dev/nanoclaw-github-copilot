@@ -17,7 +17,7 @@ interface CheckResult {
   message: string;
 }
 
-function check(
+export function check(
   name: string,
   fn: () => { ok: boolean; msg: string; status?: 'ok' | 'warn' | 'error' },
 ): CheckResult {
@@ -35,6 +35,36 @@ function check(
       message: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+/**
+ * Pure decision logic for the "Registered chats" check. Extracted so we
+ * can unit-test the severity matrix without standing up a full config.
+ *
+ * Severity rules:
+ * - chats > 0  → ok
+ * - chats = 0 + at least one channel enabled (telegram/teams accept
+ *   incoming without explicit chat registration) → warn
+ * - chats = 0 + no channel enabled → error (truly unconfigured)
+ */
+export function chatsCheck(
+  chatCount: number,
+  enabledChannels: string[],
+): { ok: boolean; status?: 'ok' | 'warn' | 'error'; msg: string } {
+  if (chatCount > 0) {
+    return { ok: true, msg: `${chatCount} chat(s)` };
+  }
+  if (enabledChannels.length > 0) {
+    return {
+      ok: false,
+      status: 'warn',
+      msg: `0 explicit — ${enabledChannels.join(', ')} accept incoming without registration; add with: nanoclaw chat add`,
+    };
+  }
+  return {
+    ok: false,
+    msg: 'none and no channels enabled — add with: nanoclaw chat add',
+  };
 }
 
 export function runDoctor(): CheckResult[] {
@@ -220,22 +250,9 @@ export function runDoctor(): CheckResult[] {
       .filter(([, c]: any[]) => c?.enabled)
       .map(([name]) => name);
     results.push(
-      check('Registered chats', () => {
-        if (chatCount > 0) {
-          return { ok: true, msg: `${chatCount} chat(s)` };
-        }
-        if (enabledChannels.length > 0) {
-          return {
-            ok: false,
-            status: 'warn',
-            msg: `0 explicit — ${enabledChannels.join(', ')} accept incoming without registration; add with: nanoclaw chat add`,
-          };
-        }
-        return {
-          ok: false,
-          msg: 'none and no channels enabled — add with: nanoclaw chat add',
-        };
-      }),
+      check('Registered chats', () =>
+        chatsCheck(chatCount, enabledChannels),
+      ),
     );
   } catch {
     /* ignore */
