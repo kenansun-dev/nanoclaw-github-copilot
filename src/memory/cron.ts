@@ -14,6 +14,12 @@
  *   memory.dailySummary.cron     = "45 23 * * *"  (23:45 local time)
  *   memory.dailySummary.prompt   = (built-in prompt below)
  *
+ * Why 23:45 (kenan, 2026-04-19)? See features/memory.md → "为什么默认
+ * 23:45". Short version: late enough to capture the full day's chatter,
+ * still in the same local day (so today's journal carries today's
+ * entries), with ~15 min buffer for the summarization turn to finish
+ * before midnight.
+ *
  * The task is keyed by `id = "memory-daily-summary:<chatJid>"` so we
  * can safely detect & skip if it already exists, and recreate if the
  * cron expression or prompt changed.

@@ -109,25 +109,69 @@ $NANOCLAW_MEMORY_DIR/  (defaults to <groupFolder>/memory/)
 
 ## Phase 2: 自动每日总结 cron (SHIPPED)
 
-`src/memory/cron.ts` 提供 `ensureDailySummaryTask({ chatJid, groupFolder })`，被 `host-runner.ts` 在每次 spawn agent 时调用（幂等）。
+### How it works (end-to-end)
 
-- **默认 cron**: `45 23 * * *` （23:45 local time，kenan 钉的）
-- **默认 enabled**: `true`
-- **默认 prompt**: 内置（"总结今天 chat history，用 memory_append_today…"）
-- **Drift detection**: 如果配置改了 cron 或 prompt，`updateTask` 在场更新，不动 status / last_run
-- **Disable 路径**: `memory.dailySummary.enabled: false` — 不会删除已存在任务，需要手动 `nanoclaw task cancel`
+1. **Trigger**: 每次 host 准备 spawn agent 处理 group 消息，先调一次 `ensureDailySummaryTask({chatJid, groupFolder})` (idempotent)
+2. **Ensure**:
+   - 找不到 task → 用 default cron + prompt 创建（id = `memory-daily-summary:<chatJid>`）
+   - 找到了 → 比较 cron + prompt 与当前 config，drift 了就 `updateTask` 在场更新，**不动** `status` / `last_run` / `last_result`（保留用户手动暂停 + 历史）
+3. **Fire**: 到点了 NanoClaw 现成的 task scheduler（`cron-parser` + 配置的 `TIMEZONE`）按普通 task 一样 spawn agent，prompt 就是 default summary prompt
+4. **Agent 行为**: prompt 让 agent 读今天 chat history，挑 3–7 个 highlight，**每个 highlight 单独调一次 `memory_append_today`**（每条独立 timestamp）
+5. **结果**: 写进 `<groupDir>/memory/YYYY-MM-DD.md`，下次 agent 想回忆今天能 `memory_read` 拿到
 
-### Phase 2 配置
+复用现有 task scheduler 而不是新开 cron loop — 一种调度机制就够了。
+
+### 为什么默认 23:45 local time（kenan · 2026-04-19）
+
+- **23:45 而不是 00:00 之后**：summary 总结的是 **"今天"** 的 chat history。如果 cron 跨过午夜才 fire，agent 算"今天"是新的一天，会写空 journal 或写错日期。23:45 让 agent 在**还在当天**的时候完成总结。
+- **23:45 而不是 23:55**：留 ~15 min buffer 给 agent 实际跑完（模型推理 + tool calls 可能 30s–2min）。23:55 fire 可能 00:00 才写完，当天 journal 拿不到这条。
+- **不是 22:00 之类更早的时间**：用户晚上 22–23 点还可能在群里聊事，总结太早会漏掉这段。
+- 想改？config 改 cron expression 即可，这值不是硬编码的限制，只是 sane default。
+
+### Disable 路径的现状（**已知 sharp edge**）
+
+`memory.dailySummary.enabled: false` 只让 `ensureDailySummaryTask` 早 return，**不会**修改已存在的 task — cron 还是会照常 fire。要真停掉得 `nanoclaw task cancel memory-daily-summary:<chatJid>`。
+
+Rpi5 review 标记为 design 问题（[#1495347889784754176]），TODO：要么 disable=false 时把 task `status` 改成 `paused`，要么文档警示更显眼。
+
+### 怎么配置（用户视角）
+
+所有字段都可选，缺省走 default。改完 nanoclaw.json 后**下次 agent spawn 自动 pickup**（drift detection 会 in-place update 已有 task）。
 
 ```json
-"memory": {
-  "dailySummary": {
-    "enabled": true,
-    "cron": "45 23 * * *",
-    "prompt": "...optional override..."
+{
+  "memory": {
+    "dailySummary": {
+      "enabled": true,
+      "cron": "45 23 * * *",
+      "prompt": "...optional override..."
+    }
   }
 }
 ```
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `enabled` | `true` | 开关。**注意**：改成 false 不会删已存在 task，见上文 sharp edge |
+| `cron` | `45 23 * * *` | 5段 cron，按配置的 `TIMEZONE` 解析。改 cron 下次 spawn 会同步到已有 task |
+| `prompt` | 内置 | 触发时给 agent 的 prompt。改 prompt 同样下次 spawn 同步 |
+
+常见想改的场景：
+- **不想被半夜叫醒**：改 cron 到 `0 8 * * *`（早 8 点总结昨天）
+- **想关掉**：先 `nanoclaw task cancel memory-daily-summary:<chatJid>` 取消已存在 task，**然后**才设 `enabled: false`
+- **改 prompt**：注意保留"每条 highlight 单独 call `memory_append_today`"这条指令，不然 agent 会一次写完所有 bullets，每条共享同一个 timestamp
+
+### Memory tools（agent 用的，5 个）
+
+所有 tool 名字都是 `mcp__nanoclaw__memory_*`，scope 都是当前 group：
+
+| Tool | 用途 |
+|---|---|
+| `memory_list` | 列 group 下所有 memory 文件（MEMORY.md + 每日 journal），含 size/mtime/preview |
+| `memory_read` | 读某个文件（>256KB head/tail 截断） |
+| `memory_search` | 跨所有 memory 文件 grep + 上下文 |
+| `memory_append_today` | append 一行到今天的 `YYYY-MM-DD.md`，自动加 timestamp。**写错日期是常见 bug 来源 — 这个 tool 让 agent 不用自己算日期** |
+| `memory_promote` | 把 daily 的内容"晋升"到 `MEMORY.md`（curated 长期记忆）。Agent 该 sparingly 用，只放跨天/跨周值得记的 |
 
 ## Phase 3+ (TODO)
 
