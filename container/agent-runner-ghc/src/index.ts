@@ -262,6 +262,27 @@ async function main(): Promise<void> {
     };
   }
 
+  // Memory injection (Phase 1): append per-group MEMORY.md + today/yesterday
+  // journals to systemMessage. See features/memory.md and
+  // src/memory/loader.ts (host-side canonical version).
+  try {
+    const { loadMemoryFromEnv } = await import('./memory-loader.js');
+    const memory = loadMemoryFromEnv();
+    if (memory.additionalContext) {
+      const sectionLabels = memory.sections.map((s) => s.label).join(', ');
+      log(`[memory] injecting ${memory.sections.length} section(s): ${sectionLabels}`);
+      systemMessage = {
+        mode: 'append',
+        content: systemMessage.content + '\n\n' + memory.additionalContext,
+      };
+    } else {
+      log('[memory] no memory files found');
+    }
+  } catch (err) {
+    // Memory loading is best-effort; never block agent startup on it.
+    log(`[memory] load failed (non-fatal): ${(err as Error).message}`);
+  }
+
   // Discover additional directories and skill directories
   const extraDirs: string[] = [];
   const extraBase = process.env.NANOCLAW_EXTRA_DIR || '/workspace/extra';

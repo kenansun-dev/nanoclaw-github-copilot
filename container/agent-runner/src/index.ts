@@ -422,6 +422,24 @@ async function runQuery(
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 
+  // Memory injection (Phase 1): append per-group MEMORY.md + today/yesterday
+  // journals to the global system prompt. See features/memory.md and
+  // src/memory/loader.ts (host-side canonical version).
+  try {
+    const { loadMemoryFromEnv } = await import('./memory-loader.js');
+    const memory = loadMemoryFromEnv();
+    if (memory.additionalContext) {
+      const sectionLabels = memory.sections.map((s) => s.label).join(', ');
+      log(`[memory] injecting ${memory.sections.length} section(s): ${sectionLabels}`);
+      globalClaudeMd = (globalClaudeMd ? globalClaudeMd + '\n\n' : '') + memory.additionalContext;
+    } else {
+      log('[memory] no memory files found');
+    }
+  } catch (err) {
+    // Memory loading is best-effort; never block agent startup on it.
+    log(`[memory] load failed (non-fatal): ${(err as Error).message}`);
+  }
+
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
   const extraDirs: string[] = [];
