@@ -1,80 +1,64 @@
 ---
 name: memory
-description: Persist and recall information across sessions using NanoClaw's per-group memory files. Use when the user says "remember this", when you learn something worth keeping (preferences, decisions, project context), or when answering a question that might benefit from prior context.
+description: Recall and persist information across sessions using NanoClaw's per-group memory tools. Use when the user says "remember this", when you learn something worth keeping (preferences, decisions, project context), or when answering a question that might benefit from prior context.
 ---
 
 # Memory — Continuity Across Sessions
 
-NanoClaw injects your per-group memory into your system prompt at the start of every session. You should both **read it** (it's already loaded — just refer to what you know) and **write to it** (when something is worth keeping).
+NanoClaw gives you tools to read & write a per-group memory store. Memory is **on-demand** — it is NOT auto-loaded into your system prompt. Call the tools when you need it.
 
-## Where memory lives
+## Tools (MCP server: `nanoclaw-memory`)
 
-Inside the container, your memory directory is mounted at:
-
-```
-$NANOCLAW_MEMORY_DIR        # absolute path, set by host
-# fallback: $NANOCLAW_WORK_DIR/memory  (usually /workspace/group/memory)
-```
-
-Three kinds of files:
-
-- **`MEMORY.md`** — Long-term curated memory. Persistent facts, user preferences, important decisions, lessons learned. Keep it tight; this is your distilled wisdom, not a journal.
-- **`YYYY-MM-DD.md`** — Daily journal. Raw notes about what happened today. Today's and yesterday's files are auto-injected at session start.
-- (Anything else you create in this directory is fine; only the three above are auto-loaded.)
-
-## When to write to memory
-
-**Write to today's journal** (`memory/$(date +%F).md`) when:
-- Something noteworthy happened in this conversation that future-you should know
-- The user shared context about an ongoing project, decision, or preference
-- You made a significant action (deployed, opened a PR, ran a long task)
-- You learned a lesson the hard way (don't repeat it)
-
-**Write to `MEMORY.md`** when:
-- It's a durable fact, preference, or rule that applies across many sessions (not just today's task)
-- It's a cross-channel rule that matters everywhere
-
-Example (append to today's journal):
-
-```bash
-cat >> "$NANOCLAW_MEMORY_DIR/$(date +%F).md" <<'EOF'
-
-## 2026-04-19 14:30 — User decided to skip Phase 4 vector search
-Reasoning: keyword grep is fast enough for current corpus size (<200 files).
-Will revisit if memory grows past 1000 files.
-EOF
-```
+| Tool | Use when |
+|---|---|
+| `memory_list` | You want to know what memory files exist (sizes, dates, previews). Cheap, run first when you're unsure. |
+| `memory_search` | You're answering a question that might be in the past ("do you remember…?", "what did we decide about X?"). Substring search across all memory files, returns ±3 lines of context. |
+| `memory_read` | You know exactly which file you want (e.g. `MEMORY.md` for long-term, `2026-04-19.md` for a specific day). |
+| `memory_append_today` | Capture an event, decision, conversation, or noteworthy moment. Adds a timestamped bullet to today's daily journal (local time). Cheap — use freely. |
+| `memory_promote` | A fact is durable enough to belong in long-term memory (`MEMORY.md`). User preferences, hard rules, important persistent context. Use sparingly. |
 
 ## When to read memory
 
-You don't usually need to read memory explicitly — it's already in your system prompt. But you should **check the injected sections at the top of your context** when:
-- The user asks "do you remember…?"
-- You're starting a task that resembles a past one
-- You're unsure about a user preference (formatting, tone, language)
+- User asks "do you remember…?", "what did we say about…?", "last time we…": → `memory_search` with a relevant keyword first; if it returns a hit, follow up with `memory_read` for the full file.
+- Starting a task that resembles a past one: → `memory_search` for the topic.
+- You suspect there's a relevant user preference but aren't sure: → `memory_search` or `memory_read MEMORY.md`.
 
-If you need a memory file that wasn't auto-injected (e.g. last week's journal), read it directly:
+You don't need to load memory at the start of every session — only when it's actually useful. Skip it for trivial chat.
 
-```bash
-ls "$NANOCLAW_MEMORY_DIR"/*.md
-cat "$NANOCLAW_MEMORY_DIR/2026-04-12.md"
-```
+## When to write memory
+
+**Use `memory_append_today` when:**
+- Something noteworthy happened in this conversation
+- The user shared context about an ongoing project, decision, or preference
+- You took a significant action (deployed, opened a PR, ran a long task, made a non-obvious choice)
+- You learned a lesson the hard way
+
+**Use `memory_promote` when:**
+- It's a durable fact, preference, or rule that applies across many sessions
+- It's a cross-channel rule that matters everywhere
+- You've seen the same lesson in the daily journal more than once and want to lift it
+
+## Local time
+
+`memory_append_today` and the daily journal filenames use **local time** (the timezone configured in `nanoclaw.json`). You don't have to think about timezones — the tool handles it. Today's journal is always `<local-date>.md`.
+
+## Daily summary (cron)
+
+A daily cron job runs at a configured time (local) and asks an agent to read the day's chat history and append the highlights to today's journal. You can still write your own bullets — they sit alongside the cron-generated ones.
 
 ## What NOT to memorize
 
-- **Secrets** — never write tokens, passwords, API keys, or PII to memory unless the user explicitly asks. Memory is plaintext and may be read by future agents.
+- **Secrets** — NEVER store tokens, passwords, API keys, or PII unless the user explicitly asks. Memory is plaintext and visible to future agents.
 - **Trivia** — don't journal every "thanks" or "ok". Memory is for things future-you will be glad you wrote.
-- **Output spam** — don't dump entire command outputs into memory. Summarize.
+- **Output spam** — don't paste entire command outputs. Summarize.
 
-## Daily summary (Phase 2, coming)
+## Storage layout (for reference)
 
-A daily cron will eventually distil your daily journal entries into `MEMORY.md`. Until then, do a quick review yourself once a day if you've been productive — promote 2-3 lasting lessons from today's journal into `MEMORY.md` and trim the journal.
+```
+$NANOCLAW_MEMORY_DIR/   (defaults to <groupFolder>/memory/)
+  MEMORY.md             ← long-term curated
+  YYYY-MM-DD.md         ← per-day journal (local time)
+  .dreams/              ← cron summarizer state (don't touch)
+```
 
-## Quick reference
-
-| Action | Command |
-|---|---|
-| List memory files | `ls "$NANOCLAW_MEMORY_DIR"` |
-| Read today's journal | `cat "$NANOCLAW_MEMORY_DIR/$(date +%F).md"` |
-| Append to today | `echo "- thing" >> "$NANOCLAW_MEMORY_DIR/$(date +%F).md"` |
-| Read MEMORY.md | `cat "$NANOCLAW_MEMORY_DIR/MEMORY.md"` |
-| Edit MEMORY.md | use the Edit/Write tool on `$NANOCLAW_MEMORY_DIR/MEMORY.md` |
+You generally don't need to interact with the filesystem directly — use the tools.

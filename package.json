@@ -2,11 +2,10 @@
   "name": "nanoclaw-github-copilot",
   "version": "0.0.1-alpha",
   "description": "AI assistant that runs agents in secure containers, powered by GitHub Copilot SDK",
-
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && cd container/agent-runner-ghc && npx tsc && cd mcp-servers/pdf && npx tsc && cd ../../../.. && cd container/agent-runner && npx tsc",
+    "build": "tsc && cd container/agent-runner-ghc && npx tsc && cd mcp-servers/pdf && npx tsc && cd ../memory && npx tsc && cd ../../../.. && cd container/agent-runner && npx tsc && cd mcp-servers/memory && npx tsc",
     "build:runners": "cd container/agent-runner-ghc && npx tsc && cd mcp-servers/pdf && npx tsc && cd ../../../.. && cd container/agent-runner && npx tsc",
     "prepack": "npm run build && npm run build:runners",
     "postinstall": "node scripts/postinstall.mjs",

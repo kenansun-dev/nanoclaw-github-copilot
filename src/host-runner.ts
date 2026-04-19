@@ -20,7 +20,6 @@ import {
   getConfig,
 } from './config.js';
 import { resolveWorkspace, paths as wsPaths } from './workspace.js';
-import { loadMemory } from './memory/loader.js';
 import {
   resolveAgentForChat,
   getAgentModelName,
@@ -194,6 +193,7 @@ export async function runHostAgent(
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     TZ: TIMEZONE,
+    NANOCLAW_TZ: TIMEZONE,
     // Override paths that agent-runner expects (container paths → host paths)
     NANOCLAW_HOST_MODE: '1',
     HOME: process.env.HOME || process.env.USERPROFILE || os.homedir(),
@@ -376,66 +376,9 @@ export async function runHostAgent(
     env.NANOCLAW_GLOBAL_CLAUDE_MD = globalClaudeMd;
   }
 
-  // Memory injection (Phase 1) — host-side composition.
-  //
-  // We deliberately do NOT edit the runner code (container/agent-runner
-  // is upstream-tracked; touching it adds merge cost). Instead we read
-  // the per-group memory files here, append them to the global prompt
-  // template, write the result to a per-spawn temp file under
-  // <groupDir>/, and re-point NANOCLAW_GLOBAL_CLAUDE_MD at it.
-  //
-  // Both runners (CC + GHC) already honour this env var, so memory
-  // injection is fully transparent to them.
-  //
-  // See features/memory.md and src/memory/loader.ts.
-  try {
-    const memory = loadMemory({ groupFolder: groupDir });
-    if (memory.additionalContext) {
-      const baseContent =
-        env.NANOCLAW_GLOBAL_CLAUDE_MD &&
-        fs.existsSync(env.NANOCLAW_GLOBAL_CLAUDE_MD)
-          ? fs.readFileSync(env.NANOCLAW_GLOBAL_CLAUDE_MD, 'utf-8')
-          : '';
-      const composed =
-        (baseContent ? baseContent.trimEnd() + '\n\n' : '') +
-        memory.additionalContext;
-      // Sweep stale composed prompt files from prior agent runs in this
-      // group folder before writing the fresh one. Keeps groupDir tidy
-      // even if a previous run crashed before cleanup.
-      try {
-        for (const entry of fs.readdirSync(groupDir)) {
-          if (
-            entry.startsWith('.nanoclaw-system-prompt.') &&
-            entry.endsWith('.md')
-          ) {
-            fs.unlinkSync(path.join(groupDir, entry));
-          }
-        }
-      } catch {
-        // Sweep is best-effort; ignore.
-      }
-      const composedPath = path.join(
-        groupDir,
-        `.nanoclaw-system-prompt.${process.pid}.md`,
-      );
-      fs.writeFileSync(composedPath, composed, 'utf-8');
-      env.NANOCLAW_GLOBAL_CLAUDE_MD = composedPath;
-      logger.info(
-        {
-          sections: memory.sections.length,
-          composedPath,
-          bytes: composed.length,
-        },
-        'Memory injection: composed system-prompt overlay',
-      );
-    }
-  } catch (err) {
-    // Best-effort: never block agent startup on memory loading.
-    logger.warn(
-      { err: (err as Error).message },
-      'Memory injection skipped (load failed)',
-    );
-  }
+  // Pass memory directory to runner so the memory MCP server can locate it.
+  // The MCP server uses NANOCLAW_GROUP_FOLDER + 'memory/' subdir.
+  env.NANOCLAW_MEMORY_DIR = path.join(groupDir, 'memory');
 
   // Spawn command
   // Resolve tsx: try package node_modules, then global
