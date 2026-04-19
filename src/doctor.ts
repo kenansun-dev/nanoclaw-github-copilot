@@ -67,6 +67,46 @@ export function chatsCheck(
   };
 }
 
+/**
+ * Pure decision logic for the "Main chat singleton" check.
+ *
+ * Multiple chats marked isMain:true all mount to the same `main/` folder
+ * (chat-manager.ts:29 `if (chatConfig?.isMain) return 'main'`). The v3→v4
+ * migration auto-dedupes on upgrade, but a hand-edited nanoclaw.json could
+ * still introduce duplicates after the loader runs in non-throwing modes.
+ * This check surfaces it as a doctor error with concrete remediation.
+ *
+ * Severity rules:
+ * - 0 main chats → ok (warn variant: "no main chat picked" if any chats exist)
+ * - 1 main chat  → ok
+ * - >1 main chats → error (mount collision)
+ */
+export function mainChatSingletonCheck(
+  mainJids: string[],
+  totalChatCount: number,
+): { ok: boolean; status?: 'ok' | 'warn' | 'error'; msg: string } {
+  if (mainJids.length > 1) {
+    return {
+      ok: false,
+      status: 'error',
+      msg:
+        `${mainJids.length} chats marked isMain — they all collide on the same main/ folder. ` +
+        `Run: nanoclaw chat set-main <id> to pick one and clear the rest.`,
+    };
+  }
+  if (mainJids.length === 1) {
+    return { ok: true, msg: `1 main chat (${mainJids[0]})` };
+  }
+  if (totalChatCount > 0) {
+    return {
+      ok: false,
+      status: 'warn',
+      msg: 'no main chat picked — run: nanoclaw chat set-main <id>',
+    };
+  }
+  return { ok: true, msg: 'no chats registered' };
+}
+
 export function runDoctor(): CheckResult[] {
   const results: CheckResult[] = [];
 
@@ -251,6 +291,18 @@ export function runDoctor(): CheckResult[] {
       .map(([name]) => name);
     results.push(
       check('Registered chats', () => chatsCheck(chatCount, enabledChannels)),
+    );
+
+    // Main chat singleton: catches the silent mount-collision bug from
+    // pre-v4 multi-isMain configs that bypass the migration (e.g. hand-
+    // edited nanoclaw.json after the loader normalized things).
+    const mainJids = Object.entries(config.chats)
+      .filter(([, e]: any[]) => e?.isMain)
+      .map(([jid]) => jid);
+    results.push(
+      check('Main chat singleton', () =>
+        mainChatSingletonCheck(mainJids, chatCount),
+      ),
     );
   } catch {
     /* ignore */

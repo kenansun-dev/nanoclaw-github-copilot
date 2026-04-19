@@ -13,7 +13,7 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { check, chatsCheck, formatDoctorResults } from './doctor.js';
+import { check, chatsCheck, mainChatSingletonCheck, formatDoctorResults } from './doctor.js';
 
 describe('check helper', () => {
   it('returns ok when fn returns ok=true and no status override', () => {
@@ -89,6 +89,36 @@ describe('chatsCheck severity matrix', () => {
     // No status override → check() will compute 'error' from ok=false.
     expect(r.status).toBeUndefined();
     expect(r.msg).toContain('none and no channels enabled');
+  });
+});
+
+describe('mainChatSingletonCheck severity matrix', () => {
+  it('0 mains + 0 chats → ok (clean install)', () => {
+    const r = mainChatSingletonCheck([], 0);
+    expect(r).toMatchObject({ ok: true, msg: 'no chats registered' });
+  });
+
+  it('0 mains + N chats → warn (forgot to pick one)', () => {
+    const r = mainChatSingletonCheck([], 3);
+    expect(r.ok).toBe(false);
+    expect(r.status).toBe('warn');
+    expect(r.msg).toContain('no main chat picked');
+    expect(r.msg).toContain('chat set-main');
+  });
+
+  it('exactly 1 main → ok with jid in message', () => {
+    const r = mainChatSingletonCheck(['tg:8731187021'], 5);
+    expect(r.ok).toBe(true);
+    expect(r.msg).toContain('tg:8731187021');
+  });
+
+  it('>1 mains → error pointing at the collision', () => {
+    const r = mainChatSingletonCheck(['tg:1', 'tg:2', 'tg:3'], 10);
+    expect(r.ok).toBe(false);
+    expect(r.status).toBe('error');
+    expect(r.msg).toContain('3 chats marked isMain');
+    expect(r.msg).toContain('main/ folder');
+    expect(r.msg).toContain('chat set-main');
   });
 });
 
