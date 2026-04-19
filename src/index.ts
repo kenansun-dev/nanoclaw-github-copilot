@@ -932,7 +932,10 @@ async function main(): Promise<void> {
     fs.mkdirSync(path.dirname(pidFilePath), { recursive: true });
     fs.writeFileSync(pidFilePath, String(process.pid));
   } catch (err) {
-    logger.warn({ err }, 'Failed to write PID file (status CLI may report stale)');
+    logger.warn(
+      { err },
+      'Failed to write PID file (status CLI may report stale)',
+    );
   }
   const cleanupPidFile = (): void => {
     if (!pidFilePath) return;

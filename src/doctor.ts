@@ -9,6 +9,7 @@ import path from 'path';
 import { paths, resolveWorkspace } from './workspace.js';
 import { loadConfig } from './config-loader.js';
 import { PACKAGE_ROOT } from './config.js';
+import { isGHCProvider } from './config-extensions.js';
 
 interface CheckResult {
   name: string;
@@ -69,8 +70,6 @@ export function runDoctor(): CheckResult[] {
     check('Container image', () => {
       try {
         const config = loadConfig();
-        // Check provider-specific image
-        const { isGHCProvider } = require('./config-extensions.js') as any;
         let image = config.sandbox.image;
         try {
           if (isGHCProvider()) image = 'nanoclaw-agent-ghc:latest';
@@ -87,8 +86,11 @@ export function runDoctor(): CheckResult[] {
           ok: !!output,
           msg: output || `${image} not found — run: nanoclaw sandbox build`,
         };
-      } catch {
-        return { ok: false, msg: 'could not check' };
+      } catch (err: any) {
+        return {
+          ok: false,
+          msg: `could not check (${err?.message ?? err})`,
+        };
       }
     }),
   );
