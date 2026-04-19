@@ -109,8 +109,14 @@ export function loadMemory(opts: LoadMemoryOptions): LoadedMemory {
   const yesterday = dateMinusDays(today, 1);
 
   const candidates: { label: string; path: string }[] = [
-    { label: 'Long-term memory (MEMORY.md)', path: path.join(memoryDir, 'MEMORY.md') },
-    { label: `Today's journal (${today}.md)`, path: path.join(memoryDir, `${today}.md`) },
+    {
+      label: 'Long-term memory (MEMORY.md)',
+      path: path.join(memoryDir, 'MEMORY.md'),
+    },
+    {
+      label: `Today's journal (${today}.md)`,
+      path: path.join(memoryDir, `${today}.md`),
+    },
     {
       label: `Yesterday's journal (${yesterday}.md)`,
       path: path.join(memoryDir, `${yesterday}.md`),
@@ -141,7 +147,7 @@ export function loadMemory(opts: LoadMemoryOptions): LoadedMemory {
     `The following content was loaded from \`${memoryDir}\` and is your`,
     'long-term + recent memory for this group. Treat it as authoritative',
     'context but do not echo it back unless the user asks. When you learn',
-    'something worth remembering, append to today\'s journal file or',
+    "something worth remembering, append to today's journal file or",
     '`MEMORY.md` directly using the Write/Edit tools.',
     '',
     '---',

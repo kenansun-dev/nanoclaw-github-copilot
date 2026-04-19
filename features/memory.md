@@ -114,3 +114,15 @@ OpenClaw 的 memory 系统：
 - **Phase 1.5 (cheap follow-up)**: `userPromptSubmitted` hook for per-turn memory refresh (so memory edits during the session take effect on the next turn without restarting).
 - **No need for `systemPrompt` append fallback** — both SDKs have proper hooks. Skip the `COPILOT.md` mutation hack proposed in earlier draft.
 - **No conflict with rpi5's `usage_stats` work** — usage uses post-event observers (`assistant.usage` for GHC, result message for CC), memory uses pre-turn hooks. Orthogonal.
+
+## Decoupling Constraint (kenan, 2026-04-19)
+
+> *“nanoclaw ghc fork 版本需要时长从 upstream 同步，如果耦合性太强，不方便 merge。之前我们说过这点，用 extension 的形式实现解耦。”*
+
+**Implication for Phase 1**: do NOT edit `container/agent-runner/src/index.ts` (it tracks upstream `qwibitai/nanoclaw`). Editing it costs us a merge conflict on every upstream sync.
+
+**Phase 1 ships using host-side composition only** — the host reads the per-group memory, appends it to the global system prompt template (`CLAUDE.md` / `COPILOT.md`), writes the result to a per-spawn temp file under `<groupDir>/.nanoclaw-system-prompt.<pid>.md`, and re-points the existing `NANOCLAW_GLOBAL_CLAUDE_MD` env var at that file. Both runners already honour the env var (existing fork patch), so memory injection is **fully transparent to upstream**.
+
+**Phase 1 limitation**: only `agents.defaults.mode === 'host'` paths get memory injection. Container mode (`src/container-runner.ts`) doesn't propagate `NANOCLAW_GLOBAL_CLAUDE_MD` and would need its own bind-mount story — deferred to Phase 1.5 / 2.
+
+**Future hooks** (Phase 1.5+): if we *do* need runtime injection (per-turn refresh, post-compact), we'll vendor a small extension shim that the runners load via a *single, narrow* upstream-friendly hook surface (one env var pointing at a JS module exposing `sessionStart` / `userPromptSubmitted` callbacks). That patch is small enough to maintain across upstream syncs. We're explicitly NOT shipping that yet.

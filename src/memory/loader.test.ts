@@ -32,7 +32,10 @@ describe('memory loader', () => {
   it('loads MEMORY.md when present', () => {
     const memDir = path.join(tmp, 'memory');
     fs.mkdirSync(memDir);
-    fs.writeFileSync(path.join(memDir, 'MEMORY.md'), '# Long-term\nUser likes tea.');
+    fs.writeFileSync(
+      path.join(memDir, 'MEMORY.md'),
+      '# Long-term\nUser likes tea.',
+    );
     const result = loadMemory({ groupFolder: tmp, today: '2026-04-19' });
     expect(result.sections).toHaveLength(1);
     expect(result.sections[0].label).toContain('MEMORY.md');
@@ -43,8 +46,14 @@ describe('memory loader', () => {
   it('loads today and yesterday journal files when present', () => {
     const memDir = path.join(tmp, 'memory');
     fs.mkdirSync(memDir);
-    fs.writeFileSync(path.join(memDir, '2026-04-19.md'), 'Today: shipped Phase 1');
-    fs.writeFileSync(path.join(memDir, '2026-04-18.md'), 'Yesterday: spike done');
+    fs.writeFileSync(
+      path.join(memDir, '2026-04-19.md'),
+      'Today: shipped Phase 1',
+    );
+    fs.writeFileSync(
+      path.join(memDir, '2026-04-18.md'),
+      'Yesterday: spike done',
+    );
     const result = loadMemory({ groupFolder: tmp, today: '2026-04-19' });
     expect(result.sections).toHaveLength(2);
     expect(result.additionalContext).toContain('shipped Phase 1');
@@ -102,7 +111,9 @@ describe('memory loader', () => {
     fs.mkdirSync(path.join(memDir, 'MEMORY.md')); // dir, not file
     fs.writeFileSync(path.join(memDir, '2026-04-19.md'), 'OK');
     const result = loadMemory({ groupFolder: tmp, today: '2026-04-19' });
-    expect(result.sections.find((s) => s.label.includes('MEMORY.md'))).toBeUndefined();
+    expect(
+      result.sections.find((s) => s.label.includes('MEMORY.md')),
+    ).toBeUndefined();
     expect(result.additionalContext).toContain('OK');
   });
 });
