@@ -13,8 +13,26 @@ no synchronisation between them:
 | Store | Location | Populated by | Read by |
 |---|---|---|---|
 | `config.chats` (per-channel) | `~/.nanoclaw/nanoclaw.json` `channels.<x>.chats[]` | manual yaml edit + `chat-manager.addChat()` | `doctor`, `config get`, runtime routing |
-| `registered_groups` table | sqlite `messages.db` | `addChat()` (via the DB call inside chat-manager that nobody traced) | `chat-manager.listChats()` ⇒ `nanoclaw chat list` |
+| `registered_groups` table | sqlite `messages.db` | `addChat()` via `setRegisteredGroup()` (`chat-manager.ts:101`) | `chat-manager.listChats()` ⇒ `nanoclaw chat list` |
 | `chats` table | sqlite `messages.db` | inbound message handler (auto) | `chat-manager.listPendingChats()` (currently `return []` stub) |
+
+**Important correction (verified post-draft)**: `addChat()` writes
+**both** `config.chats` *and* `registered_groups` — see `chat-manager.ts:88-110`.
+The write path is not broken. The split is on the **read** side:
+`listChats()` reads only `registered_groups`, `doctor` reads only
+`config.chats`. So `nanoclaw chat add foo` produces a chat that
+*both* show, but only because they each happen to know about it via
+different stores that happen to be in sync — until they aren't.
+
+What actually leaves rpi5 with empty `config.chats` + 31 rows in
+`db.chats` is: nobody has ever run `nanoclaw chat add` on that
+machine. Every chat in the DB came from inbound message observation,
+which only writes `db.chats`, never `config.chats` or
+`registered_groups`. So the user's intent for those 31 rows is
+**unknown** (some might be groups they want auto-registered, some
+are obviously test/throwaway like `teams:test-conv-1`).
+
+This distinction matters for question 3 below.
 
 Observed on rpi5 today (PR #14 baseline):
 
@@ -81,19 +99,30 @@ migration must dedupe accordingly.
 
 ### 3. Migration path for existing deployments
 
-rpi5 has 31 `chats` rows + N `registered_groups` rows. After this PR
-merges, what happens on first launch?
+Two distinct populations to handle:
 
-- (a) Auto-import all `registered_groups` into `config.chats` (+ keep
-  backup of pre-migration JSON for rollback)
-- (b) Print a one-time advisory "run `nanoclaw chat import-from-db` to
-  migrate" and leave config untouched
-- (c) Same as (a) but only for groups with `isMain=true` (assume the
-  rest were exploratory)
+**Population A: `registered_groups` rows** (created via `nanoclaw chat
+add` — represent explicit user intent). Should be 1:1 mirrored into
+`config.chats` if not already there. Safe default: **auto-import**
+with a JSON backup of the pre-migration `nanoclaw.json` saved next
+to it (`nanoclaw.json.pre-chat-ssot.bak`). These rows already represent
+user choice, so silently surfacing them in the SSOT is the right call.
 
-Default behaviour matters because users who upgrade silently will lose
-or gain registered chats depending on the choice. (a) is safest if we
-write a backup first.
+**Population B: `db.chats` rows that have no matching
+`registered_groups` row** (auto-observed from inbound traffic — user
+intent is **unknown**). DO NOT auto-import. Surface as `nanoclaw chat
+pending` only. User decides per-chat with `nanoclaw chat add <jid>`
+or leaves them as ambient observation that doesn't get a folder /
+cron / agent.
+
+This split avoids the failure mode where a user's machine suddenly
+"registers" 31 chats they never asked for (rpi5 today: lots of test
+rows like `teams:test-conv-1`, `teams:c1` that should never become
+first-class registered chats).
+
+Migration script: `nanoclaw migrate chat-ssot` — idempotent, prints
+a summary (`imported N from registered_groups, found M pending in
+db.chats — review with: nanoclaw chat pending`).
 
 ### 4. `containerConfig` per-chat
 
