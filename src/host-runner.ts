@@ -357,12 +357,6 @@ export async function runHostAgent(
   // Working directory (agent cwd)
   env.NANOCLAW_WORK_DIR = groupDir;
 
-  // Memory directory (per-group long-term + daily memory). The runner's
-  // memory loader reads MEMORY.md + today/yesterday journal files from
-  // here and appends the composed text to the agent's system prompt.
-  // See src/memory/loader.ts and features/memory.md.
-  env.NANOCLAW_MEMORY_DIR = path.join(groupDir, 'memory');
-
   // Global agent prompt template
   // GHC uses COPILOT.md if available, CC uses CLAUDE.md
   const groupType = group.isMain ? 'main' : 'global';
