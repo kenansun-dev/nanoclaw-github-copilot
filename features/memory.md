@@ -93,3 +93,24 @@ OpenClaw 的 memory 系统：
 - **GHC CLI** 有 `~/.copilot/session-state/` 但没有跨 session 的 memory
 - **Claude Code** 有 `CLAUDE.md` 作为 project instructions 但不是 memory
 - NanoClaw 的 memory 是**补充**，不冲突。通过 system prompt 注入，agent 能看到但不会覆盖 CLI 自己的机制
+
+## SDK Compatibility (spike 2026-04-19)
+
+**Both runners expose symmetric hook APIs that make memory injection clean and runner-agnostic.**
+
+### CC (Claude Agent SDK)
+- File: `container/agent-runner/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`
+- `systemPrompt: { type: 'preset', preset: 'claude_code', append: '...' }` — static append at session creation (line ~1372)
+- `SessionStartHook` → `SessionStartHookSpecificOutput.additionalContext` (line ~2805) — runtime per-session injection (`source: 'startup' | 'resume' | 'clear' | 'compact'`)
+- `UserPromptSubmitHook` → `UserPromptSubmitHookSpecificOutput.additionalContext` (line ~4377) — per-turn injection
+
+### GHC (`@github/copilot/sdk`)
+- File: `container/agent-runner-ghc/node_modules/@github/copilot/sdk/index.d.ts`
+- `QueryHooks.sessionStart` → `SessionStartHookOutput.additionalContext` (line ~34683) — `source: 'startup' | 'resume' | 'new'`
+- `QueryHooks.userPromptSubmitted` → `UserPromptSubmittedHookOutput.additionalContext` (line ~38460); also exposes `modifiedPrompt` for prompt rewriting
+
+### Decision
+- **Phase 1 injection mechanism**: `sessionStart` hook in BOTH runners returning `additionalContext` containing `MEMORY.md` + today/yesterday's `memory/YYYY-MM-DD.md` content. Single shared abstraction in host, two thin runner adapters.
+- **Phase 1.5 (cheap follow-up)**: `userPromptSubmitted` hook for per-turn memory refresh (so memory edits during the session take effect on the next turn without restarting).
+- **No need for `systemPrompt` append fallback** — both SDKs have proper hooks. Skip the `COPILOT.md` mutation hack proposed in earlier draft.
+- **No conflict with rpi5's `usage_stats` work** — usage uses post-event observers (`assistant.usage` for GHC, result message for CC), memory uses pre-turn hooks. Orthogonal.
