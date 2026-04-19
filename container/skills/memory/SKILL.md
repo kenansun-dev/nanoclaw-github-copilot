@@ -7,7 +7,9 @@ description: Recall and persist information across sessions using NanoClaw's per
 
 NanoClaw gives you tools to read & write a per-group memory store. Memory is **on-demand** — it is NOT auto-loaded into your system prompt. Call the tools when you need it.
 
-## Tools (MCP server: `nanoclaw-memory`)
+## Tools (`nanoclaw` MCP server)
+
+Memory tools live alongside the other nanoclaw tools (`send_message`, `schedule_task`, etc.) in the single `nanoclaw` MCP server. Tool names: `memory_list`, `memory_read`, `memory_search`, `memory_append_today`, `memory_promote`.
 
 | Tool | Use when |
 |---|---|
@@ -42,9 +44,11 @@ You don't need to load memory at the start of every session — only when it's a
 
 `memory_append_today` and the daily journal filenames use **local time** (the timezone configured in `nanoclaw.json`). You don't have to think about timezones — the tool handles it. Today's journal is always `<local-date>.md`.
 
-## Daily summary (cron)
+## Daily summary (cron, automatic)
 
-A daily cron job runs at a configured time (local) and asks an agent to read the day's chat history and append the highlights to today's journal. You can still write your own bullets — they sit alongside the cron-generated ones.
+A per-group cron task runs **daily at 23:45 local time** (configurable via `memory.dailySummary.cron`). It asks an agent to summarize the day's chat history and append highlights to today's daily journal via `memory_append_today`. The task is registered automatically the first time a group spawns an agent; idempotent on subsequent spawns. Disable with `memory.dailySummary.enabled: false`.
+
+You can still write your own bullets with `memory_append_today` — they sit alongside the cron-generated ones.
 
 ## What NOT to memorize
 

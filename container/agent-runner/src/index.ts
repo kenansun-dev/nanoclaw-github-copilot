@@ -493,8 +493,6 @@ async function runQuery(
         'Skill',
         'NotebookEdit',
         'mcp__nanoclaw__*',
-        'mcp__nanoclaw-memory__*',
-        'mcp__nanoclaw-pdf__*',
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -510,41 +508,6 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
-        // Auto-discover built-in MCP servers from mcp-servers/ directory.
-        // Each subdirectory with a built dist/index.js (or index.js) is
-        // registered as a local MCP server named `nanoclaw-<dir>`. Mirrors
-        // the GHC runner pattern; lets the fork ship additional MCP
-        // servers (e.g. memory, pdf) without further upstream edits.
-        ...(() => {
-          const mcpServersDir = path.join(__dirname, '..', 'mcp-servers');
-          const servers: Record<string, any> = {};
-          if (fs.existsSync(mcpServersDir)) {
-            for (const entry of fs.readdirSync(mcpServersDir)) {
-              const serverDir = path.join(mcpServersDir, entry);
-              const distJs = path.join(serverDir, 'dist', 'index.js');
-              const indexJs = path.join(serverDir, 'index.js');
-              const entryPoint = fs.existsSync(distJs)
-                ? distJs
-                : fs.existsSync(indexJs)
-                  ? indexJs
-                  : null;
-              if (entryPoint) {
-                servers[`nanoclaw-${entry}`] = {
-                  command: 'node',
-                  args: [entryPoint],
-                  env: {
-                    NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-                    NANOCLAW_MEMORY_DIR:
-                      process.env.NANOCLAW_MEMORY_DIR || '',
-                    NANOCLAW_TZ: process.env.NANOCLAW_TZ || '',
-                  },
-                };
-                log(`Discovered built-in MCP server: nanoclaw-${entry}`);
-              }
-            }
-          }
-          return servers;
-        })(),
       },
       hooks: {
         PreCompact: [

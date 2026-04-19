@@ -30,6 +30,7 @@ import type { AgentConfig } from './config-loader.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { ContainerInput, ContainerOutput } from './container-runner.js';
+import { ensureDailySummaryTask } from './memory/cron.js';
 
 const OUTPUT_START = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END = '---NANOCLAW_OUTPUT_END---';
@@ -145,6 +146,17 @@ export async function runHostAgent(
   // Prepare working directory
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
+
+  // Ensure per-group memory daily-summary cron task exists. Idempotent;
+  // updates in place if config changed. Honours `memory.dailySummary.enabled`.
+  try {
+    ensureDailySummaryTask({
+      chatJid: input.chatJid,
+      groupFolder: group.folder,
+    });
+  } catch (err) {
+    logger.warn({ err }, 'ensureDailySummaryTask threw (non-fatal)');
+  }
 
   // Prepare session directory
   const sessionDirName = isAgentGHC(agent) ? '.copilot' : '.claude';
