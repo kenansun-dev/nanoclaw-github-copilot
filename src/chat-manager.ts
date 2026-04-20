@@ -4,11 +4,17 @@
  * Reads/writes chats section of nanoclaw.json + syncs with SQLite DB.
  */
 
-import { loadConfig, saveConfig, NanoclawConfig } from './config-loader.js';
+import {
+  loadConfig,
+  saveConfig,
+  NanoclawConfig,
+  nextChatId,
+} from './config-loader.js';
 import { setRegisteredGroup, getAllRegisteredGroups } from './db.js';
 import { logger } from './logger.js';
 
 export interface ChatInfo {
+  id?: number;
   jid: string;
   name: string;
   isMain: boolean;
@@ -83,10 +89,15 @@ export function addChat(
     requiresTrigger?: boolean;
     agentId?: string;
   } = {},
-): void {
+): { id: number } {
   const config = loadConfig();
 
+  // Reuse existing id if this jid is already in config; else assign next free.
+  const existingId = config.chats[jid]?.id;
+  const id = typeof existingId === 'number' ? existingId : nextChatId(config);
+
   config.chats[jid] = {
+    id,
     name,
     isMain: options.isMain,
     requiresTrigger: options.requiresTrigger,
@@ -107,7 +118,23 @@ export function addChat(
     isMain: options.isMain ?? false,
   });
 
-  logger.info({ jid, name, folder }, 'Chat added');
+  logger.info({ id, jid, name, folder }, 'Chat added');
+  return { id };
+}
+
+/**
+ * Set or clear the main chat. Pass null to clear.
+ * `target` is a jid (already validated by caller).
+ */
+export function setMainChat(jid: string | null): void {
+  const config = loadConfig();
+  for (const [j, entry] of Object.entries(config.chats)) {
+    const shouldBeMain = jid !== null && j === jid;
+    if (shouldBeMain && !entry.isMain) entry.isMain = true;
+    else if (!shouldBeMain && entry.isMain) delete entry.isMain;
+  }
+  saveConfig(config);
+  logger.info({ jid }, jid ? 'Main chat set' : 'Main chat cleared');
 }
 
 /**
@@ -130,16 +157,24 @@ export function removeChat(jid: string): boolean {
  */
 export function listChats(): ChatInfo[] {
   const groups = getAllRegisteredGroups();
-  return Object.entries(groups).map(([jid, g]) => ({
-    jid,
-    name: g.name,
-    isMain: g.isMain ?? false,
-    channel: jid.startsWith('tg:')
-      ? 'telegram'
-      : jid.startsWith('teams:')
-        ? 'teams'
-        : 'unknown',
-  }));
+  const config = loadConfig();
+  return Object.entries(groups)
+    .map(([jid, g]) => ({
+      id: config.chats[jid]?.id,
+      jid,
+      name: g.name,
+      isMain: g.isMain ?? false,
+      channel: jid.startsWith('tg:')
+        ? 'telegram'
+        : jid.startsWith('teams:')
+          ? 'teams'
+          : jid.startsWith('dc:')
+            ? 'discord'
+            : jid.startsWith('wa:')
+              ? 'whatsapp'
+              : 'unknown',
+    }))
+    .sort((a, b) => (a.id ?? 1e9) - (b.id ?? 1e9));
 }
 
 /**

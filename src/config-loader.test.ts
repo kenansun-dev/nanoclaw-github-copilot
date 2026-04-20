@@ -420,3 +420,205 @@ describe('sandbox.engine config', () => {
     expect(config.sandbox.engine).toBe('node');
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// chat numeric-id surface (kenan model: numeric id is user-facing handle,
+// jid is detail field, isMain singleton enforced at load).
+// ──────────────────────────────────────────────────────────────────────────
+import {
+  resolveChatHandle,
+  nextChatId,
+  findExtraMainChats,
+} from './config-loader.js';
+
+describe('config-loader / chat numeric ids', () => {
+  const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-chatid-${Date.now()}`);
+
+  beforeEach(() => {
+    setWorkspace(tmpDir);
+    ensureWorkspace();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('v3 → v4 migration assigns sequential ids in jid sort order (top-level format)', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 3,
+        chats: {
+          'tg:222': { name: 'b' },
+          'tg:111': { name: 'a' },
+          'tg:333': { name: 'c' },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.chats['tg:111'].id).toBe(1);
+    expect(config.chats['tg:222'].id).toBe(2);
+    expect(config.chats['tg:333'].id).toBe(3);
+  });
+
+  it('v3 → v4 migration honours pre-existing ids and only fills gaps', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 3,
+        channels: {
+          telegram: {
+            chats: [
+              { jid: 'tg:111', name: 'a', id: 5 },
+              { jid: 'tg:222', name: 'b' },
+              { jid: 'tg:333', name: 'c' },
+            ],
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.chats['tg:111'].id).toBe(5);
+    expect(config.chats['tg:222'].id).toBe(1);
+    expect(config.chats['tg:333'].id).toBe(2);
+  });
+
+  it('nextChatId returns max+1 when ids exist', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 4,
+        channels: {
+          telegram: {
+            chats: [
+              { jid: 'tg:111', name: 'a', id: 3 },
+              { jid: 'tg:222', name: 'b', id: 7 },
+            ],
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(nextChatId(config)).toBe(8);
+  });
+
+  it('nextChatId returns 1 when chats are empty', () => {
+    const config = loadConfig();
+    expect(nextChatId(config)).toBe(1);
+  });
+
+  it('resolveChatHandle accepts numeric id', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 4,
+        channels: {
+          telegram: { chats: [{ jid: 'tg:111', name: 'a', id: 7 }] },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(resolveChatHandle(config, '7')).toBe('tg:111');
+  });
+
+  it('resolveChatHandle accepts jid', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 4,
+        channels: {
+          telegram: { chats: [{ jid: 'tg:111', name: 'a', id: 7 }] },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(resolveChatHandle(config, 'tg:111')).toBe('tg:111');
+  });
+
+  it('resolveChatHandle returns null on miss', () => {
+    const config = loadConfig();
+    expect(resolveChatHandle(config, '99')).toBeNull();
+    expect(resolveChatHandle(config, 'tg:nope')).toBeNull();
+    expect(resolveChatHandle(config, '')).toBeNull();
+  });
+
+  it('loadConfig throws when more than one chat is isMain', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 4,
+        channels: {
+          telegram: {
+            chats: [
+              { jid: 'tg:111', name: 'a', id: 1, isMain: true },
+              { jid: 'tg:222', name: 'b', id: 2, isMain: true },
+            ],
+          },
+        },
+      }),
+    );
+    expect(() => loadConfig()).toThrow(/2 chats marked isMain/);
+  });
+
+  it('loadConfig succeeds with exactly one isMain', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 4,
+        channels: {
+          telegram: {
+            chats: [
+              { jid: 'tg:111', name: 'a', id: 1, isMain: true },
+              { jid: 'tg:222', name: 'b', id: 2 },
+            ],
+          },
+        },
+      }),
+    );
+    expect(() => loadConfig()).not.toThrow();
+  });
+
+  it('v3 → v4 dedupes isMain when v0→1 set it on multiple chats (regression: rpi5 review)', () => {
+    // Simulate post-v0→1 state: every chat has isMain:true (the v0→1 default).
+    // Without dedupe in v3→4, loadConfig() would throw "2 chats marked isMain"
+    // and break every multi-chat user on upgrade.
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 3,
+        channels: {
+          telegram: {
+            chats: [
+              { jid: 'tg:111', name: 'a', isMain: true },
+              { jid: 'tg:222', name: 'b', isMain: true },
+              { jid: 'tg:333', name: 'c', isMain: true },
+            ],
+          },
+        },
+      }),
+    );
+    // Should NOT throw.
+    const config = loadConfig();
+    // Lowest-id (first assigned) kept as main; rest cleared.
+    expect(config.chats['tg:111'].isMain).toBe(true);
+    expect(config.chats['tg:222'].isMain).toBeUndefined();
+    expect(config.chats['tg:333'].isMain).toBeUndefined();
+    expect(findExtraMainChats(config)).toEqual([]);
+  });
+
+  it('findExtraMainChats returns empty when at most one isMain', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 4,
+        channels: {
+          telegram: {
+            chats: [{ jid: 'tg:111', name: 'a', id: 1, isMain: true }],
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(findExtraMainChats(config)).toEqual([]);
+  });
+});

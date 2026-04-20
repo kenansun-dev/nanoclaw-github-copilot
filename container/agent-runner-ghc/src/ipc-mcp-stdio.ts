@@ -10,6 +10,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
+import { registerMemoryTools } from './memory-tools.js';
 
 const IPC_DIR = process.env.NANOCLAW_IPC_DIR
   ? path.dirname(process.env.NANOCLAW_IPC_DIR)  // NANOCLAW_IPC_DIR points to input/, go up one level
@@ -426,6 +427,10 @@ server.tool(
     };
   },
 );
+
+// Memory tools (per-group MEMORY.md + daily journals).
+// Source of truth: container/shared/memory-tools.ts (build-time copied here).
+registerMemoryTools(server);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

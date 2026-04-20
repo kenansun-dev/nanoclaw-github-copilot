@@ -49,8 +49,12 @@ export interface Binding {
   };
 }
 
-// New chats format: grouped by channel
+// New chats format: grouped by channel.
+// `id` is a stable user-facing numeric handle assigned at chat-add time.
+// It is the only thing users type at the CLI; jid is the platform-stable id
+// kept as a detail field. See proposals/chat-ssot.md.
 export interface ChatEntry {
+  id?: number;
   jid: string;
   name: string;
   isMain?: boolean;
@@ -124,6 +128,7 @@ export interface NanoclawConfig {
   chats: Record<
     string,
     {
+      id?: number;
       name: string;
       isMain?: boolean;
       requiresTrigger?: boolean;
@@ -295,6 +300,7 @@ function normalizeChats(
 ): Record<
   string,
   {
+    id?: number;
     name: string;
     isMain?: boolean;
     requiresTrigger?: boolean;
@@ -310,6 +316,7 @@ function normalizeChats(
       for (const entry of chDef.chats) {
         if (entry.jid) {
           result[entry.jid] = {
+            id: typeof entry.id === 'number' ? entry.id : undefined,
             name: entry.name || entry.jid,
             isMain: entry.isMain,
             requiresTrigger: entry.requiresTrigger,
@@ -340,6 +347,7 @@ function normalizeChats(
         for (const entry of entries) {
           if (entry.jid && !result[entry.jid]) {
             result[entry.jid] = {
+              id: typeof entry.id === 'number' ? entry.id : undefined,
               name: entry.name || entry.jid,
               isMain: entry.isMain,
               requiresTrigger: entry.requiresTrigger,
@@ -349,7 +357,7 @@ function normalizeChats(
         }
       }
     } else {
-      // Old flat format
+      // Old flat format (jid-keyed map). No `id` field — assigned by v3→v4 migration.
       for (const [jid, cfg] of Object.entries(raw) as any[]) {
         if (!result[jid]) {
           result[jid] = cfg;
@@ -359,6 +367,50 @@ function normalizeChats(
   }
 
   return result;
+}
+
+/**
+ * Resolve a user-supplied chat handle (numeric id or jid) to its jid.
+ * Returns null if no chat matches. Used by CLI commands like `chat set-main <id-or-jid>`.
+ */
+export function resolveChatHandle(
+  config: NanoclawConfig,
+  handle: string,
+): string | null {
+  if (!handle) return null;
+  // jid path: contains a colon and matches an existing key
+  if (handle.includes(':') && config.chats[handle]) return handle;
+  // numeric id path
+  const id = Number(handle);
+  if (Number.isInteger(id) && id > 0) {
+    for (const [jid, entry] of Object.entries(config.chats)) {
+      if (entry.id === id) return jid;
+    }
+  }
+  return null;
+}
+
+/**
+ * Assign a fresh sequential numeric id, larger than any currently-used id.
+ */
+export function nextChatId(config: NanoclawConfig): number {
+  let max = 0;
+  for (const entry of Object.values(config.chats)) {
+    if (typeof entry.id === 'number' && entry.id > max) max = entry.id;
+  }
+  return max + 1;
+}
+
+/**
+ * Validate that at most one chat is marked isMain.
+ * Returns the offending jids when there are too many; empty array when fine.
+ */
+export function findExtraMainChats(config: NanoclawConfig): string[] {
+  const mains: string[] = [];
+  for (const [jid, entry] of Object.entries(config.chats)) {
+    if (entry.isMain) mains.push(jid);
+  }
+  return mains.length > 1 ? mains : [];
 }
 
 /**
@@ -378,12 +430,17 @@ function distributeChatsToChannels(
     const ch = channelFromJid(jid);
     if (!byChannel[ch]) byChannel[ch] = [];
     byChannel[ch].push({
+      ...(typeof config.id === 'number' ? { id: config.id } : {}),
       jid,
       name: config.name,
       isMain: config.isMain,
       requiresTrigger: config.requiresTrigger,
       agentId: config.agentId,
     });
+  }
+  // Stable sort by id within each channel for readable diffs.
+  for (const entries of Object.values(byChannel)) {
+    entries.sort((a, b) => (a.id ?? 1e9) - (b.id ?? 1e9));
   }
 
   // Write into channels.<name>.chats — but only for channels that already exist.
@@ -403,7 +460,7 @@ function distributeChatsToChannels(
 
 // ─── Config Migration ────────────────────────────────────────────────────────
 
-const CURRENT_CONFIG_VERSION = 3;
+const CURRENT_CONFIG_VERSION = 4;
 
 /**
  * Migrate config from older versions. Returns true if migration occurred.
@@ -491,6 +548,110 @@ function migrateConfig(config: Record<string, any>): boolean {
       migrated = true;
     }
     config.configVersion = 3;
+    migrated = true;
+  }
+
+  // v3 → v4: assign sequential numeric `id` to every chat entry.
+  // Ids are stable user-facing handles for CLI commands (set-main, etc.).
+  // Walks chats in deterministic load order and assigns 1..N.
+  if (version < 4) {
+    // Collect all chat entries from every supported on-disk shape:
+    //   - channels.<name>.chats: ChatEntry[] (canonical)
+    //   - chats: { <channel>: ChatEntry[] }   (older grouped)
+    //   - chats: { <jid>: {...} }              (oldest flat)
+    type Walked = { entry: any };
+    const grouped: Walked[] = [];
+    const flat: Array<{ jid: string; entry: any }> = [];
+
+    if (config.channels && typeof config.channels === 'object') {
+      const chOrder = Object.keys(config.channels).sort();
+      for (const ch of chOrder) {
+        const arr = config.channels[ch]?.chats;
+        if (Array.isArray(arr)) {
+          for (const entry of arr) grouped.push({ entry });
+        }
+      }
+    }
+
+    if (config.chats && typeof config.chats === 'object') {
+      const channelKeys = [
+        'telegram',
+        'teams',
+        'discord',
+        'slack',
+        'whatsapp',
+        'other',
+      ];
+      const isGrouped = Object.keys(config.chats).some(
+        (k) => channelKeys.includes(k) && Array.isArray(config.chats[k]),
+      );
+      if (isGrouped) {
+        const chOrder = Object.keys(config.chats).sort();
+        for (const ch of chOrder) {
+          const arr = config.chats[ch];
+          if (Array.isArray(arr)) {
+            for (const entry of arr) grouped.push({ entry });
+          }
+        }
+      } else {
+        const jids = Object.keys(config.chats).sort();
+        for (const jid of jids) flat.push({ jid, entry: config.chats[jid] });
+      }
+    }
+
+    const used = new Set<number>();
+    for (const { entry } of grouped) {
+      if (entry && typeof entry.id === 'number' && entry.id > 0)
+        used.add(entry.id);
+    }
+    for (const { entry } of flat) {
+      if (entry && typeof entry.id === 'number' && entry.id > 0)
+        used.add(entry.id);
+    }
+    let next = 1;
+    const nextFree = (): number => {
+      while (used.has(next)) next++;
+      used.add(next);
+      return next;
+    };
+    for (const { entry } of grouped) {
+      if (entry && typeof entry.id !== 'number') {
+        entry.id = nextFree();
+        migrated = true;
+      }
+    }
+    for (const { entry } of flat) {
+      if (entry && typeof entry.id !== 'number') {
+        entry.id = nextFree();
+        migrated = true;
+      }
+    }
+
+    // Dedupe isMain: v0→1 migration set isMain:true on every grouped chat
+    // that lacked the field. With the v4 "at most one isMain" invariant, that
+    // would brick any pre-v1 multi-chat config on first launch. Keep the
+    // lowest-id main, clear the rest, and warn so the user can re-pick.
+    const allMains = [...grouped, ...flat]
+      .map(({ entry }) => entry)
+      .filter((e) => e && e.isMain);
+    if (allMains.length > 1) {
+      allMains.sort((a, b) => (a.id ?? 1e9) - (b.id ?? 1e9));
+      const kept = allMains[0];
+      const cleared: number[] = [];
+      for (let i = 1; i < allMains.length; i++) {
+        delete allMains[i].isMain;
+        if (typeof allMains[i].id === 'number') cleared.push(allMains[i].id);
+        migrated = true;
+      }
+      logger.warn(
+        { kept: kept.id, cleared, total: allMains.length },
+        `v3→4 migration: ${allMains.length} chats had isMain:true (likely from v0→1 default). ` +
+          `Kept #${kept.id} as main; cleared #${cleared.join(', #')}. ` +
+          `Run \`nanoclaw chat set-main <id>\` to choose a different main.`,
+      );
+    }
+
+    config.configVersion = 4;
     migrated = true;
   }
 
@@ -601,6 +762,23 @@ export function loadConfig(): NanoclawConfig {
 
   // Normalize chats: convert grouped format to flat Record<jid, config>
   config.chats = normalizeChats(config.chats, config.channels) as any;
+
+  // Singleton invariant: at most one chat may be isMain. Multiple isMain
+  // chats silently collide on the same `main/` mount folder — fail loud.
+  const extraMains = findExtraMainChats(config);
+  if (extraMains.length > 0) {
+    const lines = extraMains
+      .map((j) => {
+        const e = config.chats[j];
+        return `    • #${e.id ?? '?'}  ${j}  (${e.name || '?'})`;
+      })
+      .join('\n');
+    throw new Error(
+      `nanoclaw config: ${extraMains.length} chats marked isMain:\n${lines}\n` +
+        `At most one chat may be the main chat. Edit ~/.nanoclaw/nanoclaw.json ` +
+        `or run \`nanoclaw chat set-main <id>\` to choose one and clear the rest.`,
+    );
+  }
 
   // Merge MCP servers from mcp.json if it exists
   if (fs.existsSync(paths.mcpConfig)) {

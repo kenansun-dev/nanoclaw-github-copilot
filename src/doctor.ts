@@ -9,6 +9,7 @@ import path from 'path';
 import { paths, resolveWorkspace } from './workspace.js';
 import { loadConfig } from './config-loader.js';
 import { PACKAGE_ROOT } from './config.js';
+import { isGHCProvider } from './config-extensions.js';
 
 interface CheckResult {
   name: string;
@@ -16,13 +17,17 @@ interface CheckResult {
   message: string;
 }
 
-function check(
+export function check(
   name: string,
-  fn: () => { ok: boolean; msg: string },
+  fn: () => { ok: boolean; msg: string; status?: 'ok' | 'warn' | 'error' },
 ): CheckResult {
   try {
-    const { ok, msg } = fn();
-    return { name, status: ok ? 'ok' : 'error', message: msg };
+    const { ok, msg, status } = fn();
+    return {
+      name,
+      status: status ?? (ok ? 'ok' : 'error'),
+      message: msg,
+    };
   } catch (err) {
     return {
       name,
@@ -30,6 +35,76 @@ function check(
       message: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+/**
+ * Pure decision logic for the "Registered chats" check. Extracted so we
+ * can unit-test the severity matrix without standing up a full config.
+ *
+ * Severity rules:
+ * - chats > 0  → ok
+ * - chats = 0 + at least one channel enabled (telegram/teams accept
+ *   incoming without explicit chat registration) → warn
+ * - chats = 0 + no channel enabled → error (truly unconfigured)
+ */
+export function chatsCheck(
+  chatCount: number,
+  enabledChannels: string[],
+): { ok: boolean; status?: 'ok' | 'warn' | 'error'; msg: string } {
+  if (chatCount > 0) {
+    return { ok: true, msg: `${chatCount} chat(s)` };
+  }
+  if (enabledChannels.length > 0) {
+    return {
+      ok: false,
+      status: 'warn',
+      msg: `0 explicit — ${enabledChannels.join(', ')} accept incoming without registration; add with: nanoclaw chat add`,
+    };
+  }
+  return {
+    ok: false,
+    msg: 'none and no channels enabled — add with: nanoclaw chat add',
+  };
+}
+
+/**
+ * Pure decision logic for the "Main chat singleton" check.
+ *
+ * Multiple chats marked isMain:true all mount to the same `main/` folder
+ * (chat-manager.ts:29 `if (chatConfig?.isMain) return 'main'`). The v3→v4
+ * migration auto-dedupes on upgrade, but a hand-edited nanoclaw.json could
+ * still introduce duplicates after the loader runs in non-throwing modes.
+ * This check surfaces it as a doctor error with concrete remediation.
+ *
+ * Severity rules:
+ * - 0 main chats → ok (warn variant: "no main chat picked" if any chats exist)
+ * - 1 main chat  → ok
+ * - >1 main chats → error (mount collision)
+ */
+export function mainChatSingletonCheck(
+  mainJids: string[],
+  totalChatCount: number,
+): { ok: boolean; status?: 'ok' | 'warn' | 'error'; msg: string } {
+  if (mainJids.length > 1) {
+    return {
+      ok: false,
+      status: 'error',
+      msg:
+        `${mainJids.length} chats marked isMain — they all collide on the same main/ folder. ` +
+        `Run: nanoclaw chat set-main <id> to pick one and clear the rest.`,
+    };
+  }
+  if (mainJids.length === 1) {
+    return { ok: true, msg: `1 main chat (${mainJids[0]})` };
+  }
+  if (totalChatCount > 0) {
+    return {
+      ok: false,
+      status: 'warn',
+      msg: 'no main chat picked — run: nanoclaw chat set-main <id>',
+    };
+  }
+  return { ok: true, msg: 'no chats registered' };
 }
 
 export function runDoctor(): CheckResult[] {
@@ -69,8 +144,6 @@ export function runDoctor(): CheckResult[] {
     check('Container image', () => {
       try {
         const config = loadConfig();
-        // Check provider-specific image
-        const { isGHCProvider } = require('./config-extensions.js') as any;
         let image = config.sandbox.image;
         try {
           if (isGHCProvider()) image = 'nanoclaw-agent-ghc:latest';
@@ -87,8 +160,11 @@ export function runDoctor(): CheckResult[] {
           ok: !!output,
           msg: output || `${image} not found — run: nanoclaw sandbox build`,
         };
-      } catch {
-        return { ok: false, msg: 'could not check' };
+      } catch (err: any) {
+        return {
+          ok: false,
+          msg: `could not check (${err?.message ?? err})`,
+        };
       }
     }),
   );
@@ -204,15 +280,29 @@ export function runDoctor(): CheckResult[] {
     }
 
     // Chats
+    // Canonical format: channels.<name>.chats[]; legacy: top-level chats
+    // (loadConfig normalizes both into config.chats). Surface a per-channel
+    // breakdown so empty deployments aren't flagged red — telegram bots and
+    // teams webhooks accept DMs/mentions without explicit chat registration,
+    // so "none" is a warning, not a failure.
     const chatCount = Object.keys(config.chats).length;
+    const enabledChannels = Object.entries(config.channels ?? {})
+      .filter(([, c]: any[]) => c?.enabled)
+      .map(([name]) => name);
     results.push(
-      check('Registered chats', () => ({
-        ok: chatCount > 0,
-        msg:
-          chatCount > 0
-            ? `${chatCount} chat(s)`
-            : 'none — add with: nanoclaw chat add',
-      })),
+      check('Registered chats', () => chatsCheck(chatCount, enabledChannels)),
+    );
+
+    // Main chat singleton: catches the silent mount-collision bug from
+    // pre-v4 multi-isMain configs that bypass the migration (e.g. hand-
+    // edited nanoclaw.json after the loader normalized things).
+    const mainJids = Object.entries(config.chats)
+      .filter(([, e]: any[]) => e?.isMain)
+      .map(([jid]) => jid);
+    results.push(
+      check('Main chat singleton', () =>
+        mainChatSingletonCheck(mainJids, chatCount),
+      ),
     );
   } catch {
     /* ignore */

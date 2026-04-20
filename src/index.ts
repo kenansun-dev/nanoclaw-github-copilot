@@ -919,6 +919,35 @@ function formatThinkingForChannel(
 }
 
 async function main(): Promise<void> {
+  // Write PID file so `nanoclaw status` can detect us regardless of how we
+  // were launched (manual `nanoclaw start` already does this for the wrapper
+  // process, but systemd launches `node dist/index.js` directly and bypasses
+  // that path — leaving status reporting "not running" while we're alive).
+  // Owning the write here covers both launch modes with one source of truth.
+  let pidFilePath: string | null = null;
+  try {
+    const { resolveWorkspace } = await import('./workspace.js');
+    const ws = resolveWorkspace();
+    pidFilePath = path.join(ws, 'state', 'nanoclaw.pid');
+    fs.mkdirSync(path.dirname(pidFilePath), { recursive: true });
+    fs.writeFileSync(pidFilePath, String(process.pid));
+  } catch (err) {
+    logger.warn(
+      { err },
+      'Failed to write PID file (status CLI may report stale)',
+    );
+  }
+  const cleanupPidFile = (): void => {
+    if (!pidFilePath) return;
+    try {
+      const recorded = fs.readFileSync(pidFilePath, 'utf-8').trim();
+      if (recorded === String(process.pid)) fs.unlinkSync(pidFilePath);
+    } catch {
+      /* file already gone or unreadable */
+    }
+  };
+  process.on('exit', cleanupPidFile);
+
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');

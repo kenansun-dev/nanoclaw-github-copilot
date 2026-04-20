@@ -30,6 +30,7 @@ import type { AgentConfig } from './config-loader.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { ContainerInput, ContainerOutput } from './container-runner.js';
+import { ensureDailySummaryTask } from './memory/cron.js';
 
 const OUTPUT_START = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END = '---NANOCLAW_OUTPUT_END---';
@@ -146,6 +147,17 @@ export async function runHostAgent(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
+  // Ensure per-group memory daily-summary cron task exists. Idempotent;
+  // updates in place if config changed. Honours `memory.dailySummary.enabled`.
+  try {
+    ensureDailySummaryTask({
+      chatJid: input.chatJid,
+      groupFolder: group.folder,
+    });
+  } catch (err) {
+    logger.warn({ err }, 'ensureDailySummaryTask threw (non-fatal)');
+  }
+
   // Prepare session directory
   const sessionDirName = isAgentGHC(agent) ? '.copilot' : '.claude';
   const ws = resolveWorkspace();
@@ -193,6 +205,7 @@ export async function runHostAgent(
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     TZ: TIMEZONE,
+    NANOCLAW_TZ: TIMEZONE,
     // Override paths that agent-runner expects (container paths → host paths)
     NANOCLAW_HOST_MODE: '1',
     HOME: process.env.HOME || process.env.USERPROFILE || os.homedir(),
@@ -374,6 +387,10 @@ export async function runHostAgent(
   if (fs.existsSync(globalClaudeMd)) {
     env.NANOCLAW_GLOBAL_CLAUDE_MD = globalClaudeMd;
   }
+
+  // Pass memory directory to runner so the memory MCP server can locate it.
+  // The MCP server uses NANOCLAW_GROUP_FOLDER + 'memory/' subdir.
+  env.NANOCLAW_MEMORY_DIR = path.join(groupDir, 'memory');
 
   // Spawn command
   // Resolve tsx: try package node_modules, then global

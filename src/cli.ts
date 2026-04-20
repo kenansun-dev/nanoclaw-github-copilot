@@ -863,9 +863,14 @@ async function runChat(args: string[]) {
           'No registered chats. Add one with: nanoclaw chat add <jid> <name>',
         );
       } else {
+        console.log('  ID  | CHANNEL    | JID                       | NAME');
+        console.log('  ----+------------+---------------------------+------');
         for (const c of chats) {
+          const idCol = String(c.id ?? '?').padStart(3);
+          const chCol = (c.channel || '?').padEnd(10);
+          const jidCol = c.jid.padEnd(25).slice(0, 25);
           const main = c.isMain ? ' [main]' : '';
-          console.log(`  ${c.channel || '?'} | ${c.jid} | ${c.name}${main}`);
+          console.log(`  ${idCol} | ${chCol} | ${jidCol} | ${c.name}${main}`);
         }
       }
       break;
@@ -897,19 +902,72 @@ async function runChat(args: string[]) {
       );
       break;
     }
-    case 'remove': {
+    case 'add': {
       const jid = args[1];
+      const name = args[2] || 'unnamed';
+      const isMain = args.includes('--main');
       if (!jid) {
-        console.error('Usage: nanoclaw chat remove <jid>');
+        console.error('Usage: nanoclaw chat add <jid> <name> [--main]');
         process.exit(1);
       }
+      const { addChat } = await import('./chat-manager.js');
+      const { id } = addChat(jid, name, { isMain });
+      console.log(
+        `Chat registered: #${id} ${jid} (${name})${isMain ? ' [main]' : ''}`,
+      );
+      break;
+    }
+    case 'set-main': {
+      const handle = args[1];
+      if (!handle) {
+        console.error('Usage: nanoclaw chat set-main <id-or-jid>');
+        process.exit(1);
+      }
+      const { loadConfig, resolveChatHandle } =
+        await import('./config-loader.js');
+      const { setMainChat } = await import('./chat-manager.js');
+      const config = loadConfig();
+      const jid = resolveChatHandle(config, handle);
+      if (!jid) {
+        console.error(
+          `No chat matches "${handle}". Run \`nanoclaw chat list\` to see ids.`,
+        );
+        process.exit(1);
+      }
+      setMainChat(jid);
+      const entry = config.chats[jid];
+      console.log(
+        `Main chat set: #${entry?.id ?? '?'} ${jid} (${entry?.name ?? '?'})`,
+      );
+      break;
+    }
+    case 'unset-main': {
+      const { setMainChat } = await import('./chat-manager.js');
+      setMainChat(null);
+      console.log('Main chat cleared.');
+      break;
+    }
+    case 'remove': {
+      const handle = args[1];
+      if (!handle) {
+        console.error('Usage: nanoclaw chat remove <id-or-jid>');
+        process.exit(1);
+      }
+      const { loadConfig, resolveChatHandle } =
+        await import('./config-loader.js');
       const { removeChat } = await import('./chat-manager.js');
+      const config = loadConfig();
+      const jid = resolveChatHandle(config, handle) ?? handle;
       const removed = removeChat(jid);
-      console.log(removed ? `Chat removed: ${jid}` : `Chat not found: ${jid}`);
+      console.log(
+        removed ? `Chat removed: ${jid}` : `Chat not found: ${handle}`,
+      );
       break;
     }
     default:
-      console.log('Usage: nanoclaw chat <list|pending|add|remove> [args]');
+      console.log(
+        'Usage: nanoclaw chat <list|pending|add|remove|set-main|unset-main> [args]',
+      );
   }
 }
 
