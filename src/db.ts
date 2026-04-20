@@ -807,6 +807,19 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   );
 }
 
+/**
+ * Remove a registered group from the DB.
+ * Returns true if a row was deleted, false if no such jid existed.
+ * Symmetric to `setRegisteredGroup`; needed by `chat remove` so the
+ * config↔DB dual-store doesn't get re-populated by reconcile-on-CLI.
+ */
+export function removeRegisteredGroup(jid: string): boolean {
+  const info = db
+    .prepare('DELETE FROM registered_groups WHERE jid = ?')
+    .run(jid);
+  return info.changes > 0;
+}
+
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
   const rows = db.prepare('SELECT * FROM registered_groups').all() as Array<{
     jid: string;

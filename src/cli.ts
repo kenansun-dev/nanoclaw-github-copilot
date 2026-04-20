@@ -543,11 +543,19 @@ async function runService(action: string) {
       if (cfg.channels?.teams?.enabled) channels.push('teams');
       if (cfg.channels?.discord?.enabled) channels.push('discord');
 
-      // Chat count
-      const chatCount = Object.values(cfg.chats || {}).reduce(
-        (sum: number, arr: any) => sum + (Array.isArray(arr) ? arr.length : 0),
-        0,
-      );
+      // Chat count: post-PR-#14, config.chats is `{jid: ChatEntry}` (flat
+      // object) — not the legacy per-channel array shape. The old reducer
+      // returned 0 for everyone. Use listChats() so the count matches what
+      // doctor and `nanoclaw chat list` report (config + DB merged).
+      let chatCount = 0;
+      try {
+        const { listChats } = await import('./chat-manager.js');
+        chatCount = listChats().length;
+      } catch {
+        // DB unavailable (e.g. running before initDatabase) — fall back to
+        // config.chats keys so we still report something sensible.
+        chatCount = Object.keys(cfg.chats || {}).length;
+      }
 
       // DevTunnel
       const dtPidFile = join(ws, 'devtunnel.pid');

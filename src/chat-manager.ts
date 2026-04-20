@@ -10,7 +10,7 @@ import {
   NanoclawConfig,
   nextChatId,
 } from './config-loader.js';
-import { setRegisteredGroup, getAllRegisteredGroups } from './db.js';
+import { setRegisteredGroup, getAllRegisteredGroups, removeRegisteredGroup } from './db.js';
 import { reconcileChatRegistry } from './chat-reconcile.js';
 import { logger } from './logger.js';
 import { uniqueIsMainFolder } from './session-routing.js';
@@ -174,17 +174,24 @@ export function setMainChat(jid: string | null): void {
 }
 
 /**
- * Remove a chat from nanoclaw.json.
- * Note: doesn't remove from DB (preserves history).
+ * Remove a chat from nanoclaw.json AND from the DB registered_groups
+ * table. Without the DB delete the next `chat *` CLI call would re-run
+ * reconcile and re-add the same jid with a new id, defeating the remove.
  */
 export function removeChat(jid: string): boolean {
   const config = loadConfig();
-  if (!config.chats[jid]) return false;
+  const inConfig = !!config.chats[jid];
+  if (inConfig) {
+    delete config.chats[jid];
+    saveConfig(config);
+  }
+  const removedFromDb = removeRegisteredGroup(jid);
 
-  delete config.chats[jid];
-  saveConfig(config);
-
-  logger.info({ jid }, 'Chat removed from config');
+  if (!inConfig && !removedFromDb) return false;
+  logger.info(
+    { jid, fromConfig: inConfig, fromDb: removedFromDb },
+    'Chat removed',
+  );
   return true;
 }
 
