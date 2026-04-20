@@ -134,6 +134,38 @@ export function reconcileChatRegistry(): ReconcileResult {
 }
 
 /**
+ * Dry-run reconcile: compute what `reconcileChatRegistry()` would change,
+ * without writing anything. Loads real config + DB but uses a deep clone
+ * of the config so the loaded object is not mutated.
+ *
+ * Returns the same `ReconcileResult` shape; `dirty` is true iff any of
+ * `added`, `dedupedMains`, `mirroredToDb` are non-empty. Used by the
+ * doctor `Chat registry drift` check to surface DB-only chats and
+ * mount-collision before they cause silent data loss.
+ */
+export function detectChatDrift(): ReconcileResult & { dirty: boolean } {
+  const config = loadConfig();
+  const groups = getAllRegisteredGroups();
+  // Deep-clone config.chats so dedupe doesn't mutate the loaded object.
+  const clone: NanoclawConfig = {
+    ...config,
+    chats: JSON.parse(JSON.stringify(config.chats)),
+  };
+  const r = _reconcilePure(clone, groups);
+  const dirty =
+    r.added.length > 0 ||
+    r.dedupedMains.length > 0 ||
+    r.mirroredToDb.length > 0;
+  return {
+    added: r.added,
+    dedupedMains: r.dedupedMains,
+    mirroredToDb: r.mirroredToDb,
+    keptMain: r.keptMain,
+    dirty,
+  };
+}
+
+/**
  * Test-only: reconcile a passed-in config object (no I/O), returning the
  * same result shape. Used by config-loader.test.ts to exercise the merge
  * + dedupe logic without touching the real DB.

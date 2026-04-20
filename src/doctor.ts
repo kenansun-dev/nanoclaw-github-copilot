@@ -3,6 +3,7 @@
  */
 
 import { execSync } from 'child_process';
+import { createRequire } from 'module';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -47,6 +48,44 @@ export function check(
  *   incoming without explicit chat registration) → warn
  * - chats = 0 + no channel enabled → error (truly unconfigured)
  */
+/**
+ * Pure decision logic for the "Chat registry drift" doctor check.
+ * Inputs are the counts/jids returned by `detectChatDrift()`.
+ *
+ * Severity rules:
+ * - dirty=false                                 → ok ("in sync")
+ * - added>0 only                                → warn (DB-only chats; reconcile will fix non-destructively)
+ * - dedupedMains>0 OR mirroredToDb>0            → error (mount collision risk; surface immediately)
+ */
+export function chatDriftCheck(d: {
+  added: string[];
+  dedupedMains: string[];
+  mirroredToDb: string[];
+}): { ok: boolean; status?: 'ok' | 'warn' | 'error'; msg: string } {
+  const dirty =
+    d.added.length + d.dedupedMains.length + d.mirroredToDb.length;
+  if (dirty === 0) {
+    return { ok: true, msg: 'config.chats and registered_groups in sync' };
+  }
+  if (d.dedupedMains.length > 0 || d.mirroredToDb.length > 0) {
+    return {
+      ok: false,
+      status: 'error',
+      msg:
+        `${d.dedupedMains.length} duplicate main(s), ${d.mirroredToDb.length} ` +
+        `isMain mismatch(es) — chats compete for main/ mount. ` +
+        'Run: nanoclaw chat reconcile',
+    };
+  }
+  return {
+    ok: false,
+    status: 'warn',
+    msg:
+      `${d.added.length} chat(s) only in DB (no id, not in nanoclaw.json). ` +
+      'Run: nanoclaw chat reconcile to backfill ids.',
+  };
+}
+
 export function chatsCheck(
   chatCount: number,
   enabledChannels: string[],
@@ -330,6 +369,22 @@ export function runDoctor(): CheckResult[] {
         mainChatSingletonCheck(mainJids, chatCount, isGroupByJid),
       ),
     );
+
+    // Chat registry drift: catches the production bug found post-PR-#14
+    // deploy where inbound-registered chats live only in registered_groups
+    // and silently bypass the singleton invariant. Dry-run reconcile, no
+    // writes — points at `nanoclaw chat reconcile` for the actual fix.
+    try {
+      // runDoctor is sync; chat-reconcile is fork-only ESM, so use
+      // createRequire for a sync load instead of converting the whole
+      // function (and 4+ tests) to async.
+      const req = createRequire(import.meta.url);
+      const { detectChatDrift } = req('./chat-reconcile.js');
+      const drift = detectChatDrift();
+      results.push(check('Chat registry drift', () => chatDriftCheck(drift)));
+    } catch {
+      /* DB unavailable or chat-reconcile not built; skip silently */
+    }
   } catch {
     /* ignore */
   }

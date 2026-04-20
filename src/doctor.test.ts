@@ -16,6 +16,7 @@ import { describe, it, expect } from 'vitest';
 import {
   check,
   chatsCheck,
+  chatDriftCheck,
   mainChatSingletonCheck,
   formatDoctorResults,
 } from './doctor.js';
@@ -155,6 +156,60 @@ describe('mainChatSingletonCheck severity matrix', () => {
     const r = mainChatSingletonCheck(['tg:1', 'dc:2'], 5);
     // Without isGroup info, we treat them as not-known-groups → ok.
     expect(r.ok).toBe(true);
+  });
+});
+
+describe('chatDriftCheck severity matrix', () => {
+  it('clean state → ok', () => {
+    const r = chatDriftCheck({ added: [], dedupedMains: [], mirroredToDb: [] });
+    expect(r.ok).toBe(true);
+    expect(r.msg).toContain('in sync');
+  });
+
+  it('only added → warn (DB-only chats, non-destructive)', () => {
+    const r = chatDriftCheck({
+      added: ['tg:1', 'tg:2'],
+      dedupedMains: [],
+      mirroredToDb: [],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.status).toBe('warn');
+    expect(r.msg).toContain('2 chat(s) only in DB');
+    expect(r.msg).toContain('chat reconcile');
+  });
+
+  it('dedupedMains > 0 → error (mount collision)', () => {
+    const r = chatDriftCheck({
+      added: [],
+      dedupedMains: ['tg:2', 'tg:3', 'tui:1'],
+      mirroredToDb: [],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.status).toBe('error');
+    expect(r.msg).toContain('3 duplicate main(s)');
+    expect(r.msg).toContain('main/ mount');
+  });
+
+  it('mirroredToDb > 0 → error (config↔DB isMain mismatch)', () => {
+    const r = chatDriftCheck({
+      added: [],
+      dedupedMains: [],
+      mirroredToDb: ['tg:1'],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.status).toBe('error');
+    expect(r.msg).toContain('1 isMain mismatch(es)');
+  });
+
+  it('combined drift → error wins (worst signal surfaces)', () => {
+    const r = chatDriftCheck({
+      added: ['tg:5'],
+      dedupedMains: ['tg:2'],
+      mirroredToDb: ['tg:1'],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.status).toBe('error');
+    expect(r.msg).not.toContain('only in DB'); // doesn't downgrade to warn
   });
 });
 
