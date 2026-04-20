@@ -11,6 +11,7 @@ import {
   nextChatId,
 } from './config-loader.js';
 import { setRegisteredGroup, getAllRegisteredGroups } from './db.js';
+import { reconcileChatRegistry } from './chat-reconcile.js';
 import { logger } from './logger.js';
 import { uniqueIsMainFolder } from './session-routing.js';
 
@@ -70,8 +71,28 @@ export function deriveGroupFolder(
 /**
  * Sync chats from nanoclaw.json into the SQLite DB.
  * Called on startup to ensure DB matches config.
+ *
+ * Also runs `reconcileChatRegistry` first so DB-only chats (created by
+ * inbound handlers, `pair`, or `tui-direct` without a corresponding
+ * `addChat` call) are imported into config.chats with proper ids and the
+ * "at most one isMain" invariant is enforced across both stores.
+ * Without this, a fresh PR #14 deploy would see `config.chats = {}` and
+ * `chat list` would print every id as `?` (kenansun, 2026-04-20 deploy).
  */
 export function syncChatsFromConfig(config: NanoclawConfig): void {
+  // Reconcile is best-effort: if it fails (e.g. partial DB during init)
+  // we still fall through to the legacy config→DB sync below.
+  try {
+    reconcileChatRegistry();
+    // Reload config for the loop below now that reconcile may have added entries.
+    config = loadConfig();
+  } catch (err: any) {
+    logger.warn(
+      { err: err?.message },
+      'Chat reconcile skipped — falling back to one-way config→DB sync',
+    );
+  }
+
   const existing = getAllRegisteredGroups();
 
   for (const [jid, chatConfig] of Object.entries(config.chats)) {

@@ -166,6 +166,17 @@ async function runInit(args: string[]) {
 }
 
 async function runDoctor(_args: string[]) {
+  // Reconcile first so doctor's main-chat singleton check sees DB-only
+  // chats too (otherwise we miss the very mount-collision case the check
+  // exists to catch).
+  try {
+    const { initDatabase } = await import('./db.js');
+    initDatabase();
+    const { reconcileChatRegistry } = await import('./chat-reconcile.js');
+    reconcileChatRegistry();
+  } catch {
+    // best effort — doctor still runs and will report the underlying issue
+  }
   const { runDoctor, formatDoctorResults } = await import('./doctor.js');
   const results = runDoctor();
   console.log(formatDoctorResults(results));
@@ -854,7 +865,27 @@ async function runChat(args: string[]) {
   const { initDatabase } = await import('./db.js');
   initDatabase();
 
+  // Reconcile DB ↔ config.chats so `chat list`, `chat set-main`, etc. all
+  // see the same picture. Cheap (idempotent) and prevents the "DB has 8
+  // chats but config.chats is empty" deploy hazard.
+  if (sub !== 'reconcile') {
+    const { reconcileChatRegistry } = await import('./chat-reconcile.js');
+    reconcileChatRegistry();
+  }
+
   switch (sub) {
+    case 'reconcile': {
+      const { reconcileChatRegistry } = await import('./chat-reconcile.js');
+      const r = reconcileChatRegistry();
+      console.log(
+        `Reconciled: added ${r.added.length}, deduped main on ${r.dedupedMains.length}, mirrored to DB ${r.mirroredToDb.length}.`,
+      );
+      if (r.added.length > 0) console.log('  added: ' + r.added.join(', '));
+      if (r.dedupedMains.length > 0)
+        console.log('  cleared isMain: ' + r.dedupedMains.join(', '));
+      if (r.keptMain) console.log('  kept main: ' + r.keptMain);
+      break;
+    }
     case 'list': {
       const { listChats } = await import('./chat-manager.js');
       const chats = listChats();
