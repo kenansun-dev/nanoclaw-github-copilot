@@ -13,7 +13,12 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { check, chatsCheck, mainChatSingletonCheck, formatDoctorResults } from './doctor.js';
+import {
+  check,
+  chatsCheck,
+  mainChatSingletonCheck,
+  formatDoctorResults,
+} from './doctor.js';
 
 describe('check helper', () => {
   it('returns ok when fn returns ok=true and no status override', () => {
