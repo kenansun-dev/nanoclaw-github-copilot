@@ -47,6 +47,7 @@ vi.mock('./config.js', () => ({
   AGENT_RUN_TIMEOUT_MS: 600000, // 10min
   IS_GHC_PROVIDER: false,
   PROVIDER_SESSION_DIR: '.claude',
+  ONECLI_API_KEY: '',
   TIMEZONE: 'America/Los_Angeles',
   getConfig: () => ({ providers: {} }),
   resolveAgentForChat: () => ({
