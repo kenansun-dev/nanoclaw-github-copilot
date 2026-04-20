@@ -471,8 +471,22 @@ function distributeChatsToChannels(
   // Write into channels.<name>.chats — but only for channels that already exist.
   // Don't create stub entries for unknown channel names (e.g. 'other' from unrecognized jids).
   if (!toSave.channels) toSave.channels = {};
+  const orphans: Record<string, any> = {};
   for (const [ch, entries] of Object.entries(byChannel)) {
-    if (!toSave.channels[ch]) continue; // Unknown channel — skip
+    if (!toSave.channels[ch]) {
+      // Channel not registered — stash these chats back at the top-level
+      // `chats` key so we don't silently drop them. This matters most for
+      // tui:N (channelFromJid → 'other'), which has no channel config but
+      // is real, persistent state. Without this fallback, reconcile keeps
+      // re-importing them from DB on every boot, only to lose them again
+      // at saveConfig time — a forever-drift loop (rpi5 caught this on
+      // 2026-04-20 live test of PR #15).
+      for (const e of entries) {
+        const { jid, ...rest } = e;
+        orphans[jid] = rest;
+      }
+      continue;
+    }
     toSave.channels[ch].chats = entries;
   }
   // Clean up channels that no longer have chats
@@ -480,6 +494,12 @@ function distributeChatsToChannels(
     if (chDef && typeof chDef === 'object' && chDef.chats && !byChannel[ch]) {
       delete chDef.chats;
     }
+  }
+
+  // Re-attach orphans (chats whose channel isn't registered) at top level
+  // so normalizeChats() picks them up again on next load.
+  if (Object.keys(orphans).length > 0) {
+    toSave.chats = orphans;
   }
 }
 

@@ -667,6 +667,46 @@ describe('config-loader / chat numeric ids', () => {
     const config = loadConfig();
     expect(findExtraMainChats(config)).toEqual([]);
   });
+
+  // rpi5 caught this on 2026-04-20 live deploy of PR #15: reconcile
+  // imports tui:N chats from DB → channelFromJid('tui:N') === 'other'
+  // → distributeChatsToChannels skips because no `channels.other` exists
+  // → chats vanish on saveConfig → next boot reconcile re-adds them
+  // → forever-drift loop. Fix: stash unknown-channel chats back at
+  // top-level `chats` so normalizeChats picks them up next load.
+  it('saveConfig preserves chats whose channel has no config (e.g. tui:N)', () => {
+    const cfgPath = path.join(tmpDir, 'nanoclaw.json');
+    fs.writeFileSync(
+      cfgPath,
+      JSON.stringify({
+        configVersion: 4,
+        chats: {
+          'tui:1': { id: 1, name: 'tui-1' },
+          'tg:42': { id: 2, name: 'kenan-tg' },
+        },
+        channels: { telegram: { enabled: true } },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.chats['tui:1']).toBeDefined();
+    expect(config.chats['tg:42']).toBeDefined();
+
+    saveConfig(config);
+
+    const config2 = loadConfig();
+    expect(config2.chats['tui:1']).toBeDefined();
+    expect(config2.chats['tui:1'].name).toBe('tui-1');
+    expect(config2.chats['tg:42']).toBeDefined();
+
+    // And the on-disk shape: tui:1 lives under top-level `chats`,
+    // tg:42 under channels.telegram.chats.
+    const onDisk = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+    expect(onDisk.chats).toBeDefined();
+    expect(onDisk.chats['tui:1']).toBeDefined();
+    expect(onDisk.channels.telegram.chats).toEqual([
+      expect.objectContaining({ jid: 'tg:42', name: 'kenan-tg' }),
+    ]);
+  });
 });
 
 describe('config migration v4→v5: TUI chat consolidation', () => {
