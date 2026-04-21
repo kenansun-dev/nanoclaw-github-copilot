@@ -94,6 +94,6 @@ export async function runLogLevel(args: string[]): Promise<void> {
       'Wrote reload trigger; daemon will pick up the change shortly.',
     );
   } else {
-    console.log(`Sent SIGUSR2 to daemon (pid ${result.pid}); change is live.`);
+    console.log(`Sent SIGUSR2 to daemon (pid ${result.pid}); reload requested.`);
   }
 }
