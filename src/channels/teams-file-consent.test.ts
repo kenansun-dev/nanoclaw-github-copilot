@@ -33,10 +33,7 @@ describe('Teams fileConsent/invoke handler — wire path coverage', () => {
     // to 501. This check reads the compiled source to verify the wire-up.
     const fs = await import('fs');
     const path = await import('path');
-    const src = fs.readFileSync(
-      path.resolve(__dirname, 'teams.ts'),
-      'utf-8',
-    );
+    const src = fs.readFileSync(path.resolve(__dirname, 'teams.ts'), 'utf-8');
 
     // The handleIncoming method must call the shared consent handler.
     // We look for the call site, not just any reference (handleIncomingRaw
@@ -64,10 +61,7 @@ describe('Teams fileConsent/invoke handler — wire path coverage', () => {
   it('handleIncomingRaw still calls the same shared handler (no drift)', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const src = fs.readFileSync(
-      path.resolve(__dirname, 'teams.ts'),
-      'utf-8',
-    );
+    const src = fs.readFileSync(path.resolve(__dirname, 'teams.ts'), 'utf-8');
 
     const rawStart = src.indexOf('private async handleIncomingRaw(');
     expect(rawStart).toBeGreaterThan(0);
@@ -157,6 +151,73 @@ describe('handleFileConsentInvoke decision tree (logic mirror)', () => {
   it('unknown action: status=200', async () => {
     const r = await decide({ action: 'something-weird' });
     expect(r).toEqual({ status: 200, uploadCalled: false });
+  });
+});
+
+describe('FileConsentCard outgoing attachment shape (sendFile DM path)', () => {
+  // When the bot wants to deliver a file to a 1:1 DM, it emits a
+  // FileConsentCard attachment so Teams can show the Allow/Decline UI.
+  // CRITICAL invariant, documented inline in teams.ts:1026-1032:
+  //   the attachment object MUST use `contentType`, NOT `type`.
+  // Using `type` causes botbuilder to throw
+  //   "ContentType of an attachment is not set"
+  // which has three compounding effects:
+  //   1. The consent card never renders (user sees "Sorry, something went wrong")
+  //   2. No fileConsent/invoke ever arrives back → no upload → no file
+  //   3. Subsequent outbound sends on the same conversation silently drop
+  // Historically this was a load-bearing source comment. This test pins it.
+
+  it('sendFile DM path builds FileConsentCard with contentType (not type)', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(path.resolve(__dirname, 'teams.ts'), 'utf-8');
+
+    const sendFileStart = src.indexOf('async sendFile(');
+    expect(sendFileStart).toBeGreaterThan(0);
+    const nextBoundary = [
+      src.indexOf('\n  async ', sendFileStart + 20),
+      src.indexOf('\n  private ', sendFileStart + 20),
+    ]
+      .filter((i) => i > 0)
+      .sort((a, b) => a - b)[0];
+    const body = src.slice(sendFileStart, nextBoundary ?? src.length);
+
+    expect(body).toContain(
+      "contentType: 'application/vnd.microsoft.teams.card.file.consent'",
+    );
+    expect(body).toMatch(/attachments:\s*\[consentCard/);
+
+    // Regression guard: inside the `const consentCard = { ... }` literal,
+    // there must be NO bare `type:` key (would duplicate/conflict with
+    // `contentType`). This is the exact historical bug the source comment
+    // warns about.
+    const consentCardStart = body.indexOf('const consentCard = {');
+    expect(consentCardStart).toBeGreaterThan(0);
+    const consentCardEnd = body.indexOf('};', consentCardStart);
+    expect(consentCardEnd).toBeGreaterThan(consentCardStart);
+    const consentCardLiteral = body.slice(consentCardStart, consentCardEnd);
+    expect(consentCardLiteral).not.toMatch(/\btype:/);
+  });
+
+  it('sendFile group/channel path does NOT send FileConsentCard', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(path.resolve(__dirname, 'teams.ts'), 'utf-8');
+
+    const sendFileStart = src.indexOf('async sendFile(');
+    const nextBoundary = [
+      src.indexOf('\n  async ', sendFileStart + 20),
+      src.indexOf('\n  private ', sendFileStart + 20),
+    ]
+      .filter((i) => i > 0)
+      .sort((a, b) => a - b)[0];
+    const body = src.slice(sendFileStart, nextBoundary ?? src.length);
+
+    const elseIdx = body.indexOf('} else {');
+    expect(elseIdx).toBeGreaterThan(0);
+    const groupBranch = body.slice(elseIdx);
+
+    expect(groupBranch).not.toContain('file.consent');
   });
 });
 
