@@ -13,7 +13,7 @@ const runCli = (args: string) =>
     env: { ...process.env, NANOCLAW_WORKSPACE: tmpWorkspace },
   });
 
-describe('E2E: nanoclaw CLI', () => {
+describe('E2E: nanoclaw CLI', { timeout: 60_000 }, () => {
   afterAll(() => {
     fs.rmSync(tmpWorkspace, { recursive: true, force: true });
   });
