@@ -107,11 +107,19 @@ Probably mostly works (it's been there a while) but could have edge cases.
 
 ### Phase 4: Implement group/channel send via Graph
 **Owner**: Rpi5 implementation, VM design + reviews
+
+**Capability framing (per Rpi5 push-back 2026-04-21)**: v1 is NOT "missing" group/channel send. v1 explicitly supports:
+- DM: bidirectional file (send + receive)
+- Group/channel: receive (full) + send-as-text (path hint inline)
+
+That's a complete, documented capability matrix — not a gap. Phase 5 is a future enhancement, not a v1 acceptance criterion.
+
 - **Pre-requisite decision**: how do we get a delegated token?
-  - Option A: User OAuth flow on first use (bot DMs user with sign-in card → user signs in → bot stores refresh token per user)
-  - Option B: Use bot's own user identity (app installed by an admin who consented; bot has its own service account)
-  - Option C: Skip group/channel send entirely — only support DM file send + group/channel receive (where Teams provides pre-auth download URL anyway)
-- **Recommendation**: **Option C for v1**, then revisit. Option A is a 200-LOC refactor with token storage + refresh logic; Option B requires customer ops involvement. Option C unblocks 80% of the use case (DM send works, group/channel receive works) at near-zero cost.
+  - Option A: User OAuth flow on first use (bot DMs user with sign-in card → user signs in → bot stores refresh token per user). UX is poor in Teams — every user must sign in, refresh tokens expire, bot needs per-user token store.
+  - Option B: Use bot's own service-account identity (admin installs + consents; bot has one Graph token, optionally refreshed via certificate auth). Higher ops bar but **zero per-user friction**, single token store.
+  - Option C: Skip group/channel send entirely — only support DM file send + group/channel receive (where Teams provides pre-auth download URL anyway).
+- **Recommendation v1**: **Option C**. Zero new infra, ships today.
+- **Recommendation v2 (if/when group send proves needed)**: **Option B over Option A** (per Rpi5 push-back 2026-04-21). The customer ops burden is one-time admin work; Option A's per-user OAuth dance is recurring user friction every refresh-token expiry.
 
 ### Phase 5 (optional): Group/channel real send via Graph
 Only if Phase 1 diagnostics show users actually want this and Option C feels too limited.
@@ -126,7 +134,7 @@ For each scope, end-to-end test:
 
 ## Open questions
 
-1. **Does the Teams app manifest in our setup currently declare `supportsFiles: true`?** If not, that's gap 1.1's cause and the fix is one config line + re-publish.
+1. ~~**Does the Teams app manifest in our setup currently declare `supportsFiles: true`?**~~ **Resolved 2026-04-21**: yes, `src/cli/teams-manifest.ts:216` sets `supportsFiles: true` with scopes `['personal','team','groupChat']`. So gap 1.1 is NOT a manifest issue — assuming kenan re-generated his manifest via `nanoclaw teams-manifest` and re-uploaded recently. **Action**: kenan, when did you last regenerate? If pre-2026-04-19 you might still be on an older manifest — re-run `nanoclaw teams-manifest`, re-upload to Teams Admin, then re-test.
 2. **Is there any tenant-scoped policy blocking bot file attachments?** Some org policies block external app file sharing.
 3. **For group send Phase 5: which OAuth identity?** Need user input from kenan on his preference (Option A/B/C).
 
