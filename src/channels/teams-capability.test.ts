@@ -198,11 +198,7 @@ describe('IPC turn boundary closure reset', () => {
     result: { result: any; partial?: boolean; newSessionId?: string },
   ): void {
     // Sentinel: query-complete (result===null + newSessionId + !partial)
-    if (
-      result.result === null &&
-      result.newSessionId &&
-      !result.partial
-    ) {
+    if (result.result === null && result.newSessionId && !result.partial) {
       state.queryBoundaryPending = true;
     }
     // Real output — perform boundary reset BEFORE dispatching.
@@ -287,10 +283,7 @@ describe('IPC turn boundary closure reset', () => {
 
   it('source contract: processGroupMessages declares queryBoundaryPending', async () => {
     const src = await import('node:fs').then((fs) =>
-      fs.promises.readFile(
-        new URL('../index.ts', import.meta.url),
-        'utf-8',
-      ),
+      fs.promises.readFile(new URL('../index.ts', import.meta.url), 'utf-8'),
     );
     expect(src).toMatch(/let queryBoundaryPending = false/);
     expect(src).toMatch(/queryBoundaryPending = true/);

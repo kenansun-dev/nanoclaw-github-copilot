@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { paths } from './workspace.js';
 
 import { OneCLI } from '@onecli-sh/sdk';
 
@@ -1128,26 +1129,57 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => shutdown('SIGINT'));
 
   // SIGUSR2: re-read config and re-apply log level. Used by
-  // `nanoclaw loglevel <level>` for live updates without restart.
+  // `nanoclaw loglevel <level>`, `nanoclaw mcp add/remove`, and
+  // `nanoclaw reload` for live updates without restart.
   process.on('SIGUSR2', async () => {
+    await reloadFromConfigFile('SIGUSR2');
+  });
+
+  // Windows fallback: process.kill(pid, 'SIGUSR2') is a no-op on win32,
+  // so the CLI helpers write a trigger file and the daemon polls for it.
+  // ~2s cadence matches the Windows IPC poll interval; light cost since
+  // it's just an fs.existsSync per tick.
+  if (process.platform === 'win32') {
+    const triggerPath = (() => {
+      const ws = path.dirname(paths.config);
+      return path.join(ws, 'state', 'reload.trigger');
+    })();
+    setInterval(() => {
+      try {
+        if (fs.existsSync(triggerPath)) {
+          fs.unlinkSync(triggerPath);
+          void reloadFromConfigFile('reload-trigger');
+        }
+      } catch (err) {
+        logger.debug({ err }, 'Reload trigger poll error');
+      }
+    }, 2000).unref();
+  }
+
+  async function reloadFromConfigFile(source: string): Promise<void> {
     try {
       const { reloadConfig, getConfig } = await import('./config.js');
       const { applyConfigLogLevel, setLogLevel, getLogLevel } =
         await import('./logger.js');
       reloadConfig();
-      const newLevel = getConfig().logLevel;
-      // force=true so this overrides env-locked threshold (the user explicitly
-      // asked via CLI, treat as a fresh manual override).
+      const cfg = getConfig();
+      const newLevel = cfg.logLevel;
+      // force=true so this overrides env-locked threshold (the user
+      // explicitly asked via CLI; treat as a fresh manual override).
       if (newLevel) {
         setLogLevel(newLevel, { force: true });
       } else {
         applyConfigLogLevel(newLevel);
       }
-      logger.info({ level: getLogLevel() }, 'Log level reloaded via SIGUSR2');
+      const mcpCount = Object.keys(cfg.mcp?.servers || {}).length;
+      logger.info(
+        { source, level: getLogLevel(), mcpServers: mcpCount },
+        'Config reloaded',
+      );
     } catch (err) {
-      logger.error({ err }, 'SIGUSR2 log-level reload failed');
+      logger.error({ source, err }, 'Config reload failed');
     }
-  });
+  }
 
   // Handle /remote-control and /remote-control-end commands
   async function handleRemoteControl(

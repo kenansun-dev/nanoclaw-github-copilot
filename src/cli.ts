@@ -107,6 +107,11 @@ try {
       await runLogLevel(commandArgs);
       break;
     }
+    case 'reload': {
+      const { runReload } = await import('./cli/reload.js');
+      await runReload(commandArgs);
+      break;
+    }
     case 'config':
       await runConfig(commandArgs);
       break;
@@ -1124,6 +1129,7 @@ Service
   status                            Show service + workspace status
   logs [-f]                         View logs
   loglevel [<level>]                Show or change log level (live, no restart)
+  reload                            Ask running daemon to re-read nanoclaw.json
 
 Config
   config get [key]                  Show config
@@ -1291,6 +1297,29 @@ async function runMcp(args: string[]) {
         /* mcporter sync is best-effort */
       }
       console.log(`Added MCP server: ${name} (saved to nanoclaw.json)`);
+      // Ask running daemon to reload so the next agent turn sees the new
+      // server without requiring `nanoclaw restart`.
+      try {
+        const { signalReload } = await import('./daemon-signal.js');
+        const r = signalReload();
+        if (r.delivered) {
+          console.log(
+            r.method === 'trigger-file'
+              ? '  → reload trigger written; daemon will pick it up shortly.'
+              : '  → daemon reloaded (live, no restart needed).',
+          );
+        } else if (r.noDaemon) {
+          console.log(
+            '  → daemon not running; will be picked up on next start.',
+          );
+        } else {
+          console.log(
+            `  → reload signal failed (${r.error || 'unknown'}); run \`nanoclaw restart\` to apply.`,
+          );
+        }
+      } catch {
+        /* reload is best-effort */
+      }
       break;
     }
     case 'remove': {
@@ -1315,6 +1344,25 @@ async function runMcp(args: string[]) {
         /* best-effort */
       }
       console.log(`Removed MCP server: ${name} (saved to nanoclaw.json)`);
+      // Ask running daemon to reload so the removed server is dropped from
+      // the next agent turn's mcp.json.
+      try {
+        const { signalReload } = await import('./daemon-signal.js');
+        const r = signalReload();
+        if (r.delivered) {
+          console.log(
+            r.method === 'trigger-file'
+              ? '  → reload trigger written; daemon will pick it up shortly.'
+              : '  → daemon reloaded (live, no restart needed).',
+          );
+        } else if (r.noDaemon) {
+          console.log(
+            '  → daemon not running; will be picked up on next start.',
+          );
+        }
+      } catch {
+        /* reload is best-effort */
+      }
       break;
     }
     case 'daemon': {

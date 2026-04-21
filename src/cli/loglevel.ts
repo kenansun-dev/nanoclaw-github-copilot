@@ -14,30 +14,11 @@
  */
 
 import fs from 'fs';
-import path from 'path';
 import { paths } from '../workspace.js';
 import { getValidLevels } from '../logger.js';
+import { readPid, signalReload } from '../daemon-signal.js';
 
 const VALID = getValidLevels();
-
-function readPid(): number | null {
-  try {
-    const ws = path.dirname(paths.config);
-    const pidFile = path.join(ws, 'state', 'nanoclaw.pid');
-    if (!fs.existsSync(pidFile)) return null;
-    const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
-    if (!Number.isFinite(pid) || pid <= 0) return null;
-    // Verify the process is alive
-    try {
-      process.kill(pid, 0);
-      return pid;
-    } catch {
-      return null;
-    }
-  } catch {
-    return null;
-  }
-}
 
 function readConfig(): any {
   const configPath = paths.config;
@@ -96,20 +77,23 @@ export async function runLogLevel(args: string[]): Promise<void> {
     );
   }
 
-  // Try live reload via SIGUSR2
-  const pid = readPid();
-  if (pid === null) {
+  // Try live reload via SIGUSR2 (or Windows trigger-file fallback).
+  const result = signalReload();
+  if (result.noDaemon) {
     console.log('Daemon not running — value will take effect on next start.');
     return;
   }
-
-  try {
-    process.kill(pid, 'SIGUSR2');
-    console.log(`Sent SIGUSR2 to daemon (pid ${pid}); change is live.`);
-  } catch (err: any) {
+  if (!result.delivered) {
     console.error(
-      `Failed to signal daemon (pid ${pid}): ${err.message}. Restart with "nanoclaw restart" to apply.`,
+      `Failed to signal daemon${result.pid ? ` (pid ${result.pid})` : ''}: ${result.error || 'unknown'}. Restart with "nanoclaw restart" to apply.`,
     );
     process.exit(1);
+  }
+  if (result.method === 'trigger-file') {
+    console.log(
+      'Wrote reload trigger; daemon will pick up the change shortly.',
+    );
+  } else {
+    console.log(`Sent SIGUSR2 to daemon (pid ${result.pid}); change is live.`);
   }
 }
