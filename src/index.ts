@@ -162,7 +162,10 @@ function saveState(): void {
  * this so the lifecycle is observable in logs.
  */
 function traceSetTyping(
-  channel: { name: string; setTyping?: (jid: string, isTyping: boolean) => Promise<void> },
+  channel: {
+    name: string;
+    setTyping?: (jid: string, isTyping: boolean) => Promise<void>;
+  },
   chatJid: string,
   isTyping: boolean,
   reason: string,
@@ -364,6 +367,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   };
 
   await traceSetTyping(channel, chatJid, true, 'turn-start');
+  // Defense-in-depth: even if runAgent rejects (unhandled), an editMessage
+  // throws, or any unexpected error escapes the try block, the typing
+  // indicator MUST be released and the idle timer MUST be cleared.
+  // The happy-path setTyping(false, 'turn-end') is kept inline for telemetry
+  // clarity; the finally block is the safety net so we never leave Teams
+  // pinned to typing for hours after a crash. (rpi5's onProcessDiedWithoutOutput
+  // callback in group-queue covers the host-process-died case; this finally
+  // covers the in-process throw / promise-rejection case. They overlap on
+  // purpose — cheap, idempotent, no harm calling setTyping(false) twice.)
   let hadError = false;
   let outputSentToUser = false;
   // Progressive send state: track message ID for editMessage on partial updates
@@ -372,134 +384,154 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let lastFinalMsgId: string | undefined;
   // Thinking message state (separate from answer progressive message)
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback
+  try {
+    const output = await runAgent(group, prompt, chatJid, async (result) => {
+      // Streaming output callback
 
-    // Skip thinking-only deltas (will be merged into final result)
-    if (result.thinking && !result.result) {
-      return;
-    }
-
-    if (result.result) {
-      // Merge thinking into result as one message (only if showThinking is enabled)
-      let thinkingParseMode: 'HTML' | 'Markdown' | undefined;
-      if (
-        result.thinking &&
-        !result.partial &&
-        getConfig().agents?.defaults?.showThinking
-      ) {
-        const tp = formatThinkingForChannel(result.thinking, chatJid);
-        if (tp) {
-          thinkingParseMode = tp.parseMode;
-          // Don't escape the answer — let Telegram fallback handle parse errors
-          result.result = tp.text + '\n\n' + result.result;
-        }
-      }
-      const raw =
-        typeof result.result === 'string'
-          ? result.result
-          : JSON.stringify(result.result);
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      if (!text) {
-        if (result.status === 'success') queue.notifyIdle(chatJid);
+      // Skip thinking-only deltas (will be merged into final result)
+      if (result.thinking && !result.result) {
         return;
       }
 
-      // Agent produced output for the user — reset busy-ack debounce so any
-      // future silent stretch on a follow-up message can be acked again.
-      queue.notifyAgentOutput(chatJid);
-
-      const sendOpts = thinkingParseMode
-        ? { parseMode: thinkingParseMode }
-        : undefined;
-
-      if (result.partial && channel.editMessage) {
-        // Delta/partial: accumulate and edit existing message
-        progressiveText = text; // delta buffer already accumulated in agent-runner
-        if (!progressiveMsgId) {
-          // First partial — send new message
-          await traceSetTyping(channel, chatJid, false, 'progressive-first-partial');
-          const msgId = await channel.sendMessage(
-            chatJid,
-            text + ' ◌',
-            sendOpts,
-          );
-          progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;
-        } else {
-          // Subsequent partial — edit existing message
-          await channel.editMessage(
-            chatJid,
-            progressiveMsgId,
-            text + ' ◌',
-            sendOpts,
-          );
-        }
-      } else {
-        // Final message (or channel doesn't support edit)
-        await traceSetTyping(channel, chatJid, false, 'final-output');
-        if (progressiveMsgId && channel.editMessage) {
-          // Replace the progressive message with final content
-          await channel.editMessage(chatJid, progressiveMsgId, text, sendOpts);
-        } else if (
-          outputSentToUser &&
-          lastFinalMsgId &&
-          channel.editMessage &&
-          !channel.prefersNewMessageForFinal
+      if (result.result) {
+        // Merge thinking into result as one message (only if showThinking is enabled)
+        let thinkingParseMode: 'HTML' | 'Markdown' | undefined;
+        if (
+          result.thinking &&
+          !result.partial &&
+          getConfig().agents?.defaults?.showThinking
         ) {
-          // Multiple final outputs (e.g. tool call → new response): edit the
-          // last message on channels where in-place edits feel natural
-          // (Telegram). Channels with prefersNewMessageForFinal (Teams)
-          // skip this branch and send a new message instead, otherwise
-          // each subsequent final silently overwrites the previous one.
-          await channel.editMessage(chatJid, lastFinalMsgId, text, sendOpts);
-        } else {
-          const msgId = await channel.sendMessage(chatJid, text, sendOpts);
-          lastFinalMsgId = typeof msgId === 'string' ? msgId : undefined;
+          const tp = formatThinkingForChannel(result.thinking, chatJid);
+          if (tp) {
+            thinkingParseMode = tp.parseMode;
+            // Don't escape the answer — let Telegram fallback handle parse errors
+            result.result = tp.text + '\n\n' + result.result;
+          }
         }
-        progressiveMsgId = undefined;
-        progressiveText = '';
-        outputSentToUser = true;
+        const raw =
+          typeof result.result === 'string'
+            ? result.result
+            : JSON.stringify(result.result);
+        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        if (!text) {
+          if (result.status === 'success') queue.notifyIdle(chatJid);
+          return;
+        }
+
+        // Agent produced output for the user — reset busy-ack debounce so any
+        // future silent stretch on a follow-up message can be acked again.
+        queue.notifyAgentOutput(chatJid);
+
+        const sendOpts = thinkingParseMode
+          ? { parseMode: thinkingParseMode }
+          : undefined;
+
+        if (result.partial && channel.editMessage) {
+          // Delta/partial: accumulate and edit existing message
+          progressiveText = text; // delta buffer already accumulated in agent-runner
+          if (!progressiveMsgId) {
+            // First partial — send new message
+            await traceSetTyping(
+              channel,
+              chatJid,
+              false,
+              'progressive-first-partial',
+            );
+            const msgId = await channel.sendMessage(
+              chatJid,
+              text + ' ◌',
+              sendOpts,
+            );
+            progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;
+          } else {
+            // Subsequent partial — edit existing message
+            await channel.editMessage(
+              chatJid,
+              progressiveMsgId,
+              text + ' ◌',
+              sendOpts,
+            );
+          }
+        } else {
+          // Final message (or channel doesn't support edit)
+          await traceSetTyping(channel, chatJid, false, 'final-output');
+          if (progressiveMsgId && channel.editMessage) {
+            // Replace the progressive message with final content
+            await channel.editMessage(
+              chatJid,
+              progressiveMsgId,
+              text,
+              sendOpts,
+            );
+          } else if (
+            outputSentToUser &&
+            lastFinalMsgId &&
+            channel.editMessage &&
+            !channel.prefersNewMessageForFinal
+          ) {
+            // Multiple final outputs (e.g. tool call → new response): edit the
+            // last message on channels where in-place edits feel natural
+            // (Telegram). Channels with prefersNewMessageForFinal (Teams)
+            // skip this branch and send a new message instead, otherwise
+            // each subsequent final silently overwrites the previous one.
+            await channel.editMessage(chatJid, lastFinalMsgId, text, sendOpts);
+          } else {
+            const msgId = await channel.sendMessage(chatJid, text, sendOpts);
+            lastFinalMsgId = typeof msgId === 'string' ? msgId : undefined;
+          }
+          progressiveMsgId = undefined;
+          progressiveText = '';
+          outputSentToUser = true;
+        }
+        logger.info(
+          { group: group.name, partial: !!result.partial },
+          `Agent output: ${raw.length} chars`,
+        );
+        resetIdleTimer();
       }
-      logger.info(
-        { group: group.name, partial: !!result.partial },
-        `Agent output: ${raw.length} chars`,
-      );
-      resetIdleTimer();
-    }
 
-    if (result.status === 'success') {
-      queue.notifyIdle(chatJid);
-    }
+      if (result.status === 'success') {
+        queue.notifyIdle(chatJid);
+      }
 
-    if (result.status === 'error') {
-      hadError = true;
-    }
-  });
+      if (result.status === 'error') {
+        hadError = true;
+      }
+    });
 
-  await traceSetTyping(channel, chatJid, false, 'turn-end');
-  if (idleTimer) clearTimeout(idleTimer);
+    await traceSetTyping(channel, chatJid, false, 'turn-end');
+    if (idleTimer) clearTimeout(idleTimer);
 
-  if (output === 'error' || hadError) {
-    // If we already sent output to the user, don't roll back the cursor —
-    // the user got their response and re-processing would send duplicates.
-    if (outputSentToUser) {
+    if (output === 'error' || hadError) {
+      // If we already sent output to the user, don't roll back the cursor —
+      // the user got their response and re-processing would send duplicates.
+      if (outputSentToUser) {
+        logger.warn(
+          { group: group.name },
+          'Agent error after output was sent, skipping cursor rollback to prevent duplicates',
+        );
+        return true;
+      }
+      // Roll back cursor so retries can re-process these messages
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
       logger.warn(
         { group: group.name },
-        'Agent error after output was sent, skipping cursor rollback to prevent duplicates',
+        'Agent error, rolled back message cursor for retry',
       );
-      return true;
+      return false;
     }
-    // Roll back cursor so retries can re-process these messages
-    lastAgentTimestamp[chatJid] = previousCursor;
-    saveState();
-    logger.warn(
-      { group: group.name },
-      'Agent error, rolled back message cursor for retry',
-    );
-    return false;
-  }
 
-  return true;
+    return true;
+  } finally {
+    // Safety net: always release typing + clear idle timer, even if anything
+    // above threw. traceSetTyping swallows its own errors; idleTimer cleanup
+    // is no-throw. The 'finally-guard' reason makes stuck-typing investigations
+    // greppable: if grep shows finally-guard right before a stuck-typing
+    // report, an exception escaped the happy path.
+    if (idleTimer) clearTimeout(idleTimer);
+    await traceSetTyping(channel, chatJid, false, 'finally-guard');
+  }
 }
 
 async function runAgent(
@@ -825,8 +857,9 @@ async function startMessageLoop(): Promise<void> {
               messagesToSend[messagesToSend.length - 1].timestamp;
             saveState();
             // Show typing indicator while the container processes the piped message
-            traceSetTyping(channel, chatJid, true, 'ipc-pipe').catch((err: any) =>
-              logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
+            traceSetTyping(channel, chatJid, true, 'ipc-pipe').catch(
+              (err: any) =>
+                logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
             );
             // Busy ack: if user piled on a 2nd message before the agent
             // produced anything, let them know we received it and are still
@@ -1310,11 +1343,12 @@ async function main(): Promise<void> {
     (groupJid: string, rollbackCursor: string | null) => {
       const channel = findChannel(channels, groupJid);
       if (channel) {
-        traceSetTyping(channel, groupJid, false, 'agent-died').catch((err: any) =>
-          logger.warn(
-            { groupJid, err },
-            'Failed to clear typing indicator after agent died',
-          ),
+        traceSetTyping(channel, groupJid, false, 'agent-died').catch(
+          (err: any) =>
+            logger.warn(
+              { groupJid, err },
+              'Failed to clear typing indicator after agent died',
+            ),
         );
       }
       if (rollbackCursor) {
