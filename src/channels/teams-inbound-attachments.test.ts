@@ -30,10 +30,7 @@ import path from 'path';
  */
 
 function readTeamsSrc(): string {
-  return fs.readFileSync(
-    path.resolve(__dirname, 'teams.ts'),
-    'utf-8',
-  );
+  return fs.readFileSync(path.resolve(__dirname, 'teams.ts'), 'utf-8');
 }
 
 function sliceMethod(src: string, marker: string): string {
@@ -77,7 +74,7 @@ describe('Teams inbound attachment handling \u2014 wire path coverage', () => {
     const body = sliceMethod(src, 'private async handleIncoming(');
 
     const processorIdx = body.indexOf('processIncomingAttachments');
-    const gateIdx = body.indexOf("!activity.text) return");
+    const gateIdx = body.indexOf('!activity.text) return');
 
     expect(processorIdx).toBeGreaterThan(0);
     expect(gateIdx).toBeGreaterThan(0);
@@ -93,7 +90,10 @@ describe('processIncomingAttachments \u2014 surfaces file to agent on every path
 
   let body: string;
   beforeEach(() => {
-    body = sliceMethod(readTeamsSrc(), 'private async processIncomingAttachments(');
+    body = sliceMethod(
+      readTeamsSrc(),
+      'private async processIncomingAttachments(',
+    );
   });
 
   it('success path: appends [Document: ...] note with local path', () => {
@@ -117,7 +117,9 @@ describe('processIncomingAttachments \u2014 surfaces file to agent on every path
   it('exception path: surfaces error note to activity.text', () => {
     expect(body).toContain('Failed to download Teams file');
     expect(body).toMatch(/\[Document: \$\{fileName\}\] \(download error/);
-    const errSection = body.slice(body.indexOf('Failed to download Teams file'));
+    const errSection = body.slice(
+      body.indexOf('Failed to download Teams file'),
+    );
     expect(errSection).toMatch(/activity\.text \+=/);
   });
 
@@ -126,8 +128,12 @@ describe('processIncomingAttachments \u2014 surfaces file to agent on every path
     // the attachment silently. Surface [Document: name] so the agent sees
     // that a file was sent, even without a local download.
     // Covers both `!activity.text` and text-present cases.
-    expect(body).toMatch(/if \(!activity\.text\) \{[\s\S]*?activity\.text = `\[Document: \$\{fileName\}\]`;/);
-    expect(body).toMatch(/\} else \{[\s\S]*?activity\.text \+= `\\n\[Document: \$\{fileName\}\]`;/);
+    expect(body).toMatch(
+      /if \(!activity\.text\) \{[\s\S]*?activity\.text = `\[Document: \$\{fileName\}\]`;/,
+    );
+    expect(body).toMatch(
+      /\} else \{[\s\S]*?activity\.text \+= `\\n\[Document: \$\{fileName\}\]`;/,
+    );
   });
 
   it('skips adaptive-card and hero-card attachments (non-file)', () => {

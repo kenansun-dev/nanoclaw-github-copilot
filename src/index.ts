@@ -1481,12 +1481,14 @@ async function main(): Promise<void> {
         const msg =
           `⚠️ Agent process crashed (exit ${exitCode}). ` +
           `Send your message again and a fresh agent will pick it up.`;
-        channel.sendMessage(groupJid, msg).catch((err: any) =>
-          logger.warn(
-            { groupJid, exitCode, err },
-            'Failed to deliver agent-crash notice to channel',
-          ),
-        );
+        channel
+          .sendMessage(groupJid, msg)
+          .catch((err: any) =>
+            logger.warn(
+              { groupJid, exitCode, err },
+              'Failed to deliver agent-crash notice to channel',
+            ),
+          );
       }
       if (rollbackCursor) {
         const before = lastAgentTimestamp[groupJid];

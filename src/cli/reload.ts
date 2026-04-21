@@ -49,6 +49,8 @@ export async function runReload(_args: string[]): Promise<void> {
   if (result.method === 'trigger-file') {
     console.log('Wrote reload trigger; daemon will reload config within ~2s.');
   } else {
-    console.log(`Sent SIGUSR2 to daemon (pid ${result.pid}); reload requested.`);
+    console.log(
+      `Sent SIGUSR2 to daemon (pid ${result.pid}); reload requested.`,
+    );
   }
 }
