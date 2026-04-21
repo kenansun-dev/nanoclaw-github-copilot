@@ -34,7 +34,11 @@ import {
   nextChatId,
   type NanoclawConfig,
 } from './config-loader.js';
-import { getAllRegisteredGroups, setRegisteredGroup } from './db.js';
+import {
+  getAllRegisteredGroups,
+  setRegisteredGroup,
+  getAllChatIsGroup,
+} from './db.js';
 import { logger } from './logger.js';
 
 export interface ReconcileResult {
@@ -53,6 +57,7 @@ export interface ReconcileResult {
 export function reconcileChatRegistry(): ReconcileResult {
   const config = loadConfig();
   const groups = getAllRegisteredGroups();
+  const isGroupByJid = getAllChatIsGroup();
 
   const result: ReconcileResult = {
     added: [],
@@ -74,9 +79,14 @@ export function reconcileChatRegistry(): ReconcileResult {
     result.added.push(jid);
   }
 
-  // 2) Dedupe isMain on the merged set (lowest id wins).
+  // 2) Dedupe isMain *only on groups* (lowest id wins).
+  //    Multiple isMain DMs are intentional and collapse onto a shared
+  //    session per agent (PR #16, src/session-routing.ts). Only group
+  //    chats must keep the singleton invariant since group sessions
+  //    stay isolated.
+  const isMainGroup = (jid: string): boolean => isGroupByJid.get(jid) === true;
   const mains = Object.entries(config.chats)
-    .filter(([, e]) => e.isMain)
+    .filter(([jid, e]) => e.isMain && isMainGroup(jid))
     .sort((a, b) => (a[1].id ?? 1e9) - (b[1].id ?? 1e9));
   if (mains.length > 0) {
     result.keptMain = mains[0][0];
@@ -146,12 +156,13 @@ export function reconcileChatRegistry(): ReconcileResult {
 export function detectChatDrift(): ReconcileResult & { dirty: boolean } {
   const config = loadConfig();
   const groups = getAllRegisteredGroups();
+  const isGroupByJid = getAllChatIsGroup();
   // Deep-clone config.chats so dedupe doesn't mutate the loaded object.
   const clone: NanoclawConfig = {
     ...config,
     chats: JSON.parse(JSON.stringify(config.chats)),
   };
-  const r = _reconcilePure(clone, groups);
+  const r = _reconcilePure(clone, groups, isGroupByJid);
   const dirty =
     r.added.length > 0 ||
     r.dedupedMains.length > 0 ||
@@ -183,6 +194,7 @@ export function _reconcilePure(
       added_at?: string;
     }
   >,
+  isGroupByJid?: Map<string, boolean | undefined>,
 ): ReconcileResult & { config: NanoclawConfig } {
   const result: ReconcileResult = {
     added: [],
@@ -203,8 +215,12 @@ export function _reconcilePure(
     result.added.push(jid);
   }
 
+  // Only dedupe isMain on group chats. Multi-isMain DMs intentionally
+  // share a session per agent (PR #16). Without isGroup info, conserva-
+  // tively skip dedupe (the existing tests pass an empty/undefined map).
+  const isMainGroup = (jid: string): boolean => isGroupByJid?.get(jid) === true;
   const mains = Object.entries(config.chats)
-    .filter(([, e]) => e.isMain)
+    .filter(([jid, e]) => e.isMain && (isGroupByJid ? isMainGroup(jid) : true))
     .sort((a, b) => (a[1].id ?? 1e9) - (b[1].id ?? 1e9));
   if (mains.length > 0) {
     result.keptMain = mains[0][0];

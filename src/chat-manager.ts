@@ -10,7 +10,11 @@ import {
   NanoclawConfig,
   nextChatId,
 } from './config-loader.js';
-import { setRegisteredGroup, getAllRegisteredGroups, removeRegisteredGroup } from './db.js';
+import {
+  setRegisteredGroup,
+  getAllRegisteredGroups,
+  removeRegisteredGroup,
+} from './db.js';
 import { reconcileChatRegistry } from './chat-reconcile.js';
 import { logger } from './logger.js';
 import { uniqueIsMainFolder } from './session-routing.js';

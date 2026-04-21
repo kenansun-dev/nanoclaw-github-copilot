@@ -35,7 +35,7 @@ function getChatIsGroup(jid: string): boolean | undefined {
  * `getAllRegisteredGroups` to avoid N+1 SQL when collapsing folders
  * for many registered groups at once.
  */
-function getAllChatIsGroup(): Map<string, boolean | undefined> {
+export function getAllChatIsGroup(): Map<string, boolean | undefined> {
   const out = new Map<string, boolean | undefined>();
   if (!db) return out;
   const rows = db.prepare('SELECT jid, is_group FROM chats').all() as Array<{

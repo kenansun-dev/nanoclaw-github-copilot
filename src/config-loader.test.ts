@@ -669,40 +669,46 @@ describe('config-loader / chat numeric ids', () => {
   });
 
   // rpi5 caught this on 2026-04-20 live deploy of PR #15: reconcile
-  // imports tui:N chats from DB → channelFromJid('tui:N') === 'other'
-  // → distributeChatsToChannels skips because no `channels.other` exists
+  // imports DB chats whose channel isn't in `channels.<name>` config
+  // → channelFromJid('signal:abc') === 'signal' (or 'other')
+  // → distributeChatsToChannels skips because no `channels.signal` exists
   // → chats vanish on saveConfig → next boot reconcile re-adds them
   // → forever-drift loop. Fix: stash unknown-channel chats back at
   // top-level `chats` so normalizeChats picks them up next load.
-  it('saveConfig preserves chats whose channel has no config (e.g. tui:N)', () => {
+  //
+  // 2026-04-21: switched the example jid from 'tui:1' to 'signal:abc'
+  // because PR #16's v4→v5 TUI migration consolidates tui:N →
+  // tui:default. The orphan-preservation behavior we test here is
+  // channel-agnostic, so any unconfigured channel works as the example.
+  it('saveConfig preserves chats whose channel has no config (e.g. signal:*)', () => {
     const cfgPath = path.join(tmpDir, 'nanoclaw.json');
     fs.writeFileSync(
       cfgPath,
       JSON.stringify({
-        configVersion: 4,
+        configVersion: 5,
         chats: {
-          'tui:1': { id: 1, name: 'tui-1' },
+          'signal:abc': { id: 1, name: 'signal-friend' },
           'tg:42': { id: 2, name: 'kenan-tg' },
         },
         channels: { telegram: { enabled: true } },
       }),
     );
     const config = loadConfig();
-    expect(config.chats['tui:1']).toBeDefined();
+    expect(config.chats['signal:abc']).toBeDefined();
     expect(config.chats['tg:42']).toBeDefined();
 
     saveConfig(config);
 
     const config2 = loadConfig();
-    expect(config2.chats['tui:1']).toBeDefined();
-    expect(config2.chats['tui:1'].name).toBe('tui-1');
+    expect(config2.chats['signal:abc']).toBeDefined();
+    expect(config2.chats['signal:abc'].name).toBe('signal-friend');
     expect(config2.chats['tg:42']).toBeDefined();
 
-    // And the on-disk shape: tui:1 lives under top-level `chats`,
+    // And the on-disk shape: signal:abc lives under top-level `chats`,
     // tg:42 under channels.telegram.chats.
     const onDisk = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
     expect(onDisk.chats).toBeDefined();
-    expect(onDisk.chats['tui:1']).toBeDefined();
+    expect(onDisk.chats['signal:abc']).toBeDefined();
     expect(onDisk.channels.telegram.chats).toEqual([
       expect.objectContaining({ jid: 'tg:42', name: 'kenan-tg' }),
     ]);

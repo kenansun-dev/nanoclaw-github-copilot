@@ -62,8 +62,7 @@ export function chatDriftCheck(d: {
   dedupedMains: string[];
   mirroredToDb: string[];
 }): { ok: boolean; status?: 'ok' | 'warn' | 'error'; msg: string } {
-  const dirty =
-    d.added.length + d.dedupedMains.length + d.mirroredToDb.length;
+  const dirty = d.added.length + d.dedupedMains.length + d.mirroredToDb.length;
   if (dirty === 0) {
     return { ok: true, msg: 'config.chats and registered_groups in sync' };
   }

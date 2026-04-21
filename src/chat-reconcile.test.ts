@@ -111,4 +111,58 @@ describe('chat-reconcile / _reconcilePure', () => {
     expect(r2.dedupedMains).toEqual([]);
     expect(r2.mirroredToDb).toEqual([]);
   });
+
+  it('does NOT dedupe multi-isMain DMs when isGroup map says they are DMs (PR #16 share-main)', () => {
+    const config = baseConfig();
+    const groups = {
+      'tg:1': grp('dm-a', true),
+      'tg:2': grp('dm-b', true),
+    };
+    const isGroupByJid = new Map<string, boolean | undefined>([
+      ['tg:1', false],
+      ['tg:2', false],
+    ]);
+    const r = _reconcilePure(config, groups, isGroupByJid);
+    expect(r.dedupedMains).toEqual([]);
+    // Both DMs preserve isMain so the share-main collapse can fire.
+    expect(config.chats['tg:1'].isMain).toBe(true);
+    expect(config.chats['tg:2'].isMain).toBe(true);
+  });
+
+  it('still dedupes multi-isMain GROUPS when isGroup map says they are groups', () => {
+    const config = baseConfig();
+    const groups = {
+      'tg:g1': grp('grp-a', true),
+      'tg:g2': grp('grp-b', true),
+    };
+    const isGroupByJid = new Map<string, boolean | undefined>([
+      ['tg:g1', true],
+      ['tg:g2', true],
+    ]);
+    const r = _reconcilePure(config, groups, isGroupByJid);
+    // Lowest id wins
+    expect(r.keptMain).toBe('tg:g1');
+    expect(r.dedupedMains).toEqual(['tg:g2']);
+    expect(config.chats['tg:g2'].isMain).toBeUndefined();
+  });
+
+  it('mixed: keeps single main group + preserves multiple isMain DMs', () => {
+    const config = baseConfig();
+    const groups = {
+      'tg:g1': grp('grp', true),
+      'tg:dm1': grp('dm-a', true),
+      'tg:dm2': grp('dm-b', true),
+    };
+    const isGroupByJid = new Map<string, boolean | undefined>([
+      ['tg:g1', true],
+      ['tg:dm1', false],
+      ['tg:dm2', false],
+    ]);
+    const r = _reconcilePure(config, groups, isGroupByJid);
+    // Only 1 group main → no dedupe
+    expect(r.dedupedMains).toEqual([]);
+    expect(config.chats['tg:g1'].isMain).toBe(true);
+    expect(config.chats['tg:dm1'].isMain).toBe(true);
+    expect(config.chats['tg:dm2'].isMain).toBe(true);
+  });
 });
