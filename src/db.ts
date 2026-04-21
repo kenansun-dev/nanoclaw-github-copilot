@@ -35,7 +35,7 @@ function getChatIsGroup(jid: string): boolean | undefined {
  * `getAllRegisteredGroups` to avoid N+1 SQL when collapsing folders
  * for many registered groups at once.
  */
-function getAllChatIsGroup(): Map<string, boolean | undefined> {
+export function getAllChatIsGroup(): Map<string, boolean | undefined> {
   const out = new Map<string, boolean | undefined>();
   if (!db) return out;
   const rows = db.prepare('SELECT jid, is_group FROM chats').all() as Array<{
@@ -805,6 +805,19 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
     group.isMain ? 1 : 0,
   );
+}
+
+/**
+ * Remove a registered group from the DB.
+ * Returns true if a row was deleted, false if no such jid existed.
+ * Symmetric to `setRegisteredGroup`; needed by `chat remove` so the
+ * config↔DB dual-store doesn't get re-populated by reconcile-on-CLI.
+ */
+export function removeRegisteredGroup(jid: string): boolean {
+  const info = db
+    .prepare('DELETE FROM registered_groups WHERE jid = ?')
+    .run(jid);
+  return info.changes > 0;
 }
 
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {

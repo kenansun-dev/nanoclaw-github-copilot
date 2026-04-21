@@ -10,7 +10,12 @@ import {
   NanoclawConfig,
   nextChatId,
 } from './config-loader.js';
-import { setRegisteredGroup, getAllRegisteredGroups } from './db.js';
+import {
+  setRegisteredGroup,
+  getAllRegisteredGroups,
+  removeRegisteredGroup,
+} from './db.js';
+import { reconcileChatRegistry } from './chat-reconcile.js';
 import { logger } from './logger.js';
 import { uniqueIsMainFolder } from './session-routing.js';
 
@@ -70,8 +75,28 @@ export function deriveGroupFolder(
 /**
  * Sync chats from nanoclaw.json into the SQLite DB.
  * Called on startup to ensure DB matches config.
+ *
+ * Also runs `reconcileChatRegistry` first so DB-only chats (created by
+ * inbound handlers, `pair`, or `tui-direct` without a corresponding
+ * `addChat` call) are imported into config.chats with proper ids and the
+ * "at most one isMain" invariant is enforced across both stores.
+ * Without this, a fresh PR #14 deploy would see `config.chats = {}` and
+ * `chat list` would print every id as `?` (kenansun, 2026-04-20 deploy).
  */
 export function syncChatsFromConfig(config: NanoclawConfig): void {
+  // Reconcile is best-effort: if it fails (e.g. partial DB during init)
+  // we still fall through to the legacy config→DB sync below.
+  try {
+    reconcileChatRegistry();
+    // Reload config for the loop below now that reconcile may have added entries.
+    config = loadConfig();
+  } catch (err: any) {
+    logger.warn(
+      { err: err?.message },
+      'Chat reconcile skipped — falling back to one-way config→DB sync',
+    );
+  }
+
   const existing = getAllRegisteredGroups();
 
   for (const [jid, chatConfig] of Object.entries(config.chats)) {
@@ -153,17 +178,24 @@ export function setMainChat(jid: string | null): void {
 }
 
 /**
- * Remove a chat from nanoclaw.json.
- * Note: doesn't remove from DB (preserves history).
+ * Remove a chat from nanoclaw.json AND from the DB registered_groups
+ * table. Without the DB delete the next `chat *` CLI call would re-run
+ * reconcile and re-add the same jid with a new id, defeating the remove.
  */
 export function removeChat(jid: string): boolean {
   const config = loadConfig();
-  if (!config.chats[jid]) return false;
+  const inConfig = !!config.chats[jid];
+  if (inConfig) {
+    delete config.chats[jid];
+    saveConfig(config);
+  }
+  const removedFromDb = removeRegisteredGroup(jid);
 
-  delete config.chats[jid];
-  saveConfig(config);
-
-  logger.info({ jid }, 'Chat removed from config');
+  if (!inConfig && !removedFromDb) return false;
+  logger.info(
+    { jid, fromConfig: inConfig, fromDb: removedFromDb },
+    'Chat removed',
+  );
   return true;
 }
 
