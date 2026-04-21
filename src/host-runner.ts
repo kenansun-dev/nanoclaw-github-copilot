@@ -76,27 +76,103 @@ export function unregisterAgentPid(pid: number): void {
   }
 }
 
-export function killAllAgentPids(): void {
+export async function killAllAgentPids(): Promise<void> {
   try {
     const file = agentPidsFile();
-    if (!fs.existsSync(file)) return;
+    if (!fs.existsSync(file)) {
+      logger.debug('killAllAgentPids: no agent-pids.json, nothing to kill');
+      return;
+    }
     const pids: number[] = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    if (pids.length === 0) {
+      logger.debug('killAllAgentPids: agent-pids.json empty');
+      fs.unlinkSync(file);
+      return;
+    }
+    logger.info(
+      { pids, platform: process.platform },
+      `killAllAgentPids: attempting to kill ${pids.length} tracked agent pid(s)`,
+    );
     for (const pid of pids) {
-      try {
-        // Verify process still exists before killing
-        process.kill(pid, 0);
-        if (process.platform === 'win32') {
+      if (process.platform === 'win32') {
+        // Windows: ALWAYS run taskkill /F /T unconditionally. /T walks the
+        // process tree, so even if the root (this pid) is already a zombie,
+        // live grandchildren (tsx, node, docker, mcp subprocesses) get reaped.
+        // Previously we gated on `process.kill(pid, 0)` which is unreliable
+        // on Windows (can return true for zombies AND false for legit-dead-
+        // but-children-alive). Kenan hit EBUSY on npm install because of
+        // orphaned grandchildren holding container/agent-runner-ghc handles.
+        // 2026-04-21.
+        try {
           execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'pipe' });
-        } else {
-          process.kill(pid, 'SIGTERM');
+          logger.info({ pid }, 'taskkill /F /T succeeded (tree killed)');
+        } catch (err: any) {
+          // Exit code 128 = process not found; treat as success.
+          const msg = err?.stderr?.toString?.() ?? String(err);
+          if (/not found|不存在|找不到/i.test(msg)) {
+            logger.debug({ pid }, 'taskkill: process already gone');
+          } else {
+            logger.warn({ pid, err: msg }, 'taskkill /F /T failed');
+          }
         }
-      } catch {
-        /* already dead or doesn't exist */
+      } else {
+        // POSIX: try process-group kill first (negative pid), then fall back
+        // to single-pid. Process-group kill reaches detached grandchildren
+        // spawned with setsid/detached:true.
+        // Escalate to SIGKILL after 2s if anything in the group is still
+        // alive — a misbehaving agent with a SIGTERM handler that refuses
+        // to exit would otherwise hang stop forever. Rpi5 nit 2026-04-21.
+        let pgroupOk = false;
+        try {
+          process.kill(-pid, 'SIGTERM');
+          logger.info({ pid }, 'SIGTERM sent to process group');
+          pgroupOk = true;
+        } catch {
+          try {
+            process.kill(pid, 'SIGTERM');
+            logger.debug({ pid }, 'SIGTERM sent to pid (no pgroup)');
+          } catch {
+            logger.debug({ pid }, 'process already dead');
+            continue;
+          }
+        }
+        // Poll up to 2s for clean exit, then SIGKILL the pgroup.
+        const deadline = Date.now() + 2000;
+        let stillAlive = true;
+        while (Date.now() < deadline) {
+          try {
+            process.kill(pid, 0);
+          } catch {
+            stillAlive = false;
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        if (stillAlive) {
+          try {
+            process.kill(pid, 0);
+            try {
+              if (pgroupOk) process.kill(-pid, 'SIGKILL');
+              else process.kill(pid, 'SIGKILL');
+              logger.warn(
+                { pid },
+                'SIGTERM did not take effect after 2s — sent SIGKILL',
+              );
+            } catch {
+              /* died during escalation */
+            }
+          } catch {
+            /* died cleanly from SIGTERM */
+          }
+        }
       }
     }
     fs.unlinkSync(file);
-  } catch {
-    /* best effort */
+  } catch (err: any) {
+    logger.warn(
+      { err: err?.message ?? String(err) },
+      'killAllAgentPids: unexpected error',
+    );
   }
 }
 
@@ -436,8 +512,24 @@ export async function runHostAgent(
 
   onProcess(child, processName);
 
-  // Track child PID for clean shutdown
-  if (child.pid) registerAgentPid(child.pid);
+  // Track child PID for clean shutdown.
+  // Also log pid + ppid + cmd prominently so ops can grep the log and find
+  // the actual process tree root (process name on Windows is just 'node',
+  // which is useless for identification). Kenan, 2026-04-21.
+  if (child.pid) {
+    registerAgentPid(child.pid);
+    logger.info(
+      {
+        group: group.name,
+        processName,
+        pid: child.pid,
+        ppid: process.pid,
+        cmd,
+        platform: process.platform,
+      },
+      `Host agent spawned (pid=${child.pid}, ppid=${process.pid}) — use 'taskkill /F /T /PID ${child.pid}' on Windows or 'kill -- -${child.pid}' on POSIX to force-kill the whole tree`,
+    );
+  }
 
   return new Promise<ContainerOutput>((resolve) => {
     let stdout = '';
@@ -665,10 +757,31 @@ export async function runHostAgent(
       const duration = Date.now() - startTime;
 
       if (resolved) {
-        logger.info(
-          { group: group.name, processName, code, duration },
-          'Host agent process ended (output already delivered)',
-        );
+        // Default path: promise already resolved (IPC mode after first
+        // query-complete). Just log. BUT if exit was non-zero, also dump
+        // the last ~50 stderr lines so root-cause is reachable from the
+        // log without needing LOG_LEVEL=debug to have been on at crash
+        // time. (Added 2026-04-21 after kenan's silent code=1 crash on
+        // a gitignore request — the only signal in the log was the bare
+        // `code=1` line; stderr was captured in-memory but discarded.)
+        if (code !== 0 && stderr.trim()) {
+          const tail = stderr.trim().split('\n').slice(-50).join('\n');
+          logger.error(
+            {
+              group: group.name,
+              processName,
+              code,
+              duration,
+              stderrTail: tail,
+            },
+            'Host agent process exited non-zero AFTER delivering output (stderr tail captured)',
+          );
+        } else {
+          logger.info(
+            { group: group.name, processName, code, duration },
+            'Host agent process ended (output already delivered)',
+          );
+        }
         return;
       }
 

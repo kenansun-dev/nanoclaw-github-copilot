@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { paths } from './workspace.js';
 
 import { OneCLI } from '@onecli-sh/sdk';
 
@@ -382,11 +383,36 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let progressiveMsgId: string | undefined;
   let progressiveText = '';
   let lastFinalMsgId: string | undefined;
+  // IPC mode: the runAgent() promise resolves on the first query-complete
+  // signal, but the spawned agent process keeps living and the stdout
+  // listener (with this onOutput closure) keeps firing for follow-up
+  // turns piped via queue.sendMessage. Track query boundaries so each
+  // new turn starts with fresh progressive/multi-final state instead
+  // of editing turn N-1's reply when turn N's output arrives.
+  // Symptom this prevents (kenansun, 2026-04-21): user asks new
+  // question, nanoclaw edits the previous reply instead of sending a
+  // new message. Root cause: lastFinalMsgId from turn N-1 still in scope.
+  let queryBoundaryPending = false;
   // Thinking message state (separate from answer progressive message)
 
   try {
     const output = await runAgent(group, prompt, chatJid, async (result) => {
       // Streaming output callback
+
+      // Query-complete sentinel: agent finished a query and is waiting for
+      // the next IPC pipe (IPC mode only). Mark a boundary so the next
+      // non-null result resets per-turn message-id state. Doing the reset
+      // here (on the sentinel) instead of pre-emptively at the top of the
+      // next turn avoids racing with trailing partials of the current turn.
+      if (
+        result.result === null &&
+        (result as any).newSessionId &&
+        !result.partial
+      ) {
+        queryBoundaryPending = true;
+        // Don't return — let the rest of the handler run for thinking/status
+        // bookkeeping, then exit naturally on the !result.result guard above.
+      }
 
       // Skip thinking-only deltas (will be merged into final result)
       if (result.thinking && !result.result) {
@@ -394,6 +420,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
 
       if (result.result) {
+        // New-turn boundary: clear per-turn message tracking before handling
+        // this output so it sends fresh instead of editing the previous turn.
+        if (queryBoundaryPending) {
+          queryBoundaryPending = false;
+          progressiveMsgId = undefined;
+          progressiveText = '';
+          lastFinalMsgId = undefined;
+          outputSentToUser = false;
+          logger.debug(
+            { chatJid, group: group.name },
+            'IPC turn boundary: reset per-turn message-id state',
+          );
+        }
         // Merge thinking into result as one message (only if showThinking is enabled)
         let thinkingParseMode: 'HTML' | 'Markdown' | undefined;
         if (
@@ -1030,6 +1069,25 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
 
+  // Apply config.logLevel as early as possible so subsequent startup logs
+  // reflect the user's preferred verbosity. env LOG_LEVEL still wins inside
+  // applyConfigLogLevel (it's locked in logger.ts at module init).
+  try {
+    const { loadConfig: lc } = await import('./config-loader.js');
+    const { applyConfigLogLevel, getLogLevel } = await import('./logger.js');
+    const cfg = lc();
+    applyConfigLogLevel(cfg.logLevel);
+    logger.info(
+      {
+        level: getLogLevel(),
+        source: process.env.LOG_LEVEL ? 'env' : 'config',
+      },
+      'Log level initialized',
+    );
+  } catch (err) {
+    logger.warn({ err }, 'Failed to apply config.logLevel at startup');
+  }
+
   // Clear stale agent PIDs from previous run
   try {
     const { clearAgentPids } = await import('./host-runner.js');
@@ -1069,6 +1127,59 @@ async function main(): Promise<void> {
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+
+  // SIGUSR2: re-read config and re-apply log level. Used by
+  // `nanoclaw loglevel <level>`, `nanoclaw mcp add/remove`, and
+  // `nanoclaw reload` for live updates without restart.
+  process.on('SIGUSR2', async () => {
+    await reloadFromConfigFile('SIGUSR2');
+  });
+
+  // Windows fallback: process.kill(pid, 'SIGUSR2') is a no-op on win32,
+  // so the CLI helpers write a trigger file and the daemon polls for it.
+  // ~2s cadence matches the Windows IPC poll interval; light cost since
+  // it's just an fs.existsSync per tick.
+  if (process.platform === 'win32') {
+    const triggerPath = (() => {
+      const ws = path.dirname(paths.config);
+      return path.join(ws, 'state', 'reload.trigger');
+    })();
+    setInterval(() => {
+      try {
+        if (fs.existsSync(triggerPath)) {
+          fs.unlinkSync(triggerPath);
+          void reloadFromConfigFile('reload-trigger');
+        }
+      } catch (err) {
+        logger.debug({ err }, 'Reload trigger poll error');
+      }
+    }, 2000).unref();
+  }
+
+  async function reloadFromConfigFile(source: string): Promise<void> {
+    try {
+      const { reloadConfig, getConfig } = await import('./config.js');
+      const { applyConfigLogLevel, setLogLevel, getLogLevel } =
+        await import('./logger.js');
+      reloadConfig();
+      const cfg = getConfig();
+      const newLevel = cfg.logLevel;
+      // force=true so this overrides env-locked threshold (the user
+      // explicitly asked via CLI; treat as a fresh manual override).
+      if (newLevel) {
+        setLogLevel(newLevel, { force: true });
+      } else {
+        applyConfigLogLevel(newLevel);
+      }
+      const mcpCount = Object.keys(cfg.mcp?.servers || {}).length;
+      logger.info(
+        { source, level: getLogLevel(), mcpServers: mcpCount },
+        'Config reloaded',
+      );
+    } catch (err) {
+      logger.error({ source, err }, 'Config reload failed');
+    }
+  }
 
   // Handle /remote-control and /remote-control-end commands
   async function handleRemoteControl(
@@ -1340,7 +1451,11 @@ async function main(): Promise<void> {
   // indicator (set fire-and-forget at the IPC pipe site — nothing else
   // would clear it on this code path).
   queue.setOnProcessDiedWithoutOutput(
-    (groupJid: string, rollbackCursor: string | null) => {
+    (
+      groupJid: string,
+      rollbackCursor: string | null,
+      exitCode: number | null,
+    ) => {
       const channel = findChannel(channels, groupJid);
       if (channel) {
         traceSetTyping(channel, groupJid, false, 'agent-died').catch(
@@ -1350,6 +1465,30 @@ async function main(): Promise<void> {
               'Failed to clear typing indicator after agent died',
             ),
         );
+      }
+      // Surface non-zero exits to the user so they don't sit watching
+      // radio silence after a crash. Honours the same `sendErrorToUser`
+      // config gate as the structured-error path. (kenan, 2026-04-21
+      // gitignore reproducer: agent exit code=1 → bot said nothing.)
+      const sendErrors = getConfig().sendErrorToUser === true;
+      if (
+        sendErrors &&
+        channel &&
+        exitCode !== null &&
+        exitCode !== 0 &&
+        !queue.isShuttingDown()
+      ) {
+        const msg =
+          `⚠️ Agent process crashed (exit ${exitCode}). ` +
+          `Send your message again and a fresh agent will pick it up.`;
+        channel
+          .sendMessage(groupJid, msg)
+          .catch((err: any) =>
+            logger.warn(
+              { groupJid, exitCode, err },
+              'Failed to deliver agent-crash notice to channel',
+            ),
+          );
       }
       if (rollbackCursor) {
         const before = lastAgentTimestamp[groupJid];

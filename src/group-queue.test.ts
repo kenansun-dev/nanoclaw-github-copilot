@@ -486,7 +486,10 @@ describe('GroupQueue', () => {
 
   // --- Tests for #188/#189 process liveness + IPC queue ---
 
-  it('sendMessage rejects when process exitCode is not null', async () => {
+  it('sendMessage cleans up state and re-queues when process exitCode is not null', async () => {
+    // Updated 2026-04-21: previously this rejected silently and left the
+    // user wedged. Now it returns false (caller persists the message) and
+    // also clears dangling state so drainGroup can respawn for the next tick.
     vi.useRealTimers();
     const queue = new GroupQueue();
     queue.setProcessMessagesFn(async () => true);
@@ -503,6 +506,14 @@ describe('GroupQueue', () => {
     // Simulate process death
     state.process.exitCode = 1;
     expect(queue.sendMessage('group1@g.us', 'hello')).toBe(false);
+    // State should now be cleaned up: dead process reference is gone, and
+    // drainGroup has re-triggered runForGroup which set active=true again
+    // with a fresh slot ready for the new agent spawn.
+    expect(state.process).toBeNull();
+    // pendingMessages was set so drainGroup picks up; runForGroup may have
+    // already cleared it (depending on processMessagesFn synchrony) or left
+    // it for the next tick. Either way, the dangling dead-process state is
+    // gone, which is the actual fix.
   });
 
   it('drainGroup pipes messages to idle agent via processMessagesFn', async () => {
@@ -656,10 +667,15 @@ describe('GroupQueue', () => {
       expect(callback).toHaveBeenCalledWith(
         'group1@g.us',
         '2026-04-21T03:25:25.000Z',
+        143,
       );
     });
 
-    it('does NOT fire callback when process exits cleanly after producing output', async () => {
+    it('fires callback with null cursor + exit=0 when process exits cleanly after producing output', async () => {
+      // Updated 2026-04-21: callback now also fires for case3 (delivered-then-died)
+      // so dangling state gets cleaned and the next user message can respawn.
+      // hadInFlight=false here so rollback cursor is null; exitCode=0 means
+      // index.ts will skip the user-facing crash notice.
       const callback = vi.fn();
       queue.setOnProcessDiedWithoutOutput(callback);
 
@@ -672,9 +688,8 @@ describe('GroupQueue', () => {
       proc.exitCode = 0;
       proc.emit('exit');
 
-      // Callback should NOT fire — there were no in-flight piped messages
-      // when the process died (output already delivered, cursor cleared).
-      expect(callback).not.toHaveBeenCalled();
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledWith('group1@g.us', null, 0);
     });
 
     it('does NOT fire callback when process dies before any IPC pipe', async () => {
@@ -709,6 +724,7 @@ describe('GroupQueue', () => {
       expect(callback).toHaveBeenCalledWith(
         'group1@g.us',
         '2026-04-21T01:00:00Z',
+        143,
       );
     });
   });

@@ -7,7 +7,18 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { resolveWorkspace, ensureWorkspace } from '../workspace.js';
 
-export async function initWorkspace(projectRoot: string): Promise<void> {
+export async function initWorkspace(
+  projectRoot: string,
+  args: string[] = [],
+): Promise<void> {
+  // --sync / --no-prompt: skip the interactive setup wizard entirely.
+  // Used by `nanoclaw update` so a re-install doesn't re-prompt the user
+  // for Telegram/Teams/auth choices that were already made on first install.
+  const syncOnly =
+    args.includes('--sync') ||
+    args.includes('--no-prompt') ||
+    args.includes('--non-interactive');
+
   const ws = resolveWorkspace();
 
   const isUpdate = fs.existsSync(path.join(ws, 'nanoclaw.json'));
@@ -118,6 +129,44 @@ export async function initWorkspace(projectRoot: string): Promise<void> {
     console.log('Non-interactive mode detected. Skipping channel setup.');
     console.log('Edit nanoclaw.json to configure channels manually.');
     return;
+  }
+
+  // Explicit sync mode: caller (e.g. `nanoclaw update`) already has a
+  // configured workspace and doesn't want the wizard to re-ask Telegram /
+  // Teams / auth choices.
+  if (syncOnly) {
+    console.log('');
+    console.log('Sync mode — skipping interactive setup wizard.');
+    return;
+  }
+
+  // Defensive: if workspace already has channels configured, the wizard
+  // would just re-ask things the user already answered. Skip silently on
+  // re-runs (`isUpdate`) when at least one channel is already enabled.
+  if (isUpdate) {
+    try {
+      const cfgRaw = fs.readFileSync(path.join(ws, 'nanoclaw.json'), 'utf-8');
+      const cfg = JSON.parse(cfgRaw);
+      const channels = cfg?.channels || {};
+      const hasConfiguredChannel = Object.values(channels).some(
+        (c: any) => c && typeof c === 'object' && c.enabled === true,
+      );
+      if (hasConfiguredChannel) {
+        console.log('');
+        console.log(
+          'Workspace already configured — skipping channel setup wizard.',
+        );
+        console.log('Re-run with `nanoclaw init --force` to reconfigure.');
+        return;
+      }
+    } catch {
+      // Config unreadable — fall through to wizard so user can recover.
+    }
+  }
+
+  // Allow explicit opt-in to re-run the wizard even when channels exist.
+  if (args.includes('--force')) {
+    // no-op; just continue to the wizard below
   }
   const readline = await import('readline');
   const rl = readline.createInterface({

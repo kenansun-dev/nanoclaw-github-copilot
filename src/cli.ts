@@ -102,6 +102,16 @@ try {
     case 'logs':
       await runLogs(commandArgs);
       break;
+    case 'loglevel': {
+      const { runLogLevel } = await import('./cli/loglevel.js');
+      await runLogLevel(commandArgs);
+      break;
+    }
+    case 'reload': {
+      const { runReload } = await import('./cli/reload.js');
+      await runReload(commandArgs);
+      break;
+    }
     case 'config':
       await runConfig(commandArgs);
       break;
@@ -162,7 +172,7 @@ try {
 
 async function runInit(args: string[]) {
   const { initWorkspace } = await import('./cli/init.js');
-  await initWorkspace(PROJECT_ROOT);
+  await initWorkspace(PROJECT_ROOT, args);
 }
 
 async function runDoctor(_args: string[]) {
@@ -371,7 +381,7 @@ async function runService(action: string) {
         // Also kill any lingering agent child processes
         try {
           const { killAllAgentPids } = await import('./host-runner.js');
-          killAllAgentPids();
+          await killAllAgentPids();
         } catch {
           /* */
         }
@@ -379,14 +389,37 @@ async function runService(action: string) {
       }
       // PID fallback
       if (!existsSync(pidFile)) {
-        // Still try to kill agent children in case of stale state
+        // Daemon pidfile gone, but there may still be orphaned agent
+        // children whose root pid never got unregistered (e.g. if the
+        // daemon crashed instead of exiting cleanly). Kenan, 2026-04-21:
+        // 'nanoclaw stop' 就算检测到没在跑，也可以把相应的进程再 stop 一遍。
         try {
           const { killAllAgentPids } = await import('./host-runner.js');
-          killAllAgentPids();
+          await killAllAgentPids();
+        } catch (err: any) {
+          console.log(`[stop] killAllAgentPids failed: ${err?.message ?? err}`);
+        }
+        // Also try to kill devtunnel if we started it
+        try {
+          const dtPidFile = join(ws, 'devtunnel.pid');
+          if (existsSync(dtPidFile)) {
+            const dtPid = parseInt(fs.readFileSync(dtPidFile, 'utf-8').trim());
+            try {
+              killProcess(dtPid);
+              console.log(
+                `[stop] cleaned up orphaned devtunnel (pid: ${dtPid})`,
+              );
+            } catch {
+              /* already dead */
+            }
+            fs.unlinkSync(dtPidFile);
+          }
         } catch {
           /* */
         }
-        console.log('Not running');
+        console.log(
+          'Not running (attempted cleanup of any tracked child pids)',
+        );
         return;
       }
       const pid = fs.readFileSync(pidFile, 'utf-8').trim();
@@ -394,7 +427,7 @@ async function runService(action: string) {
       // Kill child agent processes first
       try {
         const { killAllAgentPids } = await import('./host-runner.js');
-        killAllAgentPids();
+        await killAllAgentPids();
       } catch {
         /* */
       }
@@ -1118,6 +1151,8 @@ Service
   dev                               Start in foreground (debug)
   status                            Show service + workspace status
   logs [-f]                         View logs
+  loglevel [<level>]                Show or change log level (live, no restart)
+  reload                            Ask running daemon to re-read nanoclaw.json
 
 Config
   config get [key]                  Show config
@@ -1285,6 +1320,29 @@ async function runMcp(args: string[]) {
         /* mcporter sync is best-effort */
       }
       console.log(`Added MCP server: ${name} (saved to nanoclaw.json)`);
+      // Ask running daemon to reload so the next agent turn sees the new
+      // server without requiring `nanoclaw restart`.
+      try {
+        const { signalReload } = await import('./daemon-signal.js');
+        const r = signalReload();
+        if (r.delivered) {
+          console.log(
+            r.method === 'trigger-file'
+              ? '  → reload trigger written; daemon will pick it up shortly.'
+              : '  → daemon reloaded (live, no restart needed).',
+          );
+        } else if (r.noDaemon) {
+          console.log(
+            '  → daemon not running; will be picked up on next start.',
+          );
+        } else {
+          console.log(
+            `  → reload signal failed (${r.error || 'unknown'}); run \`nanoclaw restart\` to apply.`,
+          );
+        }
+      } catch {
+        /* reload is best-effort */
+      }
       break;
     }
     case 'remove': {
@@ -1309,6 +1367,25 @@ async function runMcp(args: string[]) {
         /* best-effort */
       }
       console.log(`Removed MCP server: ${name} (saved to nanoclaw.json)`);
+      // Ask running daemon to reload so the removed server is dropped from
+      // the next agent turn's mcp.json.
+      try {
+        const { signalReload } = await import('./daemon-signal.js');
+        const r = signalReload();
+        if (r.delivered) {
+          console.log(
+            r.method === 'trigger-file'
+              ? '  → reload trigger written; daemon will pick it up shortly.'
+              : '  → daemon reloaded (live, no restart needed).',
+          );
+        } else if (r.noDaemon) {
+          console.log(
+            '  → daemon not running; will be picked up on next start.',
+          );
+        }
+      } catch {
+        /* reload is best-effort */
+      }
       break;
     }
     case 'daemon': {

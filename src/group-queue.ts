@@ -61,7 +61,11 @@ export class GroupQueue {
    * fire-and-forget at the IPC pipe site.
    */
   private onProcessDiedWithoutOutput:
-    | ((groupJid: string, rollbackTimestamp: string | null) => void)
+    | ((
+        groupJid: string,
+        rollbackTimestamp: string | null,
+        exitCode: number | null,
+      ) => void)
     | null = null;
 
   private getGroup(groupJid: string): GroupState {
@@ -99,7 +103,11 @@ export class GroupQueue {
    * in flight). See `inFlightCursorRollback` on `GroupState` for context.
    */
   setOnProcessDiedWithoutOutput(
-    fn: (groupJid: string, rollbackTimestamp: string | null) => void,
+    fn: (
+      groupJid: string,
+      rollbackTimestamp: string | null,
+      exitCode: number | null,
+    ) => void,
   ): void {
     this.onProcessDiedWithoutOutput = fn;
   }
@@ -202,18 +210,37 @@ export class GroupQueue {
       const isCase1 = state.active && state.idleWaiting;
       const isCase2 =
         state.active && state.pipedSinceOutput > 0 && !state.agentHasOutput;
-      if (isCase1 || isCase2) {
+      // Case 3 (added 2026-04-21 after kenan's silent-crash report): IPC-mode
+      // agent had already delivered output for this turn (agentHasOutput=true,
+      // idleWaiting=false because sendMessage cleared it on the most recent
+      // pipe), then died with non-zero code. Without this branch, runContainer's
+      // finally has long since returned (resolved at first query-complete), so
+      // state.active stays true and state.process keeps a dangling reference
+      // to the dead child. Next sendMessage then rejects with 'process already
+      // exited' — user sees radio silence forever. Symptom: kenan 08:04 sent
+      // gitignore request; agent exited code=1; bot replied nothing; later '?'
+      // also rejected. Fix: treat any active-and-not-cleaned-up exit as needing
+      // cleanup so the next message can respawn.
+      const isCase3 =
+        state.active && !state.idleWaiting && state.agentHasOutput;
+      if (isCase1 || isCase2 || isCase3) {
         const hadInFlight = state.pipedSinceOutput > 0 && !state.agentHasOutput;
         const rollbackCursor = state.inFlightCursorRollback;
+        const exitCode = (proc as any).exitCode;
+        const caseLabel = isCase2
+          ? 'piped-then-died'
+          : isCase3
+            ? 'delivered-then-died'
+            : 'idle-then-died';
         logger.info(
           {
             groupJid,
-            case: isCase2 ? 'piped-then-died' : 'idle-then-died',
+            case: caseLabel,
             inFlightCursorRollback: rollbackCursor,
             pipedSinceOutput: state.pipedSinceOutput,
             agentHasOutput: state.agentHasOutput,
             hadInFlight,
-            exitCode: (proc as any).exitCode,
+            exitCode,
           },
           'Active process exited, releasing state',
         );
@@ -251,13 +278,20 @@ export class GroupQueue {
         state.groupFolder = null;
         state.inFlightCursorRollback = null;
         this.activeCount--;
-        // Notify subscriber (index.ts) so it can rollback the cursor and
-        // clear the typing indicator that was set fire-and-forget at the
-        // IPC pipe site. Fire only when there were piped-but-unacked
-        // messages — healthy idle exits don't need a rollback.
-        if (hadInFlight && this.onProcessDiedWithoutOutput) {
+        // Notify subscriber (index.ts) so it can rollback the cursor (if
+        // there were piped-but-unacked messages), clear the typing
+        // indicator, and surface a non-zero exit to the user. We now fire
+        // unconditionally on case3 (delivered-then-died) too, because a
+        // non-zero exit there still means the next user message would
+        // otherwise see silence; index.ts decides whether to message based
+        // on exitCode.
+        if (this.onProcessDiedWithoutOutput && (hadInFlight || isCase3)) {
           try {
-            this.onProcessDiedWithoutOutput(groupJid, rollbackCursor);
+            this.onProcessDiedWithoutOutput(
+              groupJid,
+              hadInFlight ? rollbackCursor : null,
+              exitCode,
+            );
           } catch (err) {
             logger.warn(
               { groupJid, err },
@@ -309,12 +343,29 @@ export class GroupQueue {
       );
       return false;
     }
-    // Check process is actually alive — prevents piping to dead process's IPC dir
+    // Check process is actually alive — prevents piping to dead process's IPC dir.
+    // If the process has exited but state hasn't been cleaned up yet (race with
+    // proc.on('exit')), tear down the dangling state and queue this message as
+    // pending so drainGroup can respawn. Without this, a crashed agent leaves
+    // the user wedged: every subsequent message gets rejected and they see
+    // radio silence until 'nanoclaw restart'. (kenan, 2026-04-21)
     if (state.process && state.process.exitCode !== null) {
       logger.info(
         { groupJid, exitCode: state.process.exitCode },
-        'sendMessage: rejected (process already exited)',
+        'sendMessage: process already exited — cleaning up and re-queuing',
       );
+      const wasActive = state.active;
+      state.active = false;
+      state.idleWaiting = false;
+      state.process = null;
+      state.containerName = null;
+      state.groupFolder = null;
+      state.inFlightCursorRollback = null;
+      if (wasActive) this.activeCount--;
+      // Caller will persist this message to DB; we just signal pending and
+      // let drainGroup pick it up on the next tick.
+      state.pendingMessages = true;
+      this.drainGroup(groupJid);
       return false;
     }
     state.idleWaiting = false;

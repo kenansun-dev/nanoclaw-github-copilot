@@ -373,87 +373,29 @@ export class TeamsChannel implements Channel {
 
     // Handle FileConsentCard invoke (user accepted/declined file download)
     if (activity.type === 'invoke' && activity.name === 'fileConsent/invoke') {
-      const value = activity.value;
-      if (value?.action === 'decline') {
-        logger.info({ jid: chatJid }, 'Teams file consent declined by user');
-        return { status: 200 };
-      }
-      if (value?.action === 'accept' && value?.context?.filePath) {
-        const uploadUrl = value.uploadInfo?.uploadUrl;
-        const filePath = value.context.filePath;
-        if (!uploadUrl) {
-          logger.warn(
-            { jid: chatJid },
-            'Teams fileConsent accept without uploadUrl',
-          );
-          return { status: 200 };
-        }
-        try {
-          const fs = await import('fs');
-          const fileBuffer = fs.default.readFileSync(filePath);
-          const uploadRes = await fetch(uploadUrl, {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'application/octet-stream',
-              'Content-Range': `bytes 0-${fileBuffer.length - 1}/${fileBuffer.length}`,
-            },
-            body: fileBuffer,
-          });
-          if (uploadRes.ok) {
-            logger.info(
-              { jid: chatJid, file: value.context.filename },
-              'Teams file uploaded via FileConsent',
-            );
-            // Respond to the invoke first (so Teams un-pends the conversation),
-            // THEN send the file.info card asynchronously — fire-and-forget so
-            // we don't block the invoke response path.
-            setImmediate(() => {
-              const ref = this.conversationRefs.get(chatJid);
-              if (!ref) return;
-              this.adapter
-                .continueConversation(
-                  ref as ConversationReference,
-                  async (ctx: TurnContext) => {
-                    await ctx.sendActivity({
-                      attachments: [
-                        {
-                          contentType:
-                            'application/vnd.microsoft.teams.card.file.info',
-                          name:
-                            value.uploadInfo?.name || value.context.filename,
-                          content: {
-                            uniqueId: value.uploadInfo?.uniqueId,
-                            fileType:
-                              value.uploadInfo?.fileType ||
-                              value.context.filename?.split('.').pop(),
-                          },
-                        } as any,
-                      ],
-                    } as Partial<Activity>);
-                  },
-                )
-                .catch((err: any) =>
-                  logger.warn(
-                    { err: err.message },
-                    'Teams file.info card send failed',
-                  ),
-                );
-            });
-            return { status: 200 };
-          } else {
-            const errText = await uploadRes.text().catch(() => '');
-            logger.warn(
-              { status: uploadRes.status, errText },
-              'Teams file upload failed',
-            );
-            return { status: 502 };
-          }
-        } catch (err: any) {
-          logger.error({ err: err.message }, 'Teams FileConsent upload error');
-          return { status: 500 };
-        }
-      }
-      return { status: 200 };
+      return await this.handleFileConsentInvoke(activity, chatJid);
+    }
+
+    // Diagnostic log on every message activity. Helps debug missing-file
+    // reports: shows whether Teams forwarded any attachment metadata at all
+    // and what content types it sent. Cheap (one info-level line per inbound
+    // message). Added 2026-04-21 after kenan reported repo-list.json silent
+    // miss with no log trace.
+    if (activity.type === 'message') {
+      const attCount = activity.attachments?.length || 0;
+      const attTypes = (activity.attachments || []).map(
+        (a: any) => a.contentType,
+      );
+      logger.info(
+        {
+          chatJid,
+          textLen: (activity.text || '').length,
+          attCount,
+          attTypes,
+          textFormat: activity.textFormat,
+        },
+        'Teams message activity received',
+      );
     }
 
     // Handle file attachments (download to group workspace)
@@ -462,99 +404,7 @@ export class TeamsChannel implements Channel {
       activity.attachments &&
       activity.attachments.length > 0
     ) {
-      for (const att of activity.attachments) {
-        // Skip Adaptive Cards and other non-file attachments
-        if (
-          att.contentType === 'application/vnd.microsoft.card.adaptive' ||
-          att.contentType === 'application/vnd.microsoft.card.hero' ||
-          (!att.contentUrl && !att.content?.downloadUrl)
-        )
-          continue;
-
-        // Teams file attachments: real download URL is often
-        // att.content.downloadUrl (pre-authenticated SharePoint URL, no bearer).
-        // att.contentUrl is a non-authenticated reference. Prefer downloadUrl.
-        const isTeamsFileInfo =
-          att.contentType ===
-          'application/vnd.microsoft.teams.file.download.info';
-        const effectiveUrl = isTeamsFileInfo
-          ? att.content?.downloadUrl
-          : att.contentUrl;
-        if (!effectiveUrl) continue;
-
-        const fileName = (att.name || 'attachment')
-          .replace(/[\/\\:*?"<>|]/g, '_')
-          .replace(/\.\./g, '_');
-        const group = this.opts.registeredGroups()[chatJid];
-        if (group) {
-          try {
-            const fs = await import('fs');
-            const pathMod = await import('path');
-            const { resolveWorkspace } = await import('../workspace.js');
-            const uploadsDir = pathMod.default.join(
-              resolveWorkspace(),
-              'groups',
-              group.folder,
-              'uploads',
-            );
-            fs.default.mkdirSync(uploadsDir, { recursive: true });
-            const localPath = pathMod.default.join(uploadsDir, fileName);
-
-            // Teams attachments almost always require bot/graph auth to download.
-            // Real contentUrls are on sharepoint.com, 1drv.ms, graph.microsoft.com,
-            // skype.com, or botframework.com. Always try to attach a bearer token.
-            // Pre-authenticated SharePoint downloadUrls (isTeamsFileInfo) DON'T
-            // need a token and will actually fail if one is attached.
-            const headers: Record<string, string> = {};
-            if (!isTeamsFileInfo) {
-              try {
-                const token = await (
-                  this.adapter as any
-                ).credentialsFactory?.createCredentials?.();
-                if (token?.token) {
-                  headers['Authorization'] = `Bearer ${token.token}`;
-                }
-              } catch {
-                /* proceed without auth — will likely 401 for private files */
-              }
-            }
-            const res = await fetch(effectiveUrl, { headers });
-            if (res.ok) {
-              const buffer = Buffer.from(await res.arrayBuffer());
-              fs.default.writeFileSync(localPath, buffer);
-              logger.info(
-                { jid: chatJid, file: fileName, path: localPath },
-                'Teams file downloaded',
-              );
-              // Append file info to message content
-              const fileNote = `[Document: ${fileName}] (saved to ${localPath})`;
-              if (activity.text) {
-                activity.text += `\n${fileNote}`;
-              } else {
-                activity.text = fileNote;
-              }
-            } else {
-              logger.warn(
-                { jid: chatJid, file: fileName, status: res.status },
-                'Teams file download failed',
-              );
-              if (!activity.text) {
-                activity.text = `[Document: ${fileName}] (download failed)`;
-              }
-            }
-          } catch (err: any) {
-            logger.error(
-              { err, file: fileName },
-              'Failed to download Teams file',
-            );
-            if (!activity.text) {
-              activity.text = `[Document: ${fileName}]`;
-            }
-          }
-        } else if (!activity.text) {
-          activity.text = `[Document: ${fileName}]`;
-        }
-      }
+      await this.processIncomingAttachments(activity, chatJid);
     }
 
     if (activity.type !== 'message' || !activity.text) return;
@@ -651,10 +501,262 @@ export class TeamsChannel implements Channel {
     );
   }
 
+  /**
+   * Shared FileConsentCard invoke handler used by BOTH auth paths:
+   *   - handleIncomingRaw (raw/cert mode, direct HTTP response)
+   *   - handleIncoming    (BotFramework adapter mode, via InvokeResponse activity)
+   *
+   * Returns { status } — caller in raw mode writes it as JSON body; caller in
+   * adapter mode emits it as an InvokeResponse activity via context.sendActivity.
+   *
+   * History: before 2026-04-21 this logic lived only inside handleIncomingRaw,
+   * so the adapter path silently fell through on fileConsent/invoke and Teams
+   * received 501 Not Implemented ("something went wrong, please try again").
+   * Ported out to fix that. A test pins both wire paths.
+   */
+  private async handleFileConsentInvoke(
+    activity: any,
+    chatJid: string,
+  ): Promise<{ status: number }> {
+    const value = activity.value;
+    if (value?.action === 'decline') {
+      logger.info({ jid: chatJid }, 'Teams file consent declined by user');
+      return { status: 200 };
+    }
+    if (value?.action === 'accept' && value?.context?.filePath) {
+      const uploadUrl = value.uploadInfo?.uploadUrl;
+      const filePath = value.context.filePath;
+      if (!uploadUrl) {
+        logger.warn(
+          { jid: chatJid },
+          'Teams fileConsent accept without uploadUrl',
+        );
+        return { status: 200 };
+      }
+      try {
+        const fs = await import('fs');
+        const fileBuffer = fs.default.readFileSync(filePath);
+        const uploadRes = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'Content-Range': `bytes 0-${fileBuffer.length - 1}/${fileBuffer.length}`,
+          },
+          body: fileBuffer,
+        });
+        if (uploadRes.ok) {
+          logger.info(
+            { jid: chatJid, file: value.context.filename },
+            'Teams file uploaded via FileConsent',
+          );
+          // Respond to the invoke first (so Teams un-pends the conversation),
+          // THEN send the file.info card asynchronously — fire-and-forget so
+          // we don't block the invoke response path.
+          setImmediate(() => {
+            const ref = this.conversationRefs.get(chatJid);
+            if (!ref) return;
+            this.adapter
+              .continueConversation(
+                ref as ConversationReference,
+                async (ctx: TurnContext) => {
+                  await ctx.sendActivity({
+                    attachments: [
+                      {
+                        contentType:
+                          'application/vnd.microsoft.teams.card.file.info',
+                        name: value.uploadInfo?.name || value.context.filename,
+                        content: {
+                          uniqueId: value.uploadInfo?.uniqueId,
+                          fileType:
+                            value.uploadInfo?.fileType ||
+                            value.context.filename?.split('.').pop(),
+                        },
+                      } as any,
+                    ],
+                  } as Partial<Activity>);
+                },
+              )
+              .catch((err: any) =>
+                logger.warn(
+                  { err: err.message },
+                  'Teams file.info card send failed',
+                ),
+              );
+          });
+          return { status: 200 };
+        } else {
+          const errText = await uploadRes.text().catch(() => '');
+          logger.warn(
+            { status: uploadRes.status, errText },
+            'Teams file upload failed',
+          );
+          return { status: 502 };
+        }
+      } catch (err: any) {
+        logger.error({ err: err.message }, 'Teams FileConsent upload error');
+        return { status: 500 };
+      }
+    }
+    return { status: 200 };
+  }
+
+  /**
+   * Shared inbound attachment processor used by BOTH auth paths:
+   *   - handleIncomingRaw (raw/cert mode)
+   *   - handleIncoming    (adapter mode via BotFrameworkAdapter)
+   *
+   * Mutates `activity.text` in place to append a `[Document: ...]` note
+   * with local saved path so the agent can read the downloaded file.
+   *
+   * History: before 2026-04-21 this logic lived only inside handleIncomingRaw,
+   * so the adapter path silently dropped inbound file attachments — user
+   * drags a file into Teams → bot only sees text (often empty) → replies
+   * "I can't see attachments". Ported out to fix. Same split-brain pattern
+   * as fileConsent/invoke (both fixed in the same PR).
+   */
+  private async processIncomingAttachments(
+    activity: any,
+    chatJid: string,
+  ): Promise<void> {
+    for (const att of activity.attachments) {
+      // Skip Adaptive Cards and other non-file attachments
+      if (
+        att.contentType === 'application/vnd.microsoft.card.adaptive' ||
+        att.contentType === 'application/vnd.microsoft.card.hero' ||
+        (!att.contentUrl && !att.content?.downloadUrl)
+      ) {
+        logger.debug(
+          {
+            chatJid,
+            contentType: att.contentType,
+            hasContentUrl: !!att.contentUrl,
+            hasDownloadUrl: !!att.content?.downloadUrl,
+          },
+          'Teams attachment skipped (card or no download URL)',
+        );
+        continue;
+      }
+
+      // Teams file attachments: real download URL is often
+      // att.content.downloadUrl (pre-authenticated SharePoint URL, no bearer).
+      // att.contentUrl is a non-authenticated reference. Prefer downloadUrl.
+      const isTeamsFileInfo =
+        att.contentType ===
+        'application/vnd.microsoft.teams.file.download.info';
+      const effectiveUrl = isTeamsFileInfo
+        ? att.content?.downloadUrl
+        : att.contentUrl;
+      if (!effectiveUrl) continue;
+
+      const fileName = (att.name || 'attachment')
+        .replace(/[\/\\:*?"<>|]/g, '_')
+        .replace(/\.\./g, '_');
+      const group = this.opts.registeredGroups()[chatJid];
+      if (group) {
+        try {
+          const fs = await import('fs');
+          const pathMod = await import('path');
+          const { resolveWorkspace } = await import('../workspace.js');
+          const uploadsDir = pathMod.default.join(
+            resolveWorkspace(),
+            'groups',
+            group.folder,
+            'uploads',
+          );
+          fs.default.mkdirSync(uploadsDir, { recursive: true });
+          const localPath = pathMod.default.join(uploadsDir, fileName);
+
+          // Teams attachments almost always require bot/graph auth to download.
+          // Real contentUrls are on sharepoint.com, 1drv.ms, graph.microsoft.com,
+          // skype.com, or botframework.com. Always try to attach a bearer token.
+          // Pre-authenticated SharePoint downloadUrls (isTeamsFileInfo) DON'T
+          // need a token and will actually fail if one is attached.
+          const headers: Record<string, string> = {};
+          if (!isTeamsFileInfo) {
+            try {
+              const token = await (
+                this.adapter as any
+              ).credentialsFactory?.createCredentials?.();
+              if (token?.token) {
+                headers['Authorization'] = `Bearer ${token.token}`;
+              }
+            } catch {
+              /* proceed without auth — will likely 401 for private files */
+            }
+          }
+          const res = await fetch(effectiveUrl, { headers });
+          if (res.ok) {
+            const buffer = Buffer.from(await res.arrayBuffer());
+            fs.default.writeFileSync(localPath, buffer);
+            logger.info(
+              { jid: chatJid, file: fileName, path: localPath },
+              'Teams file downloaded',
+            );
+            // Append file info to message content
+            const fileNote = `[Document: ${fileName}] (saved to ${localPath})`;
+            if (activity.text) {
+              activity.text += `\n${fileNote}`;
+            } else {
+              activity.text = fileNote;
+            }
+          } else {
+            logger.warn(
+              { jid: chatJid, file: fileName, status: res.status },
+              'Teams file download failed',
+            );
+            // Surface failure to agent so it can apologize / ask user to retry
+            // (instead of silently dropping → agent hallucinates "I can't see files").
+            const failNote = `[Document: ${fileName}] (download failed: HTTP ${res.status})`;
+            if (activity.text) {
+              activity.text += `\n${failNote}`;
+            } else {
+              activity.text = failNote;
+            }
+          }
+        } catch (err: any) {
+          logger.error(
+            { err, file: fileName },
+            'Failed to download Teams file',
+          );
+          // Surface error too — agent needs to know a file came in even if we
+          // couldn't persist it.
+          const errNote = `[Document: ${fileName}] (download error)`;
+          if (activity.text) {
+            activity.text += `\n${errNote}`;
+          } else {
+            activity.text = errNote;
+          }
+        }
+      } else if (!activity.text) {
+        // No registered group — still surface the fact that a file came in.
+        activity.text = `[Document: ${fileName}]`;
+      } else {
+        // Group unregistered but text present — append file note so agent sees it.
+        activity.text += `\n[Document: ${fileName}]`;
+      }
+    }
+  }
+
   private async handleIncoming(context: TurnContext): Promise<void> {
     const activity = context.activity;
     const conversationId = activity.conversation?.id || '';
     const chatJid = `teams:${conversationId}`;
+
+    // Handle FileConsentCard invoke BEFORE the messageReaction / message gates
+    // below. When a user clicks Allow/Decline on a file consent card, Teams
+    // sends activity.type === 'invoke' with name === 'fileConsent/invoke'. The
+    // BotFramework adapter expects the handler to emit an InvokeResponse
+    // activity (otherwise it returns 501 to Teams → user sees "something went
+    // wrong"). Ported from handleIncomingRaw 2026-04-21 (root cause of kenan's
+    // 501 repro).
+    if (activity.type === 'invoke' && activity.name === 'fileConsent/invoke') {
+      const result = await this.handleFileConsentInvoke(activity, chatJid);
+      await context.sendActivity({
+        type: 'invokeResponse',
+        value: { status: result.status },
+      } as any);
+      return;
+    }
 
     // Handle reaction events
     if (activity.type === 'messageReaction') {
@@ -683,6 +785,25 @@ export class TeamsChannel implements Channel {
     if (activity.type === 'message' && !activity.text && activity.value) {
       if (!(await this.resolveCardSubmit(activity))) return;
     }
+
+    // Process incoming file attachments BEFORE the text gate below. Teams
+    // sends file drops as activity.attachments[] with contentType
+    // 'application/vnd.microsoft.teams.file.download.info'. If we don't
+    // handle them, attachments are silently dropped and when there's no
+    // accompanying text, the whole activity gets filtered by the gate —
+    // agent sees nothing, user sees "I can't see attachments" hallucination.
+    // processIncomingAttachments mutates activity.text in place with a
+    // [Document: name] note so even text-less file drops survive the gate.
+    // Ported from handleIncomingRaw 2026-04-21 (second half of the same
+    // split-brain bug as fileConsent/invoke).
+    if (
+      activity.type === 'message' &&
+      activity.attachments &&
+      activity.attachments.length > 0
+    ) {
+      await this.processIncomingAttachments(activity, chatJid);
+    }
+
     if (activity.type !== 'message' || !activity.text) return;
 
     // Store conversation reference for proactive messaging later
