@@ -102,6 +102,11 @@ try {
     case 'logs':
       await runLogs(commandArgs);
       break;
+    case 'loglevel': {
+      const { runLogLevel } = await import('./cli/loglevel.js');
+      await runLogLevel(commandArgs);
+      break;
+    }
     case 'config':
       await runConfig(commandArgs);
       break;
@@ -1118,6 +1123,7 @@ Service
   dev                               Start in foreground (debug)
   status                            Show service + workspace status
   logs [-f]                         View logs
+  loglevel [<level>]                Show or change log level (live, no restart)
 
 Config
   config get [key]                  Show config

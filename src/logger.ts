@@ -25,8 +25,76 @@ const MSG_COLOR = '\x1b[36m';
 const RESET = '\x1b[39m';
 const FULL_RESET = '\x1b[0m';
 
-const threshold =
-  LEVELS[(process.env.LOG_LEVEL as Level) || 'info'] ?? LEVELS.info;
+const VALID_LEVELS: readonly Level[] = [
+  'debug',
+  'info',
+  'warn',
+  'error',
+  'fatal',
+] as const;
+
+function parseLevel(value: string | undefined | null): Level | undefined {
+  if (!value) return undefined;
+  const normalized = value.trim().toLowerCase() as Level;
+  return VALID_LEVELS.includes(normalized) ? normalized : undefined;
+}
+
+// Mutable threshold so it can be changed at runtime (see setLogLevel).
+// Initial value: env LOG_LEVEL takes priority, else 'info'.
+// On startup, applyConfigLogLevel() may bump it to config.logLevel when
+// env LOG_LEVEL is unset (env always wins as a manual override).
+let currentLevel: Level = parseLevel(process.env.LOG_LEVEL) ?? 'info';
+let envLevelLocked = parseLevel(process.env.LOG_LEVEL) !== undefined;
+
+function threshold(): number {
+  return LEVELS[currentLevel];
+}
+
+/** Returns the currently active log level. */
+export function getLogLevel(): Level {
+  return currentLevel;
+}
+
+/** Returns the list of valid log level names. */
+export function getValidLevels(): readonly Level[] {
+  return VALID_LEVELS;
+}
+
+/**
+ * Change the log level at runtime. Intended for the `nanoclaw loglevel`
+ * CLI / SIGUSR2 reload path. Returns the level that was applied (which
+ * may differ from the requested value if env LOG_LEVEL is locked).
+ */
+export function setLogLevel(
+  level: string,
+  opts: { force?: boolean } = {},
+): { applied: Level; locked: boolean } {
+  const parsed = parseLevel(level);
+  if (!parsed) {
+    throw new Error(
+      `Invalid log level: ${level}. Valid: ${VALID_LEVELS.join(', ')}`,
+    );
+  }
+  // env LOG_LEVEL is treated as a manual override; don't let config or
+  // runtime calls silently undo it unless caller explicitly forces.
+  if (envLevelLocked && !opts.force) {
+    return { applied: currentLevel, locked: true };
+  }
+  if (opts.force) envLevelLocked = false;
+  currentLevel = parsed;
+  return { applied: parsed, locked: false };
+}
+
+/**
+ * Apply config.logLevel at startup. No-op if env LOG_LEVEL is set
+ * (env wins as manual override) or if config value is invalid/missing.
+ * Safe to call multiple times (e.g. on reloadConfig).
+ */
+export function applyConfigLogLevel(configLevel: string | undefined): void {
+  if (envLevelLocked) return;
+  const parsed = parseLevel(configLevel);
+  if (parsed) currentLevel = parsed;
+}
 
 const stdoutIsTTY = process.stdout.isTTY === true;
 const stderrIsTTY = process.stderr.isTTY === true;
@@ -174,7 +242,7 @@ function log(
   dataOrMsg: Record<string, unknown> | string,
   msg?: string,
 ): void {
-  if (LEVELS[level] < threshold) return;
+  if (LEVELS[level] < threshold()) return;
 
   const timestamp = ts();
   const levelTag = level.toUpperCase();

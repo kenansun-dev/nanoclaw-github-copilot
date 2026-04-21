@@ -1068,6 +1068,25 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
 
+  // Apply config.logLevel as early as possible so subsequent startup logs
+  // reflect the user's preferred verbosity. env LOG_LEVEL still wins inside
+  // applyConfigLogLevel (it's locked in logger.ts at module init).
+  try {
+    const { loadConfig: lc } = await import('./config-loader.js');
+    const { applyConfigLogLevel, getLogLevel } = await import('./logger.js');
+    const cfg = lc();
+    applyConfigLogLevel(cfg.logLevel);
+    logger.info(
+      {
+        level: getLogLevel(),
+        source: process.env.LOG_LEVEL ? 'env' : 'config',
+      },
+      'Log level initialized',
+    );
+  } catch (err) {
+    logger.warn({ err }, 'Failed to apply config.logLevel at startup');
+  }
+
   // Clear stale agent PIDs from previous run
   try {
     const { clearAgentPids } = await import('./host-runner.js');
@@ -1107,6 +1126,28 @@ async function main(): Promise<void> {
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+
+  // SIGUSR2: re-read config and re-apply log level. Used by
+  // `nanoclaw loglevel <level>` for live updates without restart.
+  process.on('SIGUSR2', async () => {
+    try {
+      const { reloadConfig, getConfig } = await import('./config.js');
+      const { applyConfigLogLevel, setLogLevel, getLogLevel } =
+        await import('./logger.js');
+      reloadConfig();
+      const newLevel = getConfig().logLevel;
+      // force=true so this overrides env-locked threshold (the user explicitly
+      // asked via CLI, treat as a fresh manual override).
+      if (newLevel) {
+        setLogLevel(newLevel, { force: true });
+      } else {
+        applyConfigLogLevel(newLevel);
+      }
+      logger.info({ level: getLogLevel() }, 'Log level reloaded via SIGUSR2');
+    } catch (err) {
+      logger.error({ err }, 'SIGUSR2 log-level reload failed');
+    }
+  });
 
   // Handle /remote-control and /remote-control-end commands
   async function handleRemoteControl(
