@@ -312,7 +312,10 @@ export function runDoctor(): CheckResult[] {
     let isGroupByJid: Record<string, boolean | undefined> = {};
     try {
       const { getAllChats } = require('./db.js');
-      const allChats = getAllChats() as Array<{ jid: string; is_group?: number | null }>;
+      const allChats = getAllChats() as Array<{
+        jid: string;
+        is_group?: number | null;
+      }>;
       for (const c of allChats) {
         isGroupByJid[c.jid] =
           c.is_group === null || c.is_group === undefined

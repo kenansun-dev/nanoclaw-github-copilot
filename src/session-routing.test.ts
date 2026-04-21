@@ -63,11 +63,7 @@ describe('collapseMainDmFolder', () => {
       { agentId: 'beta' },
       false,
     );
-    const def = collapseMainDmFolder(
-      group('main-tg-ccc'),
-      undefined,
-      false,
-    );
+    const def = collapseMainDmFolder(group('main-tg-ccc'), undefined, false);
     expect(atlas).toBe('main-atlas');
     expect(beta).toBe('main-beta');
     expect(def).toBe('main');
