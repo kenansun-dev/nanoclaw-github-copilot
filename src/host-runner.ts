@@ -79,24 +79,59 @@ export function unregisterAgentPid(pid: number): void {
 export function killAllAgentPids(): void {
   try {
     const file = agentPidsFile();
-    if (!fs.existsSync(file)) return;
+    if (!fs.existsSync(file)) {
+      logger.debug('killAllAgentPids: no agent-pids.json, nothing to kill');
+      return;
+    }
     const pids: number[] = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    if (pids.length === 0) {
+      logger.debug('killAllAgentPids: agent-pids.json empty');
+      fs.unlinkSync(file);
+      return;
+    }
+    logger.info({ pids, platform: process.platform }, `killAllAgentPids: attempting to kill ${pids.length} tracked agent pid(s)`);
     for (const pid of pids) {
-      try {
-        // Verify process still exists before killing
-        process.kill(pid, 0);
-        if (process.platform === 'win32') {
+      if (process.platform === 'win32') {
+        // Windows: ALWAYS run taskkill /F /T unconditionally. /T walks the
+        // process tree, so even if the root (this pid) is already a zombie,
+        // live grandchildren (tsx, node, docker, mcp subprocesses) get reaped.
+        // Previously we gated on `process.kill(pid, 0)` which is unreliable
+        // on Windows (can return true for zombies AND false for legit-dead-
+        // but-children-alive). Kenan hit EBUSY on npm install because of
+        // orphaned grandchildren holding container/agent-runner-ghc handles.
+        // 2026-04-21.
+        try {
           execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'pipe' });
-        } else {
-          process.kill(pid, 'SIGTERM');
+          logger.info({ pid }, 'taskkill /F /T succeeded (tree killed)');
+        } catch (err: any) {
+          // Exit code 128 = process not found; treat as success.
+          const msg = err?.stderr?.toString?.() ?? String(err);
+          if (/not found|不存在|找不到/i.test(msg)) {
+            logger.debug({ pid }, 'taskkill: process already gone');
+          } else {
+            logger.warn({ pid, err: msg }, 'taskkill /F /T failed');
+          }
         }
-      } catch {
-        /* already dead or doesn't exist */
+      } else {
+        // POSIX: try process-group kill first (negative pid), then fall back
+        // to single-pid. Process-group kill reaches detached grandchildren
+        // spawned with setsid/detached:true.
+        try {
+          process.kill(-pid, 'SIGTERM');
+          logger.info({ pid }, 'SIGTERM sent to process group');
+        } catch {
+          try {
+            process.kill(pid, 'SIGTERM');
+            logger.debug({ pid }, 'SIGTERM sent to pid (no pgroup)');
+          } catch {
+            logger.debug({ pid }, 'process already dead');
+          }
+        }
       }
     }
     fs.unlinkSync(file);
-  } catch {
-    /* best effort */
+  } catch (err: any) {
+    logger.warn({ err: err?.message ?? String(err) }, 'killAllAgentPids: unexpected error');
   }
 }
 
@@ -436,8 +471,24 @@ export async function runHostAgent(
 
   onProcess(child, processName);
 
-  // Track child PID for clean shutdown
-  if (child.pid) registerAgentPid(child.pid);
+  // Track child PID for clean shutdown.
+  // Also log pid + ppid + cmd prominently so ops can grep the log and find
+  // the actual process tree root (process name on Windows is just 'node',
+  // which is useless for identification). Kenan, 2026-04-21.
+  if (child.pid) {
+    registerAgentPid(child.pid);
+    logger.info(
+      {
+        group: group.name,
+        processName,
+        pid: child.pid,
+        ppid: process.pid,
+        cmd,
+        platform: process.platform,
+      },
+      `Host agent spawned (pid=${child.pid}, ppid=${process.pid}) — use 'taskkill /F /T /PID ${child.pid}' on Windows or 'kill -- -${child.pid}' on POSIX to force-kill the whole tree`,
+    );
+  }
 
   return new Promise<ContainerOutput>((resolve) => {
     let stdout = '';
@@ -675,7 +726,13 @@ export async function runHostAgent(
         if (code !== 0 && stderr.trim()) {
           const tail = stderr.trim().split('\n').slice(-50).join('\n');
           logger.error(
-            { group: group.name, processName, code, duration, stderrTail: tail },
+            {
+              group: group.name,
+              processName,
+              code,
+              duration,
+              stderrTail: tail,
+            },
             'Host agent process exited non-zero AFTER delivering output (stderr tail captured)',
           );
         } else {

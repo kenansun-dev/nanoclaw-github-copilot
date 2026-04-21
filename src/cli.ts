@@ -389,14 +389,33 @@ async function runService(action: string) {
       }
       // PID fallback
       if (!existsSync(pidFile)) {
-        // Still try to kill agent children in case of stale state
+        // Daemon pidfile gone, but there may still be orphaned agent
+        // children whose root pid never got unregistered (e.g. if the
+        // daemon crashed instead of exiting cleanly). Kenan, 2026-04-21:
+        // 'nanoclaw stop' 就算检测到没在跑，也可以把相应的进程再 stop 一遍。
         try {
           const { killAllAgentPids } = await import('./host-runner.js');
           killAllAgentPids();
+        } catch (err: any) {
+          console.log(`[stop] killAllAgentPids failed: ${err?.message ?? err}`);
+        }
+        // Also try to kill devtunnel if we started it
+        try {
+          const dtPidFile = join(ws, 'devtunnel.pid');
+          if (existsSync(dtPidFile)) {
+            const dtPid = parseInt(fs.readFileSync(dtPidFile, 'utf-8').trim());
+            try {
+              killProcess(dtPid);
+              console.log(`[stop] cleaned up orphaned devtunnel (pid: ${dtPid})`);
+            } catch {
+              /* already dead */
+            }
+            fs.unlinkSync(dtPidFile);
+          }
         } catch {
           /* */
         }
-        console.log('Not running');
+        console.log('Not running (attempted cleanup of any tracked child pids)');
         return;
       }
       const pid = fs.readFileSync(pidFile, 'utf-8').trim();
