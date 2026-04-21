@@ -23,11 +23,18 @@ import { ASSISTANT_NAME } from '../config.js';
 import { logger } from '../logger.js';
 import { loadConfig } from '../config-loader.js';
 import { resolveWorkspace } from '../workspace.js';
+import { deriveGroupFolder } from '../chat-manager.js';
 // registerGroup callback is provided via ChannelOpts
 import { registerChannel, ChannelOpts } from './registry.js';
 import { Channel, NewMessage } from '../types.js';
 
 const TUI_JID_PREFIX = 'tui:';
+// Single stable jid shared by every TUI connection. Each `nanoclaw tui`
+// session attaches to the same registered chat instead of creating a new
+// `tui:1`, `tui:2`, ... entry that pollutes nanoclaw.json + status/doctor.
+// All TUI clients share the same isMain DM session via the share-main
+// collapse rule (see src/session-routing.ts).
+const TUI_JID = `${TUI_JID_PREFIX}default`;
 const SOCK_NAME =
   process.platform === 'win32' ? '\\\\.\\pipe\\nanoclaw-tui' : 'tui.sock';
 
@@ -85,41 +92,45 @@ export class TuiChannel implements Channel {
 
   private handleConnection(socket: net.Socket): void {
     const clientId = String(this.nextClientId++);
-    const jid = `${TUI_JID_PREFIX}${clientId}`;
+    // Every TUI client attaches to the same stable jid so we don't
+    // proliferate tui:1, tui:2, ... entries in nanoclaw.json/db on each
+    // connect. clientId is kept locally for log correlation only.
+    const jid = TUI_JID;
     const client: TuiClient = { id: clientId, socket, buffer: '' };
     this.clients.set(clientId, client);
 
-    logger.info({ clientId }, 'TUI client connected');
+    logger.info({ clientId, jid }, 'TUI client connected');
 
-    // Auto-register TUI group so messages get routed
+    // Auto-register the TUI group on the FIRST connect ever (or first
+    // connect after this process started). Idempotent: already-present
+    // jid skips registration. isMain=true so the share-main collapse
+    // rule routes it onto the canonical 'main' (or 'main-<agent>') folder.
     const config = loadConfig();
     const assistantName = config.agents?.defaults?.name || ASSISTANT_NAME;
 
     const existingGroups = this.opts.registeredGroups();
     if (!existingGroups[jid] && this.opts.registerGroup) {
-      // Only the first TUI client is main; subsequent ones are not
-      const hasMainTui = Object.entries(existingGroups).some(
-        ([k, g]) => k.startsWith(TUI_JID_PREFIX) && g.isMain,
-      );
+      const folder = deriveGroupFolder(jid, { isMain: true });
       const tuiGroup = {
-        name: `tui-${clientId}`,
-        folder: `tui-${clientId}`,
+        name: 'tui',
+        folder,
         isMain: true,
         trigger: '',
         added_at: new Date().toISOString(),
       };
       this.opts.registerGroup(jid, tuiGroup);
       logger.info(
-        { jid, group: tuiGroup.name, isMain: tuiGroup.isMain },
-        'Auto-registered TUI group',
+        { jid, folder, isMain: true },
+        'Auto-registered TUI group (single shared entry)',
       );
     }
 
-    // Notify chat metadata
+    // Notify chat metadata. isGroup=false so the share-main collapse
+    // rule treats this as a DM and merges it onto the canonical session.
     this.opts.onChatMetadata(
       jid,
       new Date().toISOString(),
-      `tui-${clientId}`,
+      'tui',
       'tui',
       false,
     );
@@ -196,10 +207,12 @@ export class TuiChannel implements Channel {
   }
 
   async sendMessage(jid: string, text: string): Promise<string | void> {
-    const client = this.getClientByJid(jid);
-    if (!client) return;
+    const clients = this.getClientsForJid(jid);
+    if (clients.length === 0) return;
     const messageId = `tui-msg-${Date.now()}`;
-    this.sendJson(client.socket, { type: 'reply', text, messageId });
+    for (const client of clients) {
+      this.sendJson(client.socket, { type: 'reply', text, messageId });
+    }
     return messageId;
   }
 
@@ -208,22 +221,25 @@ export class TuiChannel implements Channel {
     messageId: string,
     text: string,
   ): Promise<string | void> {
-    const client = this.getClientByJid(jid);
-    if (!client) return;
+    const clients = this.getClientsForJid(jid);
+    if (clients.length === 0) return;
     // Distinguish streaming partial (still accumulating, has ◌ marker)
     // from final edit (replacing progressive message with final content).
     // Final edits should emit as 'reply' so TUI renders a complete line
     // with trailing newlines, not as an in-place overwrite.
     const isStreaming = text.includes('◌');
     const type = isStreaming ? 'partial' : 'reply';
-    this.sendJson(client.socket, { type, text, messageId });
+    for (const client of clients) {
+      this.sendJson(client.socket, { type, text, messageId });
+    }
     return messageId;
   }
 
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
-    const client = this.getClientByJid(jid);
-    if (!client) return;
-    this.sendJson(client.socket, { type: 'typing', isTyping });
+    const clients = this.getClientsForJid(jid);
+    for (const client of clients) {
+      this.sendJson(client.socket, { type: 'typing', isTyping });
+    }
   }
 
   isConnected(): boolean {
@@ -256,9 +272,17 @@ export class TuiChannel implements Channel {
     }
   }
 
+  private getClientsForJid(jid: string): TuiClient[] {
+    // All TUI clients share the canonical jid. Broadcast outbound
+    // messages to every attached client so multiple `nanoclaw tui`
+    // sessions can observe the same conversation.
+    if (jid !== TUI_JID) return [];
+    return Array.from(this.clients.values());
+  }
+
+  /** Legacy single-client lookup, kept for callers outside the broadcast path. */
   private getClientByJid(jid: string): TuiClient | undefined {
-    const clientId = jid.replace(TUI_JID_PREFIX, '');
-    return this.clients.get(clientId);
+    return this.getClientsForJid(jid)[0];
   }
 
   private sendJson(socket: net.Socket, obj: object): void {

@@ -95,7 +95,9 @@ function resolveCollapsedFolder(
  */
 function resolveCollapsedFolderBatch(
   group: RegisteredGroup & { jid: string },
-  chatsConfig: Record<string, { agentId?: string; isMain?: boolean }> | undefined,
+  chatsConfig:
+    | Record<string, { agentId?: string; isMain?: boolean }>
+    | undefined,
   isGroupMap: Map<string, boolean | undefined>,
 ): string {
   if (!group.isMain) return group.folder;
