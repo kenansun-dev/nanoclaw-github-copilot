@@ -381,7 +381,7 @@ async function runService(action: string) {
         // Also kill any lingering agent child processes
         try {
           const { killAllAgentPids } = await import('./host-runner.js');
-          killAllAgentPids();
+          await killAllAgentPids();
         } catch {
           /* */
         }
@@ -395,7 +395,7 @@ async function runService(action: string) {
         // 'nanoclaw stop' 就算检测到没在跑，也可以把相应的进程再 stop 一遍。
         try {
           const { killAllAgentPids } = await import('./host-runner.js');
-          killAllAgentPids();
+          await killAllAgentPids();
         } catch (err: any) {
           console.log(`[stop] killAllAgentPids failed: ${err?.message ?? err}`);
         }
@@ -406,7 +406,9 @@ async function runService(action: string) {
             const dtPid = parseInt(fs.readFileSync(dtPidFile, 'utf-8').trim());
             try {
               killProcess(dtPid);
-              console.log(`[stop] cleaned up orphaned devtunnel (pid: ${dtPid})`);
+              console.log(
+                `[stop] cleaned up orphaned devtunnel (pid: ${dtPid})`,
+              );
             } catch {
               /* already dead */
             }
@@ -415,7 +417,9 @@ async function runService(action: string) {
         } catch {
           /* */
         }
-        console.log('Not running (attempted cleanup of any tracked child pids)');
+        console.log(
+          'Not running (attempted cleanup of any tracked child pids)',
+        );
         return;
       }
       const pid = fs.readFileSync(pidFile, 'utf-8').trim();
@@ -423,7 +427,7 @@ async function runService(action: string) {
       // Kill child agent processes first
       try {
         const { killAllAgentPids } = await import('./host-runner.js');
-        killAllAgentPids();
+        await killAllAgentPids();
       } catch {
         /* */
       }

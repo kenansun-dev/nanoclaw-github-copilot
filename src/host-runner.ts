@@ -76,7 +76,7 @@ export function unregisterAgentPid(pid: number): void {
   }
 }
 
-export function killAllAgentPids(): void {
+export async function killAllAgentPids(): Promise<void> {
   try {
     const file = agentPidsFile();
     if (!fs.existsSync(file)) {
@@ -89,7 +89,10 @@ export function killAllAgentPids(): void {
       fs.unlinkSync(file);
       return;
     }
-    logger.info({ pids, platform: process.platform }, `killAllAgentPids: attempting to kill ${pids.length} tracked agent pid(s)`);
+    logger.info(
+      { pids, platform: process.platform },
+      `killAllAgentPids: attempting to kill ${pids.length} tracked agent pid(s)`,
+    );
     for (const pid of pids) {
       if (process.platform === 'win32') {
         // Windows: ALWAYS run taskkill /F /T unconditionally. /T walks the
@@ -116,22 +119,60 @@ export function killAllAgentPids(): void {
         // POSIX: try process-group kill first (negative pid), then fall back
         // to single-pid. Process-group kill reaches detached grandchildren
         // spawned with setsid/detached:true.
+        // Escalate to SIGKILL after 2s if anything in the group is still
+        // alive — a misbehaving agent with a SIGTERM handler that refuses
+        // to exit would otherwise hang stop forever. Rpi5 nit 2026-04-21.
+        let pgroupOk = false;
         try {
           process.kill(-pid, 'SIGTERM');
           logger.info({ pid }, 'SIGTERM sent to process group');
+          pgroupOk = true;
         } catch {
           try {
             process.kill(pid, 'SIGTERM');
             logger.debug({ pid }, 'SIGTERM sent to pid (no pgroup)');
           } catch {
             logger.debug({ pid }, 'process already dead');
+            continue;
+          }
+        }
+        // Poll up to 2s for clean exit, then SIGKILL the pgroup.
+        const deadline = Date.now() + 2000;
+        let stillAlive = true;
+        while (Date.now() < deadline) {
+          try {
+            process.kill(pid, 0);
+          } catch {
+            stillAlive = false;
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        if (stillAlive) {
+          try {
+            process.kill(pid, 0);
+            try {
+              if (pgroupOk) process.kill(-pid, 'SIGKILL');
+              else process.kill(pid, 'SIGKILL');
+              logger.warn(
+                { pid },
+                'SIGTERM did not take effect after 2s — sent SIGKILL',
+              );
+            } catch {
+              /* died during escalation */
+            }
+          } catch {
+            /* died cleanly from SIGTERM */
           }
         }
       }
     }
     fs.unlinkSync(file);
   } catch (err: any) {
-    logger.warn({ err: err?.message ?? String(err) }, 'killAllAgentPids: unexpected error');
+    logger.warn(
+      { err: err?.message ?? String(err) },
+      'killAllAgentPids: unexpected error',
+    );
   }
 }
 
