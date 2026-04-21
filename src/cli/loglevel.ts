@@ -66,7 +66,7 @@ export async function runLogLevel(args: string[]): Promise<void> {
     console.log(`Configured (nanoclaw.json): ${configLevel}`);
     if (envLevel) {
       console.log(
-        `Environment LOG_LEVEL:      ${envLevel}  ⚠️  env wins; live override needs --force`,
+        `Environment LOG_LEVEL:      ${envLevel}  ⚠️  env LOG_LEVEL is set on daemon; \`loglevel <x>\` will override on next SIGUSR2`,
       );
     }
     console.log(
