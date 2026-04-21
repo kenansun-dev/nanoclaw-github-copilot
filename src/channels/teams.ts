@@ -47,6 +47,12 @@ export interface TeamsChannelOpts {
 
 export class TeamsChannel implements Channel {
   name = 'teams';
+  // Teams updateActivity overwrites the existing message in-place with no
+  // visible "edited" affordance, so when the agent emits multiple final
+  // outputs in a single turn (text → tool call → more text), reusing
+  // editMessage silently destroys earlier replies. Always send new
+  // messages for separate finals; progressive partials still use editMessage.
+  prefersNewMessageForFinal = true;
 
   private adapter: BotFrameworkAdapter;
   private adapterSettings: Record<string, any> = {};

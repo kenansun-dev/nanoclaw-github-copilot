@@ -409,8 +409,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (progressiveMsgId && channel.editMessage) {
           // Replace the progressive message with final content
           await channel.editMessage(chatJid, progressiveMsgId, text, sendOpts);
-        } else if (outputSentToUser && lastFinalMsgId && channel.editMessage) {
-          // Multiple final outputs (e.g. tool call → new response): edit the last message
+        } else if (
+          outputSentToUser &&
+          lastFinalMsgId &&
+          channel.editMessage &&
+          !channel.prefersNewMessageForFinal
+        ) {
+          // Multiple final outputs (e.g. tool call → new response): edit the
+          // last message on channels where in-place edits feel natural
+          // (Telegram). Channels with prefersNewMessageForFinal (Teams)
+          // skip this branch and send a new message instead, otherwise
+          // each subsequent final silently overwrites the previous one.
           await channel.editMessage(chatJid, lastFinalMsgId, text, sendOpts);
         } else {
           const msgId = await channel.sendMessage(chatJid, text, sendOpts);

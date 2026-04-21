@@ -103,6 +103,18 @@ export interface Channel {
     text: string,
     options?: { parseMode?: 'HTML' | 'Markdown' },
   ): Promise<string | void>;
+  /**
+   * When true, multiple final outputs in a single agent turn (e.g.
+   * text → tool call → more text) are delivered as separate new messages
+   * instead of editing the previous final message. Channels where in-place
+   * edits feel natural (Telegram) leave this false; channels where edits
+   * silently overwrite history (Teams) should set this true so each agent
+   * reply stays visible.
+   *
+   * This does NOT affect progressive streaming partials — those still
+   * accumulate via editMessage on the same in-flight message.
+   */
+  prefersNewMessageForFinal?: boolean;
   reactToMessage?(
     jid: string,
     emoji: string,
