@@ -70,32 +70,41 @@ export function chatsCheck(
 /**
  * Pure decision logic for the "Main chat singleton" check.
  *
- * Multiple chats marked isMain:true all mount to the same `main/` folder
- * (chat-manager.ts:29 `if (chatConfig?.isMain) return 'main'`). The v3→v4
- * migration auto-dedupes on upgrade, but a hand-edited nanoclaw.json could
- * still introduce duplicates after the loader runs in non-throwing modes.
- * This check surfaces it as a doctor error with concrete remediation.
+ * Multiple chats marked isMain DMs are allowed and intentionally collapse
+ * onto a shared session per agent (see `collapseMainDmFolder` in
+ * session-routing.ts). Multiple isMain *groups* are still flagged — group
+ * sessions must stay isolated to prevent cross-context bleed.
  *
  * Severity rules:
- * - 0 main chats → ok (warn variant: "no main chat picked" if any chats exist)
- * - 1 main chat  → ok
- * - >1 main chats → error (mount collision)
+ * - 0 main chats and any chats exist → warn (no main picked)
+ * - >=1 main DMs (any count) and <=1 main group → ok
+ * - >1 main groups → error (group session collision)
  */
 export function mainChatSingletonCheck(
   mainJids: string[],
   totalChatCount: number,
+  isGroupByJid: Record<string, boolean | undefined> = {},
 ): { ok: boolean; status?: 'ok' | 'warn' | 'error'; msg: string } {
-  if (mainJids.length > 1) {
+  const mainGroups = mainJids.filter((jid) => isGroupByJid[jid] === true);
+  const mainDms = mainJids.filter((jid) => isGroupByJid[jid] !== true);
+
+  if (mainGroups.length > 1) {
     return {
       ok: false,
       status: 'error',
       msg:
-        `${mainJids.length} chats marked isMain — they all collide on the same main/ folder. ` +
-        `Run: nanoclaw chat set-main <id> to pick one and clear the rest.`,
+        `${mainGroups.length} group chats marked isMain — group sessions must stay isolated. ` +
+        `Run: nanoclaw chat set-main <id> to pick one and clear the rest. ` +
+        `(Multiple isMain DMs are allowed and share a session.)`,
     };
   }
-  if (mainJids.length === 1) {
-    return { ok: true, msg: `1 main chat (${mainJids[0]})` };
+  if (mainJids.length >= 1) {
+    const dmsNote =
+      mainDms.length > 1 ? ` (${mainDms.length} DMs share session)` : '';
+    return {
+      ok: true,
+      msg: `${mainJids.length} main chat${mainJids.length === 1 ? '' : 's'}${dmsNote}`,
+    };
   }
   if (totalChatCount > 0) {
     return {
@@ -293,15 +302,32 @@ export function runDoctor(): CheckResult[] {
       check('Registered chats', () => chatsCheck(chatCount, enabledChannels)),
     );
 
-    // Main chat singleton: catches the silent mount-collision bug from
-    // pre-v4 multi-isMain configs that bypass the migration (e.g. hand-
-    // edited nanoclaw.json after the loader normalized things).
+    // Main chat singleton: catches the silent mount-collision bug for
+    // group chats. Multiple isMain DMs are allowed and intentionally
+    // share a session (see session-routing.ts).
     const mainJids = Object.entries(config.chats)
       .filter(([, e]: any[]) => e?.isMain)
       .map(([jid]) => jid);
+    // Build is-group map from the chats table (channel adapters populate this).
+    let isGroupByJid: Record<string, boolean | undefined> = {};
+    try {
+      const { getAllChats } = require('./db.js');
+      const allChats = getAllChats() as Array<{
+        jid: string;
+        is_group?: number | null;
+      }>;
+      for (const c of allChats) {
+        isGroupByJid[c.jid] =
+          c.is_group === null || c.is_group === undefined
+            ? undefined
+            : c.is_group === 1;
+      }
+    } catch {
+      /* db not ready — fall back to no info, conservative warn */
+    }
     results.push(
       check('Main chat singleton', () =>
-        mainChatSingletonCheck(mainJids, chatCount),
+        mainChatSingletonCheck(mainJids, chatCount, isGroupByJid),
       ),
     );
   } catch {

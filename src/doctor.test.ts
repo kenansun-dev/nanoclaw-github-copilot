@@ -111,19 +111,50 @@ describe('mainChatSingletonCheck severity matrix', () => {
     expect(r.msg).toContain('chat set-main');
   });
 
-  it('exactly 1 main → ok with jid in message', () => {
-    const r = mainChatSingletonCheck(['tg:8731187021'], 5);
+  it('exactly 1 main → ok', () => {
+    const r = mainChatSingletonCheck(['tg:8731187021'], 5, {
+      'tg:8731187021': false,
+    });
     expect(r.ok).toBe(true);
-    expect(r.msg).toContain('tg:8731187021');
+    expect(r.msg).toContain('1 main chat');
   });
 
-  it('>1 mains → error pointing at the collision', () => {
-    const r = mainChatSingletonCheck(['tg:1', 'tg:2', 'tg:3'], 10);
+  it('multiple isMain DMs → ok with shared-session note', () => {
+    const r = mainChatSingletonCheck(['tg:1', 'dc:2', 'tui:3'], 10, {
+      'tg:1': false,
+      'dc:2': false,
+      'tui:3': false,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.msg).toContain('3 main chats');
+    expect(r.msg).toContain('share session');
+  });
+
+  it('multiple isMain DMs + 1 isMain group → ok', () => {
+    const r = mainChatSingletonCheck(['tg:1', 'dc:2', 'tg:group'], 10, {
+      'tg:1': false,
+      'dc:2': false,
+      'tg:group': true,
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('>1 isMain groups → error (group sessions must stay isolated)', () => {
+    const r = mainChatSingletonCheck(['tg:g1', 'tg:g2', 'tg:g3'], 10, {
+      'tg:g1': true,
+      'tg:g2': true,
+      'tg:g3': true,
+    });
     expect(r.ok).toBe(false);
     expect(r.status).toBe('error');
-    expect(r.msg).toContain('3 chats marked isMain');
-    expect(r.msg).toContain('main/ folder');
+    expect(r.msg).toContain('3 group chats marked isMain');
     expect(r.msg).toContain('chat set-main');
+  });
+
+  it('unknown isGroup defaults to DM-style behavior (no error)', () => {
+    const r = mainChatSingletonCheck(['tg:1', 'dc:2'], 5);
+    // Without isGroup info, we treat them as not-known-groups → ok.
+    expect(r.ok).toBe(true);
   });
 });
 

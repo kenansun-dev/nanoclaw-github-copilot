@@ -402,15 +402,40 @@ export function nextChatId(config: NanoclawConfig): number {
 }
 
 /**
- * Validate that at most one chat is marked isMain.
- * Returns the offending jids when there are too many; empty array when fine.
+ * Validate the isMain invariant.
+ *
+ * After the share-main feature: multiple isMain *DMs* are allowed and
+ * intentionally collapse onto a shared session per agent (see
+ * src/session-routing.ts). Multiple isMain *groups* still violate the
+ * invariant — group sessions must stay isolated.
+ *
+ * Without authoritative is-group info we conservatively treat ALL chats
+ * as DMs (the share-main case), so config loading never blocks the user
+ * just because we can't resolve isGroup yet. The doctor check
+ * (`mainChatSingletonCheck`) provides the stricter group-aware view
+ * once chats.is_group is populated.
+ *
+ * @param config         The loaded config.
+ * @param isGroupByJid   Optional authoritative is-group map. When
+ *                       provided, only multi-isMain *groups* are flagged.
+ * @returns The offending jids when there are too many; empty array when fine.
  */
-export function findExtraMainChats(config: NanoclawConfig): string[] {
+export function findExtraMainChats(
+  config: NanoclawConfig,
+  isGroupByJid?: Record<string, boolean | undefined>,
+): string[] {
   const mains: string[] = [];
   for (const [jid, entry] of Object.entries(config.chats)) {
     if (entry.isMain) mains.push(jid);
   }
-  return mains.length > 1 ? mains : [];
+  if (mains.length <= 1) return [];
+
+  // No isGroup info → assume all are DMs (allowed). Be conservative
+  // here: false-negatives at this layer are caught by the doctor check.
+  if (!isGroupByJid) return [];
+
+  const mainGroups = mains.filter((jid) => isGroupByJid[jid] === true);
+  return mainGroups.length > 1 ? mainGroups : [];
 }
 
 /**
@@ -460,7 +485,7 @@ function distributeChatsToChannels(
 
 // ─── Config Migration ────────────────────────────────────────────────────────
 
-const CURRENT_CONFIG_VERSION = 4;
+const CURRENT_CONFIG_VERSION = 5;
 
 /**
  * Migrate config from older versions. Returns true if migration occurred.
@@ -655,6 +680,45 @@ function migrateConfig(config: Record<string, any>): boolean {
     migrated = true;
   }
 
+  if (version < 5) {
+    // v5: consolidate legacy per-connection TUI chats (`tui:1`, `tui:2`, ...)
+    // into a single canonical `tui:default` entry. Pre-v5 the TUI channel
+    // auto-registered a new chat per socket connection, polluting
+    // nanoclaw.json + status/doctor with N entries that all collapsed onto
+    // the same `main/` folder anyway. v5+ uses one stable jid for all TUI
+    // sessions; this migration removes the legacy entries and ensures a
+    // single `tui:default` row exists if any TUI chat existed before.
+    if (config.chats && typeof config.chats === 'object') {
+      const tuiKeys = Object.keys(config.chats).filter(
+        (k) =>
+          k.startsWith('tui:') && k !== 'tui:default' && /^tui:\d+$/.test(k),
+      );
+      if (tuiKeys.length > 0) {
+        // Pick a representative entry to seed tui:default if it doesn't exist
+        const firstKey = tuiKeys[0];
+        const firstEntry = config.chats[firstKey];
+        if (!config.chats['tui:default']) {
+          config.chats['tui:default'] = {
+            ...firstEntry,
+            name: 'tui',
+            isMain: true,
+          };
+        }
+        for (const k of tuiKeys) {
+          delete config.chats[k];
+        }
+        logger.info(
+          { removed: tuiKeys.length, kept: 'tui:default' },
+          'v5 migration: consolidated legacy TUI chats into tui:default',
+        );
+        migrated = true;
+      }
+    }
+
+    config.configVersion = 5;
+    migrated = true;
+  }
+
   return migrated;
 }
 
@@ -763,8 +827,11 @@ export function loadConfig(): NanoclawConfig {
   // Normalize chats: convert grouped format to flat Record<jid, config>
   config.chats = normalizeChats(config.chats, config.channels) as any;
 
-  // Singleton invariant: at most one chat may be isMain. Multiple isMain
-  // chats silently collide on the same `main/` mount folder — fail loud.
+  // Singleton invariant: at most one *group* may be isMain. Multiple
+  // isMain DMs are allowed and intentionally share a session per agent
+  // (see src/session-routing.ts and features/dm-session-sharing.md).
+  // Without isGroup info here we skip the strict check; the doctor
+  // check enforces the group-aware view at runtime.
   const extraMains = findExtraMainChats(config);
   if (extraMains.length > 0) {
     const lines = extraMains
@@ -774,9 +841,10 @@ export function loadConfig(): NanoclawConfig {
       })
       .join('\n');
     throw new Error(
-      `nanoclaw config: ${extraMains.length} chats marked isMain:\n${lines}\n` +
-        `At most one chat may be the main chat. Edit ~/.nanoclaw/nanoclaw.json ` +
-        `or run \`nanoclaw chat set-main <id>\` to choose one and clear the rest.`,
+      `nanoclaw config: ${extraMains.length} group chats marked isMain:\n${lines}\n` +
+        `Group chats must keep isolated sessions — at most one may be the main group. ` +
+        `Edit ~/.nanoclaw/nanoclaw.json or run \`nanoclaw chat set-main <id>\` ` +
+        `to choose one and clear the rest. (Multiple DM chats may share a main session.)`,
     );
   }
 

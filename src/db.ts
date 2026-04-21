@@ -5,6 +5,7 @@ import path from 'path';
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import { collapseMainDmFolder } from './session-routing.js';
 import {
   NewMessage,
   RegisteredGroup,
@@ -13,6 +14,99 @@ import {
 } from './types.js';
 
 let db: Database.Database;
+
+/**
+ * Lookup `chats.is_group` for a single jid. Returns undefined when the
+ * row is missing or the column is NULL (channel adapter hasn't recorded
+ * the metadata yet). Used by the collapse-on-read path so we only merge
+ * isMain DMs onto a shared session when we *know* they are DMs.
+ */
+function getChatIsGroup(jid: string): boolean | undefined {
+  if (!db) return undefined;
+  const row = db
+    .prepare('SELECT is_group FROM chats WHERE jid = ?')
+    .get(jid) as { is_group: number | null } | undefined;
+  if (!row || row.is_group === null) return undefined;
+  return row.is_group === 1;
+}
+
+/**
+ * Batch-fetch `chats.is_group` for ALL chats in one query. Used by
+ * `getAllRegisteredGroups` to avoid N+1 SQL when collapsing folders
+ * for many registered groups at once.
+ */
+function getAllChatIsGroup(): Map<string, boolean | undefined> {
+  const out = new Map<string, boolean | undefined>();
+  if (!db) return out;
+  const rows = db.prepare('SELECT jid, is_group FROM chats').all() as Array<{
+    jid: string;
+    is_group: number | null;
+  }>;
+  for (const r of rows) {
+    out.set(r.jid, r.is_group === null ? undefined : r.is_group === 1);
+  }
+  return out;
+}
+
+/**
+ * Lazy chat-config snapshot getter. Returns the full `chats` map from
+ * nanoclaw.json or undefined if config can't be loaded. Wrapped so we
+ * can call it once outside hot loops in `getAllRegisteredGroups`.
+ */
+function loadChatsConfigSnapshot():
+  | Record<string, { agentId?: string; isMain?: boolean }>
+  | undefined {
+  try {
+    // Lazy require to avoid pulling config-loader during early db init.
+    // config-loader does not import from db.ts, so this is acyclic.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { loadConfig } = require('./config-loader.js');
+    return loadConfig().chats as
+      | Record<string, { agentId?: string; isMain?: boolean }>
+      | undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve the canonical (collapsed) folder for a registered group.
+ * Loads the chat config lazily so the agentId can drive per-agent collapse.
+ * Falls back to the raw folder if config can't be loaded for any reason.
+ *
+ * Single-row path: used by `getRegisteredGroup`. For batch reads use
+ * `resolveCollapsedFolderBatch` to avoid N+1 SQL/fs reads.
+ */
+function resolveCollapsedFolder(
+  group: RegisteredGroup & { jid: string },
+): string {
+  if (!group.isMain) return group.folder;
+  const chats = loadChatsConfigSnapshot();
+  return collapseMainDmFolder(
+    group,
+    chats?.[group.jid],
+    getChatIsGroup(group.jid),
+  );
+}
+
+/**
+ * Batch-friendly collapse: caller pre-fetches the chats config map and
+ * is_group map once, then this just does pure lookup per row.
+ */
+function resolveCollapsedFolderBatch(
+  group: RegisteredGroup & { jid: string },
+  chatsConfig:
+    | Record<string, { agentId?: string; isMain?: boolean }>
+    | undefined,
+  isGroupMap: Map<string, boolean | undefined>,
+): string {
+  if (!group.isMain) return group.folder;
+  return collapseMainDmFolder(
+    group,
+    chatsConfig?.[group.jid],
+    isGroupMap.get(group.jid),
+  );
+}
 
 function createSchema(database: Database.Database): void {
   database.exec(`
@@ -676,7 +770,7 @@ export function getRegisteredGroup(
     );
     return undefined;
   }
-  return {
+  const baseGroup: RegisteredGroup & { jid: string } = {
     jid: row.jid,
     name: row.name,
     folder: row.folder,
@@ -689,6 +783,9 @@ export function getRegisteredGroup(
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
   };
+  // Collapse-on-read: isMain DMs share a canonical session per agent.
+  // See src/session-routing.ts and features/dm-session-sharing.md.
+  return { ...baseGroup, folder: resolveCollapsedFolder(baseGroup) };
 }
 
 export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
@@ -722,6 +819,11 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     is_main: number | null;
   }>;
   const result: Record<string, RegisteredGroup> = {};
+  // Pre-fetch chats.is_group + nanoclaw.json once so the per-row
+  // collapse stays O(1). Avoids N+1 SQL/fs reads when many chats
+  // are registered.
+  const isGroupMap = getAllChatIsGroup();
+  const chatsConfig = loadChatsConfigSnapshot();
   for (const row of rows) {
     if (!isValidGroupFolder(row.folder)) {
       logger.warn(
@@ -730,7 +832,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       );
       continue;
     }
-    result[row.jid] = {
+    const baseGroup: RegisteredGroup = {
       name: row.name,
       folder: row.folder,
       trigger: row.trigger_pattern,
@@ -741,6 +843,16 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       requiresTrigger:
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       isMain: row.is_main === 1 ? true : undefined,
+    };
+    // Collapse-on-read: isMain DMs share a canonical session per agent.
+    // See src/session-routing.ts and features/dm-session-sharing.md.
+    result[row.jid] = {
+      ...baseGroup,
+      folder: resolveCollapsedFolderBatch(
+        { ...baseGroup, jid: row.jid },
+        chatsConfig,
+        isGroupMap,
+      ),
     };
   }
   return result;

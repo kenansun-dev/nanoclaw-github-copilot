@@ -94,6 +94,7 @@ export const TIMEZONE = _config.timezone;
 
 // --- Upstream compat exports ---
 export const ONECLI_URL = process.env.ONECLI_URL || 'http://localhost:10254';
+export const ONECLI_API_KEY = process.env.ONECLI_API_KEY;
 
 export const MAX_MESSAGES_PER_PROMPT = Math.max(
   parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10,

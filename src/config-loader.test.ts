@@ -542,7 +542,10 @@ describe('config-loader / chat numeric ids', () => {
     expect(resolveChatHandle(config, '')).toBeNull();
   });
 
-  it('loadConfig throws when more than one chat is isMain', () => {
+  it('loadConfig allows multiple isMain chats (DM share-main feature)', () => {
+    // After the share-main feature: multi-isMain is intentional for DMs.
+    // loadConfig should NOT throw on it; the doctor check enforces the
+    // group-aware view at runtime once chats.is_group is populated.
     fs.writeFileSync(
       path.join(tmpDir, 'nanoclaw.json'),
       JSON.stringify({
@@ -557,7 +560,50 @@ describe('config-loader / chat numeric ids', () => {
         },
       }),
     );
-    expect(() => loadConfig()).toThrow(/2 chats marked isMain/);
+    expect(() => loadConfig()).not.toThrow();
+  });
+
+  it('findExtraMainChats flags multi-isMain *groups* when isGroup info is given', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 4,
+        channels: {
+          telegram: {
+            chats: [
+              { jid: 'tg:g1', name: 'group1', id: 1, isMain: true },
+              { jid: 'tg:g2', name: 'group2', id: 2, isMain: true },
+            ],
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    const isGroupByJid = { 'tg:g1': true, 'tg:g2': true };
+    expect(findExtraMainChats(config, isGroupByJid)).toEqual([
+      'tg:g1',
+      'tg:g2',
+    ]);
+  });
+
+  it('findExtraMainChats does NOT flag multi-isMain DMs', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 4,
+        channels: {
+          telegram: {
+            chats: [
+              { jid: 'tg:111', name: 'a', id: 1, isMain: true },
+              { jid: 'tg:222', name: 'b', id: 2, isMain: true },
+            ],
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    const isGroupByJid = { 'tg:111': false, 'tg:222': false };
+    expect(findExtraMainChats(config, isGroupByJid)).toEqual([]);
   });
 
   it('loadConfig succeeds with exactly one isMain', () => {
@@ -620,5 +666,90 @@ describe('config-loader / chat numeric ids', () => {
     );
     const config = loadConfig();
     expect(findExtraMainChats(config)).toEqual([]);
+  });
+});
+
+describe('config migration v4→v5: TUI chat consolidation', () => {
+  const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-tuiv5-${Date.now()}`);
+
+  beforeEach(() => {
+    setWorkspace(tmpDir);
+    ensureWorkspace();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('consolidates legacy tui:N entries into a single tui:default', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 4,
+        chats: {
+          'tui:1': { id: 10, name: 'tui-1', isMain: true },
+          'tui:2': { id: 11, name: 'tui-2', isMain: true },
+          'tui:3': { id: 12, name: 'tui-3', isMain: true },
+          'tg:999': { id: 1, name: 'kenan', isMain: true },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.configVersion).toBe(5);
+    expect(config.chats['tui:1']).toBeUndefined();
+    expect(config.chats['tui:2']).toBeUndefined();
+    expect(config.chats['tui:3']).toBeUndefined();
+    expect(config.chats['tui:default']).toBeDefined();
+    expect(config.chats['tui:default'].name).toBe('tui');
+    expect(config.chats['tui:default'].isMain).toBe(true);
+    // Non-TUI chats are untouched.
+    expect(config.chats['tg:999']).toBeDefined();
+  });
+
+  it('is a no-op when no legacy tui:N entries exist', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 4,
+        chats: { 'tg:999': { id: 1, name: 'kenan', isMain: true } },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.configVersion).toBe(5);
+    expect(config.chats['tui:default']).toBeUndefined();
+    expect(config.chats['tg:999']).toBeDefined();
+  });
+
+  it('preserves an existing tui:default if it is already present', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 4,
+        chats: {
+          'tui:default': { id: 5, name: 'tui', isMain: true, custom: 'kept' },
+          'tui:1': { id: 10, name: 'tui-1', isMain: true },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.chats['tui:1']).toBeUndefined();
+    expect(config.chats['tui:default']).toBeDefined();
+    expect((config.chats['tui:default'] as any).custom).toBe('kept');
+  });
+
+  it('does not touch tui: entries that are not pure-numeric (defensive)', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 4,
+        chats: {
+          'tui:custom-name': { id: 5, name: 'tui-custom', isMain: true },
+        },
+      }),
+    );
+    const config = loadConfig();
+    // Only `tui:N` (digits) get consolidated. `tui:custom-name` is left alone.
+    expect(config.chats['tui:custom-name']).toBeDefined();
+    expect(config.chats['tui:default']).toBeUndefined();
   });
 });
