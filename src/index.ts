@@ -1451,7 +1451,11 @@ async function main(): Promise<void> {
   // indicator (set fire-and-forget at the IPC pipe site — nothing else
   // would clear it on this code path).
   queue.setOnProcessDiedWithoutOutput(
-    (groupJid: string, rollbackCursor: string | null) => {
+    (
+      groupJid: string,
+      rollbackCursor: string | null,
+      exitCode: number | null,
+    ) => {
       const channel = findChannel(channels, groupJid);
       if (channel) {
         traceSetTyping(channel, groupJid, false, 'agent-died').catch(
@@ -1460,6 +1464,28 @@ async function main(): Promise<void> {
               { groupJid, err },
               'Failed to clear typing indicator after agent died',
             ),
+        );
+      }
+      // Surface non-zero exits to the user so they don't sit watching
+      // radio silence after a crash. Honours the same `sendErrorToUser`
+      // config gate as the structured-error path. (kenan, 2026-04-21
+      // gitignore reproducer: agent exit code=1 → bot said nothing.)
+      const sendErrors = getConfig().sendErrorToUser === true;
+      if (
+        sendErrors &&
+        channel &&
+        exitCode !== null &&
+        exitCode !== 0 &&
+        !queue.isShuttingDown()
+      ) {
+        const msg =
+          `⚠️ Agent process crashed (exit ${exitCode}). ` +
+          `Send your message again and a fresh agent will pick it up.`;
+        channel.sendMessage(groupJid, msg).catch((err: any) =>
+          logger.warn(
+            { groupJid, exitCode, err },
+            'Failed to deliver agent-crash notice to channel',
+          ),
         );
       }
       if (rollbackCursor) {
