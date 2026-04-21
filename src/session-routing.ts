@@ -1,0 +1,86 @@
+/**
+ * Session routing — fork-only.
+ *
+ * Multiple direct-message chats (Telegram DM, Discord DM, TUI, etc.)
+ * marked `isMain: true` should converge onto a single shared session
+ * within an agent. This module computes the "canonical" folder a chat
+ * collapses to at read time, while DB rows keep per-chat unique folders
+ * to satisfy `registered_groups.folder UNIQUE`.
+ *
+ * Properties enforced:
+ * - DMs share session within an agent (collapse to 'main' or 'main-<agent>')
+ * - Groups/channels stay isolated (defensive `isGroup` guard)
+ * - Different agents stay isolated (per-agent collapse buckets)
+ */
+
+import { RegisteredGroup } from './types.js';
+
+/**
+ * Sanitize an agentId to a folder-safe slug.
+ * Mirrors the rule used by `deriveGroupFolder` so agent-bucketed folders
+ * remain consistent across read and write paths.
+ */
+export function agentSlug(agentId: string): string {
+  return agentId.replace(/[^a-zA-Z0-9-]/g, '-');
+}
+
+/**
+ * Compute the canonical folder for a chat at read time.
+ *
+ * @param group           Raw RegisteredGroup row (with per-chat unique folder)
+ * @param chatConfig      Chat config entry (may have agentId)
+ * @param chatIsGroup     Authoritative is-group flag from `chats.is_group`
+ *                         column (populated by channel adapters). When
+ *                         undefined we conservatively treat the chat as a
+ *                         group — collapsing only when we know it is a DM.
+ * @returns The folder upstream consumers should see for routing/mounts.
+ */
+export function collapseMainDmFolder(
+  group: RegisteredGroup,
+  chatConfig?: { agentId?: string },
+  chatIsGroup?: boolean,
+): string {
+  if (!group.isMain) return group.folder;
+  if (chatIsGroup === true) return group.folder; // group/channel — never collapse
+
+  // Treat unknown isGroup conservatively: only collapse when we know it's a DM.
+  // This avoids accidentally merging group sessions during the brief window
+  // before the channel adapter has populated chats.is_group.
+  if (chatIsGroup !== false) return group.folder;
+
+  const agentId = chatConfig?.agentId;
+  return agentId ? `main-${agentSlug(agentId)}` : 'main';
+}
+
+/**
+ * Generate a unique-per-jid folder name for an isMain DM that will pass
+ * the `registered_groups.folder UNIQUE` constraint while still collapsing
+ * to a canonical session at read time.
+ *
+ * Format: `main[-<agent>]-<channel>-<jidHash>`
+ *  - `<channel>`: short slug derived from the jid prefix (e.g. `tg`, `dc`, `tui`)
+ *  - `<jidHash>`: first 8 chars of a deterministic hash of the full jid
+ *
+ * Length is bounded to 64 chars to satisfy `isValidGroupFolder`.
+ */
+export function uniqueIsMainFolder(jid: string, agentId?: string): string {
+  const prefix = agentId ? `main-${agentSlug(agentId)}` : 'main';
+  const channel = jid.split(':')[0]?.slice(0, 8) || 'unk';
+  const jidHash = shortHash(jid);
+  const combined = `${prefix}-${channel}-${jidHash}`;
+  return combined.length > 64 ? combined.slice(0, 64) : combined;
+}
+
+/**
+ * Tiny deterministic hash (FNV-1a 32-bit) used purely for folder uniqueness.
+ * Not cryptographic — collision risk for an 8-char hex is ~1 in 4 billion,
+ * which is fine for the ~10s of chats a single user registers.
+ */
+function shortHash(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0').slice(0, 8);
+}

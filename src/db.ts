@@ -5,6 +5,7 @@ import path from 'path';
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import { collapseMainDmFolder } from './session-routing.js';
 import {
   NewMessage,
   RegisteredGroup,
@@ -13,6 +14,43 @@ import {
 } from './types.js';
 
 let db: Database.Database;
+
+/**
+ * Lookup `chats.is_group` for a single jid. Returns undefined when the
+ * row is missing or the column is NULL (channel adapter hasn't recorded
+ * the metadata yet). Used by the collapse-on-read path so we only merge
+ * isMain DMs onto a shared session when we *know* they are DMs.
+ */
+function getChatIsGroup(jid: string): boolean | undefined {
+  if (!db) return undefined;
+  const row = db
+    .prepare('SELECT is_group FROM chats WHERE jid = ?')
+    .get(jid) as { is_group: number | null } | undefined;
+  if (!row || row.is_group === null) return undefined;
+  return row.is_group === 1;
+}
+
+/**
+ * Resolve the canonical (collapsed) folder for a registered group.
+ * Loads the chat config lazily so the agentId can drive per-agent collapse.
+ * Falls back to the raw folder if config can't be loaded for any reason.
+ */
+function resolveCollapsedFolder(
+  group: RegisteredGroup & { jid: string },
+): string {
+  if (!group.isMain) return group.folder;
+  let chatConfig: { agentId?: string } | undefined;
+  try {
+    // Lazy require to avoid pulling config-loader during early db init.
+    // config-loader does not import from db.ts, so this is acyclic.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { loadConfig } = require('./config-loader.js');
+    chatConfig = loadConfig().chats?.[group.jid];
+  } catch {
+    /* config not ready — stay on raw folder */
+  }
+  return collapseMainDmFolder(group, chatConfig, getChatIsGroup(group.jid));
+}
 
 function createSchema(database: Database.Database): void {
   database.exec(`
@@ -676,7 +714,7 @@ export function getRegisteredGroup(
     );
     return undefined;
   }
-  return {
+  const baseGroup: RegisteredGroup & { jid: string } = {
     jid: row.jid,
     name: row.name,
     folder: row.folder,
@@ -689,6 +727,9 @@ export function getRegisteredGroup(
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
   };
+  // Collapse-on-read: isMain DMs share a canonical session per agent.
+  // See src/session-routing.ts and features/dm-session-sharing.md.
+  return { ...baseGroup, folder: resolveCollapsedFolder(baseGroup) };
 }
 
 export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
@@ -730,7 +771,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       );
       continue;
     }
-    result[row.jid] = {
+    const baseGroup: RegisteredGroup = {
       name: row.name,
       folder: row.folder,
       trigger: row.trigger_pattern,
@@ -741,6 +782,12 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       requiresTrigger:
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       isMain: row.is_main === 1 ? true : undefined,
+    };
+    // Collapse-on-read: isMain DMs share a canonical session per agent.
+    // See src/session-routing.ts and features/dm-session-sharing.md.
+    result[row.jid] = {
+      ...baseGroup,
+      folder: resolveCollapsedFolder({ ...baseGroup, jid: row.jid }),
     };
   }
   return result;

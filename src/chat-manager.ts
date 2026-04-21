@@ -12,6 +12,7 @@ import {
 } from './config-loader.js';
 import { setRegisteredGroup, getAllRegisteredGroups } from './db.js';
 import { logger } from './logger.js';
+import { uniqueIsMainFolder } from './session-routing.js';
 
 export interface ChatInfo {
   id?: number;
@@ -24,15 +25,29 @@ export interface ChatInfo {
 
 /**
  * Derive a unique group folder name from a chat JID and its config.
- * When an agentId is assigned, the folder includes the agent prefix to
- * prevent session collisions when multiple agents share the same chat
- * (e.g. two Teams bots in one group conversation).
+ *
+ * For isMain chats we generate a unique-per-jid folder so multiple chats
+ * marked isMain can coexist in the DB (the `registered_groups.folder UNIQUE`
+ * constraint forbids two rows with the same folder). They are *collapsed* back
+ * to a canonical 'main' (or 'main-<agent>') at read time by
+ * `collapseMainDmFolder` in session-routing.ts — only when authoritative
+ * `chats.is_group` says the chat is a DM. Group chats marked isMain keep
+ * their unique folder and stay isolated.
+ *
+ * For non-isMain chats with an assigned agentId, the folder includes the
+ * agent prefix to prevent session collisions when multiple agents share the
+ * same chat (e.g. two Teams bots in one group conversation).
  */
 export function deriveGroupFolder(
   jid: string,
   chatConfig?: { isMain?: boolean; agentId?: string },
 ): string {
-  if (chatConfig?.isMain) return 'main';
+  if (chatConfig?.isMain) {
+    // Unique per jid in the DB; collapse-on-read maps DM mains back to
+    // a shared canonical folder. Existing rows with folder='main' continue
+    // to work — collapse is a no-op for them.
+    return uniqueIsMainFolder(jid, chatConfig.agentId);
+  }
 
   const base = jid.replace(/[^a-zA-Z0-9-]/g, '-');
 

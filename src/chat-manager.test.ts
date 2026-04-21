@@ -2,14 +2,32 @@ import { describe, it, expect } from 'vitest';
 import { deriveGroupFolder } from './chat-manager.js';
 
 describe('deriveGroupFolder', () => {
-  it('returns "main" for isMain chats', () => {
-    expect(deriveGroupFolder('tg:123', { isMain: true })).toBe('main');
+  it('returns a unique-per-jid main folder for isMain chats (no agent)', () => {
+    const folder = deriveGroupFolder('tg:123', { isMain: true });
+    // Format: main-<channel>-<jidHash>; collapse-on-read maps it back to 'main'.
+    expect(folder).toMatch(/^main-tg-[0-9a-f]{8}$/);
+    expect(folder.length).toBeLessThanOrEqual(64);
   });
 
-  it('returns "main" for isMain even with agentId', () => {
-    expect(
-      deriveGroupFolder('tg:123', { isMain: true, agentId: 'my-agent' }),
-    ).toBe('main');
+  it('returns a unique-per-jid main folder for isMain chats with agentId', () => {
+    const folder = deriveGroupFolder('tg:123', {
+      isMain: true,
+      agentId: 'my-agent',
+    });
+    expect(folder).toMatch(/^main-my-agent-tg-[0-9a-f]{8}$/);
+    expect(folder.length).toBeLessThanOrEqual(64);
+  });
+
+  it('produces distinct folders for two isMain chats on different jids (same agent)', () => {
+    const a = deriveGroupFolder('tg:111', { isMain: true });
+    const b = deriveGroupFolder('dc:222', { isMain: true });
+    expect(a).not.toBe(b);
+  });
+
+  it('produces deterministic folders for the same jid+agent', () => {
+    const a = deriveGroupFolder('tg:123', { isMain: true });
+    const b = deriveGroupFolder('tg:123', { isMain: true });
+    expect(a).toBe(b);
   });
 
   it('returns sanitized JID when no agentId', () => {
