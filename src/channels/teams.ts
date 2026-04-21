@@ -456,6 +456,28 @@ export class TeamsChannel implements Channel {
       return { status: 200 };
     }
 
+    // Diagnostic log on every message activity. Helps debug missing-file
+    // reports: shows whether Teams forwarded any attachment metadata at all
+    // and what content types it sent. Cheap (one info-level line per inbound
+    // message). Added 2026-04-21 after kenan reported repo-list.json silent
+    // miss with no log trace.
+    if (activity.type === 'message') {
+      const attCount = activity.attachments?.length || 0;
+      const attTypes = (activity.attachments || []).map(
+        (a: any) => a.contentType,
+      );
+      logger.info(
+        {
+          chatJid,
+          textLen: (activity.text || '').length,
+          attCount,
+          attTypes,
+          textFormat: activity.textFormat,
+        },
+        'Teams message activity received',
+      );
+    }
+
     // Handle file attachments (download to group workspace)
     if (
       activity.type === 'message' &&
@@ -468,8 +490,18 @@ export class TeamsChannel implements Channel {
           att.contentType === 'application/vnd.microsoft.card.adaptive' ||
           att.contentType === 'application/vnd.microsoft.card.hero' ||
           (!att.contentUrl && !att.content?.downloadUrl)
-        )
+        ) {
+          logger.debug(
+            {
+              chatJid,
+              contentType: att.contentType,
+              hasContentUrl: !!att.contentUrl,
+              hasDownloadUrl: !!att.content?.downloadUrl,
+            },
+            'Teams attachment skipped (card or no download URL)',
+          );
           continue;
+        }
 
         // Teams file attachments: real download URL is often
         // att.content.downloadUrl (pre-authenticated SharePoint URL, no bearer).
