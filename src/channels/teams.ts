@@ -373,87 +373,7 @@ export class TeamsChannel implements Channel {
 
     // Handle FileConsentCard invoke (user accepted/declined file download)
     if (activity.type === 'invoke' && activity.name === 'fileConsent/invoke') {
-      const value = activity.value;
-      if (value?.action === 'decline') {
-        logger.info({ jid: chatJid }, 'Teams file consent declined by user');
-        return { status: 200 };
-      }
-      if (value?.action === 'accept' && value?.context?.filePath) {
-        const uploadUrl = value.uploadInfo?.uploadUrl;
-        const filePath = value.context.filePath;
-        if (!uploadUrl) {
-          logger.warn(
-            { jid: chatJid },
-            'Teams fileConsent accept without uploadUrl',
-          );
-          return { status: 200 };
-        }
-        try {
-          const fs = await import('fs');
-          const fileBuffer = fs.default.readFileSync(filePath);
-          const uploadRes = await fetch(uploadUrl, {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'application/octet-stream',
-              'Content-Range': `bytes 0-${fileBuffer.length - 1}/${fileBuffer.length}`,
-            },
-            body: fileBuffer,
-          });
-          if (uploadRes.ok) {
-            logger.info(
-              { jid: chatJid, file: value.context.filename },
-              'Teams file uploaded via FileConsent',
-            );
-            // Respond to the invoke first (so Teams un-pends the conversation),
-            // THEN send the file.info card asynchronously — fire-and-forget so
-            // we don't block the invoke response path.
-            setImmediate(() => {
-              const ref = this.conversationRefs.get(chatJid);
-              if (!ref) return;
-              this.adapter
-                .continueConversation(
-                  ref as ConversationReference,
-                  async (ctx: TurnContext) => {
-                    await ctx.sendActivity({
-                      attachments: [
-                        {
-                          contentType:
-                            'application/vnd.microsoft.teams.card.file.info',
-                          name:
-                            value.uploadInfo?.name || value.context.filename,
-                          content: {
-                            uniqueId: value.uploadInfo?.uniqueId,
-                            fileType:
-                              value.uploadInfo?.fileType ||
-                              value.context.filename?.split('.').pop(),
-                          },
-                        } as any,
-                      ],
-                    } as Partial<Activity>);
-                  },
-                )
-                .catch((err: any) =>
-                  logger.warn(
-                    { err: err.message },
-                    'Teams file.info card send failed',
-                  ),
-                );
-            });
-            return { status: 200 };
-          } else {
-            const errText = await uploadRes.text().catch(() => '');
-            logger.warn(
-              { status: uploadRes.status, errText },
-              'Teams file upload failed',
-            );
-            return { status: 502 };
-          }
-        } catch (err: any) {
-          logger.error({ err: err.message }, 'Teams FileConsent upload error');
-          return { status: 500 };
-        }
-      }
-      return { status: 200 };
+      return await this.handleFileConsentInvoke(activity, chatJid);
     }
 
     // Diagnostic log on every message activity. Helps debug missing-file
@@ -683,10 +603,126 @@ export class TeamsChannel implements Channel {
     );
   }
 
+  /**
+   * Shared FileConsentCard invoke handler used by BOTH auth paths:
+   *   - handleIncomingRaw (raw/cert mode, direct HTTP response)
+   *   - handleIncoming    (BotFramework adapter mode, via InvokeResponse activity)
+   *
+   * Returns { status } — caller in raw mode writes it as JSON body; caller in
+   * adapter mode emits it as an InvokeResponse activity via context.sendActivity.
+   *
+   * History: before 2026-04-21 this logic lived only inside handleIncomingRaw,
+   * so the adapter path silently fell through on fileConsent/invoke and Teams
+   * received 501 Not Implemented ("something went wrong, please try again").
+   * Ported out to fix that. A test pins both wire paths.
+   */
+  private async handleFileConsentInvoke(
+    activity: any,
+    chatJid: string,
+  ): Promise<{ status: number }> {
+    const value = activity.value;
+    if (value?.action === 'decline') {
+      logger.info({ jid: chatJid }, 'Teams file consent declined by user');
+      return { status: 200 };
+    }
+    if (value?.action === 'accept' && value?.context?.filePath) {
+      const uploadUrl = value.uploadInfo?.uploadUrl;
+      const filePath = value.context.filePath;
+      if (!uploadUrl) {
+        logger.warn(
+          { jid: chatJid },
+          'Teams fileConsent accept without uploadUrl',
+        );
+        return { status: 200 };
+      }
+      try {
+        const fs = await import('fs');
+        const fileBuffer = fs.default.readFileSync(filePath);
+        const uploadRes = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'Content-Range': `bytes 0-${fileBuffer.length - 1}/${fileBuffer.length}`,
+          },
+          body: fileBuffer,
+        });
+        if (uploadRes.ok) {
+          logger.info(
+            { jid: chatJid, file: value.context.filename },
+            'Teams file uploaded via FileConsent',
+          );
+          // Respond to the invoke first (so Teams un-pends the conversation),
+          // THEN send the file.info card asynchronously — fire-and-forget so
+          // we don't block the invoke response path.
+          setImmediate(() => {
+            const ref = this.conversationRefs.get(chatJid);
+            if (!ref) return;
+            this.adapter
+              .continueConversation(
+                ref as ConversationReference,
+                async (ctx: TurnContext) => {
+                  await ctx.sendActivity({
+                    attachments: [
+                      {
+                        contentType:
+                          'application/vnd.microsoft.teams.card.file.info',
+                        name:
+                          value.uploadInfo?.name || value.context.filename,
+                        content: {
+                          uniqueId: value.uploadInfo?.uniqueId,
+                          fileType:
+                            value.uploadInfo?.fileType ||
+                            value.context.filename?.split('.').pop(),
+                        },
+                      } as any,
+                    ],
+                  } as Partial<Activity>);
+                },
+              )
+              .catch((err: any) =>
+                logger.warn(
+                  { err: err.message },
+                  'Teams file.info card send failed',
+                ),
+              );
+          });
+          return { status: 200 };
+        } else {
+          const errText = await uploadRes.text().catch(() => '');
+          logger.warn(
+            { status: uploadRes.status, errText },
+            'Teams file upload failed',
+          );
+          return { status: 502 };
+        }
+      } catch (err: any) {
+        logger.error({ err: err.message }, 'Teams FileConsent upload error');
+        return { status: 500 };
+      }
+    }
+    return { status: 200 };
+  }
+
   private async handleIncoming(context: TurnContext): Promise<void> {
     const activity = context.activity;
     const conversationId = activity.conversation?.id || '';
     const chatJid = `teams:${conversationId}`;
+
+    // Handle FileConsentCard invoke BEFORE the messageReaction / message gates
+    // below. When a user clicks Allow/Decline on a file consent card, Teams
+    // sends activity.type === 'invoke' with name === 'fileConsent/invoke'. The
+    // BotFramework adapter expects the handler to emit an InvokeResponse
+    // activity (otherwise it returns 501 to Teams → user sees "something went
+    // wrong"). Ported from handleIncomingRaw 2026-04-21 (root cause of kenan's
+    // 501 repro).
+    if (activity.type === 'invoke' && activity.name === 'fileConsent/invoke') {
+      const result = await this.handleFileConsentInvoke(activity, chatJid);
+      await context.sendActivity({
+        type: 'invokeResponse',
+        value: { status: result.status },
+      } as any);
+      return;
+    }
 
     // Handle reaction events
     if (activity.type === 'messageReaction') {
