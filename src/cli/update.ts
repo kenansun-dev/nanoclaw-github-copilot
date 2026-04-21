@@ -140,12 +140,14 @@ export async function runUpdate(args: string[]): Promise<void> {
 
     console.log('');
 
-    // Re-run init to sync workspace (idempotent — won't overwrite config)
+    // Re-run init in --sync mode to refresh templates / agent-runner deps
+    // without re-prompting Telegram/Teams/auth (those were configured on
+    // first install; `update` is a re-install, not first-time setup).
     console.log('  Syncing workspace...');
     try {
-      execSync('nanoclaw init', { stdio: 'inherit', timeout: 30000 });
+      execSync('nanoclaw init --sync', { stdio: 'inherit', timeout: 30000 });
     } catch {
-      console.log('  ⚠️  Workspace sync had issues. Run: nanoclaw init');
+      console.log('  ⚠️  Workspace sync had issues. Run: nanoclaw init --sync');
     }
 
     // Rebuild sandbox image if any agent uses sandbox mode

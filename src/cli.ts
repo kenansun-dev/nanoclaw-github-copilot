@@ -162,7 +162,7 @@ try {
 
 async function runInit(args: string[]) {
   const { initWorkspace } = await import('./cli/init.js');
-  await initWorkspace(PROJECT_ROOT);
+  await initWorkspace(PROJECT_ROOT, args);
 }
 
 async function runDoctor(_args: string[]) {
