@@ -691,9 +691,7 @@ function migrateConfig(config: Record<string, any>): boolean {
     if (config.chats && typeof config.chats === 'object') {
       const tuiKeys = Object.keys(config.chats).filter(
         (k) =>
-          k.startsWith('tui:') &&
-          k !== 'tui:default' &&
-          /^tui:\d+$/.test(k),
+          k.startsWith('tui:') && k !== 'tui:default' && /^tui:\d+$/.test(k),
       );
       if (tuiKeys.length > 0) {
         // Pick a representative entry to seed tui:default if it doesn't exist
