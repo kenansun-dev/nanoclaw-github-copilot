@@ -665,10 +665,25 @@ export async function runHostAgent(
       const duration = Date.now() - startTime;
 
       if (resolved) {
-        logger.info(
-          { group: group.name, processName, code, duration },
-          'Host agent process ended (output already delivered)',
-        );
+        // Default path: promise already resolved (IPC mode after first
+        // query-complete). Just log. BUT if exit was non-zero, also dump
+        // the last ~50 stderr lines so root-cause is reachable from the
+        // log without needing LOG_LEVEL=debug to have been on at crash
+        // time. (Added 2026-04-21 after kenan's silent code=1 crash on
+        // a gitignore request — the only signal in the log was the bare
+        // `code=1` line; stderr was captured in-memory but discarded.)
+        if (code !== 0 && stderr.trim()) {
+          const tail = stderr.trim().split('\n').slice(-50).join('\n');
+          logger.error(
+            { group: group.name, processName, code, duration, stderrTail: tail },
+            'Host agent process exited non-zero AFTER delivering output (stderr tail captured)',
+          );
+        } else {
+          logger.info(
+            { group: group.name, processName, code, duration },
+            'Host agent process ended (output already delivered)',
+          );
+        }
         return;
       }
 
