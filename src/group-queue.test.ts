@@ -18,6 +18,8 @@ vi.mock('fs', async () => {
       mkdirSync: vi.fn(),
       writeFileSync: vi.fn(),
       renameSync: vi.fn(),
+      readdirSync: vi.fn(() => []),
+      unlinkSync: vi.fn(),
     },
   };
 });
@@ -594,6 +596,120 @@ describe('GroupQueue', () => {
       await vi.advanceTimersByTimeAsync(10);
       expect(state.pipedSinceOutput).toBe(0);
       expect(state.agentHasOutput).toBe(false);
+    });
+  });
+
+  describe('process-died-without-output cursor rollback', () => {
+    /**
+     * Helper: spin up an active+idle-waiting group with a fake long-lived
+     * process. Mirrors the production flow where runContainer's finally
+     * block sees `processAlive && state.idleWaiting` and keeps state.active=true.
+     */
+    async function spinUpIdleAgent(
+      groupJid: string,
+      pid: number,
+    ): Promise<{ proc: any }> {
+      const { EventEmitter } = await import('events');
+      const proc = new EventEmitter() as any;
+      proc.exitCode = null;
+      proc.killed = false;
+      proc.pid = pid;
+      const processMessages = vi.fn(async () => {
+        // Production order: spawn process, register, then settle into
+        // idle-waiting state once the agent emits its query-complete signal.
+        queue.registerProcess(
+          groupJid,
+          proc,
+          'container-' + pid,
+          'test-group-' + pid,
+        );
+        queue.markIdle(groupJid);
+        return true;
+      });
+      queue.setProcessMessagesFn(processMessages);
+      queue.enqueueMessageCheck(groupJid);
+      await vi.advanceTimersByTimeAsync(10);
+      return { proc };
+    }
+
+    it('fires onProcessDiedWithoutOutput with rollback cursor when piped agent dies idle', async () => {
+      const callback = vi.fn();
+      queue.setOnProcessDiedWithoutOutput(callback);
+
+      const { proc } = await spinUpIdleAgent('group1@g.us', 12345);
+
+      // Pipe a follow-up message through IPC with a rollback cursor
+      // (the cursor that was active *before* index.ts advanced it)
+      const ok = queue.sendMessage(
+        'group1@g.us',
+        'follow-up question',
+        '2026-04-21T03:25:25.000Z',
+      );
+      expect(ok).toBe(true);
+
+      // Now simulate the host process dying (SIGTERM, crash, etc.)
+      // BEFORE the agent has produced output for the piped message.
+      proc.exitCode = 143; // SIGTERM
+      proc.emit('exit');
+
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledWith(
+        'group1@g.us',
+        '2026-04-21T03:25:25.000Z',
+      );
+    });
+
+    it('does NOT fire callback when process exits cleanly after producing output', async () => {
+      const callback = vi.fn();
+      queue.setOnProcessDiedWithoutOutput(callback);
+
+      const { proc } = await spinUpIdleAgent('group1@g.us', 12346);
+
+      queue.sendMessage('group1@g.us', 'q', '2026-04-21T01:00:00Z');
+      // Agent produces output — cursor is no longer in flight
+      queue.notifyAgentOutput('group1@g.us');
+
+      proc.exitCode = 0;
+      proc.emit('exit');
+
+      // Callback should NOT fire — there were no in-flight piped messages
+      // when the process died (output already delivered, cursor cleared).
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it('does NOT fire callback when process dies before any IPC pipe', async () => {
+      const callback = vi.fn();
+      queue.setOnProcessDiedWithoutOutput(callback);
+
+      const { proc } = await spinUpIdleAgent('group1@g.us', 12347);
+
+      // No sendMessage — process dies idle with nothing piped.
+      proc.exitCode = 137; // SIGKILL
+      proc.emit('exit');
+
+      // pipedSinceOutput===0, so callback should NOT fire (no rollback needed)
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it('keeps the EARLIEST piped cursor across multiple IPC pipes (oldest unacked wins)', async () => {
+      const callback = vi.fn();
+      queue.setOnProcessDiedWithoutOutput(callback);
+
+      const { proc } = await spinUpIdleAgent('group1@g.us', 12348);
+
+      // Three pipes in sequence — the FIRST cursor must win
+      queue.sendMessage('group1@g.us', 'q1', '2026-04-21T01:00:00Z');
+      queue.sendMessage('group1@g.us', 'q2', '2026-04-21T01:00:05Z');
+      queue.sendMessage('group1@g.us', 'q3', '2026-04-21T01:00:10Z');
+
+      proc.exitCode = 143;
+      proc.emit('exit');
+
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledWith(
+        'group1@g.us',
+        '2026-04-21T01:00:00Z',
+      );
     });
   });
 });

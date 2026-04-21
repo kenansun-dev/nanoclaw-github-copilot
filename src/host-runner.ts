@@ -483,9 +483,18 @@ export async function runHostAgent(
       ? null
       : setTimeout(killOnTimeout, timeoutMs);
 
-    // Absolute timeout: hard cap on total run duration, never reset by output.
-    // This prevents agent runs from hanging forever when tools are stuck.
-    const absoluteTimeout: ReturnType<typeof setTimeout> | null =
+    // Absolute timeout: hard cap on a single query's run duration.
+    // - Non-IPC mode (sandbox or short-lived host): cap = total process
+    //   lifetime, since the process exits after the query.
+    // - IPC mode (host with neverTimeout): cap = per-query budget. The
+    //   timer is restarted whenever a new IPC input file appears (see
+    //   fs.watch below) and cleared when the agent signals query-complete
+    //   (result===null && newSessionId, the IPC-idle marker). Without this
+    //   per-query semantics, a healthy long-lived agent gets SIGTERM'd at
+    //   the lifetime cap and any IPC message piped in the seconds before
+    //   the kill is silently dropped (typing indicator stays on, message
+    //   lost). See docs/teams-stuck-agent-investigation.md.
+    let absoluteTimeout: ReturnType<typeof setTimeout> | null =
       AGENT_RUN_TIMEOUT_MS > 0
         ? setTimeout(() => {
             logger.error(
@@ -493,12 +502,68 @@ export async function runHostAgent(
                 group: group.name,
                 processName,
                 timeoutMs: AGENT_RUN_TIMEOUT_MS,
+                mode: neverTimeout ? 'ipc-per-query' : 'lifetime',
               },
               'Agent absolute timeout reached, killing',
             );
             killOnTimeout();
           }, AGENT_RUN_TIMEOUT_MS)
         : null;
+    const restartAbsoluteTimeout = (reason: string) => {
+      if (AGENT_RUN_TIMEOUT_MS <= 0) return;
+      if (absoluteTimeout) clearTimeout(absoluteTimeout);
+      absoluteTimeout = setTimeout(() => {
+        logger.error(
+          {
+            group: group.name,
+            processName,
+            timeoutMs: AGENT_RUN_TIMEOUT_MS,
+            mode: 'ipc-per-query',
+            reason,
+          },
+          'Agent absolute timeout reached (IPC per-query), killing',
+        );
+        killOnTimeout();
+      }, AGENT_RUN_TIMEOUT_MS);
+    };
+    const pauseAbsoluteTimeout = (reason: string) => {
+      if (absoluteTimeout) {
+        clearTimeout(absoluteTimeout);
+        absoluteTimeout = null;
+        logger.info(
+          { group: group.name, processName, reason },
+          'Absolute timeout paused (agent idle-waiting for IPC)',
+        );
+      }
+    };
+
+    // IPC mode: watch the input dir so each new IPC message restarts the
+    // per-query budget. Use fs.watch (inotify on Linux) — events fire when
+    // group-queue.sendMessage atomically renames a *.json.tmp into place.
+    let ipcWatcher: fs.FSWatcher | null = null;
+    if (neverTimeout && AGENT_RUN_TIMEOUT_MS > 0) {
+      try {
+        const watchDir = path.join(ipcDir, 'input');
+        ipcWatcher = fs.watch(watchDir, (eventType, filename) => {
+          if (
+            eventType === 'rename' &&
+            filename &&
+            String(filename).endsWith('.json')
+          ) {
+            logger.info(
+              { group: group.name, processName, file: String(filename) },
+              'IPC input received, restarting per-query timeout',
+            );
+            restartAbsoluteTimeout('ipc-input:' + String(filename));
+          }
+        });
+      } catch (err: any) {
+        logger.warn(
+          { group: group.name, processName, err: err?.message ?? err },
+          'Failed to watch IPC input dir for absolute-timeout reset',
+        );
+      }
+    }
 
     const resetTimeout = () => {
       if (neverTimeout) return;
@@ -554,6 +619,20 @@ export async function runHostAgent(
             resolved = true;
             resolve(output);
           }
+          // In IPC mode: a query just finished (whether it was the first
+          // query that resolves the promise above, or a follow-up that
+          // arrived via IPC). Pause the per-query absolute timeout until
+          // the next IPC input restarts it. Without this, an idle agent
+          // sitting on the watch loop still gets killed at the budget
+          // expiry even though it's not stuck on anything.
+          if (
+            neverTimeout &&
+            output.result === null &&
+            output.newSessionId &&
+            !output.partial
+          ) {
+            pauseAbsoluteTimeout('query-complete');
+          }
         } catch (err) {
           logger.error(
             { error: err, json: jsonStr.substring(0, 200) },
@@ -575,6 +654,13 @@ export async function runHostAgent(
     child.on('close', (code) => {
       if (timeout) clearTimeout(timeout);
       if (absoluteTimeout) clearTimeout(absoluteTimeout);
+      if (ipcWatcher) {
+        try {
+          ipcWatcher.close();
+        } catch {
+          /* ignore */
+        }
+      }
       if (child.pid) unregisterAgentPid(child.pid);
       const duration = Date.now() - startTime;
 
@@ -659,6 +745,13 @@ export async function runHostAgent(
     child.on('error', (err) => {
       if (timeout) clearTimeout(timeout);
       if (absoluteTimeout) clearTimeout(absoluteTimeout);
+      if (ipcWatcher) {
+        try {
+          ipcWatcher.close();
+        } catch {
+          /* ignore */
+        }
+      }
       logger.error(
         { group: group.name, processName, error: err },
         'Host agent spawn error',

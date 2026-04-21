@@ -155,6 +155,37 @@ function saveState(): void {
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
 }
 
+/**
+ * Wrapper around channel.setTyping that adds an INFO log for telemetry.
+ * Used to debug "typing indicator stuck on" symptoms (e.g. when an agent
+ * dies after being told it's typing). All call sites should go through
+ * this so the lifecycle is observable in logs.
+ */
+function traceSetTyping(
+  channel: { name: string; setTyping?: (jid: string, isTyping: boolean) => Promise<void> },
+  chatJid: string,
+  isTyping: boolean,
+  reason: string,
+): Promise<void> {
+  if (!channel.setTyping) return Promise.resolve();
+  logger.info(
+    { chatJid, channel: channel.name, isTyping, reason },
+    'Channel typing state change',
+  );
+  return channel.setTyping(chatJid, isTyping).catch((err: any) => {
+    logger.warn(
+      {
+        chatJid,
+        channel: channel.name,
+        isTyping,
+        reason,
+        err: err?.message ?? err,
+      },
+      'channel.setTyping failed',
+    );
+  });
+}
+
 function registerGroup(jid: string, group: RegisteredGroup): void {
   let groupDir: string;
   try {
@@ -332,7 +363,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }, IDLE_TIMEOUT);
   };
 
-  await channel.setTyping?.(chatJid, true);
+  await traceSetTyping(channel, chatJid, true, 'turn-start');
   let hadError = false;
   let outputSentToUser = false;
   // Progressive send state: track message ID for editMessage on partial updates
@@ -387,7 +418,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         progressiveText = text; // delta buffer already accumulated in agent-runner
         if (!progressiveMsgId) {
           // First partial — send new message
-          await channel.setTyping?.(chatJid, false);
+          await traceSetTyping(channel, chatJid, false, 'progressive-first-partial');
           const msgId = await channel.sendMessage(
             chatJid,
             text + ' ◌',
@@ -405,7 +436,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         }
       } else {
         // Final message (or channel doesn't support edit)
-        await channel.setTyping?.(chatJid, false);
+        await traceSetTyping(channel, chatJid, false, 'final-output');
         if (progressiveMsgId && channel.editMessage) {
           // Replace the progressive message with final content
           await channel.editMessage(chatJid, progressiveMsgId, text, sendOpts);
@@ -445,7 +476,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   });
 
-  await channel.setTyping?.(chatJid, false);
+  await traceSetTyping(channel, chatJid, false, 'turn-end');
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
@@ -779,7 +810,13 @@ async function startMessageLoop(): Promise<void> {
             ? contextPrefix + '\n\n' + formatted
             : formatted;
 
-          if (queue.sendMessage(chatJid, fullPrompt)) {
+          // Capture cursor BEFORE the optimistic advance so we can roll
+          // back to it if the active agent dies before producing output
+          // (host-runner SIGTERM, IPC pipe race, etc). Without rollback,
+          // these messages are silently lost — they're already past the
+          // cursor when the next agent spawn drains the DB.
+          const cursorBeforePipe = lastAgentTimestamp[chatJid] || '';
+          if (queue.sendMessage(chatJid, fullPrompt, cursorBeforePipe)) {
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
@@ -788,11 +825,9 @@ async function startMessageLoop(): Promise<void> {
               messagesToSend[messagesToSend.length - 1].timestamp;
             saveState();
             // Show typing indicator while the container processes the piped message
-            channel
-              .setTyping?.(chatJid, true)
-              ?.catch((err: any) =>
-                logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
-              );
+            traceSetTyping(channel, chatJid, true, 'ipc-pipe').catch((err: any) =>
+              logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
+            );
             // Busy ack: if user piled on a 2nd message before the agent
             // produced anything, let them know we received it and are still
             // working. 1st message = typing indicator only; 3rd+ = silent.
@@ -1266,6 +1301,38 @@ async function main(): Promise<void> {
   });
   startSessionCleanup();
   queue.setProcessMessagesFn(processGroupMessages);
+  // Recover from agent crashes/timeouts that happen after IPC pipe but
+  // before output: rollback the message cursor so dropped messages get
+  // re-read from the DB by the next agent spawn, and clear the typing
+  // indicator (set fire-and-forget at the IPC pipe site — nothing else
+  // would clear it on this code path).
+  queue.setOnProcessDiedWithoutOutput(
+    (groupJid: string, rollbackCursor: string | null) => {
+      const channel = findChannel(channels, groupJid);
+      if (channel) {
+        traceSetTyping(channel, groupJid, false, 'agent-died').catch((err: any) =>
+          logger.warn(
+            { groupJid, err },
+            'Failed to clear typing indicator after agent died',
+          ),
+        );
+      }
+      if (rollbackCursor) {
+        const before = lastAgentTimestamp[groupJid];
+        lastAgentTimestamp[groupJid] = rollbackCursor;
+        saveState();
+        logger.warn(
+          { groupJid, before, rolledBackTo: rollbackCursor },
+          'Agent died with piped IPC messages in flight; rolled back cursor',
+        );
+      } else {
+        logger.info(
+          { groupJid },
+          'Agent died while idle but no piped messages in flight; cursor untouched',
+        );
+      }
+    },
+  );
   recoverPendingMessages();
   startMessageLoop().catch((err: any) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');

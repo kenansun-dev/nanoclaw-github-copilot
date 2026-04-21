@@ -34,6 +34,15 @@ interface GroupState {
   pipedSinceOutput: number;
   /** True once the active agent has produced any reply for the current turn. */
   agentHasOutput: boolean;
+  /**
+   * Earliest user-message timestamp piped into the active agent for the
+   * current in-flight query that has NOT yet been ack'd by an agent reply.
+   * `null` = nothing in flight. Used by the process-died handler to roll
+   * the cursor back so dropped messages get re-processed by the next
+   * agent spawn (cursor was advanced when the IPC pipe succeeded —
+   * without rollback the message is silently lost on agent crash/timeout).
+   */
+  inFlightCursorRollback: string | null;
 }
 
 export class GroupQueue {
@@ -43,6 +52,17 @@ export class GroupQueue {
   private processMessagesFn: ((groupJid: string) => Promise<boolean>) | null =
     null;
   private shuttingDown = false;
+  /**
+   * Optional listener invoked when the active process dies before producing
+   * any output for piped IPC messages. Receives the rollback cursor (the
+   * earliest piped-but-unacked message timestamp). Caller (index.ts) uses
+   * this to restore lastAgentTimestamp so the messages are re-processed by
+   * the next agent spawn, and to clear the typing indicator that was set
+   * fire-and-forget at the IPC pipe site.
+   */
+  private onProcessDiedWithoutOutput:
+    | ((groupJid: string, rollbackTimestamp: string | null) => void)
+    | null = null;
 
   private getGroup(groupJid: string): GroupState {
     let state = this.groups.get(groupJid);
@@ -60,6 +80,7 @@ export class GroupQueue {
         retryCount: 0,
         pipedSinceOutput: 0,
         agentHasOutput: false,
+        inFlightCursorRollback: null,
       };
       this.groups.set(groupJid, state);
     }
@@ -68,6 +89,19 @@ export class GroupQueue {
 
   setProcessMessagesFn(fn: (groupJid: string) => Promise<boolean>): void {
     this.processMessagesFn = fn;
+  }
+
+  /**
+   * Register a listener that fires when the active host process dies
+   * before producing output for piped IPC messages. The listener is called
+   * with `(groupJid, rollbackTimestamp)` where rollbackTimestamp is the
+   * earliest piped-but-unacked message timestamp (or null if nothing was
+   * in flight). See `inFlightCursorRollback` on `GroupState` for context.
+   */
+  setOnProcessDiedWithoutOutput(
+    fn: (groupJid: string, rollbackTimestamp: string | null) => void,
+  ): void {
+    this.onProcessDiedWithoutOutput = fn;
   }
 
   enqueueMessageCheck(groupJid: string): void {
@@ -155,10 +189,33 @@ export class GroupQueue {
     // state and drain pending work. Without this, host-mode early-resolve leaves
     // state.active=true after the process dies, swallowing pending messages.
     proc.on('exit', () => {
-      if (state.active && state.idleWaiting) {
+      // Two cases we handle here (and ONLY these two):
+      //   (1) state.active && state.idleWaiting  — IPC-mode agent was
+      //       sitting idle waiting for the next pipe, then died.
+      //   (2) state.active && pipedSinceOutput > 0 && !agentHasOutput —
+      //       IPC-mode agent had a pipe in flight (idleWaiting cleared by
+      //       sendMessage), then died before producing output.
+      // We must NOT fire during the initial query phase (state.active=true,
+      // idleWaiting=false, pipedSinceOutput=0). In that path runContainer's
+      // finally block owns the cleanup; double-cleanup here would corrupt
+      // activeCount.
+      const isCase1 = state.active && state.idleWaiting;
+      const isCase2 =
+        state.active && state.pipedSinceOutput > 0 && !state.agentHasOutput;
+      if (isCase1 || isCase2) {
+        const hadInFlight = state.pipedSinceOutput > 0 && !state.agentHasOutput;
+        const rollbackCursor = state.inFlightCursorRollback;
         logger.info(
-          { groupJid },
-          'Process exited while idle-waiting, releasing active state',
+          {
+            groupJid,
+            case: isCase2 ? 'piped-then-died' : 'idle-then-died',
+            inFlightCursorRollback: rollbackCursor,
+            pipedSinceOutput: state.pipedSinceOutput,
+            agentHasOutput: state.agentHasOutput,
+            hadInFlight,
+            exitCode: (proc as any).exitCode,
+          },
+          'Active process exited, releasing state',
         );
         // Clean up stale IPC files that were written for this now-dead process
         if (state.groupFolder) {
@@ -192,7 +249,22 @@ export class GroupQueue {
         state.process = null;
         state.containerName = null;
         state.groupFolder = null;
+        state.inFlightCursorRollback = null;
         this.activeCount--;
+        // Notify subscriber (index.ts) so it can rollback the cursor and
+        // clear the typing indicator that was set fire-and-forget at the
+        // IPC pipe site. Fire only when there were piped-but-unacked
+        // messages — healthy idle exits don't need a rollback.
+        if (hadInFlight && this.onProcessDiedWithoutOutput) {
+          try {
+            this.onProcessDiedWithoutOutput(groupJid, rollbackCursor);
+          } catch (err) {
+            logger.warn(
+              { groupJid, err },
+              'onProcessDiedWithoutOutput listener threw',
+            );
+          }
+        }
         this.drainGroup(groupJid);
       }
     });
@@ -219,7 +291,11 @@ export class GroupQueue {
     state.idleWaiting = true;
   }
 
-  sendMessage(groupJid: string, text: string): boolean {
+  sendMessage(
+    groupJid: string,
+    text: string,
+    rollbackCursor?: string,
+  ): boolean {
     const state = this.getGroup(groupJid);
     if (!state.active || !state.groupFolder || state.isTaskContainer) {
       logger.info(
@@ -252,8 +328,19 @@ export class GroupQueue {
       fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
       fs.renameSync(tempPath, filepath);
       state.pipedSinceOutput += 1;
+      // Track the *earliest* unacked piped-message cursor for rollback on
+      // process death. Don't overwrite if already set — we want the oldest
+      // in-flight cursor so subsequent pipes don't lose history.
+      if (rollbackCursor && !state.inFlightCursorRollback) {
+        state.inFlightCursorRollback = rollbackCursor;
+      }
       logger.info(
-        { groupJid, file: filename, pipedSinceOutput: state.pipedSinceOutput },
+        {
+          groupJid,
+          file: filename,
+          pipedSinceOutput: state.pipedSinceOutput,
+          inFlightCursorRollback: state.inFlightCursorRollback,
+        },
         'sendMessage: piped to IPC',
       );
       return true;
@@ -272,6 +359,9 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     state.pipedSinceOutput = 0;
     state.agentHasOutput = true;
+    // Output landed — piped IPC messages have been acked, no rollback needed
+    // if the agent dies after this point.
+    state.inFlightCursorRollback = null;
   }
 
   /**
@@ -411,6 +501,7 @@ export class GroupQueue {
     state.pendingMessages = false;
     state.pipedSinceOutput = 0;
     state.agentHasOutput = false;
+    state.inFlightCursorRollback = null;
     this.activeCount++;
 
     logger.debug(
