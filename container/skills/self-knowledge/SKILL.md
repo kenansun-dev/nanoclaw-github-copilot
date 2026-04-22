@@ -96,8 +96,33 @@ cat /workspace/project/nanoclaw.json 2>/dev/null
 | `nanoclaw config set <path> <value>` | Set config value |
 | `nanoclaw chat list` | List registered chats |
 | `nanoclaw pair` | Generate pairing code for mobile apps |
-| `nanoclaw mcp` | Manage MCP servers |
+| `nanoclaw mcp add <name> <url>` | Add an MCP server (auto-reloads daemon, **no restart needed**) |
+| `nanoclaw mcp remove <name>` | Remove an MCP server (auto-reloads daemon) |
+| `nanoclaw mcp list` | List configured MCP servers |
+| `nanoclaw reload` | Hot-reload `nanoclaw.json` / `mcp.json` without restart (SIGUSR2 on POSIX, trigger file on Windows) |
 | `nanoclaw update` | Update nanoclaw to latest version |
+
+### MCP changes are hot — do not tell users to restart
+
+When a user wants to add an MCP server:
+
+1. **Use `nanoclaw mcp add <name> <url>`** — it writes to
+   `nanoclaw.json` AND signals the running daemon to reload its
+   in-memory config. The new server is live on the next agent turn.
+2. Do NOT recommend editing `~/.mcp.json` / `.cursor/mcp.json` /
+   `.vscode/mcp.json`. Those belong to other tools; NanoClaw's MCP
+   config lives at `~/.nanoclaw/nanoclaw.json` (under `mcp.servers`)
+   and `~/.nanoclaw/mcp.json`.
+3. Do NOT tell the user to run `nanoclaw restart` for an MCP change.
+   The CLI already handled the reload. Restart is a sledgehammer.
+4. If the user manually edited `~/.nanoclaw/mcp.json` or `nanoclaw.json`
+   without using the CLI, run `nanoclaw reload` (or call
+   `nanoclaw_control` with `action: reload_config` from the main chat).
+
+**The only changes that genuinely need `nanoclaw restart`**: channel
+auth tokens (Telegram bot token, Teams creds), port bindings, sandbox
+image rebuilds, and updates to nanoclaw itself. Try `reload` first if
+in doubt.
 
 ## Architecture
 

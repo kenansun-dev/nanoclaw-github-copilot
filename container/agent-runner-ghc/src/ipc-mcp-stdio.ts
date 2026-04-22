@@ -384,7 +384,12 @@ server.tool(
 
 server.tool(
   'nanoclaw_control',
-  'Control the NanoClaw host service. Use this to restart nanoclaw, reload config, or update settings. Available actions: restart, reload_config, set_config. Only available in main chat.',
+  'Control the NanoClaw host service. Available actions: restart, reload_config, set_config. ' +
+    'IMPORTANT: For adding/removing MCP servers, prefer the `nanoclaw mcp add <name> <url>` / `nanoclaw mcp remove <name>` CLI commands — they auto-reload the daemon, no restart needed. ' +
+    'Use `reload_config` after manual edits to `nanoclaw.json` or `mcp.json`. ' +
+    'Use `set_config` to change a single config field (saves + reloads in one step). ' +
+    'Only use `restart` for things that genuinely need it: channel auth tokens, port bindings, sandbox image rebuilds, or nanoclaw itself updates. ' +
+    'When in doubt, prefer reload over restart. Only available in main chat.',
   {
     action: z.enum(['restart', 'reload_config', 'set_config']).describe(
       'Action to perform: restart (restart nanoclaw service), reload_config (reload nanoclaw.json without restart), set_config (change a config value)',
