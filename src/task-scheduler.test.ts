@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
+import type { RegisteredGroup } from './types.js';
 import {
   MAX_CONSECUTIVE_GROUP_MISSING,
   _resetSchedulerLoopForTests,
@@ -241,7 +242,7 @@ describe('task scheduler', () => {
     });
 
     let groupAvailable = false;
-    const registeredGroups = () =>
+    const registeredGroups = (): Record<string, RegisteredGroup> =>
       groupAvailable
         ? {
             'cb@g.us': {
