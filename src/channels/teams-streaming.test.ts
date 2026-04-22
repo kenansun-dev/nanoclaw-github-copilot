@@ -66,7 +66,11 @@ describe('TeamsStreamingSession', () => {
     expect(first.type).toBe('typing');
     expect(first.text).toBe('hello');
     expect(first.entities?.[0].type).toBe('streaminfo');
-    expect(first.entities?.[0].streamType).toBe('streaming');
+    // First activity is `informative` (start streaming) per Teams docs.
+    // Sending `streaming` as the first activity is rejected by the
+    // server ("Only start streaming and continue streaming types are
+    // allowed as a typing activity"). Regression 2026-04-22.
+    expect(first.entities?.[0].streamType).toBe('informative');
     expect(first.entities?.[0].streamSequence).toBe(1);
 
     expect(last.type).toBe('message');
@@ -348,5 +352,126 @@ describe('TeamsStreamingSession', () => {
     // ensures the channelId hint is accepted without throwing.
     expect(teams).toBeInstanceOf(TeamsStreamingSession);
     expect(generic).toBeInstanceOf(TeamsStreamingSession);
+  });
+});
+
+/**
+ * Regression tests for the 2026-04-22 Teams streaming wire-protocol bug:
+ *   Symptom: Teams replies showed "Sorry, something went wrong." twice.
+ *   Server logs: "Only start streaming and continue streaming types are
+ *   allowed as a typing activity" then "Only end streaming type is
+ *   allowed as a message activity".
+ *
+ * Root causes (paired):
+ *   1. First chunk used `streamType: 'streaming'` directly. Per Teams
+ *      docs the first activity should be `informative` (start streaming);
+ *      the server rejected our shape with the typing-activity error.
+ *   2. Because (1) failed, no `streamId` was captured. The follow-up
+ *      `final` message went out without `streamId`, which Teams rejected
+ *      with the message-activity error — silently losing the agent's reply.
+ *
+ * Fix: bootstrap the stream with one informative activity; degrade the
+ * final to plain non-streaming when no streamId was ever obtained.
+ */
+describe('Teams streaming wire-protocol regression (2026-04-22)', () => {
+  it('first chunk is `informative` (start streaming), not `streaming`', async () => {
+    const { calls, sender } = makeSender();
+    const s = new TeamsStreamingSession(sender, {
+      delayInMs: 0,
+      log: silentLog,
+    });
+
+    await s.chunk('first chunk');
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls[0].type).toBe('typing');
+    expect(calls[0].entities?.[0].streamType).toBe('informative');
+    // No streamId on the first activity — it gets learned from the
+    // server's response.
+    expect(calls[0].entities?.[0].streamId).toBeUndefined();
+    expect(calls[0].id).toBeUndefined();
+  });
+
+  it('subsequent chunks switch to `streaming` once streamId is bound', async () => {
+    const { calls, sender } = makeSender();
+    const s = new TeamsStreamingSession(sender, {
+      delayInMs: 0,
+      log: silentLog,
+    });
+
+    await s.chunk('a');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.chunk('ab');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.chunk('abc');
+    await new Promise((r) => setTimeout(r, 5));
+
+    const typings = calls.filter((c) => c.type === 'typing');
+    expect(typings.length).toBeGreaterThanOrEqual(2);
+    expect(typings[0].entities?.[0].streamType).toBe('informative');
+    // All later typing activities are `streaming` and carry the streamId.
+    for (let i = 1; i < typings.length; i++) {
+      expect(typings[i].entities?.[0].streamType).toBe('streaming');
+      expect(typings[i].entities?.[0].streamId).toBe('msg-1');
+      expect(typings[i].id).toBe('msg-1');
+    }
+  });
+
+  it('end() degrades to plain message when no streamId was ever obtained', async () => {
+    // Simulate: first chunk send rejected before any streamId could be
+    // captured. Without the regression fix, end() would send a `final`
+    // message with no streamId — which Teams rejects with "Only end
+    // streaming type is allowed as a message activity" — silently
+    // dropping the agent's reply.
+    const calls: Array<Partial<TeamsActivity>> = [];
+    let nextId = 1;
+    const sender: ActivitySender = async (activity) => {
+      calls.push(JSON.parse(JSON.stringify(activity)));
+      // Reject the first typing activity (whatever streamType it had).
+      if (activity.type === 'typing') {
+        throw new Error('simulated wire error');
+      }
+      return `msg-${nextId++}`;
+    };
+
+    const s = new TeamsStreamingSession(sender, {
+      delayInMs: 0,
+      log: silentLog,
+    });
+
+    await s.chunk('partial text');
+    await new Promise((r) => setTimeout(r, 10));
+    const id = await s.end('final reply text');
+
+    // The agent's final reply MUST land. The first call was the
+    // typing chunk that errored; the last call must be the plain
+    // `message` activity (no streaminfo entities, no id).
+    const last = calls[calls.length - 1];
+    expect(last.type).toBe('message');
+    expect(last.text).toBe('final reply text');
+    expect(last.entities).toBeUndefined();
+    expect(last.id).toBeUndefined();
+    // Sender returned an id for the message; end() returns it.
+    expect(typeof id).toBe('string');
+  });
+
+  it('final activity always carries streamId when one was obtained', async () => {
+    const { calls, sender } = makeSender();
+    const s = new TeamsStreamingSession(sender, {
+      delayInMs: 0,
+      log: silentLog,
+    });
+
+    await s.chunk('a');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.end('abc');
+
+    const final = calls[calls.length - 1];
+    expect(final.type).toBe('message');
+    expect(final.entities?.[0].streamType).toBe('final');
+    // CRITICAL: Teams server rejects final without streamId.
+    expect(final.entities?.[0].streamId).toBe('msg-1');
+    expect(final.id).toBe('msg-1');
   });
 });

@@ -214,6 +214,26 @@ export class TeamsStreamingSession implements StreamHandle {
       }
     }
 
+    // The final `message` activity MUST carry the `streamId` returned
+    // by the first typing activity, otherwise Teams rejects it with:
+    //   "Only end streaming type is allowed as a message activity"
+    // (the validator is checking the entity shape against the
+    // end-streaming contract, which requires streamId). If we never got
+    // a streamId — e.g. the channel returned no id, or no chunks fired —
+    // fall back to a plain non-streaming message so the agent's reply
+    // still lands. Regression discovered 2026-04-22.
+    if (!this._streamId) {
+      try {
+        const id = await this.send({ type: 'message', text: finalText });
+        return id;
+      } catch (err: any) {
+        this.log.warn(
+          { err: err?.message ?? String(err) },
+          'Teams streaming: final without streamId, plain send failed',
+        );
+        return;
+      }
+    }
     const activity: Partial<TeamsActivity> = {
       type: 'message',
       text: finalText,
@@ -284,13 +304,29 @@ export class TeamsStreamingSession implements StreamHandle {
         // Nothing new since last send; skip pacing wait too.
         continue;
       }
+      // Teams server requires the FIRST activity in a stream to be a
+      // start-streaming signal (`streamType: 'informative'`). Subsequent
+      // typing activities use `streaming` and MUST carry the `streamId`
+      // returned by the first send. Sending `streaming` as the very first
+      // activity is rejected with:
+      //   "Only start streaming and continue streaming types are allowed
+      //    as a typing activity"
+      // (per-doc literal enum is `informative` / `streaming`; the server
+      // error wording reads them as 'start' / 'continue'). The MS
+      // reference impl (@microsoft/agents-hosting StreamingResponse)
+      // exposes `queueInformativeUpdate()` for this; bots that skip it
+      // and call `queueTextChunk()` first hit the same regression.
+      // Regression discovered 2026-04-22 (kenan repro on Teams Windows
+      // client). Fix: bootstrap the stream with one informative activity
+      // before any `streaming` chunks.
+      const isFirstActivity = !this._streamId;
       const activity: Partial<TeamsActivity> = {
         type: 'typing',
         text: textToSend,
         entities: [
           {
             type: 'streaminfo',
-            streamType: 'streaming',
+            streamType: isFirstActivity ? 'informative' : 'streaming',
             streamSequence: this._nextSequence++,
           },
         ],
