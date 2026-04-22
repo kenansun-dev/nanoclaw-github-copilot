@@ -240,7 +240,13 @@ describe('TeamsStreamingSession', () => {
     expect(finals[0].entities ?? []).toEqual([]);
   });
 
-  it('cancels the stream on ContentStreamNotAllowed and stops sending', async () => {
+  it('degrades to plain message on ContentStreamNotAllowed mid-stream (regression)', async () => {
+    // Regression for the silent-final-drop bug discovered in code review
+    // (rpi5, 2026-04-22): the wire layer rejecting mid-stream
+    // (`ContentStreamNotAllowed`) used to set `_cancelled=true`, then
+    // `end()` saw the cancel flag and bailed without publishing the
+    // agent's reply. The fix distinguishes wire-cancel from explicit
+    // dispatcher `cancel()`: only the explicit case suppresses the final.
     const calls: Array<Partial<TeamsActivity>> = [];
     let chunkCalled = 0;
     const sender: ActivitySender = async (activity) => {
@@ -262,11 +268,38 @@ describe('TeamsStreamingSession', () => {
     await s.chunk('a');
     await new Promise((r) => setTimeout(r, 10));
     await s.chunk('ab');
-    await s.end('abc');
+    const id = await s.end('abc');
 
-    // We attempted exactly one typing send (the rejected one) and
-    // never published a final (cancellation suppresses end's send).
-    expect(calls.filter((c) => c.type === 'typing').length).toBe(1);
+    // One typing send attempted (rejected), one plain-message final
+    // (the degraded fallback so the agent's reply still lands).
+    const typing = calls.filter((c) => c.type === 'typing');
+    const messages = calls.filter((c) => c.type === 'message');
+    expect(typing.length).toBe(1);
+    expect(messages.length).toBe(1);
+    // Plain message: no streaminfo entities (those only make sense
+    // inside an active stream).
+    expect(messages[0].entities ?? []).toEqual([]);
+    expect(messages[0].text).toBe('abc');
+    expect(typeof id).toBe('string');
+  });
+
+  it('explicit cancel() suppresses end()’s final send (dispatcher turn boundary)', async () => {
+    // The dispatcher calls cancel() on IPC turn boundaries and in the
+    // finally-guard. In those cases the stream is intentionally dead
+    // and end() must NOT publish anything — the dispatcher will dispatch
+    // any genuine final reply through a fresh stream on the next turn.
+    const { calls, sender } = makeSender();
+    const s = new TeamsStreamingSession(sender, {
+      delayInMs: 0,
+      log: silentLog,
+    });
+
+    await s.chunk('hi');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.cancel();
+    const id = await s.end('hi there');
+
+    expect(id).toBeUndefined();
     expect(calls.filter((c) => c.type === 'message').length).toBe(0);
   });
 

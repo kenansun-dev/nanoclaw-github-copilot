@@ -106,6 +106,25 @@ export class TeamsStreamingSession implements StreamHandle {
   private _nextSequence = 1;
   private _ended = false;
   private _cancelled = false;
+  /**
+   * True when the stream stopped because the dispatcher explicitly called
+   * `cancel()` (turn boundary, finally-guard, etc.). In that case `end()`
+   * must publish nothing — the dispatcher has decided this stream is dead.
+   *
+   * Distinct from `_cancelled`, which is also set when the wire layer
+   * rejects mid-stream (`ContentStreamNotAllowed`, generic send failure):
+   * those cases stop further streaming activities, but `end()` MUST still
+   * publish the final text as a plain non-streaming message, otherwise
+   * the agent's reply silently disappears.
+   *
+   * Bug discovered in code review (rpi5, 2026-04-22): without this flag,
+   * `ContentStreamNotAllowed` mid-stream caused `_cancelled = true`, then
+   * `end()` saw `_cancelled` and bailed, losing the final reply. The
+   * pre-existing comment in `_drainLoop` already promised this would
+   * "allow `end()` to publish a final non-streaming message" — we just
+   * never wired the distinction.
+   */
+  private _explicitCancel = false;
   /** Cumulative text last sent to client; used to skip no-op chunks. */
   private _lastSent = '';
   /** Cumulative text most recently received; what `end` will publish. */
@@ -154,10 +173,15 @@ export class TeamsStreamingSession implements StreamHandle {
     if (this._ended) return;
     this._ended = true;
     this._latestText = finalText;
-    if (this._cancelled) return;
+    // Explicit dispatcher-driven cancel: nothing to publish.
+    if (this._explicitCancel) return;
 
-    if (!this._isStreamingChannel) {
-      // Degraded path: send a single plain message with the final text.
+    // Wire-level cancel (ContentStreamNotAllowed / generic send failure)
+    // OR channel-rejected streaming: degrade to a single non-streaming
+    // `message` activity so the agent's final reply still lands. We strip
+    // streaminfo entities since they only make sense inside an active
+    // stream.
+    if (this._cancelled || !this._isStreamingChannel) {
       try {
         const id = await this.send({ type: 'message', text: finalText });
         return id;
@@ -171,9 +195,24 @@ export class TeamsStreamingSession implements StreamHandle {
     }
 
     // Wait for any pending streaming chunks to flush so the final
-    // arrives in-order with respect to typing activities.
+    // arrives in-order with respect to typing activities. The drain
+    // could have flipped `_cancelled` (e.g. ContentStreamNotAllowed
+    // mid-flush) — if so, fall through to the degraded plain-message
+    // path instead of bailing silently.
     await this._waitForDrain();
-    if (this._cancelled) return;
+    if (this._explicitCancel) return;
+    if (this._cancelled || !this._isStreamingChannel) {
+      try {
+        const id = await this.send({ type: 'message', text: finalText });
+        return id;
+      } catch (err: any) {
+        this.log.warn(
+          { err: err?.message ?? String(err) },
+          'Teams streaming: post-drain degraded final send failed',
+        );
+        return;
+      }
+    }
 
     const activity: Partial<TeamsActivity> = {
       type: 'message',
@@ -212,6 +251,7 @@ export class TeamsStreamingSession implements StreamHandle {
 
   async cancel(): Promise<void> {
     if (this._cancelled || this._ended) return;
+    this._explicitCancel = true;
     this._cancelled = true;
     this._ended = true;
     // Drop any queued work; let in-flight drain finish on its own.
