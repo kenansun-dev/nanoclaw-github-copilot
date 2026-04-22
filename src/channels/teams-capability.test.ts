@@ -291,3 +291,184 @@ describe('IPC turn boundary closure reset', () => {
     expect(src).toMatch(/IPC turn boundary: reset per-turn message-id state/);
   });
 });
+
+/**
+ * Regression tests for the partial+final duplicate-message bug on Teams
+ * (kenansun, 2026-04-22):
+ *
+ *   `/status` reply visible TWICE in a single Teams thread — first
+ *   copy still showing the streaming `◌` cursor (a partial that was
+ *   never edited away), second copy the real final.
+ *
+ * Root cause: the legacy partial-accumulation path used
+ * `channel.editMessage(progressiveMsgId, finalText)` to replace the
+ * in-flight partial with the final. On Teams this calls
+ * `adapter.updateActivity()`, which fails across IPC turn boundaries /
+ * stale conversation refs. The catch fallback in
+ * `src/channels/teams.ts` then sent the final as a NEW message,
+ * leaving the partial visible → user sees both.
+ *
+ * Fix: introduce `Channel.usesNativeStreaming` + `streamMessage()`.
+ * When the channel opts in, the dispatcher routes partials through a
+ * native StreamHandle that owns serialization (single in-flight at a
+ * time) and never touches `updateActivity` for the partial→final
+ * transition. Teams' `streamMessage()` will use Microsoft's streaming
+ * AI messages protocol (typing+streaminfo entities, streamSequence,
+ * streamId binding) so the platform renders one live bubble.
+ *
+ * These tests pin:
+ *   - The `Channel` interface still accepts opt-in shape (types).
+ *   - The dispatcher routing decision — mirror of the new branch in
+ *     src/index.ts — picks native streaming when both flag and method
+ *     are present, and falls back cleanly otherwise.
+ *   - The source contract that the dispatcher actually wires the
+ *     branch (so a future refactor that drops it gets caught).
+ */
+import type { StreamHandle } from '../types.js';
+
+describe('Channel.usesNativeStreaming capability surface', () => {
+  it('Channel interface declares usesNativeStreaming as optional boolean', () => {
+    const minimal: Pick<
+      Channel,
+      | 'name'
+      | 'connect'
+      | 'sendMessage'
+      | 'isConnected'
+      | 'ownsJid'
+      | 'disconnect'
+    > = {
+      name: 'fake',
+      connect: async () => {},
+      sendMessage: async () => undefined,
+      isConnected: () => true,
+      ownsJid: () => false,
+      disconnect: async () => {},
+    };
+    expect((minimal as Channel).usesNativeStreaming).toBeUndefined();
+
+    const optedIn: Channel = {
+      ...minimal,
+      usesNativeStreaming: true,
+      streamMessage: async () => ({
+        chunk: async () => {},
+        end: async () => 'final-id',
+        cancel: async () => {},
+      }),
+    };
+    expect(optedIn.usesNativeStreaming).toBe(true);
+    expect(typeof optedIn.streamMessage).toBe('function');
+  });
+
+  it('StreamHandle interface: chunk/end/cancel signatures', async () => {
+    const handle: StreamHandle = {
+      chunk: async (text: string) => {
+        expect(typeof text).toBe('string');
+      },
+      end: async (text: string) => {
+        expect(typeof text).toBe('string');
+        return 'final-id';
+      },
+      cancel: async () => {},
+    };
+    await handle.chunk('hello');
+    const id = await handle.end('hello world');
+    expect(id).toBe('final-id');
+    await handle.cancel(); // idempotent contract
+    await handle.cancel();
+  });
+});
+
+describe('partial dispatch routing (logic mirror)', () => {
+  /**
+   * Mirror of the partial-branch decision in src/index.ts. When the
+   * channel exposes both `usesNativeStreaming` AND `streamMessage`,
+   * we MUST route through the native path — never the legacy
+   * sendMessage(partial+◌)/editMessage path. Otherwise fall back to
+   * legacy.
+   */
+  type PartialRoute = 'native-stream' | 'legacy-edit' | 'no-partial-support';
+  function routePartial(args: {
+    usesNativeStreaming?: boolean;
+    hasStreamMessage: boolean;
+    hasEdit: boolean;
+  }): PartialRoute {
+    if (args.usesNativeStreaming && args.hasStreamMessage)
+      return 'native-stream';
+    if (args.hasEdit) return 'legacy-edit';
+    return 'no-partial-support';
+  }
+
+  it('Teams (native streaming + streamMessage): native-stream', () => {
+    expect(
+      routePartial({
+        usesNativeStreaming: true,
+        hasStreamMessage: true,
+        hasEdit: true,
+      }),
+    ).toBe('native-stream');
+  });
+
+  it('Telegram (no native streaming flag): legacy-edit', () => {
+    expect(
+      routePartial({
+        usesNativeStreaming: false,
+        hasStreamMessage: false,
+        hasEdit: true,
+      }),
+    ).toBe('legacy-edit');
+  });
+
+  it('flag set but streamMessage missing (misconfig): legacy-edit fallback', () => {
+    // Defensive: if a channel sets the flag but forgets streamMessage,
+    // we fall back to legacy rather than crashing. The TS type system
+    // makes this combination awkward to reach but not impossible at
+    // runtime (e.g. dynamic registry, partial mocks).
+    expect(
+      routePartial({
+        usesNativeStreaming: true,
+        hasStreamMessage: false,
+        hasEdit: true,
+      }),
+    ).toBe('legacy-edit');
+  });
+
+  it('no native streaming, no editMessage: no-partial-support (partials dropped)', () => {
+    expect(
+      routePartial({
+        usesNativeStreaming: false,
+        hasStreamMessage: false,
+        hasEdit: false,
+      }),
+    ).toBe('no-partial-support');
+  });
+});
+
+describe('native streaming dispatcher source contract', () => {
+  /**
+   * Pin the dispatcher actually wires native streaming. If a future
+   * refactor drops the branch, this test fails before users see a
+   * regression in the partial+final duplicate bug.
+   */
+  it('src/index.ts opens streamHandle on native-streaming channels', async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.promises.readFile(new URL('../index.ts', import.meta.url), 'utf-8'),
+    );
+    expect(src).toMatch(
+      /channel\.usesNativeStreaming\s*&&\s*channel\.streamMessage/,
+    );
+    expect(src).toMatch(/streamHandle\s*=\s*await\s+channel\.streamMessage/);
+    expect(src).toMatch(/streamHandle\.chunk\(text\)/);
+    expect(src).toMatch(/streamHandle\.end\(text\)/);
+  });
+
+  it('src/index.ts cancels streamHandle on turn boundary and finally-guard', async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.promises.readFile(new URL('../index.ts', import.meta.url), 'utf-8'),
+    );
+    // Two cancel sites: turn-boundary reset + finally-guard cleanup
+    const cancelMatches = src.match(/streamHandle\.cancel\(\)/g) || [];
+    expect(cancelMatches.length).toBeGreaterThanOrEqual(2);
+    expect(src).toMatch(/IPC turn boundary/);
+    expect(src).toMatch(/finally-guard/);
+  });
+});

@@ -92,6 +92,29 @@ export interface TaskRunLog {
 
 // --- Channel abstraction ---
 
+/**
+ * Handle returned by `Channel.streamMessage()`. Lifecycle:
+ *   open → chunk(cumulativeText) × N → end(finalText)
+ *   open → cancel()  (no final published)
+ *
+ * `chunk` receives the **cumulative** text accumulated so far (not a
+ * delta). This matches how the dispatcher already accumulates partial
+ * text in `progressiveText` and avoids the channel re-implementing
+ * delta state. Implementations may compress / coalesce chunks before
+ * sending if their platform rate-limits.
+ *
+ * `end` returns the platform's final message id (if any) so callers
+ * can record `lastFinalMsgId` for subsequent multi-final dispatch.
+ *
+ * Implementations MUST tolerate `end` or `cancel` being called once;
+ * subsequent calls should be no-ops.
+ */
+export interface StreamHandle {
+  chunk(cumulativeText: string): Promise<void>;
+  end(finalText: string): Promise<string | void>;
+  cancel(): Promise<void>;
+}
+
 export interface Channel {
   name: string;
   connect(): Promise<void>;
@@ -120,9 +143,50 @@ export interface Channel {
    * reply stays visible.
    *
    * This does NOT affect progressive streaming partials — those still
-   * accumulate via editMessage on the same in-flight message.
+   * accumulate via editMessage on the same in-flight message UNLESS the
+   * channel also sets `usesNativeStreaming` (see below).
    */
   prefersNewMessageForFinal?: boolean;
+  /**
+   * When true, the dispatcher routes streaming partials through
+   * `streamMessage()` instead of the legacy `sendMessage(partial+◌)` +
+   * `editMessage(partial→final)` path. Channels set this when their
+   * platform offers a native streaming protocol (e.g. Teams' streaming
+   * AI messages, where `entities[].streamType` lets the client render
+   * a single live bubble without per-chunk message edits).
+   *
+   * Why a separate flag from `prefersNewMessageForFinal`: the two
+   * concerns are independent. A channel might want native streaming
+   * (this flag) AND want subsequent finals to be new messages
+   * (`prefersNewMessageForFinal`), or either one alone. Conflating
+   * them blocked the original `prefersNewMessageForFinal` docstring
+   * which explicitly said it did not touch partials.
+   *
+   * Background: the legacy `editMessage(partial→final)` path on Teams
+   * relied on `updateActivity()` succeeding across IPC turn boundaries
+   * and stale conversation refs. When it failed, the catch block fell
+   * back to `sendMessage()` and produced visible duplicate messages.
+   * Native streaming sidesteps `updateActivity` entirely.
+   */
+  usesNativeStreaming?: boolean;
+  /**
+   * Open a native streaming session for `jid`. Required when
+   * `usesNativeStreaming` is true; ignored otherwise.
+   *
+   * The returned handle exposes `chunk(cumulativeText)` for in-flight
+   * partial updates, `end(finalText)` to publish the canonical final
+   * message (and tear down the stream), and `cancel()` to abort the
+   * stream without publishing a final.
+   *
+   * Implementations are responsible for serializing outbound activities
+   * (single in-flight at a time) and for graceful degradation when the
+   * underlying platform rejects streaming (e.g. emit a single `end`
+   * message instead).
+   */
+  streamMessage?(
+    jid: string,
+    options?: { parseMode?: 'HTML' | 'Markdown' },
+  ): Promise<StreamHandle>;
   reactToMessage?(
     jid: string,
     emoji: string,
