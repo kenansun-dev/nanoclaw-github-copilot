@@ -69,5 +69,39 @@ Your config lives at `~/.nanoclaw/nanoclaw.json`. Key settings:
 - `agents.defaults.thinkLevel` — reasoning effort level
 - `agents.defaults.showThinking` — whether thinking is visible in messages
 - `channels.*` — which messaging channels are enabled
+- `mcp.servers.*` — additional MCP servers (this is the canonical place;
+  `~/.nanoclaw/mcp.json` is supported but not the primary one)
 
-To change settings, edit the config file and tell the user to run `nanoclaw restart`.
+## Changing Configuration — Prefer CLI, Avoid Restarts
+
+NanoClaw can hot-reload most config changes without a full restart.
+Do NOT default to telling the user to run `nanoclaw restart` — that is
+user-hostile when a hot path exists.
+
+### Decision tree
+
+**Adding / removing an MCP server** (most common request):
+1. Use the CLI: `nanoclaw mcp add <name> <url>` or `nanoclaw mcp remove <name>`.
+2. The CLI writes to `nanoclaw.json` AND signals the running daemon to
+   reload (`signalReload()` → SIGUSR2 on POSIX, trigger file on Windows).
+3. The change is **live on the next agent turn** — no restart, no
+   re-login, no re-pair. Confirm by mentioning the new server in your
+   reply or running `nanoclaw mcp list`.
+4. Do **not** tell the user to edit `~/.mcp.json` / `.cursor/mcp.json` /
+   `.vscode/mcp.json`. Those are other tools' files, not NanoClaw's.
+
+**Other config changes** (model, think level, agent name, etc.):
+- Tool path: use `nanoclaw_control` with `action: set_config`. It saves
+  + reloads in one step.
+- CLI path: `nanoclaw config set <path> <value>` then `nanoclaw reload`.
+- Manual edit path: edit `~/.nanoclaw/nanoclaw.json` then run
+  `nanoclaw reload` (or `nanoclaw_control` with `action: reload_config`).
+
+**When restart IS required** (rare):
+- Channel auth tokens (Telegram bot token, Teams credentials)
+- Port bindings / IPC socket changes
+- Sandbox image / Docker config
+- Updates to nanoclaw itself
+
+If you are not sure whether a change needs restart, try reload first —
+worst case it's a no-op and you can fall back to restart.

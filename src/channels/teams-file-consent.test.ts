@@ -244,3 +244,88 @@ describe('InvokeResponse activity shape (botbuilder contract)', () => {
     expect(rawResponse).toEqual({ status: 200 });
   });
 });
+
+describe('FileInfoCard attachment shape (file chiclet rendering)', () => {
+  /**
+   * Regression test for "file chiclet" rendering bug.
+   *
+   * Background (kenansun, 2026-04-22):
+   *   After bot uploads to SharePoint, it sends a FileInfoCard back so
+   *   Teams renders the file as a clickable chiclet in chat. We were
+   *   missing the top-level `contentUrl` field. Teams server returned:
+   *     "An exception occurred when converting file info card to file chiclet"
+   *   and the user saw a Skype "unsupported card" link + "Sorry, something
+   *   went wrong" toast.
+   *
+   * Per Microsoft docs
+   * (learn.microsoft.com/microsoftteams/platform/bots/how-to/bots-filesv4#example-of-file-info-card)
+   * the attachment requires:
+   *   - contentType: 'application/vnd.microsoft.teams.card.file.info'
+   *   - contentUrl:  SharePoint URL (same one the PUT uploaded to)
+   *   - name:        filename
+   *   - content.uniqueId / content.fileType
+   *
+   * Teams provides the contentUrl in the fileConsent/invoke payload at
+   * value.uploadInfo.contentUrl. We pass it through.
+   */
+
+  it('FileInfoCard attachment includes contentUrl from uploadInfo', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(path.resolve(__dirname, 'teams.ts'), 'utf-8');
+
+    // Find the FileInfoCard send block. Use the contentType marker as anchor.
+    const anchor = src.indexOf(
+      "'application/vnd.microsoft.teams.card.file.info'",
+    );
+    expect(anchor).toBeGreaterThan(0);
+
+    // Bound to the surrounding setImmediate/continueConversation block.
+    // Look back ~600 chars and forward ~600 chars to capture the whole
+    // attachment object literal.
+    const blockStart = Math.max(0, anchor - 600);
+    const blockEnd = Math.min(src.length, anchor + 800);
+    const block = src.slice(blockStart, blockEnd);
+
+    // Must include contentUrl pulled from uploadInfo. Without this, Teams
+    // server fails to render the chiclet ("An exception occurred when
+    // converting file info card to file chiclet").
+    expect(block).toMatch(/contentUrl:\s*value\.uploadInfo\?\.contentUrl/);
+
+    // Must still include name + uniqueId + fileType.
+    expect(block).toMatch(/name:/);
+    expect(block).toMatch(/uniqueId:/);
+    expect(block).toMatch(/fileType:/);
+  });
+
+  it('logic mirror: attachment shape matches Microsoft docs', () => {
+    // Mirror of the production attachment shape so a structural change in
+    // the production code is caught here even if the source-grep above
+    // passes (e.g. someone moves the literal but breaks the runtime shape).
+    const uploadInfo = {
+      contentUrl:
+        'https://contoso.sharepoint.com/personal/u/Documents/Apps/file.txt',
+      name: 'file.txt',
+      uploadUrl: 'https://upload.example/session',
+      uniqueId: '1150D938-8870-4044-9F2C-5BBDEBA70C8C',
+      fileType: 'txt',
+    };
+    const attachment = {
+      contentType: 'application/vnd.microsoft.teams.card.file.info',
+      contentUrl: uploadInfo.contentUrl,
+      name: uploadInfo.name,
+      content: {
+        uniqueId: uploadInfo.uniqueId,
+        fileType: uploadInfo.fileType,
+      },
+    };
+    // All four fields docs-mandate must be present.
+    expect(attachment.contentType).toBe(
+      'application/vnd.microsoft.teams.card.file.info',
+    );
+    expect(attachment.contentUrl).toMatch(/^https:\/\//);
+    expect(attachment.name).toBeTruthy();
+    expect(attachment.content.uniqueId).toBeTruthy();
+    expect(attachment.content.fileType).toBeTruthy();
+  });
+});

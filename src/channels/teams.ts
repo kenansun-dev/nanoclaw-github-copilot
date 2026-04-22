@@ -18,7 +18,9 @@ import {
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
+  StreamHandle,
 } from '../types.js';
+import { TeamsStreamingSession, makeAdapterSender } from './teams-streaming.js';
 
 // ---------------------------------------------------------------------------
 // Teams Channel — implements the same Channel interface as Telegram
@@ -51,8 +53,16 @@ export class TeamsChannel implements Channel {
   // visible "edited" affordance, so when the agent emits multiple final
   // outputs in a single turn (text → tool call → more text), reusing
   // editMessage silently destroys earlier replies. Always send new
-  // messages for separate finals; progressive partials still use editMessage.
+  // messages for separate finals; progressive partials use the native
+  // streaming protocol below (see usesNativeStreaming).
   prefersNewMessageForFinal = true;
+  // Teams has a first-class streaming protocol (typing activities with
+  // `streaminfo` entities + monotonic streamSequence + a single bound
+  // streamId). The dispatcher routes partials through `streamMessage()`
+  // when this flag is set, sidestepping the historic editMessage path
+  // whose `updateActivity` racing produced visible duplicate replies.
+  // See src/channels/teams-streaming.ts for the wire-protocol notes.
+  usesNativeStreaming = true;
 
   private adapter: BotFrameworkAdapter;
   private adapterSettings: Record<string, any> = {};
@@ -559,11 +569,26 @@ export class TeamsChannel implements Channel {
               .continueConversation(
                 ref as ConversationReference,
                 async (ctx: TurnContext) => {
+                  // FileInfoCard (file chiclet) requires `contentUrl` at the
+                  // attachment top level — Teams server-side renders the
+                  // chiclet by linking to the SharePoint URL where the file
+                  // landed during the PUT upload. Without contentUrl, the
+                  // server returns:
+                  //   "An exception occurred when converting file info card
+                  //    to file chiclet"
+                  // and the user sees a Skype "unsupported card" link plus a
+                  // "Sorry, something went wrong" toast (kenansun, 2026-04-22).
+                  //
+                  // Teams sends `contentUrl` in the fileConsent/invoke
+                  // payload's `value.uploadInfo.contentUrl` — same SharePoint
+                  // URL the bot just PUT to. Reuse it.
+                  // See https://learn.microsoft.com/en-us/microsoftteams/platform/bots/how-to/bots-filesv4#example-of-file-info-card
                   await ctx.sendActivity({
                     attachments: [
                       {
                         contentType:
                           'application/vnd.microsoft.teams.card.file.info',
+                        contentUrl: value.uploadInfo?.contentUrl,
                         name: value.uploadInfo?.name || value.context.filename,
                         content: {
                           uniqueId: value.uploadInfo?.uniqueId,
@@ -1029,11 +1054,13 @@ export class TeamsChannel implements Channel {
         'Teams editMessage failed, falling back to new sendMessage',
       );
       // Fallback: send as a new message so the user at least sees the reply.
-      // Duplicate-risk assessment for Teams 1:1/channel: updateActivity either
-      // succeeds and returns cleanly, or fails with the adapter error before
-      // the update is applied. Partial-success races haven't been observed in
-      // practice here; the cost of a rare duplicate is far lower than the
-      // current silent message loss.
+      // Note: this fallback path was the source of the partial+final
+      // duplicate bug — streaming partials going through editMessage
+      // would race here and double-post. That hot path is now routed
+      // through the native streaming protocol (see streamMessage()),
+      // so this fallback only triggers for explicit edit calls
+      // (proactive message corrections), where a rare duplicate is
+      // far less likely to manifest and far cheaper than silent loss.
       try {
         return await this.sendMessage(jid, text);
       } catch (err2: any) {
@@ -1043,6 +1070,46 @@ export class TeamsChannel implements Channel {
         );
       }
     }
+  }
+
+  /**
+   * Open a Teams native streaming session for `jid`.
+   *
+   * The returned StreamHandle drives Teams' typing+streaminfo wire
+   * protocol (see src/channels/teams-streaming.ts) instead of the
+   * legacy editMessage-on-partials path. This eliminates the
+   * `updateActivity` race that produced duplicate replies (one
+   * with the `◌` cursor, one with the final content) when a
+   * partial-edit failed and fell back to sendMessage.
+   *
+   * The dispatcher only calls this when `usesNativeStreaming` is
+   * true. We don't expose a non-streaming fallback here; the
+   * StreamingSession itself degrades to a single non-streaming
+   * `message` activity if Teams reports the channel doesn't
+   * support streaming for this conversation.
+   */
+  async streamMessage(jid: string): Promise<StreamHandle> {
+    const ref = this.conversationRefs.get(jid);
+    if (!ref) {
+      // No conversation ref — we can't reach this chat at all.
+      // Return a no-op handle so the dispatcher doesn't crash; the
+      // missing-ref case is already logged elsewhere when sendMessage
+      // is attempted on the same jid.
+      logger.warn(
+        { jid },
+        'Teams: no conversation reference for streamMessage; returning no-op handle',
+      );
+      return {
+        chunk: async () => {},
+        end: async () => {},
+        cancel: async () => {},
+      };
+    }
+    const sender = makeAdapterSender({
+      adapter: this.adapter as any,
+      ref: ref as ConversationReference,
+    });
+    return new TeamsStreamingSession(sender, { channelId: 'msteams' });
   }
 
   async sendFile(

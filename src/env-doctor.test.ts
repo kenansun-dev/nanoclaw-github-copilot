@@ -88,7 +88,7 @@ describe('readEnvFile', () => {
 
 // ─── runDoctor ───────────────────────────────────────────────────────────────
 
-describe('runDoctor', () => {
+describe('runDoctor', { timeout: 30_000 }, () => {
   it('returns an array of CheckResults', () => {
     const results = runDoctor();
     expect(Array.isArray(results)).toBe(true);

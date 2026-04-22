@@ -92,7 +92,7 @@ export async function runUpdate(args: string[]): Promise<void> {
         /* */
       }
 
-      execSync('nanoclaw stop', { stdio: 'pipe', timeout: 15000 });
+      execSync('nanoclaw stop', { stdio: 'inherit', timeout: 15000 });
       console.log('  Stopped running instance');
 
       // Wait for process to fully release file locks (important on Windows)
@@ -104,8 +104,12 @@ export async function runUpdate(args: string[]): Promise<void> {
         // No PID file — wait a fixed time for safety
         await new Promise((r) => setTimeout(r, 2000));
       }
-    } catch {
-      // Not running, fine
+    } catch (err: any) {
+      // Not running is fine; surface other errors so they aren't silently lost.
+      const msg = String(err?.message ?? err);
+      if (!/Not running/i.test(msg)) {
+        console.log(`  (stop reported: ${msg})`);
+      }
     }
 
     // Determine install source
@@ -146,8 +150,10 @@ export async function runUpdate(args: string[]): Promise<void> {
     console.log('  Syncing workspace...');
     try {
       execSync('nanoclaw init --sync', { stdio: 'inherit', timeout: 30000 });
-    } catch {
-      console.log('  ⚠️  Workspace sync had issues. Run: nanoclaw init --sync');
+    } catch (err: any) {
+      console.log(
+        `  ⚠️  Workspace sync had issues: ${err?.message ?? err}. Run: nanoclaw init --sync`,
+      );
     }
 
     // Rebuild sandbox image if any agent uses sandbox mode
@@ -192,10 +198,17 @@ export async function runUpdate(args: string[]): Promise<void> {
     console.log('');
     console.log('  Restarting NanoClaw...');
     try {
-      execSync('nanoclaw start', { stdio: 'pipe', timeout: 10000 });
+      // Use 'inherit' so the user sees WHY start fails (silent 'pipe' was
+      // hiding errors and producing the unhelpful 'Could not auto-restart'
+      // message kenan kept hitting on Windows). Bumped timeout from 10s to
+      // 30s because Windows `startDirect` waits 3s + log scan + some MSDefender
+      // realtime-scan overhead can push past 10s on first start.
+      execSync('nanoclaw start', { stdio: 'inherit', timeout: 30000 });
       console.log('  ✅ NanoClaw restarted');
-    } catch {
-      console.log('  ⚠️  Could not auto-restart. Run: nanoclaw start');
+    } catch (err: any) {
+      console.log(
+        `  ⚠️  Could not auto-restart: ${err?.message ?? err}. Run: nanoclaw start`,
+      );
     }
 
     // Show new version

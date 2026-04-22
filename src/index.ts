@@ -383,6 +383,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let progressiveMsgId: string | undefined;
   let progressiveText = '';
   let lastFinalMsgId: string | undefined;
+  // Native streaming state: when channel.usesNativeStreaming, we open a
+  // StreamHandle on the first partial and feed it cumulative text. The
+  // legacy progressiveMsgId path is bypassed entirely. See
+  // src/types.ts:Channel.usesNativeStreaming docstring for why this is
+  // a separate code path from editMessage-based partial accumulation.
+  let streamHandle: import('./types.js').StreamHandle | undefined;
   // IPC mode: the runAgent() promise resolves on the first query-complete
   // signal, but the spawned agent process keeps living and the stdout
   // listener (with this onOutput closure) keeps firing for follow-up
@@ -428,6 +434,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           progressiveText = '';
           lastFinalMsgId = undefined;
           outputSentToUser = false;
+          // Cancel any leftover native stream from the previous turn so
+          // the next turn opens a fresh stream. cancel() is idempotent.
+          if (streamHandle) {
+            try {
+              await streamHandle.cancel();
+            } catch (err) {
+              logger.warn(
+                { chatJid, err: (err as Error).message },
+                'streamHandle.cancel during turn boundary failed (non-fatal)',
+              );
+            }
+            streamHandle = undefined;
+          }
           logger.debug(
             { chatJid, group: group.name },
             'IPC turn boundary: reset per-turn message-id state',
@@ -465,7 +484,24 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           ? { parseMode: thinkingParseMode }
           : undefined;
 
-        if (result.partial && channel.editMessage) {
+        if (
+          result.partial &&
+          channel.usesNativeStreaming &&
+          channel.streamMessage
+        ) {
+          // Native streaming path: hand cumulative text to the channel's
+          // StreamHandle. The handle is responsible for serializing
+          // outbound activities and graceful degradation on platforms
+          // that reject mid-stream. We never call sendMessage/editMessage
+          // here, so updateActivity races (the partial+final duplicate
+          // bug) cannot occur on this path.
+          progressiveText = text;
+          if (!streamHandle) {
+            await traceSetTyping(channel, chatJid, false, 'native-stream-open');
+            streamHandle = await channel.streamMessage(chatJid, sendOpts);
+          }
+          await streamHandle.chunk(text);
+        } else if (result.partial && channel.editMessage) {
           // Delta/partial: accumulate and edit existing message
           progressiveText = text; // delta buffer already accumulated in agent-runner
           if (!progressiveMsgId) {
@@ -494,7 +530,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         } else {
           // Final message (or channel doesn't support edit)
           await traceSetTyping(channel, chatJid, false, 'final-output');
-          if (progressiveMsgId && channel.editMessage) {
+          if (streamHandle) {
+            // Native streaming path: close the stream with the final text.
+            // The handle owns whether this becomes a new message or replaces
+            // the in-flight stream bubble (Teams: replaces; others: TBD).
+            const msgId = await streamHandle.end(text);
+            streamHandle = undefined;
+            lastFinalMsgId = typeof msgId === 'string' ? msgId : undefined;
+          } else if (progressiveMsgId && channel.editMessage) {
             // Replace the progressive message with final content
             await channel.editMessage(
               chatJid,
@@ -569,6 +612,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     // greppable: if grep shows finally-guard right before a stuck-typing
     // report, an exception escaped the happy path.
     if (idleTimer) clearTimeout(idleTimer);
+    // Cancel any unfinished native stream so the channel can clean up its
+    // queue / mark the stream bubble as ended on the user's client. cancel()
+    // is idempotent; called even if a normal end() already fired (the second
+    // call no-ops).
+    if (streamHandle) {
+      try {
+        await streamHandle.cancel();
+      } catch (err) {
+        logger.warn(
+          { chatJid, err: (err as Error).message },
+          'streamHandle.cancel in finally-guard failed (non-fatal)',
+        );
+      }
+    }
     await traceSetTyping(channel, chatJid, false, 'finally-guard');
   }
 }

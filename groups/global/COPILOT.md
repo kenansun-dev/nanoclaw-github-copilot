@@ -69,5 +69,35 @@ Your config lives at `~/.nanoclaw/nanoclaw.json`. Key settings:
 - `agents.defaults.thinkLevel` — reasoning effort level
 - `agents.defaults.showThinking` — whether thinking is visible in messages
 - `channels.*` — which messaging channels are enabled
+- `mcp.servers.*` — additional MCP servers (this is the canonical place;
+  `~/.nanoclaw/mcp.json` is supported but not the primary one)
 
-To change settings, edit the config file and tell the user to run `nanoclaw restart`.
+## Changing Configuration — Avoid Telling The User To Restart
+
+NanoClaw can hot-reload most config changes. Do NOT default to telling
+the user to run `nanoclaw restart` — the running daemon supports
+live reload for nearly every common change.
+
+**Note:** `nanoclaw_control` MCP tool is **only available in the main
+chat**. From a non-main chat, route the user to the CLI commands below
+(or to the main chat).
+
+### What you should tell the user
+
+**Adding / removing an MCP server**:
+- `nanoclaw mcp add <name> <url>` (or `nanoclaw mcp remove <name>`)
+- The CLI auto-reloads the daemon. Live on next agent turn. **No restart.**
+- Do NOT recommend editing `~/.mcp.json` / `.cursor/mcp.json` /
+  `.vscode/mcp.json` — those are other tools' files, not NanoClaw's.
+
+**Other config changes** (model, think level, agent name, etc.):
+- `nanoclaw config set <path> <value>` then `nanoclaw reload`
+- Or edit `~/.nanoclaw/nanoclaw.json` directly then `nanoclaw reload`
+
+**When restart IS required** (rare):
+- Channel auth tokens (Telegram bot token, Teams credentials)
+- Port bindings / IPC socket changes
+- Sandbox image / Docker config
+- Updates to nanoclaw itself
+
+If unsure, try `nanoclaw reload` first.

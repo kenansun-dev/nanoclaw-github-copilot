@@ -13,6 +13,7 @@ type FakeTask = {
   status: 'active' | 'paused' | 'completed';
   prompt: string;
   schedule_value: string;
+  consecutive_group_missing?: number;
 };
 
 const h = vi.hoisted(() => {
@@ -23,6 +24,7 @@ const h = vi.hoisted(() => {
       status: 'active' | 'paused' | 'completed';
       prompt: string;
       schedule_value: string;
+      consecutive_group_missing?: number;
     }
   >();
   const config: { value: Record<string, unknown> } = { value: {} };
@@ -37,6 +39,7 @@ vi.mock('./../db.js', () => ({
         status: 'active',
         prompt: row.prompt,
         schedule_value: row.schedule_value,
+        consecutive_group_missing: 0,
       });
     },
   ),
@@ -48,6 +51,8 @@ vi.mock('./../db.js', () => ({
         status: 'active' | 'paused' | 'completed';
         prompt: string;
         schedule_value: string;
+        consecutive_group_missing: number;
+        next_run: string | null;
       }>,
     ) => {
       const t = h.tasks.get(id);
@@ -186,6 +191,54 @@ describe('ensureDailySummaryTask — defaults', () => {
     h.config.value = {};
     ensureDailySummaryTask({ chatJid: CHAT, groupFolder: '/tmp/g' });
     expect(h.tasks.has(ID)).toBe(true);
+  });
+});
+
+describe('ensureDailySummaryTask — auto-resume after orphan auto-pause', () => {
+  it('resumes a task that the scheduler paused due to missing group', () => {
+    // Simulate the state the scheduler leaves behind after
+    // MAX_CONSECUTIVE_GROUP_MISSING ticks: status='paused' AND
+    // consecutive_group_missing > 0. host-runner re-invocation
+    // (because the group is back) must flip it active and reset.
+    h.tasks.set(ID, {
+      id: ID,
+      status: 'paused',
+      prompt: 'CUSTOM',
+      schedule_value: '45 23 * * *',
+      consecutive_group_missing: 5,
+    });
+    h.config.value = {
+      enabled: true,
+      cron: '45 23 * * *',
+      prompt: 'CUSTOM',
+    };
+
+    ensureDailySummaryTask({ chatJid: CHAT, groupFolder: '/tmp/g' });
+
+    const t = h.tasks.get(ID);
+    expect(t?.status).toBe('active');
+    expect(t?.consecutive_group_missing).toBe(0);
+  });
+
+  it('does NOT auto-resume a manually-paused task (counter == 0)', () => {
+    // User-initiated pause leaves consecutive_group_missing at 0;
+    // we must not undo their decision on the next host-runner spawn.
+    h.tasks.set(ID, {
+      id: ID,
+      status: 'paused',
+      prompt: 'CUSTOM',
+      schedule_value: '45 23 * * *',
+      consecutive_group_missing: 0,
+    });
+    h.config.value = {
+      enabled: true,
+      cron: '45 23 * * *',
+      prompt: 'CUSTOM',
+    };
+
+    ensureDailySummaryTask({ chatJid: CHAT, groupFolder: '/tmp/g' });
+
+    expect(h.tasks.get(ID)?.status).toBe('paused');
   });
 });
 
