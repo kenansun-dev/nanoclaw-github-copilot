@@ -474,4 +474,44 @@ describe('Teams streaming wire-protocol regression (2026-04-22)', () => {
     expect(final.entities?.[0].streamId).toBe('msg-1');
     expect(final.id).toBe('msg-1');
   });
+
+  it('only ONE informative activity even if server returns no id (no infinite informative loop)', async () => {
+    // Hardening for issue caught in 2026-04-22 self-audit:
+    //   If we keyed the bootstrap-vs-continuation decision off `!_streamId`
+    //   AND the server response carried no `id`, every subsequent chunk
+    //   would also be sent as `streamType: 'informative'`. Teams
+    //   rejects more than one informative message per stream
+    //   ("You can set only one informative message"), so this would
+    //   silently break long streams whenever the channel happens to
+    //   not return an id. We track bootstrap separately to avoid this.
+    const calls: Array<Partial<TeamsActivity>> = [];
+    const sender: ActivitySender = async (activity) => {
+      calls.push(JSON.parse(JSON.stringify(activity)));
+      return undefined; // server returns no id
+    };
+
+    const s = new TeamsStreamingSession(sender, {
+      delayInMs: 0,
+      log: silentLog,
+    });
+
+    await s.chunk('a');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.chunk('ab');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.chunk('abc');
+    await new Promise((r) => setTimeout(r, 5));
+
+    const typings = calls.filter((c) => c.type === 'typing');
+    expect(typings.length).toBeGreaterThanOrEqual(2);
+    // Exactly one informative activity — the bootstrap.
+    const informatives = typings.filter(
+      (c) => c.entities?.[0].streamType === 'informative',
+    );
+    expect(informatives.length).toBe(1);
+    // All subsequent chunks must be `streaming`, not informative.
+    for (let i = 1; i < typings.length; i++) {
+      expect(typings[i].entities?.[0].streamType).toBe('streaming');
+    }
+  });
 });

@@ -103,6 +103,15 @@ export interface TeamsStreamingOpts {
  */
 export class TeamsStreamingSession implements StreamHandle {
   private _streamId: string | undefined;
+  /**
+   * True once the bootstrap (`streamType: 'informative'`) activity has
+   * been sent. Tracked separately from `_streamId` because the server
+   * response may not always carry an id back — if we relied on
+   * `!_streamId` to mean "first activity" we'd send `informative`
+   * forever, and Teams rejects more than one informative per stream
+   * ("You can set only one informative message").
+   */
+  private _bootstrapSent = false;
   private _nextSequence = 1;
   private _ended = false;
   private _cancelled = false;
@@ -319,14 +328,22 @@ export class TeamsStreamingSession implements StreamHandle {
       // Regression discovered 2026-04-22 (kenan repro on Teams Windows
       // client). Fix: bootstrap the stream with one informative activity
       // before any `streaming` chunks.
-      const isFirstActivity = !this._streamId;
+      //
+      // Why we use `_bootstrapSent` instead of `!_streamId`: the server
+      // response is not guaranteed to carry an `id` back. If we keyed
+      // off `!_streamId` and the response came back without an id,
+      // every subsequent chunk would also be sent as `informative` —
+      // and Teams rejects more than one informative per stream
+      // ("You can set only one informative message"). Tracking the
+      // bootstrap step separately avoids that failure mode.
+      const isBootstrap = !this._bootstrapSent;
       const activity: Partial<TeamsActivity> = {
         type: 'typing',
         text: textToSend,
         entities: [
           {
             type: 'streaminfo',
-            streamType: isFirstActivity ? 'informative' : 'streaming',
+            streamType: isBootstrap ? 'informative' : 'streaming',
             streamSequence: this._nextSequence++,
           },
         ],
@@ -335,6 +352,7 @@ export class TeamsStreamingSession implements StreamHandle {
       try {
         const id = await this.send(activity);
         if (!this._streamId && id) this._streamId = id;
+        this._bootstrapSent = true;
         this._lastSent = textToSend;
       } catch (err: any) {
         const msg = String(err?.message ?? err);
