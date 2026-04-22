@@ -1,7 +1,8 @@
 # Research: Self-Improving Memory in NanoClaw
 
 **Status**: Audit + open questions. No implementation commitment.
-**Authors**: Kenan VM Claw + Kenan Rpi5 Claw, 2026-04-22
+**Author**: Kenan VM Claw, 2026-04-22
+**Audit input**: Kenan Rpi5 Claw (OpenClaw `dreaming.ts` source dive; channel-leak incident analysis)
 **Triggered by**: Kenan asked for a survey of self-improving agents (Hermes Agent as starter); we found that "self-improve" in the literature usually means *memory + skill curation*, not weight updates. The interesting question for NanoClaw is therefore: **how should the agent learn from conversations across sessions?**
 
 ---
@@ -90,12 +91,12 @@ NanoClaw needs to:
 
 ### 4.2 Wire NanoClaw memory dirs into OpenClaw dreaming
 
-OpenClaw dreaming already does multi-phase consolidation but only on the OpenClaw workspace it knows about. Two open questions to answer before implementation:
+OpenClaw dreaming already does multi-phase consolidation but only on the OpenClaw workspace it knows about. Two open questions, **partially answered by reading `src/memory-host-sdk/dreaming.ts` + `docs/concepts/dreaming.md`** (rpi5 audit):
 
-- Does the dreaming subsystem already scan `~/.openclaw/workspace/memory/` automatically, or does it need an explicit "register this workspace dir" call from NanoClaw?
-- The dreaming "deep" phase ranks facts in part by `recall count` and `query diversity`. If NanoClaw retrieves facts via GHC SDK (not via OpenClaw's recall store), those retrievals do not feed the dreaming signals. We probably need a small adapter that emits a `recall` event into OpenClaw's recall store whenever the agent reads a fact.
+- **Workspace discovery — answered.** `resolveMemoryDreamingWorkspaces()` (L595) iterates `cfg.agents.list` and calls `resolveAgentWorkspaceDir(cfg, agentId)` for each. **Any workspace registered as an OpenClaw agent is automatically scanned** — no separate "register memory dir" call needed. Wiring step is therefore: configure NanoClaw as an OpenClaw `agents.list` entry pointing at NanoClaw's workspace dir.
+- **Recall signal feed — partially answered.** `MemoryLightDreamingSource = "daily" | "sessions" | "recall"` (L54). Dreaming already treats `recall` as a first-class signal source, so the adapter direction is right: NanoClaw should emit a `recall` event into OpenClaw's recall store whenever it reads a fact via GHC `memoryApi`. **Open**: the write API for that recall store still needs a small spike (≤30 min) to confirm signature and idempotency.
 
-(rpi5 will spend the first 30 minutes of v1 implementation answering those two questions before writing wiring code.)
+So v1 §4.2 work shrinks from "two spikes + wiring" to "one spike (recall write API) + register NanoClaw as an OpenClaw agent".
 
 ### 4.3 Out of scope for v1
 
