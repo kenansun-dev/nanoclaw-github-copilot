@@ -16,15 +16,25 @@
  *    the full Teams adapter.
  *
  * Wire protocol summary:
- *   1. Each in-flight chunk is a `typing` activity carrying a
- *      `streaminfo` entity with `streamType:'streaming'` and a
- *      monotonically increasing `streamSequence`.
- *   2. The first activity's response `id` is captured as `streamId`;
- *      every subsequent activity sets `id = streamId` and includes
- *      `streamId` on its first entity. Teams uses this to render all
- *      updates in a single bubble (no message duplication).
+ *   1. The FIRST activity is a `typing` activity carrying a
+ *      `streaminfo` entity with `streamType:'informative'` (the
+ *      "start streaming" bootstrap). The Teams server returns the
+ *      `streamId` on this response. Sending `streaming` as the very
+ *      first activity is rejected by the server with
+ *      "Only start streaming and continue streaming types are allowed
+ *       as a typing activity".
+ *   2. Each subsequent in-flight chunk is a `typing` activity carrying
+ *      a `streaminfo` entity with `streamType:'streaming'` and a
+ *      monotonically increasing `streamSequence`. These activities set
+ *      `id = streamId` and include `streamId` on the first entity.
+ *      Teams uses this to render all updates in a single bubble
+ *      (no message duplication).
  *   3. The terminal activity is a `message` activity with
- *      `streamType:'final'`.
+ *      `streamType:'final'`. It MUST also carry `streamId` (otherwise
+ *      Teams rejects with "Only end streaming type is allowed as a
+ *      message activity"). If we never obtained a `streamId`, `end()`
+ *      degrades to a plain non-streaming `message` activity so the
+ *      agent's reply still lands.
  *   4. Activities MUST be sent serially. We enforce this with a
  *      single in-flight flag (`_chunkQueued`) + a queue + a serial
  *      `drainQueue` walker. Out-of-order updates would be dropped

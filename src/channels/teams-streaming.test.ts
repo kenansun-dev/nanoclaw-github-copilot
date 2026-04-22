@@ -13,11 +13,18 @@ import {
  * surface; the adapter wrapper (makeAdapterSender) is trivial glue.
  *
  * Focus areas:
- *  - Activity shape: each chunk is `typing` + `streaminfo` entity with
- *    `streamType:'streaming'` and a monotonic `streamSequence`.
+ *  - Activity shape: the first `typing` chunk uses `streamType:'informative'`
+ *    (the bootstrap that establishes the stream), every subsequent chunk
+ *    uses `streamType:'streaming'` with a monotonic `streamSequence`.
  *  - First chunk has no streamId; subsequent activities carry the id
- *    returned by the first send and stamp it on entity[0].
- *  - End publishes a `message` activity with `streamType:'final'`.
+ *    returned by the first send and stamp it on entity[0]. The bootstrap
+ *    decision is tracked via an internal flag, not derived from
+ *    `!streamId`, so a server response without an id doesn't trick us
+ *    into sending multiple `informative` activities.
+ *  - End publishes a `message` activity with `streamType:'final'`,
+ *    carrying the streamId. If no streamId was ever obtained (chunks
+ *    failed, or none fired), end degrades to a plain non-streaming
+ *    `message` activity so the agent's reply still lands.
  *  - Single in-flight: chunks queued during a slow send don't fire
  *    in parallel; the latest cumulative text wins.
  *  - Idempotency: end()/cancel() called twice are no-ops.
