@@ -569,11 +569,26 @@ export class TeamsChannel implements Channel {
               .continueConversation(
                 ref as ConversationReference,
                 async (ctx: TurnContext) => {
+                  // FileInfoCard (file chiclet) requires `contentUrl` at the
+                  // attachment top level — Teams server-side renders the
+                  // chiclet by linking to the SharePoint URL where the file
+                  // landed during the PUT upload. Without contentUrl, the
+                  // server returns:
+                  //   "An exception occurred when converting file info card
+                  //    to file chiclet"
+                  // and the user sees a Skype "unsupported card" link plus a
+                  // "Sorry, something went wrong" toast (kenansun, 2026-04-22).
+                  //
+                  // Teams sends `contentUrl` in the fileConsent/invoke
+                  // payload's `value.uploadInfo.contentUrl` — same SharePoint
+                  // URL the bot just PUT to. Reuse it.
+                  // See https://learn.microsoft.com/en-us/microsoftteams/platform/bots/how-to/bots-filesv4#example-of-file-info-card
                   await ctx.sendActivity({
                     attachments: [
                       {
                         contentType:
                           'application/vnd.microsoft.teams.card.file.info',
+                        contentUrl: value.uploadInfo?.contentUrl,
                         name: value.uploadInfo?.name || value.context.filename,
                         content: {
                           uniqueId: value.uploadInfo?.uniqueId,
