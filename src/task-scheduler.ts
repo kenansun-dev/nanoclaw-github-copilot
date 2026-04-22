@@ -10,9 +10,11 @@ import {
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
+  clearConsecutiveGroupMissing,
   getAllTasks,
   getDueTasks,
   getTaskById,
+  incrementConsecutiveGroupMissing,
   logTaskRun,
   updateTask,
   updateTaskAfterRun,
@@ -21,6 +23,17 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
+
+/**
+ * Number of consecutive scheduler ticks a task may fail to find its
+ * `group_folder` in `registeredGroups` before the scheduler auto-pauses
+ * it. Pausing stops the once-per-poll-interval log spam for orphan tasks
+ * whose group has been unregistered (e.g. TUI session ended, channel
+ * logged out, group migration left the row behind). Tasks resume
+ * automatically when their owner re-registers via `ensureDailySummaryTask`
+ * or any equivalent re-bind path.
+ */
+export const MAX_CONSECUTIVE_GROUP_MISSING = 3;
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -120,19 +133,69 @@ async function runTask(
   );
 
   if (!group) {
-    logger.error(
-      { taskId: task.id, groupFolder: task.group_folder },
-      'Group not found for task',
-    );
+    const missCount = incrementConsecutiveGroupMissing(task.id);
+    const shouldPause = missCount >= MAX_CONSECUTIVE_GROUP_MISSING;
+    const errorMsg = `Group not found: ${task.group_folder}`;
+
+    if (shouldPause) {
+      // Auto-pause stops the once-per-poll log spam (was 1440 lines/day
+      // for a daily-summary task on a 60s scheduler tick) when the group
+      // is gone for good. `ensureDailySummaryTask` (and any other
+      // re-binder) will flip status back to 'active' and reset the
+      // counter when the group reappears.
+      updateTask(task.id, { status: 'paused' });
+      logger.error(
+        {
+          taskId: task.id,
+          groupFolder: task.group_folder,
+          missCount,
+          threshold: MAX_CONSECUTIVE_GROUP_MISSING,
+        },
+        'Pausing task: group missing for consecutive ticks',
+      );
+    } else {
+      logger.error(
+        {
+          taskId: task.id,
+          groupFolder: task.group_folder,
+          missCount,
+          threshold: MAX_CONSECUTIVE_GROUP_MISSING,
+        },
+        'Group not found for task',
+      );
+    }
+
     logTaskRun({
       task_id: task.id,
       run_at: new Date().toISOString(),
       duration_ms: Date.now() - startTime,
       status: 'error',
       result: null,
-      error: `Group not found: ${task.group_folder}`,
+      error: errorMsg,
     });
+
+    // Always advance `next_run` even on this failure path. Without this,
+    // the task stays "due" on every scheduler poll and the loop fires
+    // again ~SCHEDULER_POLL_INTERVAL later, creating a tight retry loop
+    // independent of the task's real schedule. updateTaskAfterRun also
+    // moves a once-task to status='completed' when computeNextRun
+    // returns null, which is the correct terminal state.
+    const nextRun = computeNextRun(task);
+    const summary = shouldPause
+      ? `Paused after ${missCount} missing-group ticks`
+      : `Group missing (${missCount}/${MAX_CONSECUTIVE_GROUP_MISSING})`;
+    updateTaskAfterRun(task.id, nextRun, summary);
     return;
+  }
+
+  // Group is back (or has always been here): clear any prior
+  // missing-group streak so a transient gap doesn't eventually pause an
+  // otherwise-healthy task.
+  if (
+    task.consecutive_group_missing !== undefined &&
+    task.consecutive_group_missing > 0
+  ) {
+    clearConsecutiveGroupMissing(task.id);
   }
 
   // Update tasks snapshot for container to read (filtered by group)

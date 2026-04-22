@@ -71,6 +71,14 @@ export interface ScheduledTask {
   last_result: string | null;
   status: 'active' | 'paused' | 'completed';
   created_at: string;
+  /**
+   * Number of consecutive scheduler ticks that have failed to find this
+   * task's group_folder in `registeredGroups`. Reset to 0 on a successful
+   * lookup. When it reaches `MAX_CONSECUTIVE_GROUP_MISSING` the scheduler
+   * auto-pauses the task with a clear last_result. Migrated column;
+   * defaults to 0 for pre-migration rows.
+   */
+  consecutive_group_missing?: number;
 }
 
 export interface TaskRunLog {

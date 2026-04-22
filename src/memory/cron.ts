@@ -205,4 +205,35 @@ export function ensureDailySummaryTask(opts: {
       );
     }
   }
+
+  // Auto-resume: if the scheduler paused this task because its group
+  // was missing for several consecutive ticks (see
+  // task-scheduler.MAX_CONSECUTIVE_GROUP_MISSING), and we are now being
+  // called again from host-runner — meaning the group has come back
+  // online and is about to run an agent — flip the task back to active
+  // and schedule the next cron tick. We use the
+  // `consecutive_group_missing` counter rather than parsing
+  // last_result, so a manual user-pause (counter == 0) is preserved.
+  const wasAutoPaused =
+    existing.status === 'paused' &&
+    (existing.consecutive_group_missing ?? 0) > 0;
+  if (wasAutoPaused) {
+    const next = nextRunFromCron(config.cron);
+    try {
+      updateTask(id, {
+        status: 'active',
+        consecutive_group_missing: 0,
+        ...(next ? { next_run: next } : {}),
+      });
+      logger.info(
+        { id, chatJid, groupFolder, next },
+        'memory-daily-summary: resumed task after group came back',
+      );
+    } catch (err) {
+      logger.warn(
+        { id, err },
+        'memory-daily-summary: auto-resume failed (non-fatal)',
+      );
+    }
+  }
 }

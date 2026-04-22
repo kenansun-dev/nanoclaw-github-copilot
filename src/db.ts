@@ -142,6 +142,7 @@ function createSchema(database: Database.Database): void {
       last_run TEXT,
       last_result TEXT,
       status TEXT DEFAULT 'active',
+      consecutive_group_missing INTEGER DEFAULT 0,
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_next_run ON scheduled_tasks(next_run);
@@ -190,6 +191,20 @@ function createSchema(database: Database.Database): void {
   // Add script column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN script TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  // Add consecutive_group_missing column for orphan-task detection.
+  // Tracks how many consecutive scheduler ticks have failed to find
+  // the task's group in `registeredGroups`. Used to auto-pause stale
+  // tasks whose group was unregistered (TUI session ended, channel
+  // logged out, etc.) so the scheduler stops spamming once-per-minute
+  // "Group not found" errors. See task-scheduler.runTask().
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN consecutive_group_missing INTEGER DEFAULT 0`,
+    );
   } catch {
     /* column already exists */
   }
@@ -609,6 +624,7 @@ export function updateTask(
       | 'schedule_value'
       | 'next_run'
       | 'status'
+      | 'consecutive_group_missing'
     >
   >,
 ): void {
@@ -639,6 +655,10 @@ export function updateTask(
     fields.push('status = ?');
     values.push(updates.status);
   }
+  if (updates.consecutive_group_missing !== undefined) {
+    fields.push('consecutive_group_missing = ?');
+    values.push(updates.consecutive_group_missing);
+  }
 
   if (fields.length === 0) return;
 
@@ -646,6 +666,35 @@ export function updateTask(
   db.prepare(
     `UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`,
   ).run(...values);
+}
+
+/**
+ * Atomically increment `consecutive_group_missing` and return the new value.
+ * Used by the scheduler to track stale tasks whose group has been
+ * unregistered. See task-scheduler.runTask() for the policy that consumes
+ * this counter (auto-pause after MAX_CONSECUTIVE_GROUP_MISSING).
+ */
+export function incrementConsecutiveGroupMissing(id: string): number {
+  const row = db
+    .prepare(
+      `UPDATE scheduled_tasks
+       SET consecutive_group_missing = COALESCE(consecutive_group_missing, 0) + 1
+       WHERE id = ?
+       RETURNING consecutive_group_missing`,
+    )
+    .get(id) as { consecutive_group_missing: number } | undefined;
+  return row?.consecutive_group_missing ?? 0;
+}
+
+/**
+ * Reset `consecutive_group_missing` to 0. Called by the scheduler when a
+ * previously-missing group is found again, so a transient gap (e.g. quick
+ * service restart) does not eventually pause an otherwise-healthy task.
+ */
+export function clearConsecutiveGroupMissing(id: string): void {
+  db.prepare(
+    `UPDATE scheduled_tasks SET consecutive_group_missing = 0 WHERE id = ?`,
+  ).run(id);
 }
 
 export function deleteTask(id: string): void {
