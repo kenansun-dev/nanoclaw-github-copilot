@@ -1165,6 +1165,28 @@ async function main(): Promise<void> {
     logger.debug({ err }, 'Chat sync from config skipped');
   }
 
+  // Auto-install plugins listed in nanoclaw.json `plugins.enabled[]`.
+  // Mirrors CC's autoInstallEnabledPlugins. Best-effort: per-entry failures
+  // are logged but never abort startup.
+  try {
+    const { ensureEnabledPluginsInstalled } = await import('./cli/plugin.js');
+    const result = await ensureEnabledPluginsInstalled();
+    if (result.installed.length > 0) {
+      logger.info(
+        { installed: result.installed },
+        'plugins: auto-installed declared plugins',
+      );
+    }
+    for (const f of result.failed) {
+      logger.warn(
+        { plugin: f.name, error: f.error },
+        'plugins: auto-install failed',
+      );
+    }
+  } catch (err: any) {
+    logger.debug({ err }, 'plugins: auto-install skipped');
+  }
+
   restoreRemoteControl();
 
   // Ensure OneCLI agents exist for all registered groups.

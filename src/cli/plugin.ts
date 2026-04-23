@@ -306,8 +306,7 @@ function loadManifest(pluginDir: string): PluginManifest | null {
 
 function describeSpec(s: InstallSpec): string {
   if (s.kind === 'local') return `local:${s.path}`;
-  if (s.kind === 'git')
-    return `git:${s.url}${s.subdir ? `#${s.subdir}` : ''}`;
+  if (s.kind === 'git') return `git:${s.url}${s.subdir ? `#${s.subdir}` : ''}`;
   return `marketplace:${s.plugin}@${s.marketplace}`;
 }
 
@@ -728,7 +727,9 @@ export async function runPluginCommand(args: string[]): Promise<void> {
         console.log('  nanoclaw plugin install ./my-plugin');
         console.log('  nanoclaw plugin install owner/repo');
         console.log('  nanoclaw plugin install owner/repo:path/to/plugin');
-        console.log('  nanoclaw plugin install https://github.com/user/repo.git');
+        console.log(
+          '  nanoclaw plugin install https://github.com/user/repo.git',
+        );
         console.log('  nanoclaw plugin install workiq@copilot-plugins');
         return;
       }
@@ -769,18 +770,10 @@ export async function runPluginCommand(args: string[]): Promise<void> {
       );
       console.log('  remove <name>              Remove a plugin');
       console.log('  info <name>                Show plugin details');
-      console.log(
-        '  marketplace add <spec>     Register a plugin marketplace',
-      );
-      console.log(
-        '  marketplace list           List registered marketplaces',
-      );
-      console.log(
-        '  marketplace browse <name>  List plugins in a marketplace',
-      );
-      console.log(
-        '  marketplace remove <name>  Unregister a marketplace',
-      );
+      console.log('  marketplace add <spec>     Register a plugin marketplace');
+      console.log('  marketplace list           List registered marketplaces');
+      console.log('  marketplace browse <name>  List plugins in a marketplace');
+      console.log('  marketplace remove <name>  Unregister a marketplace');
   }
 }
 
@@ -919,7 +912,9 @@ function marketplaceBrowse(name: string): void {
     const ver = p.version ? ` v${p.version}` : '';
     console.log(`  📦 ${p.name}${ver}`);
     if (p.description) console.log(`     ${p.description}`);
-    console.log(`     install: \`nanoclaw plugin install ${p.name}@${mp.name}\``);
+    console.log(
+      `     install: \`nanoclaw plugin install ${p.name}@${mp.name}\``,
+    );
   }
   console.log('');
 }
@@ -941,3 +936,61 @@ function marketplaceRemove(name: string): void {
   if (fs.existsSync(cached)) fs.rmSync(cached, { recursive: true });
   console.log(`✅ Unregistered marketplace: ${name}`);
 }
+
+// ─── Startup auto-install ────────────────────────────────────────────
+
+/**
+ * Walk `plugins.enabled[]` from the loaded config and install any plugin
+ * whose target directory does not yet exist under `<workspace>/plugins/`.
+ *
+ * Mirrors CC's proposed `autoInstallEnabledPlugins` behaviour. Idempotent:
+ * already-installed plugins are skipped silently. Errors per-entry are
+ * logged but do not abort startup — we want a single broken plugin to be
+ * surfaced, not to block the whole daemon.
+ *
+ * Returns a summary of what happened so callers can log/announce.
+ */
+export async function ensureEnabledPluginsInstalled(): Promise<{
+  installed: string[];
+  skipped: string[];
+  failed: { name: string; error: string }[];
+}> {
+  const config = loadConfig();
+  const enabled = config.plugins?.enabled ?? [];
+  const result = {
+    installed: [] as string[],
+    skipped: [] as string[],
+    failed: [] as { name: string; error: string }[],
+  };
+  if (enabled.length === 0) return result;
+
+  const pDir = pluginsDir();
+  for (const entry of enabled) {
+    if (entry.autoInstall === false) {
+      result.skipped.push(entry.name);
+      continue;
+    }
+    const target = path.join(pDir, entry.name);
+    if (fs.existsSync(target)) {
+      result.skipped.push(entry.name);
+      continue;
+    }
+    try {
+      await installPlugin(entry.source);
+      // installPlugin logs to stdout; we just record the outcome.
+      if (fs.existsSync(target)) {
+        result.installed.push(entry.name);
+      } else {
+        // installPlugin printed an error and returned without creating the dir.
+        result.failed.push({
+          name: entry.name,
+          error: `installPlugin returned without creating ${target}`,
+        });
+      }
+    } catch (err: any) {
+      result.failed.push({ name: entry.name, error: err.message ?? String(err) });
+    }
+  }
+  return result;
+}
+

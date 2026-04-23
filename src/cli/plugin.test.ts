@@ -1,12 +1,18 @@
 /**
  * Unit tests for the plugin install spec parser. Pure-function — no I/O.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { setWorkspace, ensureWorkspace } from '../workspace.js';
 import {
   parseInstallSpec,
   catalogEntryToSpec,
+  ensureEnabledPluginsInstalled,
   type MarketplaceCatalogEntry,
 } from './plugin.js';
+import { saveConfig, loadConfig } from '../config-loader.js';
 
 describe('parseInstallSpec', () => {
   describe('local paths', () => {
@@ -181,5 +187,102 @@ describe('catalogEntryToSpec', () => {
       source: {},
     };
     expect(() => catalogEntryToSpec(entry)).toThrow();
+  });
+});
+
+describe('ensureEnabledPluginsInstalled', () => {
+  const tmpDir = path.join(
+    os.tmpdir(),
+    `nanoclaw-test-pluginauto-${Date.now()}`,
+  );
+
+  beforeEach(() => {
+    setWorkspace(tmpDir);
+    ensureWorkspace();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns empty result when no plugins.enabled[]', async () => {
+    const config = loadConfig();
+    config.plugins = { enabled: [], marketplaces: [], directories: [] };
+    saveConfig(config);
+    const result = await ensureEnabledPluginsInstalled();
+    expect(result).toEqual({ installed: [], skipped: [], failed: [] });
+  });
+
+  it('skips plugins whose target directory already exists', async () => {
+    // Pre-create the target dir so install is treated as already-done.
+    fs.mkdirSync(path.join(tmpDir, 'plugins', 'workiq'), { recursive: true });
+    const config = loadConfig();
+    config.plugins = {
+      enabled: [{ name: 'workiq', source: 'microsoft/work-iq' }],
+      marketplaces: [],
+      directories: [],
+    };
+    saveConfig(config);
+    const result = await ensureEnabledPluginsInstalled();
+    expect(result.skipped).toEqual(['workiq']);
+    expect(result.installed).toEqual([]);
+    expect(result.failed).toEqual([]);
+  });
+
+  it('skips plugins explicitly marked autoInstall:false', async () => {
+    const config = loadConfig();
+    config.plugins = {
+      enabled: [
+        { name: 'workiq', source: 'microsoft/work-iq', autoInstall: false },
+      ],
+      marketplaces: [],
+      directories: [],
+    };
+    saveConfig(config);
+    const result = await ensureEnabledPluginsInstalled();
+    expect(result.skipped).toEqual(['workiq']);
+    expect(result.installed).toEqual([]);
+  });
+
+  it('reports failures from invalid specs without throwing', async () => {
+    const config = loadConfig();
+    config.plugins = {
+      enabled: [{ name: 'broken', source: 'this is not a valid spec' }],
+      marketplaces: [],
+      directories: [],
+    };
+    saveConfig(config);
+    const result = await ensureEnabledPluginsInstalled();
+    // installPlugin catches parse errors and prints; target dir is never
+    // created, so we record a `failed` entry.
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].name).toBe('broken');
+  });
+
+  it('installs from a local directory source', async () => {
+    // Create a tiny local plugin source on disk.
+    const srcRoot = path.join(tmpDir, 'src-plugin');
+    fs.mkdirSync(srcRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(srcRoot, 'plugin.json'),
+      JSON.stringify({
+        name: 'localfoo',
+        version: '0.0.1',
+        description: 'local test plugin',
+      }),
+    );
+    const config = loadConfig();
+    config.plugins = {
+      enabled: [{ name: 'localfoo', source: srcRoot }],
+      marketplaces: [],
+      directories: [],
+    };
+    saveConfig(config);
+    const result = await ensureEnabledPluginsInstalled();
+    expect(result.installed).toEqual(['localfoo']);
+    expect(result.failed).toEqual([]);
+    expect(
+      fs.existsSync(path.join(tmpDir, 'plugins', 'localfoo', 'plugin.json')),
+    ).toBe(true);
   });
 });
