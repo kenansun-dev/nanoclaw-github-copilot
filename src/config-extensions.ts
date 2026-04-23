@@ -229,67 +229,73 @@ export interface VolumeMount {
 }
 
 /**
- * Build GHC-specific extra volume mounts (skills, mcp.json).
- * Returns empty array for CC provider.
+ * Build provider-specific extra volume mounts.
+ * - GHC-only: skills/, mcp.json (consumed by agent-runner-ghc).
+ * - All providers: plugin directories from 3 sources (workspace, ~/.copilot, ~/.claude).
+ *   CC consumes via additionalDirectories; GHC consumes via --plugin-dir.
  */
 export function buildProviderMounts(chatJid?: string): VolumeMount[] {
   const agent = chatJid ? resolveAgentForChat(chatJid) : undefined;
   const agentIsGHC = agent ? isAgentGHC(agent) : IS_GHC_PROVIDER;
-  if (!agentIsGHC) return [];
 
   const ws = resolveWorkspace();
   const mounts: VolumeMount[] = [];
 
-  // User skills directory
-  const skillsDir = path.join(ws, 'skills');
-  if (fs.existsSync(skillsDir)) {
-    mounts.push({
-      hostPath: skillsDir,
-      containerPath: '/workspace/skills',
-      readonly: true,
-    });
-  }
-  // MCP config
-  const mcpConfig = path.join(ws, 'mcp.json');
-  if (fs.existsSync(mcpConfig)) {
-    mounts.push({
-      hostPath: mcpConfig,
-      containerPath: '/workspace/mcp.json',
-      readonly: true,
-    });
+  // GHC-only mounts: skills/ and mcp.json
+  if (agentIsGHC) {
+    const skillsDir = path.join(ws, 'skills');
+    if (fs.existsSync(skillsDir)) {
+      mounts.push({
+        hostPath: skillsDir,
+        containerPath: '/workspace/skills',
+        readonly: true,
+      });
+    }
+    const mcpConfig = path.join(ws, 'mcp.json');
+    if (fs.existsSync(mcpConfig)) {
+      mounts.push({
+        hostPath: mcpConfig,
+        containerPath: '/workspace/mcp.json',
+        readonly: true,
+      });
+    }
   }
 
-  // Plugin directories — mount from 3 sources
-  const pluginDirs: string[] = [];
+  // Plugin directories — mount from 3 sources for ALL providers (CC + GHC).
+  // env NANOCLAW_PLUGIN_DIRS is set unconditionally in container-runner; without
+  // these mounts CC sandbox would silently drop all plugins (paths nonexistent).
   const pluginSources = [
     path.join(ws, 'plugins'),
     path.join(os.homedir(), '.copilot', 'plugins'),
     path.join(os.homedir(), '.claude', 'plugins'),
   ];
+  const seenContainerPaths = new Set<string>();
   for (const src of pluginSources) {
-    if (fs.existsSync(src)) {
-      try {
-        for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-          if (entry.isDirectory()) {
-            const pluginPath = path.join(src, entry.name);
-            if (
-              fs.existsSync(path.join(pluginPath, 'plugin.json')) ||
-              fs.existsSync(
-                path.join(pluginPath, '.claude-plugin', 'plugin.json'),
-              )
-            ) {
-              pluginDirs.push(pluginPath);
-              mounts.push({
-                hostPath: pluginPath,
-                containerPath: `/workspace/plugins/${entry.name}`,
-                readonly: true,
-              });
-            }
-          }
+    if (!fs.existsSync(src)) continue;
+    try {
+      for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const pluginPath = path.join(src, entry.name);
+        if (
+          !fs.existsSync(path.join(pluginPath, 'plugin.json')) &&
+          !fs.existsSync(
+            path.join(pluginPath, '.claude-plugin', 'plugin.json'),
+          )
+        ) {
+          continue;
         }
-      } catch {
-        /* skip */
+        const containerPath = `/workspace/plugins/${entry.name}`;
+        // Earlier sources win on name collision (workspace > .copilot > .claude)
+        if (seenContainerPaths.has(containerPath)) continue;
+        seenContainerPaths.add(containerPath);
+        mounts.push({
+          hostPath: pluginPath,
+          containerPath,
+          readonly: true,
+        });
       }
+    } catch {
+      /* skip unreadable dirs */
     }
   }
 
