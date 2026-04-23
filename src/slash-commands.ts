@@ -177,10 +177,35 @@ export async function handleSlashCommand(
     return { handled: true };
   }
 
-  // /tasks, /status, /capabilities, /wiki — pass to agent as prompts
+  // /status — render `nanoclaw status` directly to chat (file-only read,
+  // no LLM round-trip). Previously this was passed to the agent which made
+  // it ~5-10s per invocation; now it returns in <50ms.
+  if (input === '/status') {
+    if (ctx.channel) {
+      try {
+        const { getStatusText } = await import('./cli/status-text.js');
+        const text = await getStatusText();
+        // Wrap in a code fence so emoji-aligned columns render correctly
+        // on Telegram/Teams/Discord (their default proportional fonts
+        // would otherwise scramble the column alignment).
+        await ctx.channel.sendMessage(
+          ctx.chatJid,
+          '```\n' + text.trim() + '\n```',
+        );
+      } catch (err: any) {
+        await ctx.channel.sendMessage(
+          ctx.chatJid,
+          `Failed to read status: ${err?.message ?? err}`,
+        );
+      }
+    }
+    return { handled: true };
+  }
+
+  // /tasks, /capabilities, /wiki — pass to agent as prompts
   // These are handled by the agent using its tools/skills, not by nanoclaw directly.
   // Returning handled: false lets them flow through to the agent.
-  if (input === '/tasks' || input === '/status' || input === '/capabilities') {
+  if (input === '/tasks' || input === '/capabilities') {
     return { handled: false };
   }
 
