@@ -988,9 +988,11 @@ export async function ensureEnabledPluginsInstalled(): Promise<{
         });
       }
     } catch (err: any) {
-      result.failed.push({ name: entry.name, error: err.message ?? String(err) });
+      result.failed.push({
+        name: entry.name,
+        error: err.message ?? String(err),
+      });
     }
   }
   return result;
 }
-
