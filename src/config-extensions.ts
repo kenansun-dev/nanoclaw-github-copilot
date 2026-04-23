@@ -278,9 +278,7 @@ export function buildProviderMounts(chatJid?: string): VolumeMount[] {
         const pluginPath = path.join(src, entry.name);
         if (
           !fs.existsSync(path.join(pluginPath, 'plugin.json')) &&
-          !fs.existsSync(
-            path.join(pluginPath, '.claude-plugin', 'plugin.json'),
-          )
+          !fs.existsSync(path.join(pluginPath, '.claude-plugin', 'plugin.json'))
         ) {
           continue;
         }

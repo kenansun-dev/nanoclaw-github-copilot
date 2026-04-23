@@ -165,15 +165,24 @@ describe('buildProviderMounts', () => {
     );
 
     // Set up plugin in ~/.copilot/plugins/ (.claude-plugin layout)
-    const cpPluginDir = pathMod.join(homeDir, '.copilot', 'plugins', 'cp-plugin');
-    fs.mkdirSync(pathMod.join(cpPluginDir, '.claude-plugin'), { recursive: true });
+    const cpPluginDir = pathMod.join(
+      homeDir,
+      '.copilot',
+      'plugins',
+      'cp-plugin',
+    );
+    fs.mkdirSync(pathMod.join(cpPluginDir, '.claude-plugin'), {
+      recursive: true,
+    });
     fs.writeFileSync(
       pathMod.join(cpPluginDir, '.claude-plugin', 'plugin.json'),
       JSON.stringify({ name: 'cp-plugin', version: '1.0.0' }),
     );
 
     // Set up an empty dir without manifest — must be skipped
-    fs.mkdirSync(pathMod.join(wsDir, 'plugins', 'no-manifest'), { recursive: true });
+    fs.mkdirSync(pathMod.join(wsDir, 'plugins', 'no-manifest'), {
+      recursive: true,
+    });
 
     const origHome = process.env.HOME;
     const origWs = process.env.NANOCLAW_WORKSPACE;
@@ -196,7 +205,9 @@ describe('buildProviderMounts', () => {
 
       // Empty manifest dir must be excluded
       expect(
-        mounts.some((m) => m.containerPath === '/workspace/plugins/no-manifest'),
+        mounts.some(
+          (m) => m.containerPath === '/workspace/plugins/no-manifest',
+        ),
       ).toBe(false);
     } finally {
       if (origHome === undefined) delete process.env.HOME;

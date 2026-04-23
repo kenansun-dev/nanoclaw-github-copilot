@@ -757,9 +757,7 @@ export async function handlePluginIpc(
                 const m = JSON.parse(fs.readFileSync(mp, 'utf-8'));
                 out.push({
                   name:
-                    m?.name && typeof m.name === 'string'
-                      ? m.name
-                      : entry.name,
+                    m?.name && typeof m.name === 'string' ? m.name : entry.name,
                   version: m.version,
                   description: m.description,
                   provider: m.provider,

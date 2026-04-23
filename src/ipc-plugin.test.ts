@@ -209,10 +209,7 @@ describe('handlePluginIpc', () => {
       JSON.stringify({ version: '0.0.1', description: 'no name field here' }),
     );
     const requestId = 'req-list-noname';
-    await handlePluginIpc(
-      { action: 'list', requestId },
-      responseDir,
-    );
+    await handlePluginIpc({ action: 'list', requestId }, responseDir);
     const res = readResponse(requestId);
     expect(res.ok).toBe(true);
     expect(res.plugins).toHaveLength(1);
