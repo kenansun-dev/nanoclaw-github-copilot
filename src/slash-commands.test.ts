@@ -132,7 +132,8 @@ describe('handleSlashCommand', () => {
     const result = await handleSlashCommand('/status', ctx);
     expect(result.handled).toBe(true);
     expect(ctx.channel!.sendMessage).toHaveBeenCalledTimes(1);
-    const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    const sentText = (ctx.channel!.sendMessage as any).mock
+      .calls[0][1] as string;
     // Status text always starts with the version line and contains the
     // hard-coded section labels formatStatusText emits.
     expect(sentText).toContain('NanoClaw');

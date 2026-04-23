@@ -51,9 +51,8 @@ export interface StatusInfo {
 export async function collectStatus(): Promise<StatusInfo> {
   const { resolveWorkspace } = await import('../workspace.js');
   const { loadConfig } = await import('../config-loader.js');
-  const { resolveGithubToken, isCopilotAuthenticated } = await import(
-    '../config-extensions.js'
-  );
+  const { resolveGithubToken, isCopilotAuthenticated } =
+    await import('../config-extensions.js');
 
   const ws = resolveWorkspace();
   const pidFile = join(ws, 'state', 'nanoclaw.pid');
@@ -186,7 +185,9 @@ export function formatStatusText(s: StatusInfo): string {
   lines.push(`🤖 NanoClaw ${s.version}`);
   lines.push(
     `${s.running ? '✅' : '❌'} Status:    ${
-      s.running ? `running (pid: ${s.pid}, uptime: ${s.uptimeStr})` : 'not running'
+      s.running
+        ? `running (pid: ${s.pid}, uptime: ${s.uptimeStr})`
+        : 'not running'
     }`,
   );
   lines.push(

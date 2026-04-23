@@ -188,7 +188,10 @@ export async function handleSlashCommand(
         // Wrap in a code fence so emoji-aligned columns render correctly
         // on Telegram/Teams/Discord (their default proportional fonts
         // would otherwise scramble the column alignment).
-        await ctx.channel.sendMessage(ctx.chatJid, '```\n' + text.trim() + '\n```');
+        await ctx.channel.sendMessage(
+          ctx.chatJid,
+          '```\n' + text.trim() + '\n```',
+        );
       } catch (err: any) {
         await ctx.channel.sendMessage(
           ctx.chatJid,
