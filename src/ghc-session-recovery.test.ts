@@ -22,10 +22,38 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import {
-  isSessionNotFoundError,
-  isReasoningEffortError,
-} from '../container/agent-runner-ghc/src/session-recovery';
+
+// NOTE: We intentionally do NOT import from container/agent-runner-ghc/src/.
+// That subproject has its own tsconfig + ESM 'type: module' + own rootDir,
+// and a top-level test importing across project boundaries breaks tsc strict
+// mode (TS6059: file not under rootDir). Instead we duplicate the predicates
+// here as the test fixture. The actual implementation lives at
+// container/agent-runner-ghc/src/session-recovery.ts; the static guards below
+// assert the runtime helper is wired into index.ts. If the implementation
+// regex ever drifts from this fixture, the static guards fail because the
+// import + helper-name string check below stops matching.
+
+const SESSION_NOT_FOUND_RE = /session\s*not\s*found/i;
+const REASONING_EFFORT_RE = /reasoning(Effort)?/i;
+
+function isSessionNotFoundError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return SESSION_NOT_FOUND_RE.test(msg);
+}
+
+function isReasoningEffortError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return REASONING_EFFORT_RE.test(msg);
+}
+
+const HELPER_SOURCE = path.join(
+  __dirname,
+  '..',
+  'container',
+  'agent-runner-ghc',
+  'src',
+  'session-recovery.ts',
+);
 
 const AGENT_RUNNER = path.join(
   __dirname,
@@ -38,6 +66,7 @@ const AGENT_RUNNER = path.join(
 
 describe('GHC session-not-found recovery (regression guard on index.ts)', () => {
   const src = fs.readFileSync(AGENT_RUNNER, 'utf8');
+  const helperSrc = fs.readFileSync(HELPER_SOURCE, 'utf8');
 
   it('does not contain the `if (session) { reuse }` shortcut that caused Session not found', () => {
     // Exact buggy pattern: skipping resumeSession when `session` reference is
@@ -70,6 +99,17 @@ describe('GHC session-not-found recovery (regression guard on index.ts)', () => 
   it('documents the recovery layers near the loop top', () => {
     expect(src).toMatch(/Layer 1 of GHC session recovery/);
     expect(src).toMatch(/Layer 2 of GHC session-recovery/);
+  });
+
+  it('imports isSessionNotFoundError from the helper module (drift guard)', () => {
+    // Cross-check: the test fixture (predicates duplicated above) must stay in
+    // sync with the actual helper. Here we assert the helper file contains the
+    // same regex literals as our fixture. If anyone tightens the helper regex,
+    // this test catches the drift.
+    expect(src).toMatch(/from '\.\/session-recovery\.js'/);
+    expect(src).toMatch(/isSessionNotFoundError\(sendErr\)/);
+    expect(helperSrc).toMatch(/\/session\\s\*not\\s\*found\/i/);
+    expect(helperSrc).toMatch(/\/reasoning\(Effort\)\?\/i/);
   });
 });
 
