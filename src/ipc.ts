@@ -227,6 +227,44 @@ export function startIpcWatcher(deps: IpcDeps): void {
   };
 
   processIpcFiles();
+
+  // Orphan sweeper for plugin response files. The agent unlinks the
+  // response after reading it, but if the agent process dies between
+  // "host wrote response" and "agent read it", the file would sit forever.
+  // Sweep on startup + every hour, deleting responses older than 5 minutes
+  // (well beyond the agent's 30s poll timeout).
+  const sweepOrphanResponses = () => {
+    try {
+      if (!fs.existsSync(ipcBaseDir)) return;
+      const cutoff = Date.now() - 5 * 60 * 1000;
+      let swept = 0;
+      for (const group of fs.readdirSync(ipcBaseDir)) {
+        const responsesDir = path.join(ipcBaseDir, group, 'responses');
+        if (!fs.existsSync(responsesDir)) continue;
+        for (const file of fs.readdirSync(responsesDir)) {
+          if (!file.endsWith('.json')) continue;
+          const fp = path.join(responsesDir, file);
+          try {
+            const stat = fs.statSync(fp);
+            if (stat.mtimeMs < cutoff) {
+              fs.unlinkSync(fp);
+              swept++;
+            }
+          } catch {
+            // ignore per-file errors (raced unlink, etc)
+          }
+        }
+      }
+      if (swept > 0) {
+        logger.info({ swept }, 'Swept orphan plugin response files');
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Orphan response sweep failed');
+    }
+  };
+  sweepOrphanResponses();
+  setInterval(sweepOrphanResponses, 60 * 60 * 1000);
+
   logger.info('IPC watcher started (per-group namespaces)');
 }
 
@@ -624,6 +662,47 @@ async function handleControlIpc(data: any, deps: IpcDeps): Promise<void> {
   }
 }
 
+/**
+ * Sweep orphaned plugin response files. The agent unlinks each response
+ * after reading it, but if the agent process dies between "host wrote
+ * response" and "agent read it", the file would sit forever. Files older
+ * than `maxAgeMs` (default 5 min, well beyond the agent's 30s poll
+ * timeout) are deleted. Returns the number of files swept.
+ */
+export function sweepOrphanResponses(
+  ipcBaseDir: string,
+  maxAgeMs = 5 * 60 * 1000,
+): number {
+  let swept = 0;
+  try {
+    if (!fs.existsSync(ipcBaseDir)) return 0;
+    const cutoff = Date.now() - maxAgeMs;
+    for (const group of fs.readdirSync(ipcBaseDir)) {
+      const responsesDir = path.join(ipcBaseDir, group, 'responses');
+      if (!fs.existsSync(responsesDir)) continue;
+      for (const file of fs.readdirSync(responsesDir)) {
+        if (!file.endsWith('.json')) continue;
+        const fp = path.join(responsesDir, file);
+        try {
+          const stat = fs.statSync(fp);
+          if (stat.mtimeMs < cutoff) {
+            fs.unlinkSync(fp);
+            swept++;
+          }
+        } catch {
+          // ignore per-file errors (raced unlink, etc)
+        }
+      }
+    }
+    if (swept > 0) {
+      logger.info({ swept }, 'Swept orphan plugin response files');
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Orphan response sweep failed');
+  }
+  return swept;
+}
+
 export async function handlePluginIpc(
   data: any,
   responseDir: string,
@@ -677,7 +756,10 @@ export async function handlePluginIpc(
               try {
                 const m = JSON.parse(fs.readFileSync(mp, 'utf-8'));
                 out.push({
-                  name: m.name,
+                  name:
+                    m?.name && typeof m.name === 'string'
+                      ? m.name
+                      : entry.name,
                   version: m.version,
                   description: m.description,
                   provider: m.provider,
