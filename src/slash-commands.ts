@@ -271,7 +271,11 @@ async function handleReasoning(
   if (!config.agents) config.agents = {} as any;
   if (!config.agents.defaults) config.agents.defaults = {} as any;
   config.agents.defaults.showThinking = mode === 'on';
-  saveConfig(config);
+  saveConfig(config, 'slash-command', {
+    command: '/reasoning',
+    mode,
+    chatJid: ctx.chatJid,
+  });
   reloadConfig();
   if (ctx.channel) {
     await ctx.channel.sendMessage(
@@ -324,7 +328,11 @@ async function handleThink(
         | 'high'
         | 'xhigh';
     }
-    saveConfig(config);
+    saveConfig(config, 'slash-command', {
+      command: '/think',
+      level: level,
+      chatJid: ctx.chatJid,
+    });
     reloadConfig();
     if (ctx.channel) {
       await ctx.channel.sendMessage(

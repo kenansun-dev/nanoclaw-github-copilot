@@ -223,7 +223,7 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
             | 'high'
             | 'xhigh';
         }
-        saveConfig(cfg);
+        saveConfig(cfg, 'tui', { command: '/think', level });
         console.log(`🧠 Think level: ${level}\n`);
       }
       continue;
