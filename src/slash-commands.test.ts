@@ -124,14 +124,34 @@ describe('handleSlashCommand', () => {
     expect(result.handled).toBe(true);
   });
 
-  it('/status returns handled: false (passthrough to agent)', async () => {
-    const ctx = makeCtx();
-    const result = await handleSlashCommand('/status', ctx);
-    // These commands are NOT handled by nanoclaw — they pass through to the agent
-    expect(result.handled).toBe(false);
-    // No message sent by slash handler
-    expect(ctx.channel!.sendMessage).not.toHaveBeenCalled();
-  });
+  // Bumped timeout to 30s: collectStatus() does ~10 dynamic imports
+  // (workspace, config-loader, config-extensions, etc) which on a cold
+  // CI runner can exceed the default 5s. Locally it's ~4s; CI saw it
+  // tip over 5s on 2026-04-23 (run 24813239156). The work itself is
+  // file-only reads, no network/LLM, so a generous bound is fine.
+  it(
+    '/status returns handled: true and sends nanoclaw status text directly (no LLM round-trip)',
+    { timeout: 30_000 },
+    async () => {
+      // Regression for kenan request 2026-04-23: /status was previously
+      // passed to the agent which made it ~5-10s per invocation. We now
+      // render `nanoclaw status` directly in the slash handler.
+      const ctx = makeCtx();
+      const result = await handleSlashCommand('/status', ctx);
+      expect(result.handled).toBe(true);
+      expect(ctx.channel!.sendMessage).toHaveBeenCalledTimes(1);
+      const sentText = (ctx.channel!.sendMessage as any).mock
+        .calls[0][1] as string;
+      // Status text always starts with the version line and contains the
+      // hard-coded section labels formatStatusText emits.
+      expect(sentText).toContain('NanoClaw');
+      expect(sentText).toMatch(/Status:/);
+      expect(sentText).toMatch(/Workspace:/);
+      // And it's wrapped in a code fence so emoji-aligned columns render.
+      expect(sentText.startsWith('```')).toBe(true);
+      expect(sentText.endsWith('```')).toBe(true);
+    },
+  );
 
   it('/tasks returns handled: false (passthrough to agent)', async () => {
     const ctx = makeCtx();
