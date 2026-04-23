@@ -190,6 +190,39 @@ describe('catalogEntryToSpec', () => {
     };
     expect(() => catalogEntryToSpec(entry)).toThrow();
   });
+
+  it('resolves relative string source vs marketplace dir (work-iq style)', () => {
+    const entry: MarketplaceCatalogEntry = {
+      name: 'workiq',
+      source: './plugins/workiq',
+    };
+    expect(catalogEntryToSpec(entry, '/cache/marketplaces/work-iq')).toEqual({
+      kind: 'local',
+      path: '/cache/marketplaces/work-iq/plugins/workiq',
+    });
+  });
+
+  it('does not rebase absolute string source', () => {
+    const entry: MarketplaceCatalogEntry = {
+      name: 'foo',
+      source: 'microsoft/work-iq',
+    };
+    expect(catalogEntryToSpec(entry, '/cache/x')).toEqual({
+      kind: 'git',
+      url: 'https://github.com/microsoft/work-iq.git',
+    });
+  });
+
+  it('resolves relative local-object path vs marketplace dir', () => {
+    const entry: MarketplaceCatalogEntry = {
+      name: 'foo',
+      source: { source: 'local', path: './plugins/foo' },
+    };
+    expect(catalogEntryToSpec(entry, '/cache/m')).toEqual({
+      kind: 'local',
+      path: '/cache/m/plugins/foo',
+    });
+  });
 });
 
 describe('ensureEnabledPluginsInstalled', () => {

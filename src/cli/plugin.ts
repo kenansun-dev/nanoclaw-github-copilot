@@ -201,13 +201,32 @@ export interface MarketplaceCatalogSource {
  */
 export function catalogEntryToSpec(
   entry: MarketplaceCatalogEntry,
+  marketplaceDir?: string,
 ): InstallSpec {
+  // Local-path detection: if marketplaceDir is provided and the source string
+  // looks like a relative path (./foo, ../foo), resolve it against the
+  // marketplace's cloned dir rather than cwd. This matches CC/GHC marketplace
+  // semantics where catalog entries reference plugins inside the same repo.
   if (typeof entry.source === 'string') {
-    return parseInstallSpec(entry.source);
+    const s = entry.source.trim();
+    const isRelLocal =
+      s.startsWith('./') ||
+      s.startsWith('../') ||
+      s === '.' ||
+      s === '..';
+    if (isRelLocal && marketplaceDir) {
+      return { kind: 'local', path: path.resolve(marketplaceDir, s) };
+    }
+    return parseInstallSpec(s);
   }
   const src = entry.source;
   if (src.source === 'local' && src.path) {
-    return { kind: 'local', path: src.path };
+    const p = src.path;
+    const isAbs = path.isAbsolute(p) || p.startsWith('~');
+    return {
+      kind: 'local',
+      path: isAbs || !marketplaceDir ? p : path.resolve(marketplaceDir, p),
+    };
   }
   if (src.url) {
     return { kind: 'git', url: src.url, subdir: src.path, ref: src.ref };
@@ -230,10 +249,10 @@ export function catalogEntryToSpec(
  * Marketplace `source` itself is parsed as an InstallSpec (so `owner/repo`
  * shorthand works). For local sources, no cloning happens.
  */
-function fetchMarketplaceCatalog(
+function fetchMarketplaceCatalogWithDir(
   name: string,
   source: string,
-): MarketplaceCatalog {
+): { catalog: MarketplaceCatalog; resolvedDir: string } {
   const cacheRoot = marketplaceCacheDir();
   fs.mkdirSync(cacheRoot, { recursive: true });
   const cacheDir = path.join(cacheRoot, name);
@@ -270,7 +289,17 @@ function fetchMarketplaceCatalog(
       `No marketplace.json found for '${name}' at ${resolvedDir}`,
     );
   }
-  return JSON.parse(fs.readFileSync(catalogPath, 'utf-8'));
+  return {
+    catalog: JSON.parse(fs.readFileSync(catalogPath, 'utf-8')),
+    resolvedDir,
+  };
+}
+
+function fetchMarketplaceCatalog(
+  name: string,
+  source: string,
+): MarketplaceCatalog {
+  return fetchMarketplaceCatalogWithDir(name, source).catalog;
 }
 
 /**
@@ -290,14 +319,17 @@ function resolveMarketplacePlugin(
       `Marketplace '${marketplaceName}' not registered. Run \`nanoclaw plugin marketplace list\`.`,
     );
   }
-  const catalog = fetchMarketplaceCatalog(mp.name, mp.source);
+  const { catalog, resolvedDir } = fetchMarketplaceCatalogWithDir(
+    mp.name,
+    mp.source,
+  );
   const entry = catalog.plugins?.find((p) => p.name === pluginName);
   if (!entry) {
     throw new Error(
       `Plugin '${pluginName}' not found in marketplace '${marketplaceName}'`,
     );
   }
-  return catalogEntryToSpec(entry);
+  return catalogEntryToSpec(entry, resolvedDir);
 }
 
 function loadManifest(pluginDir: string): PluginManifest | null {
