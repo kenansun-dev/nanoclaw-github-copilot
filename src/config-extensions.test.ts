@@ -127,9 +127,7 @@ describe('getAgentModelName', () => {
 
   it('normalizes CC-format model name when agent provider is github-copilot', () => {
     expect(
-      getAgentModelName(
-        makeAgent({ model: 'github-copilot/claude-opus-4-6' }),
-      ),
+      getAgentModelName(makeAgent({ model: 'github-copilot/claude-opus-4-6' })),
     ).toBe('claude-opus-4');
   });
 
@@ -146,9 +144,7 @@ describe('getAgentModelName', () => {
 
   it('passes through unknown model names unchanged', () => {
     expect(
-      getAgentModelName(
-        makeAgent({ model: 'anthropic/some-future-model' }),
-      ),
+      getAgentModelName(makeAgent({ model: 'anthropic/some-future-model' })),
     ).toBe('some-future-model');
   });
 

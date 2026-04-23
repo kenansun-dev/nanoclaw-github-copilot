@@ -572,7 +572,7 @@ function distributeChatsToChannels(
 
 // ─── Config Migration ────────────────────────────────────────────────────────
 
-const CURRENT_CONFIG_VERSION = 6;
+const CURRENT_CONFIG_VERSION = 7;
 
 /**
  * Migrate config from older versions. Returns true if migration occurred.
@@ -829,6 +829,48 @@ function migrateConfig(config: Record<string, any>): boolean {
       config.plugins.directories = [];
     }
     config.configVersion = 6;
+    migrated = true;
+  }
+
+  if (version < 7) {
+    // v7: purge legacy tui:* and 'other' placeholders from root `chats`.
+    //
+    // Reason: the TUI channel auto-registers `tui:default` on connect
+    // (see channels/tui.ts), so config entries for it are pure noise.
+    // Pre-v5 left tui:1, tui:2, ... behind; v5 consolidated to
+    // tui:default but kept it in root `chats`. v7 finishes the cleanup
+    // by removing all tui:* (auto-registered on next TUI connect) plus
+    // the deprecated `other` placeholder.
+    //
+    // Real-jid entries (telegram:*, discord:*, etc.) are LEFT IN PLACE
+    // — callers (loadConfig:684+) preserve them as orphans when their
+    // channel has no config block, and reconciliation in cli.ts owns
+    // the migration to channels.<name>.chats[].
+    if (config.chats && typeof config.chats === 'object') {
+      const keys = Object.keys(config.chats);
+      let removed = 0;
+      for (const jid of keys) {
+        // tui:* (any subkey) — tui channel auto-registers tui:default
+        if (jid.startsWith('tui:')) {
+          delete config.chats[jid];
+          removed++;
+          continue;
+        }
+        // 'other' placeholder — deprecated, never wired up
+        if (jid === 'other') {
+          delete config.chats[jid];
+          removed++;
+          continue;
+        }
+      }
+      if (removed > 0) {
+        logger.info(
+          { removed },
+          'v7 migration: purged legacy tui:* and other entries from root chats',
+        );
+      }
+    }
+    config.configVersion = 7;
     migrated = true;
   }
 

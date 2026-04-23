@@ -827,19 +827,14 @@ export function setSession(
   ).run(groupFolder, provider, sessionId);
 }
 
-export function deleteSession(
-  groupFolder: string,
-  provider?: string,
-): void {
+export function deleteSession(groupFolder: string, provider?: string): void {
   if (provider) {
     db.prepare(
       'DELETE FROM sessions WHERE group_folder = ? AND provider = ?',
     ).run(groupFolder, provider);
   } else {
     // Provider omitted = clear all providers for this group (legacy behavior)
-    db.prepare('DELETE FROM sessions WHERE group_folder = ?').run(
-      groupFolder,
-    );
+    db.prepare('DELETE FROM sessions WHERE group_folder = ?').run(groupFolder);
   }
 }
 
