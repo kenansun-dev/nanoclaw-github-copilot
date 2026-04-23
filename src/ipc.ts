@@ -698,9 +698,7 @@ export async function handlePluginIpc(
           break;
         }
         // Add to plugins.enabled[] if not already there, then auto-install.
-        const { loadConfig, saveConfig } = await import(
-          './config-loader.js'
-        );
+        const { loadConfig, saveConfig } = await import('./config-loader.js');
         const config = loadConfig();
         if (!config.plugins) config.plugins = {};
         if (!config.plugins.enabled) config.plugins.enabled = [];

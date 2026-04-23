@@ -36,10 +36,7 @@ describe('handlePluginIpc', () => {
 
   it('list returns empty when no plugins/ dir', async () => {
     const requestId = 'req-list-empty';
-    await handlePluginIpc(
-      { action: 'list', requestId },
-      responseDir,
-    );
+    await handlePluginIpc({ action: 'list', requestId }, responseDir);
     const res = readResponse(requestId);
     expect(res.ok).toBe(true);
     expect(res.plugins).toEqual([]);
@@ -58,10 +55,7 @@ describe('handlePluginIpc', () => {
       }),
     );
     const requestId = 'req-list-one';
-    await handlePluginIpc(
-      { action: 'list', requestId },
-      responseDir,
-    );
+    await handlePluginIpc({ action: 'list', requestId }, responseDir);
     const res = readResponse(requestId);
     expect(res.ok).toBe(true);
     expect(res.plugins).toEqual([
@@ -84,10 +78,7 @@ describe('handlePluginIpc', () => {
       JSON.stringify({ name: 'bar', version: '0.1.0' }),
     );
     const requestId = 'req-list-cc';
-    await handlePluginIpc(
-      { action: 'list', requestId },
-      responseDir,
-    );
+    await handlePluginIpc({ action: 'list', requestId }, responseDir);
     const res = readResponse(requestId);
     expect(res.ok).toBe(true);
     expect(res.plugins[0].name).toBe('bar');
@@ -95,10 +86,7 @@ describe('handlePluginIpc', () => {
 
   it('install rejects missing source', async () => {
     const requestId = 'req-install-no-source';
-    await handlePluginIpc(
-      { action: 'install', requestId },
-      responseDir,
-    );
+    await handlePluginIpc({ action: 'install', requestId }, responseDir);
     const res = readResponse(requestId);
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/source/i);
@@ -165,9 +153,7 @@ describe('handlePluginIpc', () => {
       { action: 'install', source: srcRoot, requestId: 'pre' },
       responseDir,
     );
-    expect(
-      fs.existsSync(path.join(tmpDir, 'plugins', 'rmme')),
-    ).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, 'plugins', 'rmme'))).toBe(true);
 
     // Now uninstall
     await handlePluginIpc(
@@ -177,13 +163,9 @@ describe('handlePluginIpc', () => {
     const res = readResponse('unreq');
     expect(res.ok).toBe(true);
     expect(res.name).toBe('rmme');
-    expect(
-      fs.existsSync(path.join(tmpDir, 'plugins', 'rmme')),
-    ).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, 'plugins', 'rmme'))).toBe(false);
     const config = loadConfig();
-    expect(
-      config.plugins?.enabled?.find((e) => e.name === 'rmme'),
-    ).toBeFalsy();
+    expect(config.plugins?.enabled?.find((e) => e.name === 'rmme')).toBeFalsy();
   });
 
   it('uninstall rejects missing name', async () => {
