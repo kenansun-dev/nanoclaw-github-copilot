@@ -427,8 +427,47 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // bookkeeping, then exit naturally on the !result.result guard above.
       }
 
-      // Skip thinking-only deltas (will be merged into final result)
+      // Thinking-only deltas (no result yet). Default behavior is to
+      // skip and let final result merge. In `flash` mode we render the
+      // thinking content into the same in-flight message via editMessage,
+      // then overwrite with the final answer when it arrives — thinking
+      // disappears, leaving only the final.
       if (result.thinking && !result.result) {
+        const thinkingMode = normalizeShowThinking(
+          getConfig().agents?.defaults?.showThinking,
+        );
+        if (
+          thinkingMode === 'flash' &&
+          channel.editMessage &&
+          !channel.usesNativeStreaming
+        ) {
+          const tp = formatThinkingForChannel(result.thinking, chatJid);
+          if (tp) {
+            const previewText = '🧠 _thinking…_\n\n' + tp.text;
+            const sendOpts = { parseMode: tp.parseMode };
+            if (!progressiveMsgId) {
+              await traceSetTyping(
+                channel,
+                chatJid,
+                false,
+                'flash-thinking-first',
+              );
+              const msgId = await channel.sendMessage(
+                chatJid,
+                previewText + ' ◌',
+                sendOpts,
+              );
+              progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;
+            } else {
+              await channel.editMessage(
+                chatJid,
+                progressiveMsgId,
+                previewText + ' ◌',
+                sendOpts,
+              );
+            }
+          }
+        }
         return;
       }
 
@@ -459,13 +498,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             'IPC turn boundary: reset per-turn message-id state',
           );
         }
-        // Merge thinking into result as one message (only if showThinking is enabled)
+        // Merge thinking into result as one message (only when
+        // showThinking === 'on' / true). In `flash` mode we leave
+        // result.result alone — the editMessage path below replaces
+        // the thinking-preview with just the final answer.
         let thinkingParseMode: 'HTML' | 'Markdown' | undefined;
-        if (
-          result.thinking &&
-          !result.partial &&
-          getConfig().agents?.defaults?.showThinking
-        ) {
+        const thinkingMode = normalizeShowThinking(
+          getConfig().agents?.defaults?.showThinking,
+        );
+        if (result.thinking && !result.partial && thinkingMode === 'on') {
           const tp = formatThinkingForChannel(result.thinking, chatJid);
           if (tp) {
             thinkingParseMode = tp.parseMode;
@@ -1068,6 +1109,20 @@ function ensureContainerSystemRunning(): void {
 interface ThinkingFormat {
   text: string;
   parseMode?: 'HTML' | 'Markdown';
+}
+
+/**
+ * Normalize the showThinking config value into the string enum used by
+ * the dispatcher. Accepts legacy boolean shape (true=on, false=off) and
+ * the new string enum ('on' | 'off' | 'flash').
+ */
+function normalizeShowThinking(
+  raw: boolean | 'on' | 'off' | 'flash' | undefined,
+): 'on' | 'off' | 'flash' {
+  if (raw === true) return 'on';
+  if (raw === 'on') return 'on';
+  if (raw === 'flash') return 'flash';
+  return 'off';
 }
 
 /**

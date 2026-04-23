@@ -47,9 +47,10 @@ export const COMMANDS: SlashCommand[] = [
   {
     name: 'reasoning',
     description: 'Show or hide reasoning/thinking in messages',
-    args: 'on|off',
+    args: 'on|off|flash',
     choices: [
-      { title: 'On — show reasoning', value: 'on' },
+      { title: 'On — show reasoning (kept after final)', value: 'on' },
+      { title: 'Flash — stream then replace with final', value: 'flash' },
       { title: 'Off — hide reasoning (default)', value: 'off' },
     ],
   },
@@ -161,10 +162,10 @@ export async function handleSlashCommand(
     return { handled: true };
   }
 
-  // /reasoning [on|off] — show/hide thinking output in messages
-  const reasoningMatch = input.match(/^\/reasoning(?:\s+(on|off))?$/);
+  // /reasoning [on|off|flash] — show/hide/flash thinking output in messages
+  const reasoningMatch = input.match(/^\/reasoning(?:\s+(on|off|flash))?$/);
   if (reasoningMatch) {
-    const mode = reasoningMatch[1] as 'on' | 'off' | undefined;
+    const mode = reasoningMatch[1] as 'on' | 'off' | 'flash' | undefined;
     await handleReasoning(mode, ctx);
     return { handled: true };
   }
@@ -238,15 +239,19 @@ export async function handleSlashCommand(
 // ─── /reasoning implementation ───────────────────────────────────────────────
 
 async function handleReasoning(
-  mode: 'on' | 'off' | undefined,
+  mode: 'on' | 'off' | 'flash' | undefined,
   ctx: SlashCommandContext,
 ): Promise<void> {
   const { loadConfig, saveConfig } = await import('./config-loader.js');
   const config = loadConfig();
 
+  // Normalize current value: legacy boolean (true=on, false=off) +
+  // new string enum ('on' | 'off' | 'flash').
+  const raw = config.agents?.defaults?.showThinking;
+  const current: 'on' | 'off' | 'flash' =
+    raw === true ? 'on' : raw === 'flash' ? 'flash' : 'off';
+
   if (!mode) {
-    // Show current state
-    const current = config.agents?.defaults?.showThinking ? 'on' : 'off';
     if (ctx.channel) {
       if (ctx.channel.sendCard) {
         const cmd = COMMANDS.find((c) => c.name === 'reasoning')!;
@@ -256,12 +261,12 @@ async function handleReasoning(
         await ctx.channel.sendCard(
           ctx.chatJid,
           card,
-          `🧠 Reasoning display: **${current}**\nUsage: /reasoning on|off`,
+          `🧠 Reasoning display: **${current}**\nUsage: /reasoning on|off|flash`,
         );
       } else {
         await ctx.channel.sendMessage(
           ctx.chatJid,
-          `🧠 Reasoning display: **${current}**\nUsage: /reasoning on|off`,
+          `🧠 Reasoning display: **${current}**\nUsage: /reasoning on|off|flash`,
         );
       }
     }
@@ -270,7 +275,8 @@ async function handleReasoning(
 
   if (!config.agents) config.agents = {} as any;
   if (!config.agents.defaults) config.agents.defaults = {} as any;
-  config.agents.defaults.showThinking = mode === 'on';
+  // Store as string enum (drop legacy boolean shape on write).
+  config.agents.defaults.showThinking = mode;
   saveConfig(config, 'slash-command', {
     command: '/reasoning',
     mode,
@@ -278,12 +284,13 @@ async function handleReasoning(
   });
   reloadConfig();
   if (ctx.channel) {
-    await ctx.channel.sendMessage(
-      ctx.chatJid,
+    const blurb =
       mode === 'on'
-        ? '🧠 Reasoning is now **visible** in messages. Use `/reasoning off` to hide.'
-        : '🧠 Reasoning is now **hidden**. Use `/reasoning on` to show.',
-    );
+        ? '🧠 Reasoning is now **visible** (kept after final answer). Use `/reasoning off` to hide or `/reasoning flash` for transient mode.'
+        : mode === 'flash'
+          ? '🧠 Reasoning set to **flash** — streamed live, replaced by the final answer. Use `/reasoning on` to keep it, or `/reasoning off` to hide.'
+          : '🧠 Reasoning is now **hidden**. Use `/reasoning on` to show, or `/reasoning flash` for transient.';
+    await ctx.channel.sendMessage(ctx.chatJid, blurb);
   }
 }
 

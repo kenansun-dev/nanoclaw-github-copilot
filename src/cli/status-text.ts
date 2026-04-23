@@ -32,7 +32,7 @@ export interface StatusInfo {
   uptimeStr: string;
   model: string;
   thinkLevel: string | undefined;
-  showThinking: boolean | undefined;
+  showThinking: boolean | 'on' | 'off' | 'flash' | undefined;
   mode: string;
   agentName: string;
   provider: string;
@@ -192,7 +192,11 @@ export function formatStatusText(s: StatusInfo): string {
   );
   lines.push(
     `🧠 Model:     ${s.model}${s.thinkLevel ? ` (think: ${s.thinkLevel})` : ''}${
-      s.showThinking ? ' [reasoning visible]' : ''
+      s.showThinking === 'flash'
+        ? ' [reasoning flash]'
+        : s.showThinking === true || s.showThinking === 'on'
+          ? ' [reasoning visible]'
+          : ''
     } [${s.mode}]`,
   );
   lines.push(`👤 Agent:     ${s.agentName} (${s.provider})`);

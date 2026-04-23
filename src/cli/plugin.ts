@@ -210,10 +210,7 @@ export function catalogEntryToSpec(
   if (typeof entry.source === 'string') {
     const s = entry.source.trim();
     const isRelLocal =
-      s.startsWith('./') ||
-      s.startsWith('../') ||
-      s === '.' ||
-      s === '..';
+      s.startsWith('./') || s.startsWith('../') || s === '.' || s === '..';
     if (isRelLocal && marketplaceDir) {
       return { kind: 'local', path: path.resolve(marketplaceDir, s) };
     }

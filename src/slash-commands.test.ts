@@ -146,6 +146,39 @@ describe('handleSlashCommand', () => {
     expect(result.handled).toBe(true);
   });
 
+  it('/reasoning flash returns handled and writes "flash" to config', async () => {
+    const ctx = makeCtx();
+    const result = await handleSlashCommand('/reasoning flash', ctx);
+    expect(result.handled).toBe(true);
+    const { loadConfig } = await import('./config-loader.js');
+    expect(loadConfig().agents?.defaults?.showThinking).toBe('flash');
+  });
+
+  it('/reasoning on writes "on" (string enum, not boolean) to config', async () => {
+    const ctx = makeCtx();
+    await handleSlashCommand('/reasoning on', ctx);
+    const { loadConfig } = await import('./config-loader.js');
+    expect(loadConfig().agents?.defaults?.showThinking).toBe('on');
+  });
+
+  it('/reasoning off writes "off" to config', async () => {
+    const ctx = makeCtx();
+    await handleSlashCommand('/reasoning off', ctx);
+    const { loadConfig } = await import('./config-loader.js');
+    expect(loadConfig().agents?.defaults?.showThinking).toBe('off');
+  });
+
+  it('/reasoning rejects bogus values (returns not handled, leaves config alone)', async () => {
+    // Set a known good value first
+    await handleSlashCommand('/reasoning flash', makeCtx());
+    const result = await handleSlashCommand('/reasoning bogus', makeCtx());
+    // Match regex fails, so it's not handled by the reasoning handler
+    // (and should not stomp on the prior value).
+    expect(result.handled).toBe(false);
+    const { loadConfig } = await import('./config-loader.js');
+    expect(loadConfig().agents?.defaults?.showThinking).toBe('flash');
+  });
+
   // Bumped timeout to 30s: collectStatus() does ~10 dynamic imports
   // (workspace, config-loader, config-extensions, etc) which on a cold
   // CI runner can exceed the default 5s. Locally it's ~4s; CI saw it
