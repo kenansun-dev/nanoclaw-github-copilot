@@ -5,7 +5,11 @@
  * Target: 100% command recognition, correct handled/unhandled routing.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { setWorkspace, ensureWorkspace } from './workspace.js';
 import {
   normalizeSlashInput,
   handleSlashCommand,
@@ -14,6 +18,24 @@ import {
   COMMANDS,
   SlashCommandContext,
 } from './slash-commands.js';
+
+// Isolate workspace BEFORE any test runs handleSlashCommand. /think writes
+// to nanoclaw.json via saveConfig; without this, every CI run pollutes the
+// real ~/.nanoclaw/nanoclaw.json on the developer machine. (Caught
+// 2026-04-23 when kenan reported thinkLevel kept becoming 'high' after
+// running npm test — this test was the culprit.)
+const tmpWs = path.join(os.tmpdir(), `nanoclaw-test-slash-${Date.now()}`);
+beforeAll(() => {
+  setWorkspace(tmpWs);
+  ensureWorkspace();
+});
+afterAll(() => {
+  try {
+    fs.rmSync(tmpWs, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+});
 
 // Mock DB to avoid needing real SQLite for /new and /reset
 vi.mock('./db.js', () => ({

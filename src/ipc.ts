@@ -584,7 +584,10 @@ async function handleControlIpc(data: any, deps: IpcDeps): Promise<void> {
           /* use as string */
         }
         obj[parts[parts.length - 1]] = value;
-        saveConfig(config);
+        saveConfig(config, 'ipc-agent', {
+          via: 'ipc.nanoclaw_control.set_config',
+          configPath: data.configPath,
+        });
         // Also reload in memory
         const { reloadConfig } = await import('./config.js');
         reloadConfig();
