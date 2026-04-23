@@ -10,7 +10,9 @@ import {
   parseInstallSpec,
   catalogEntryToSpec,
   ensureEnabledPluginsInstalled,
+  resolvePluginMcpServers,
   type MarketplaceCatalogEntry,
+  type PluginManifest,
 } from './plugin.js';
 import { saveConfig, loadConfig } from '../config-loader.js';
 
@@ -284,5 +286,123 @@ describe('ensureEnabledPluginsInstalled', () => {
     expect(
       fs.existsSync(path.join(tmpDir, 'plugins', 'localfoo', 'plugin.json')),
     ).toBe(true);
+  });
+});
+
+describe('resolvePluginMcpServers', () => {
+  const tmpDir = path.join(
+    os.tmpdir(),
+    `nanoclaw-test-mcpresolver-${Date.now()}`,
+  );
+
+  beforeEach(() => {
+    fs.mkdirSync(tmpDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns null when manifest has no mcpServers field', () => {
+    const manifest: PluginManifest = { name: 'p1' };
+    expect(resolvePluginMcpServers(tmpDir, manifest)).toBeNull();
+  });
+
+  it('passes through inline-object form (CC/GHC standard)', () => {
+    const manifest: PluginManifest = {
+      name: 'p2',
+      mcpServers: {
+        foo: { command: 'node', args: ['foo.js'] },
+        bar: { url: 'https://example.com/mcp' },
+      },
+    };
+    const result = resolvePluginMcpServers(tmpDir, manifest);
+    expect(result).toEqual({
+      foo: { command: 'node', args: ['foo.js'] },
+      bar: { url: 'https://example.com/mcp' },
+    });
+  });
+
+  it('reads path-string form pointing to bare server map', () => {
+    const mcpFile = path.join(tmpDir, 'mcp.json');
+    fs.writeFileSync(
+      mcpFile,
+      JSON.stringify({
+        foo: { command: 'python', args: ['-m', 'foo'] },
+      }),
+    );
+    const manifest: PluginManifest = { name: 'p3', mcpServers: 'mcp.json' };
+    const result = resolvePluginMcpServers(tmpDir, manifest);
+    expect(result).toEqual({
+      foo: { command: 'python', args: ['-m', 'foo'] },
+    });
+  });
+
+  it('reads path-string form with `mcpServers` wrapper', () => {
+    const mcpFile = path.join(tmpDir, 'wrapped.json');
+    fs.writeFileSync(
+      mcpFile,
+      JSON.stringify({
+        mcpServers: { foo: { command: 'cat' } },
+      }),
+    );
+    const manifest: PluginManifest = {
+      name: 'p4',
+      mcpServers: 'wrapped.json',
+    };
+    expect(resolvePluginMcpServers(tmpDir, manifest)).toEqual({
+      foo: { command: 'cat' },
+    });
+  });
+
+  it('reads path-string form with `servers` wrapper', () => {
+    const mcpFile = path.join(tmpDir, 'servers.json');
+    fs.writeFileSync(
+      mcpFile,
+      JSON.stringify({ servers: { bar: { command: 'echo' } } }),
+    );
+    const manifest: PluginManifest = {
+      name: 'p5',
+      mcpServers: 'servers.json',
+    };
+    expect(resolvePluginMcpServers(tmpDir, manifest)).toEqual({
+      bar: { command: 'echo' },
+    });
+  });
+
+  it('returns null when path-string points to missing file', () => {
+    const manifest: PluginManifest = {
+      name: 'p6',
+      mcpServers: 'nope.json',
+    };
+    expect(resolvePluginMcpServers(tmpDir, manifest)).toBeNull();
+  });
+
+  it('returns null when path-string points to malformed JSON', () => {
+    const mcpFile = path.join(tmpDir, 'bad.json');
+    fs.writeFileSync(mcpFile, '{not json');
+    const manifest: PluginManifest = { name: 'p7', mcpServers: 'bad.json' };
+    expect(resolvePluginMcpServers(tmpDir, manifest)).toBeNull();
+  });
+
+  it('preserves provider-specific server fields verbatim', () => {
+    // Round-trips arbitrary MCP server config keys (env, transport, headers,
+    // cwd, etc.) so we never silently drop fields.
+    const manifest: PluginManifest = {
+      name: 'p8',
+      mcpServers: {
+        complex: {
+          command: 'node',
+          args: ['srv.js'],
+          env: { TOKEN: 'x' },
+          transport: 'stdio',
+          cwd: '/tmp',
+          headers: { authorization: 'bearer y' },
+        },
+      },
+    };
+    expect(resolvePluginMcpServers(tmpDir, manifest)).toEqual(
+      manifest.mcpServers,
+    );
   });
 });

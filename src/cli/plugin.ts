@@ -38,6 +38,14 @@ import { resolveWorkspace } from '../workspace.js';
 import { loadConfig, saveConfig } from '../config-loader.js';
 import { logger } from '../logger.js';
 
+/**
+ * Shape of a single MCP server entry inside a plugin manifest. Mirrors the
+ * CC plugin spec — keys are passed straight through to the agent runtime, so
+ * any provider-specific fields (e.g. `command`, `args`, `env`, `url`,
+ * `transport`) are preserved as-is.
+ */
+export type McpServerConfig = Record<string, unknown>;
+
 export interface PluginManifest {
   name: string;
   description?: string;
@@ -47,8 +55,15 @@ export interface PluginManifest {
   keywords?: string[];
   /** Path to skills directory (relative to plugin root) */
   skills?: string | string[];
-  /** Path to MCP config file (relative to plugin root) */
-  mcpServers?: string;
+  /**
+   * MCP server configuration. Two accepted shapes for compatibility with
+   * both the CC/GHC plugin spec and nanoclaw's older path-based form:
+   *  - **inline object** (CC/GHC standard): `{ "<name>": { command, args, ... } }`
+   *  - **path string** (legacy nanoclaw): relative path to a JSON file inside
+   *    the plugin root containing either `{ mcpServers: {...} }` or a bare
+   *    server map.
+   */
+  mcpServers?: string | Record<string, McpServerConfig>;
   /** Path to agents directory (optional, GHC only) */
   agents?: string;
   /** Path to hooks file (optional, GHC only) */
@@ -304,6 +319,55 @@ function loadManifest(pluginDir: string): PluginManifest | null {
 
 // ─── Install ─────────────────────────────────────────────────────────────────
 
+/**
+ * Resolve a plugin's MCP server map regardless of which schema shape the
+ * manifest uses. Returns `null` when nothing is configured or when a path
+ * was set but the file is missing/unreadable.
+ *
+ * Accepted shapes:
+ *  - **inline object** (CC/GHC standard): `mcpServers: { foo: {...}, bar: {...} }`
+ *  - **path string** (legacy nanoclaw): `mcpServers: "mcp.json"` pointing to
+ *    a JSON file with either `{ mcpServers: {...} }`, `{ servers: {...} }`,
+ *    or a bare `{ foo: {...} }` server map.
+ *
+ * Plugins authored against the upstream CC/GHC plugin spec can be installed
+ * directly into nanoclaw without rewriting the manifest. The legacy path
+ * shape stays supported for backward compatibility with manifests written
+ * before the CC plugin spec stabilized.
+ */
+export function resolvePluginMcpServers(
+  pluginDir: string,
+  manifest: PluginManifest,
+): Record<string, McpServerConfig> | null {
+  const raw = manifest.mcpServers;
+  if (!raw) return null;
+
+  if (typeof raw === 'object') {
+    // Inline object form (CC/GHC standard) — pass through verbatim.
+    return raw as Record<string, McpServerConfig>;
+  }
+
+  if (typeof raw === 'string') {
+    // Path-string form (legacy nanoclaw) — load + unwrap the file.
+    const mcpPath = path.join(pluginDir, raw);
+    if (!fs.existsSync(mcpPath)) return null;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
+      const servers = parsed.mcpServers || parsed.servers || parsed;
+      if (servers && typeof servers === 'object') {
+        return servers as Record<string, McpServerConfig>;
+      }
+    } catch {
+      logger.warn(
+        { plugin: path.basename(pluginDir), mcpPath },
+        'Failed to parse plugin MCP config file',
+      );
+    }
+  }
+
+  return null;
+}
+
 function describeSpec(s: InstallSpec): string {
   if (s.kind === 'local') return `local:${s.path}`;
   if (s.kind === 'git') return `git:${s.url}${s.subdir ? `#${s.subdir}` : ''}`;
@@ -512,12 +576,13 @@ function listPlugins(): void {
       if (skillCount > 0) {
         console.log(`     Skills: ${skillCount}`);
       }
-      // Check MCP
-      if (
-        manifest.mcpServers &&
-        fs.existsSync(path.join(pDir, entry.name, manifest.mcpServers))
-      ) {
-        console.log(`     MCP: ✅`);
+      // Check MCP — works for both inline-object and path-string shapes.
+      const mcpServers = resolvePluginMcpServers(
+        path.join(pDir, entry.name),
+        manifest,
+      );
+      if (mcpServers && Object.keys(mcpServers).length > 0) {
+        console.log(`     MCP: ✅ (${Object.keys(mcpServers).length})`);
       }
     } else {
       console.log(`  📦 ${entry.name} (no manifest)`);
@@ -595,20 +660,14 @@ function syncPluginsToConfig(): void {
       }
     }
 
-    // Collect MCP servers
-    if (manifest.mcpServers) {
-      const mcpPath = path.join(pDir, entry.name, manifest.mcpServers);
-      if (fs.existsSync(mcpPath)) {
-        try {
-          const mcpConfig = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
-          const servers =
-            mcpConfig.mcpServers || mcpConfig.servers || mcpConfig;
-          for (const [name, serverConfig] of Object.entries(servers)) {
-            pluginMcpServers[`plugin:${entry.name}:${name}`] = serverConfig;
-          }
-        } catch {
-          logger.warn({ plugin: entry.name }, 'Failed to parse MCP config');
-        }
+    // Collect MCP servers — resolver handles both inline object and path string.
+    const servers = resolvePluginMcpServers(
+      path.join(pDir, entry.name),
+      manifest,
+    );
+    if (servers) {
+      for (const [name, serverConfig] of Object.entries(servers)) {
+        pluginMcpServers[`plugin:${entry.name}:${name}`] = serverConfig;
       }
     }
   }
