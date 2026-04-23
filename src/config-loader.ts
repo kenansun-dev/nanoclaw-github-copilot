@@ -6,6 +6,7 @@
 import fs from 'fs';
 import { logger } from './logger.js';
 import { paths, workspacePath } from './workspace.js';
+import { auditConfigDiff, type AuditSource } from './audit.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1014,8 +1015,30 @@ function recoverFromBackup(configPath: string): Partial<NanoclawConfig> | null {
 
 /**
  * Save config back to nanoclaw.json (for CLI commands like chat add).
+ *
+ * @param source Optional caller hint for audit logs. Defaults to 'unknown' so
+ *               existing call sites keep compiling; pass a specific value
+ *               (e.g. 'slash-command', 'tui') from new call sites so audit
+ *               output identifies the trigger.
+ * @param context Optional structured context (chatJid, userId, etc.) attached
+ *                to any audit events emitted from this save.
  */
-export function saveConfig(config: NanoclawConfig): void {
+export function saveConfig(
+  config: NanoclawConfig,
+  source: AuditSource = 'unknown',
+  context?: Record<string, unknown>,
+): void {
+  // Read prior on-disk snapshot so audit can diff watched fields.
+  // Best-effort: if read fails (first save, fs error), prior = undefined and
+  // any newly-set watched field is reported as <unset> → <new>.
+  let priorOnDisk: unknown = undefined;
+  try {
+    if (fs.existsSync(paths.config)) {
+      priorOnDisk = JSON.parse(fs.readFileSync(paths.config, 'utf-8'));
+    }
+  } catch {
+    /* ignore — audit will record undefined → new */
+  }
   // Strip secrets before saving — they stay in .env
   const toSave = JSON.parse(JSON.stringify(config));
   // Strip top-level channel secrets
@@ -1076,6 +1099,15 @@ export function saveConfig(config: NanoclawConfig): void {
   // Backup before writing
   backupConfig(paths.config);
   fs.writeFileSync(paths.config, JSON.stringify(toSave, null, 2) + '\n');
+
+  // Emit audit events for watched-field diffs. After writeFileSync so we
+  // only audit changes that actually landed on disk.
+  try {
+    auditConfigDiff(priorOnDisk, toSave, source, context);
+  } catch (err) {
+    // Audit must never break saveConfig. Log to standard logger as a fallback.
+    logger.error({ err }, 'Audit emit failed (saveConfig still succeeded)');
+  }
 }
 
 // ─── Agent Resolution ────────────────────────────────────────────────────────
@@ -1246,7 +1278,7 @@ function migrateSecretsToEnv(config: any): void {
     );
 
     // Save clean config (saveConfig strips secrets)
-    saveConfig(config);
+    saveConfig(config, 'secret-migration', { migratedKeys: lines.length });
     logger.info('Stripped secrets from nanoclaw.json');
   }
 }
