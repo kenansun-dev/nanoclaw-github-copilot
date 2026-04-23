@@ -4,19 +4,34 @@
  * Plugin format (compatible with GHC plugin.json + CC AgentSkills):
  *   ~/.nanoclaw/plugins/<name>/
  *     ├── plugin.json         ← manifest (name, version, skills, mcpServers, provider)
+ *     │   (also accepts CC-style `.claude-plugin/plugin.json`)
  *     ├── skills/             ← SKILL.md files (AgentSkills format)
  *     │   └── <skill-name>/
  *     │       └── SKILL.md
  *     └── .mcp.json           ← MCP server config (optional)
  *
+ * Install spec formats (mirrors `copilot plugin install`):
+ *   ./local/path                  — local directory
+ *   /abs/path                     — local directory
+ *   https://github.com/o/r.git    — raw git URL
+ *   git@github.com:o/r.git        — ssh git URL
+ *   owner/repo                    — https://github.com/owner/repo
+ *   owner/repo:path/to/sub        — subdirectory inside a repo
+ *   plugin@marketplace            — fetch via a registered marketplace
+ *
  * Commands:
- *   nanoclaw plugin list                  — list installed plugins
- *   nanoclaw plugin install <path|url>    — install a plugin
- *   nanoclaw plugin remove <name>         — remove a plugin
- *   nanoclaw plugin info <name>           — show plugin details
+ *   nanoclaw plugin list                       — list installed plugins
+ *   nanoclaw plugin install <spec>             — install a plugin
+ *   nanoclaw plugin remove <name>              — remove a plugin
+ *   nanoclaw plugin info <name>                — show plugin details
+ *   nanoclaw plugin marketplace add <spec>     — register a marketplace
+ *   nanoclaw plugin marketplace list           — list registered marketplaces
+ *   nanoclaw plugin marketplace browse <name>  — list plugins in a marketplace
+ *   nanoclaw plugin marketplace remove <name>  — unregister a marketplace
  */
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { execSync } from 'child_process';
 import { resolveWorkspace } from '../workspace.js';
@@ -46,46 +61,314 @@ function pluginsDir(): string {
   return path.join(resolveWorkspace(), 'plugins');
 }
 
-function loadManifest(pluginDir: string): PluginManifest | null {
-  const manifestPath = path.join(pluginDir, 'plugin.json');
-  if (!fs.existsSync(manifestPath)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-  } catch {
-    return null;
+/**
+ * Cached marketplaces directory — holds shallow git clones of registered
+ * marketplace catalogs (`<workspace>/.cache/marketplaces/<name>/`).
+ */
+function marketplaceCacheDir(): string {
+  return path.join(resolveWorkspace(), '.cache', 'marketplaces');
+}
+
+// ─── Install spec parser ────────────────────────────────────────
+
+export type InstallSpec =
+  | { kind: 'local'; path: string }
+  | { kind: 'git'; url: string; subdir?: string; ref?: string }
+  | { kind: 'marketplace'; plugin: string; marketplace: string };
+
+/**
+ * Parse a plugin install spec into a normalized form. Pure (no I/O) so it
+ * can be unit-tested. Spec formats mirror `copilot plugin install`:
+ *   ./foo, /abs/foo               → local
+ *   https://..., git@..., *.git   → git URL
+ *   owner/repo                    → https://github.com/owner/repo
+ *   owner/repo:sub/dir            → git URL + subdir
+ *   plugin@marketplace            → marketplace lookup
+ */
+export function parseInstallSpec(spec: string): InstallSpec {
+  const trimmed = spec.trim();
+  if (!trimmed) throw new Error('Empty install spec');
+
+  // Local path: starts with ./, ../, /, ~, or letter+colon (Windows drive).
+  if (
+    trimmed.startsWith('./') ||
+    trimmed.startsWith('../') ||
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('~') ||
+    /^[a-zA-Z]:[\\/]/.test(trimmed)
+  ) {
+    return { kind: 'local', path: trimmed };
   }
+
+  // Explicit git URL (http(s), git+, ssh, ends with .git).
+  if (
+    /^(https?|git|ssh):\/\//.test(trimmed) ||
+    trimmed.startsWith('git@') ||
+    trimmed.endsWith('.git')
+  ) {
+    return { kind: 'git', url: trimmed };
+  }
+
+  // plugin@marketplace — the @ must NOT be the first character (would be
+  // a scoped-npm-package-style spec, which we don't support here) and the
+  // marketplace side must look like a kebab-case name.
+  const atIdx = trimmed.indexOf('@');
+  if (atIdx > 0 && atIdx < trimmed.length - 1) {
+    const plugin = trimmed.slice(0, atIdx);
+    const marketplace = trimmed.slice(atIdx + 1);
+    if (
+      /^[a-z0-9][a-z0-9_-]*$/i.test(plugin) &&
+      /^[a-z0-9][a-z0-9_-]*$/i.test(marketplace)
+    ) {
+      return { kind: 'marketplace', plugin, marketplace };
+    }
+  }
+
+  // owner/repo or owner/repo:subdir — GitHub shorthand.
+  const slashCount = (trimmed.match(/\//g) || []).length;
+  if (slashCount === 1 || (slashCount === 2 && trimmed.includes(':'))) {
+    let url: string;
+    let subdir: string | undefined;
+    const colonIdx = trimmed.indexOf(':');
+    if (colonIdx > 0) {
+      const repoPart = trimmed.slice(0, colonIdx);
+      subdir = trimmed.slice(colonIdx + 1);
+      url = `https://github.com/${repoPart}.git`;
+    } else {
+      url = `https://github.com/${trimmed}.git`;
+    }
+    return { kind: 'git', url, subdir };
+  }
+
+  throw new Error(
+    `Unrecognized install spec: ${spec}\n` +
+      `Expected: ./path, /abs/path, owner/repo, owner/repo:subdir, ` +
+      `https://..., or plugin@marketplace`,
+  );
+}
+
+// ─── Marketplace catalog (CC + GHC compatible) ──────────────────────
+
+/**
+ * Both CC and GHC use `.claude-plugin/marketplace.json` as the catalog
+ * format. Top-level shape:
+ *   { name, owner, plugins: [{ name, source, ... }] }
+ * `source` for each plugin can itself be a string in any of our InstallSpec
+ * formats, or an object: { source: 'github', repo: 'o/r', path?, ref? }.
+ */
+export interface MarketplaceCatalog {
+  name: string;
+  owner?: { name?: string; email?: string; url?: string };
+  description?: string;
+  plugins: MarketplaceCatalogEntry[];
+}
+
+export interface MarketplaceCatalogEntry {
+  name: string;
+  description?: string;
+  /** Either a string spec (`owner/repo:path`) or a CC-style source object. */
+  source: string | MarketplaceCatalogSource;
+  version?: string;
+}
+
+export interface MarketplaceCatalogSource {
+  source?: 'github' | 'git' | 'local';
+  repo?: string;
+  url?: string;
+  path?: string;
+  ref?: string;
+}
+
+/**
+ * Normalize a marketplace catalog entry's `source` field into an InstallSpec.
+ * String form is parsed via parseInstallSpec; object form is converted into
+ * either git or local kind.
+ */
+export function catalogEntryToSpec(
+  entry: MarketplaceCatalogEntry,
+): InstallSpec {
+  if (typeof entry.source === 'string') {
+    return parseInstallSpec(entry.source);
+  }
+  const src = entry.source;
+  if (src.source === 'local' && src.path) {
+    return { kind: 'local', path: src.path };
+  }
+  if (src.url) {
+    return { kind: 'git', url: src.url, subdir: src.path, ref: src.ref };
+  }
+  if (src.repo) {
+    return {
+      kind: 'git',
+      url: `https://github.com/${src.repo}.git`,
+      subdir: src.path,
+      ref: src.ref,
+    };
+  }
+  throw new Error(
+    `Marketplace entry '${entry.name}' has unrecognized source object`,
+  );
+}
+
+/**
+ * Ensure a marketplace catalog is cloned to the local cache, then read it.
+ * Marketplace `source` itself is parsed as an InstallSpec (so `owner/repo`
+ * shorthand works). For local sources, no cloning happens.
+ */
+function fetchMarketplaceCatalog(
+  name: string,
+  source: string,
+): MarketplaceCatalog {
+  const cacheRoot = marketplaceCacheDir();
+  fs.mkdirSync(cacheRoot, { recursive: true });
+  const cacheDir = path.join(cacheRoot, name);
+
+  let resolvedDir: string;
+  const spec = parseInstallSpec(source);
+  if (spec.kind === 'local') {
+    resolvedDir = path.resolve(spec.path);
+  } else if (spec.kind === 'git') {
+    if (!fs.existsSync(cacheDir)) {
+      execSync(`git clone --depth 1 "${spec.url}" "${cacheDir}"`, {
+        stdio: 'pipe',
+        timeout: 60000,
+      });
+    }
+    resolvedDir = spec.subdir ? path.join(cacheDir, spec.subdir) : cacheDir;
+  } else {
+    throw new Error(
+      `Marketplace source must be a git URL, owner/repo, or local path (got ${spec.kind})`,
+    );
+  }
+
+  // Catalog lives at .claude-plugin/marketplace.json (CC + GHC convention)
+  // OR at marketplace.json at repo root (legacy / minimal).
+  const ccPath = path.join(resolvedDir, '.claude-plugin', 'marketplace.json');
+  const rootPath = path.join(resolvedDir, 'marketplace.json');
+  const catalogPath = fs.existsSync(ccPath)
+    ? ccPath
+    : fs.existsSync(rootPath)
+      ? rootPath
+      : null;
+  if (!catalogPath) {
+    throw new Error(
+      `No marketplace.json found for '${name}' at ${resolvedDir}`,
+    );
+  }
+  return JSON.parse(fs.readFileSync(catalogPath, 'utf-8'));
+}
+
+/**
+ * Look up a plugin by name in a registered marketplace and return its
+ * normalized install spec. Throws if either marketplace or plugin is missing.
+ */
+function resolveMarketplacePlugin(
+  pluginName: string,
+  marketplaceName: string,
+): InstallSpec {
+  const config = loadConfig();
+  const mp = (config.plugins?.marketplaces || []).find(
+    (m) => m.name === marketplaceName,
+  );
+  if (!mp) {
+    throw new Error(
+      `Marketplace '${marketplaceName}' not registered. Run \`nanoclaw plugin marketplace list\`.`,
+    );
+  }
+  const catalog = fetchMarketplaceCatalog(mp.name, mp.source);
+  const entry = catalog.plugins?.find((p) => p.name === pluginName);
+  if (!entry) {
+    throw new Error(
+      `Plugin '${pluginName}' not found in marketplace '${marketplaceName}'`,
+    );
+  }
+  return catalogEntryToSpec(entry);
+}
+
+function loadManifest(pluginDir: string): PluginManifest | null {
+  // Try root plugin.json first (GHC convention), then CC's .claude-plugin/plugin.json.
+  const candidates = [
+    path.join(pluginDir, 'plugin.json'),
+    path.join(pluginDir, '.claude-plugin', 'plugin.json'),
+  ];
+  for (const manifestPath of candidates) {
+    if (!fs.existsSync(manifestPath)) continue;
+    try {
+      return JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
 }
 
 // ─── Install ─────────────────────────────────────────────────────────────────
+
+function describeSpec(s: InstallSpec): string {
+  if (s.kind === 'local') return `local:${s.path}`;
+  if (s.kind === 'git')
+    return `git:${s.url}${s.subdir ? `#${s.subdir}` : ''}`;
+  return `marketplace:${s.plugin}@${s.marketplace}`;
+}
 
 async function installPlugin(source: string): Promise<void> {
   const pDir = pluginsDir();
   fs.mkdirSync(pDir, { recursive: true });
 
+  // Resolve the spec. For marketplace specs we recurse with the resolved
+  // git/local spec so we hit the same code path uniformly.
+  let spec: InstallSpec;
+  try {
+    spec = parseInstallSpec(source);
+  } catch (err: any) {
+    console.error(`❌ ${err.message}`);
+    return;
+  }
+  if (spec.kind === 'marketplace') {
+    try {
+      spec = resolveMarketplacePlugin(spec.plugin, spec.marketplace);
+      console.log(
+        `Resolved \`${source}\` via marketplace → ${describeSpec(spec)}`,
+      );
+    } catch (err: any) {
+      console.error(`❌ ${err.message}`);
+      return;
+    }
+  }
+
   let srcDir: string;
 
-  if (source.startsWith('http://') || source.startsWith('https://')) {
-    // Git clone
+  if (spec.kind === 'git') {
     const tmpDir = path.join(pDir, '.tmp-install');
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
-    console.log(`Cloning ${source}...`);
+    console.log(`Cloning ${spec.url}...`);
     try {
-      execSync(`git clone --depth 1 "${source}" "${tmpDir}"`, {
+      execSync(`git clone --depth 1 "${spec.url}" "${tmpDir}"`, {
         stdio: 'pipe',
         timeout: 60000,
       });
-      srcDir = tmpDir;
+      srcDir = spec.subdir ? path.join(tmpDir, spec.subdir) : tmpDir;
+      if (!fs.existsSync(srcDir)) {
+        console.error(
+          `❌ Subdirectory '${spec.subdir}' not found in cloned repo.`,
+        );
+        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+        return;
+      }
     } catch (err: any) {
       console.error(`❌ Failed to clone: ${err.message}`);
       return;
     }
-  } else {
-    // Local path
-    srcDir = path.resolve(source);
+  } else if (spec.kind === 'local') {
+    srcDir = path.resolve(spec.path.replace(/^~(?=\/|$)/, os.homedir()));
     if (!fs.existsSync(srcDir)) {
       console.error(`❌ Path not found: ${srcDir}`);
       return;
     }
+  } else {
+    // Should be unreachable: marketplace was resolved above.
+    console.error(`❌ Unresolved marketplace spec: ${describeSpec(spec)}`);
+    return;
   }
 
   // Read manifest
@@ -439,13 +722,14 @@ export async function runPluginCommand(args: string[]): Promise<void> {
     case 'install':
     case 'add':
       if (!args[1]) {
-        console.log('Usage: nanoclaw plugin install <path|url>');
+        console.log('Usage: nanoclaw plugin install <spec>');
         console.log('');
         console.log('Examples:');
         console.log('  nanoclaw plugin install ./my-plugin');
-        console.log(
-          '  nanoclaw plugin install https://github.com/user/nanoclaw-wiki-plugin',
-        );
+        console.log('  nanoclaw plugin install owner/repo');
+        console.log('  nanoclaw plugin install owner/repo:path/to/plugin');
+        console.log('  nanoclaw plugin install https://github.com/user/repo.git');
+        console.log('  nanoclaw plugin install workiq@copilot-plugins');
         return;
       }
       await installPlugin(args[1]);
@@ -466,15 +750,194 @@ export async function runPluginCommand(args: string[]): Promise<void> {
       }
       pluginInfo(args[1]);
       break;
+    case 'marketplace':
+    case 'mp':
+      await runMarketplaceCommand(args.slice(1));
+      break;
     default:
-      console.log('Usage: nanoclaw plugin <list|install|remove|info> [args]');
+      console.log(
+        'Usage: nanoclaw plugin <list|install|remove|info|marketplace> [args]',
+      );
       console.log('');
       console.log('Commands:');
-      console.log('  list                    List installed plugins');
+      console.log('  list                       List installed plugins');
       console.log(
-        '  install <path|url>      Install a plugin from local path or git URL',
+        '  install <spec>             Install a plugin from path, URL,',
       );
-      console.log('  remove <name>           Remove a plugin');
-      console.log('  info <name>             Show plugin details');
+      console.log(
+        '                             owner/repo, or plugin@marketplace',
+      );
+      console.log('  remove <name>              Remove a plugin');
+      console.log('  info <name>                Show plugin details');
+      console.log(
+        '  marketplace add <spec>     Register a plugin marketplace',
+      );
+      console.log(
+        '  marketplace list           List registered marketplaces',
+      );
+      console.log(
+        '  marketplace browse <name>  List plugins in a marketplace',
+      );
+      console.log(
+        '  marketplace remove <name>  Unregister a marketplace',
+      );
   }
+}
+
+// ─── Marketplace CLI ─────────────────────────────────────────────────
+
+async function runMarketplaceCommand(args: string[]): Promise<void> {
+  const sub = args[0] || 'list';
+  switch (sub) {
+    case 'list':
+    case 'ls':
+      marketplaceList();
+      break;
+    case 'add': {
+      if (!args[1]) {
+        console.log('Usage: nanoclaw plugin marketplace add <spec>');
+        console.log('');
+        console.log('Examples:');
+        console.log('  nanoclaw plugin marketplace add github/copilot-plugins');
+        console.log(
+          '  nanoclaw plugin marketplace add https://github.com/anthropics/claude-code.git',
+        );
+        console.log('  nanoclaw plugin marketplace add ./my-marketplace');
+        return;
+      }
+      // Optional explicit name override: --name <foo>
+      let name: string | undefined;
+      const nameIdx = args.indexOf('--name');
+      if (nameIdx > 0 && args[nameIdx + 1]) name = args[nameIdx + 1];
+      marketplaceAdd(args[1], name);
+      break;
+    }
+    case 'browse':
+      if (!args[1]) {
+        console.log('Usage: nanoclaw plugin marketplace browse <name>');
+        return;
+      }
+      marketplaceBrowse(args[1]);
+      break;
+    case 'remove':
+    case 'rm':
+      if (!args[1]) {
+        console.log('Usage: nanoclaw plugin marketplace remove <name>');
+        return;
+      }
+      marketplaceRemove(args[1]);
+      break;
+    default:
+      console.log(
+        'Usage: nanoclaw plugin marketplace <list|add|browse|remove> [args]',
+      );
+  }
+}
+
+function marketplaceList(): void {
+  const config = loadConfig();
+  const list = config.plugins?.marketplaces || [];
+  if (list.length === 0) {
+    console.log('No marketplaces registered.');
+    return;
+  }
+  console.log('\n✨ Registered Marketplaces:\n');
+  for (const mp of list) {
+    console.log(`  ◆ ${mp.name}  →  ${mp.source}`);
+  }
+  console.log('');
+}
+
+function marketplaceAdd(source: string, explicitName?: string): void {
+  const config = loadConfig();
+  if (!config.plugins) config.plugins = {};
+  if (!config.plugins.marketplaces) config.plugins.marketplaces = [];
+
+  // Derive a default name from source if not provided.
+  let name = explicitName;
+  if (!name) {
+    if (/^[\w.-]+\/[\w.-]+$/.test(source)) {
+      // owner/repo → use repo part
+      name = source.split('/')[1];
+    } else if (/\/([\w.-]+?)(?:\.git)?\/?$/.test(source)) {
+      const m = source.match(/\/([\w.-]+?)(?:\.git)?\/?$/);
+      name = m?.[1];
+    } else {
+      name = path.basename(source.replace(/\.git$/, ''));
+    }
+  }
+  if (!name) {
+    console.error(
+      '❌ Could not derive marketplace name from source. Pass --name <name>.',
+    );
+    return;
+  }
+
+  const existing = config.plugins.marketplaces.find((m) => m.name === name);
+  if (existing) {
+    console.error(
+      `❌ Marketplace '${name}' already registered (source: ${existing.source}).`,
+    );
+    return;
+  }
+
+  // Verify the catalog actually exists by fetching it once.
+  try {
+    const catalog = fetchMarketplaceCatalog(name, source);
+    config.plugins.marketplaces.push({ name, source });
+    saveConfig(config);
+    console.log(
+      `✅ Registered marketplace '${name}' (${catalog.plugins?.length ?? 0} plugins available)`,
+    );
+  } catch (err: any) {
+    console.error(`❌ Failed to register marketplace: ${err.message}`);
+  }
+}
+
+function marketplaceBrowse(name: string): void {
+  const config = loadConfig();
+  const mp = (config.plugins?.marketplaces || []).find((m) => m.name === name);
+  if (!mp) {
+    console.error(`❌ Marketplace '${name}' not registered.`);
+    return;
+  }
+  let catalog: MarketplaceCatalog;
+  try {
+    catalog = fetchMarketplaceCatalog(mp.name, mp.source);
+  } catch (err: any) {
+    console.error(`❌ ${err.message}`);
+    return;
+  }
+  console.log(`\n✨ Marketplace: ${catalog.name || mp.name}`);
+  if (catalog.description) console.log(`   ${catalog.description}`);
+  console.log('');
+  if (!catalog.plugins || catalog.plugins.length === 0) {
+    console.log('  (no plugins in this marketplace)');
+    return;
+  }
+  for (const p of catalog.plugins) {
+    const ver = p.version ? ` v${p.version}` : '';
+    console.log(`  📦 ${p.name}${ver}`);
+    if (p.description) console.log(`     ${p.description}`);
+    console.log(`     install: \`nanoclaw plugin install ${p.name}@${mp.name}\``);
+  }
+  console.log('');
+}
+
+function marketplaceRemove(name: string): void {
+  const config = loadConfig();
+  const list = config.plugins?.marketplaces || [];
+  const before = list.length;
+  if (config.plugins) {
+    config.plugins.marketplaces = list.filter((m) => m.name !== name);
+  }
+  if ((config.plugins?.marketplaces?.length ?? 0) === before) {
+    console.error(`❌ Marketplace '${name}' not found.`);
+    return;
+  }
+  saveConfig(config);
+  // Also wipe the cached clone so a re-add re-fetches.
+  const cached = path.join(marketplaceCacheDir(), name);
+  if (fs.existsSync(cached)) fs.rmSync(cached, { recursive: true });
+  console.log(`✅ Unregistered marketplace: ${name}`);
 }

@@ -857,9 +857,7 @@ describe('config migration v5→v6: plugins block seed', () => {
       JSON.stringify({
         configVersion: 5,
         plugins: {
-          marketplaces: [
-            { name: 'custom-mp', source: 'kenan/my-marketplace' },
-          ],
+          marketplaces: [{ name: 'custom-mp', source: 'kenan/my-marketplace' }],
         },
       }),
     );
