@@ -171,6 +171,62 @@ export interface NanoclawConfig {
     thinkLevel?: 'low' | 'medium' | 'high' | 'xhigh';
     name?: string;
   };
+  /**
+   * Plugin configuration. Plugins extend nanoclaw with skills, MCP servers,
+   * agents, and hooks. Format is intentionally compatible with both Claude Code
+   * (`.claude-plugin/plugin.json` + `marketplace.json`) and GitHub Copilot CLI
+   * (`copilot plugin` semantics: `plugin@marketplace`, `owner/repo`, URLs).
+   *
+   * - `enabled[]`  — declarative list of plugins to ensure-installed at startup
+   *                  (similar to CC's `enabledPlugins` + `autoInstallEnabledPlugins`).
+   * - `marketplaces[]` — registered marketplaces (CC + GHC use the same
+   *                  `marketplace.json` catalog format under `.claude-plugin/`).
+   *                  Two defaults are seeded automatically:
+   *                  `github/copilot-plugins` and `github/awesome-copilot`.
+   * - `directories[]` — extra local directories scanned for plugin manifests
+   *                  (in addition to `<workspace>/plugins/`).
+   */
+  plugins?: {
+    enabled?: PluginEnabledEntry[];
+    marketplaces?: PluginMarketplaceEntry[];
+    directories?: string[];
+  };
+}
+
+/**
+ * Declarative plugin entry — "this plugin should be installed".
+ * On nanoclaw startup the host-runner ensures each entry is present under
+ * `<workspace>/plugins/<name>/`, installing it if missing.
+ *
+ * Source formats (parsed in this order, mirroring `copilot plugin install`):
+ *   - `name@marketplace`            — pull from a registered marketplace
+ *   - `owner/repo`                  — `https://github.com/owner/repo`
+ *   - `owner/repo:path/to/sub`      — subdirectory inside a repo
+ *   - `https://...` / `git@...`     — raw git URL
+ *   - `./local/path` / `/abs/path`  — local directory
+ */
+export interface PluginEnabledEntry {
+  /** Plugin name as installed under `<workspace>/plugins/<name>/`. */
+  name: string;
+  /** Where to install from. See spec formats above. */
+  source: string;
+  /** Optional git ref (branch / tag / sha). Default: marketplace's pinned version, or `HEAD`. */
+  version?: string;
+  /** Whether to auto-install if missing. Default: true. */
+  autoInstall?: boolean;
+  /** Whether the plugin is enabled (loaded at runtime). Default: true. */
+  enabled?: boolean;
+}
+
+/**
+ * Registered marketplace entry. A marketplace is a git repo (or local path)
+ * containing `.claude-plugin/marketplace.json` (CC + GHC compatible).
+ */
+export interface PluginMarketplaceEntry {
+  /** Marketplace name (used as `plugin@<name>` install spec). */
+  name: string;
+  /** Source URL or `owner/repo` short form, or local path. */
+  source: string;
 }
 
 // ─── Defaults ────────────────────────────────────────────────────────────────
@@ -212,6 +268,16 @@ const DEFAULTS: NanoclawConfig = {
   },
   chats: {},
   addons: {},
+  plugins: {
+    enabled: [],
+    // Default marketplaces mirror GHC's built-ins so the experience matches
+    // `copilot plugin install plugin@copilot-plugins` out-of-the-box.
+    marketplaces: [
+      { name: 'copilot-plugins', source: 'github/copilot-plugins' },
+      { name: 'awesome-copilot', source: 'github/awesome-copilot' },
+    ],
+    directories: [],
+  },
   pairing: { mode: 'disabled' },
   credentialProxy: { port: 3001 },
   logLevel: 'info',
@@ -505,7 +571,7 @@ function distributeChatsToChannels(
 
 // ─── Config Migration ────────────────────────────────────────────────────────
 
-const CURRENT_CONFIG_VERSION = 5;
+const CURRENT_CONFIG_VERSION = 6;
 
 /**
  * Migrate config from older versions. Returns true if migration occurred.
@@ -736,6 +802,32 @@ function migrateConfig(config: Record<string, any>): boolean {
     }
 
     config.configVersion = 5;
+    migrated = true;
+  }
+
+  if (version < 6) {
+    // v6: introduce `plugins` config block. Seeds default marketplaces so
+    // `nanoclaw plugin install <name>@copilot-plugins` works out-of-the-box,
+    // and creates an empty `enabled[]` so users can declaratively pin
+    // plugins in nanoclaw.json (akin to CC's `enabledPlugins` /
+    // `autoInstallEnabledPlugins`). Existing user-defined `plugins` blocks
+    // are preserved — we only seed missing keys.
+    if (!config.plugins || typeof config.plugins !== 'object') {
+      config.plugins = {};
+    }
+    if (!Array.isArray(config.plugins.enabled)) {
+      config.plugins.enabled = [];
+    }
+    if (!Array.isArray(config.plugins.marketplaces)) {
+      config.plugins.marketplaces = [
+        { name: 'copilot-plugins', source: 'github/copilot-plugins' },
+        { name: 'awesome-copilot', source: 'github/awesome-copilot' },
+      ];
+    }
+    if (!Array.isArray(config.plugins.directories)) {
+      config.plugins.directories = [];
+    }
+    config.configVersion = 6;
     migrated = true;
   }
 

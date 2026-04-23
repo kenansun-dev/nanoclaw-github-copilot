@@ -741,7 +741,7 @@ describe('config migration v4→v5: TUI chat consolidation', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(5);
+    expect(config.configVersion).toBe(6);
     expect(config.chats['tui:1']).toBeUndefined();
     expect(config.chats['tui:2']).toBeUndefined();
     expect(config.chats['tui:3']).toBeUndefined();
@@ -761,7 +761,7 @@ describe('config migration v4→v5: TUI chat consolidation', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(5);
+    expect(config.configVersion).toBe(6);
     expect(config.chats['tui:default']).toBeUndefined();
     expect(config.chats['tg:999']).toBeDefined();
   });
@@ -797,5 +797,75 @@ describe('config migration v4→v5: TUI chat consolidation', () => {
     // Only `tui:N` (digits) get consolidated. `tui:custom-name` is left alone.
     expect(config.chats['tui:custom-name']).toBeDefined();
     expect(config.chats['tui:default']).toBeUndefined();
+  });
+});
+
+describe('config migration v5→v6: plugins block seed', () => {
+  const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-pluginv6-${Date.now()}`);
+
+  beforeEach(() => {
+    setWorkspace(tmpDir);
+    ensureWorkspace();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('seeds default marketplaces and empty enabled[] when missing', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({ configVersion: 5 }),
+    );
+    const config = loadConfig();
+    expect(config.configVersion).toBe(6);
+    expect(config.plugins).toBeDefined();
+    expect(config.plugins?.enabled).toEqual([]);
+    expect(config.plugins?.marketplaces).toEqual([
+      { name: 'copilot-plugins', source: 'github/copilot-plugins' },
+      { name: 'awesome-copilot', source: 'github/awesome-copilot' },
+    ]);
+    expect(config.plugins?.directories).toEqual([]);
+  });
+
+  it('preserves user-defined plugins block (only seeds missing keys)', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 5,
+        plugins: {
+          enabled: [
+            {
+              name: 'workiq',
+              source: 'microsoft/work-iq',
+            },
+          ],
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.configVersion).toBe(6);
+    expect(config.plugins?.enabled).toHaveLength(1);
+    expect(config.plugins?.enabled?.[0].name).toBe('workiq');
+    // marketplaces still seeded with defaults because user didn't define them
+    expect(config.plugins?.marketplaces?.length).toBe(2);
+  });
+
+  it('does not touch user-defined marketplaces array', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 5,
+        plugins: {
+          marketplaces: [
+            { name: 'custom-mp', source: 'kenan/my-marketplace' },
+          ],
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.plugins?.marketplaces).toEqual([
+      { name: 'custom-mp', source: 'kenan/my-marketplace' },
+    ]);
   });
 });
