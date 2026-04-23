@@ -73,6 +73,20 @@ export class TeamsChannel implements Channel {
   // Store conversation references for proactive messaging
   private conversationRefs = new Map<string, Partial<ConversationReference>>();
 
+  // JIDs that currently have an active native streaming session.
+  // Bare `{type:'typing'}` keepalives MUST be suppressed for these jids:
+  // once the dispatcher sends `streamType:'informative'`, the Teams server
+  // puts the conversation in stream-mode and rejects every subsequent
+  // typing activity that does not carry a `streaminfo` entity with
+  // `streamType:'streaming'`. The reject surfaces in `onTurnError` and
+  // (worse) ends up posted as 'Sorry, something went wrong.' in the chat,
+  // interleaved with real partial output. See PR #20 for the matching
+  // wire-protocol fix on the dispatcher side; this set covers the
+  // cross-channel `setTyping` keepalive path that the dispatcher does not
+  // own. Membership is set in `streamMessage()` and cleared by the
+  // returned StreamHandle's `end`/`cancel`.
+  private streamingActiveJids = new Set<string>();
+
   // Graph API token cache for fetching reply context
   private graphToken: { token: string; expiresAt: number } | null = null;
 
@@ -218,9 +232,37 @@ export class TeamsChannel implements Channel {
 
     this.adapter = new BotFrameworkAdapter(adapterSettings);
 
-    // Catch-all error handler
+    // Catch-all error handler.
+    //
+    // Some errors here are benign streaming-wire rejects from the Teams
+    // server — most notably the bare-typing-during-stream reject that
+    // surfaces as 'Only start streaming and continue streaming types are
+    // allowed as a typing activity'. Those are recovered from at the
+    // next outbound activity and posting 'Sorry, something went wrong.'
+    // for them confuses users (it interleaves with real agent output
+    // they will receive seconds later). Filter the known-benign cases to
+    // log-only; everything else still surfaces to the user.
     this.adapter.onTurnError = async (context: TurnContext, error: Error) => {
-      logger.error({ err: error.message }, 'Teams adapter turn error');
+      const msg = String(error?.message ?? error);
+      const isBenignStreamingWireReject =
+        // bare typing rejected because conversation is in stream-mode
+        msg.includes(
+          'Only start streaming and continue streaming types are allowed',
+        ) ||
+        // bare message rejected because conversation is in stream-mode
+        msg.includes('Only end streaming type is allowed') ||
+        // multiple informative bootstraps rejected
+        msg.includes('You can set only one informative message') ||
+        // user paused / client disabled streaming mid-flight
+        msg.includes('ContentStreamNotAllowed');
+      if (isBenignStreamingWireReject) {
+        logger.warn(
+          { err: msg },
+          'Teams adapter turn error (streaming wire, suppressed user notice)',
+        );
+        return;
+      }
+      logger.error({ err: msg }, 'Teams adapter turn error');
       try {
         await context.sendActivity('Sorry, something went wrong.');
       } catch {
@@ -1109,7 +1151,62 @@ export class TeamsChannel implements Channel {
       adapter: this.adapter as any,
       ref: ref as ConversationReference,
     });
-    return new TeamsStreamingSession(sender, { channelId: 'msteams' });
+    // Track that this jid is now in stream-mode so the bare-typing
+    // keepalive suppresses itself; clear on end/cancel so subsequent
+    // non-streaming turns get keepalives back.
+    this.markStreamingActive(jid);
+    const session = new TeamsStreamingSession(sender, {
+      channelId: 'msteams',
+    });
+    const clearActive = () => this.markStreamingInactive(jid);
+    const wrappedEnd = session.end.bind(session);
+    const wrappedCancel = session.cancel.bind(session);
+    session.end = async (...args: Parameters<typeof wrappedEnd>) => {
+      try {
+        return await wrappedEnd(...args);
+      } finally {
+        clearActive();
+      }
+    };
+    session.cancel = async (...args: Parameters<typeof wrappedCancel>) => {
+      try {
+        return await wrappedCancel(...args);
+      } finally {
+        clearActive();
+      }
+    };
+    return session;
+  }
+
+  /** Test/internal: mark a jid as having an active native streaming
+   * session so `setTyping` will suppress bare-typing keepalives.
+   * Also tears down any in-flight bare-typing interval so we don't
+   * race the dispatcher's own `setTyping(false)` call. Exposed for
+   * the streaming dispatcher and unit tests. */
+  markStreamingActive(jid: string): void {
+    this.streamingActiveJids.add(jid);
+    const existing = this.typingIntervals.get(jid);
+    if (existing) {
+      clearInterval(existing);
+      this.typingIntervals.delete(jid);
+    }
+  }
+
+  /** Test/internal: clear streaming-active flag and stop any in-flight
+   * keepalive so the next turn starts cleanly. Idempotent. */
+  markStreamingInactive(jid: string): void {
+    this.streamingActiveJids.delete(jid);
+    const existing = this.typingIntervals.get(jid);
+    if (existing) {
+      clearInterval(existing);
+      this.typingIntervals.delete(jid);
+    }
+  }
+
+  /** Test-only accessor: is the bare-typing keepalive currently
+   * suppressed for `jid`? */
+  isStreamingActiveForTest(jid: string): boolean {
+    return this.streamingActiveJids.has(jid);
   }
 
   async sendFile(
@@ -1205,6 +1302,12 @@ export class TeamsChannel implements Channel {
     }
 
     if (!isTyping) return;
+    // Suppress bare `{type:'typing'}` while the conversation has an
+    // active native streaming session. The Teams server rejects bare
+    // typings in stream-mode with 'Only start streaming and continue
+    // streaming types are allowed as a typing activity', and the reject
+    // surfaces to users as 'Sorry, something went wrong.' (PR #23).
+    if (this.streamingActiveJids.has(jid)) return;
     const ref = this.conversationRefs.get(jid);
     if (!ref) return;
 
