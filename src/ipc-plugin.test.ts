@@ -112,7 +112,7 @@ describe('handlePluginIpc', () => {
     // Config should now declare it.
     const config = loadConfig();
     expect(
-      config.plugins?.enabled?.find((e) => e.name === 'localfoo'),
+      config.plugins?.enabledPlugins?.find((e) => e.name === 'localfoo'),
     ).toBeTruthy();
     // Plugin dir should exist.
     expect(
@@ -166,7 +166,7 @@ describe('handlePluginIpc', () => {
     expect(res.name).toBe('rmme');
     expect(fs.existsSync(path.join(tmpDir, 'plugins', 'rmme'))).toBe(false);
     const config = loadConfig();
-    expect(config.plugins?.enabled?.find((e) => e.name === 'rmme')).toBeFalsy();
+    expect(config.plugins?.enabledPlugins?.find((e) => e.name === 'rmme')).toBeFalsy();
   });
 
   it('uninstall rejects missing name', async () => {
@@ -182,8 +182,8 @@ describe('handlePluginIpc', () => {
   it('marketplace_list returns configured marketplaces', async () => {
     const config = loadConfig();
     config.plugins = {
-      enabled: [],
-      marketplaces: [
+      enabledPlugins: [],
+      extraKnownMarketplaces: [
         { name: 'acme', source: 'https://github.com/acme/marketplace' },
       ],
       directories: [],

@@ -35,7 +35,13 @@ import os from 'os';
 import path from 'path';
 import { execSync } from 'child_process';
 import { resolveWorkspace } from '../workspace.js';
-import { loadConfig, saveConfig } from '../config-loader.js';
+import {
+  loadConfig,
+  saveConfig,
+  getEnabledPlugins,
+  getExtraKnownMarketplaces,
+  setExtraKnownMarketplaces,
+} from '../config-loader.js';
 import { logger } from '../logger.js';
 
 /**
@@ -306,9 +312,9 @@ function fetchMarketplaceCatalog(
 function resolveMarketplacePlugin(
   pluginName: string,
   marketplaceName: string,
-): InstallSpec {
+): { spec: InstallSpec; entry: MarketplaceCatalogEntry } {
   const config = loadConfig();
-  const mp = (config.plugins?.marketplaces || []).find(
+  const mp = getExtraKnownMarketplaces(config).find(
     (m) => m.name === marketplaceName,
   );
   if (!mp) {
@@ -326,7 +332,41 @@ function resolveMarketplacePlugin(
       `Plugin '${pluginName}' not found in marketplace '${marketplaceName}'`,
     );
   }
-  return catalogEntryToSpec(entry, resolvedDir);
+  return { spec: catalogEntryToSpec(entry, resolvedDir), entry };
+}
+
+/**
+ * Synthesize a `PluginManifest` from a marketplace catalog entry. CC
+ * marketplaces frequently inline plugin metadata (name, version,
+ * description, skills, mcpServers) directly into `marketplace.json`
+ * entries rather than shipping a separate `plugin.json`. We treat the
+ * catalog entry as authoritative when no on-disk manifest exists.
+ */
+export function synthesizeManifestFromCatalogEntry(
+  entry: MarketplaceCatalogEntry,
+): PluginManifest {
+  const e = entry as MarketplaceCatalogEntry & {
+    skills?: string | string[];
+    mcpServers?: string | Record<string, McpServerConfig>;
+    agents?: string;
+    hooks?: string;
+    provider?: 'both' | 'ghc' | 'cc';
+    author?: PluginManifest['author'];
+    license?: string;
+  };
+  const out: PluginManifest = {
+    name: e.name,
+    description: e.description,
+    version: e.version,
+    provider: e.provider ?? 'both',
+  };
+  if (e.skills !== undefined) out.skills = e.skills;
+  if (e.mcpServers !== undefined) out.mcpServers = e.mcpServers;
+  if (e.agents !== undefined) out.agents = e.agents;
+  if (e.hooks !== undefined) out.hooks = e.hooks;
+  if (e.author !== undefined) out.author = e.author;
+  if (e.license !== undefined) out.license = e.license;
+  return out;
 }
 
 function loadManifest(pluginDir: string): PluginManifest | null {
@@ -369,9 +409,8 @@ export function resolvePluginMcpServers(
   manifest: PluginManifest,
 ): Record<string, McpServerConfig> | null {
   const raw = manifest.mcpServers;
-  if (!raw) return null;
 
-  if (typeof raw === 'object') {
+  if (raw && typeof raw === 'object') {
     // Inline object form (CC/GHC standard) — pass through verbatim.
     return raw as Record<string, McpServerConfig>;
   }
@@ -379,17 +418,37 @@ export function resolvePluginMcpServers(
   if (typeof raw === 'string') {
     // Path-string form (legacy nanoclaw) — load + unwrap the file.
     const mcpPath = path.join(pluginDir, raw);
-    if (!fs.existsSync(mcpPath)) return null;
+    if (fs.existsSync(mcpPath)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
+        const servers = parsed.mcpServers || parsed.servers || parsed;
+        if (servers && typeof servers === 'object') {
+          return servers as Record<string, McpServerConfig>;
+        }
+      } catch {
+        logger.warn(
+          { plugin: path.basename(pluginDir), mcpPath },
+          'Failed to parse plugin MCP config file',
+        );
+      }
+    }
+  }
+
+  // Fallback: CC convention places `.mcp.json` at the plugin root with no
+  // explicit reference from plugin.json. Auto-detect it so plugins authored
+  // for CC work without manifest edits.
+  const conventionalPath = path.join(pluginDir, '.mcp.json');
+  if (fs.existsSync(conventionalPath)) {
     try {
-      const parsed = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
+      const parsed = JSON.parse(fs.readFileSync(conventionalPath, 'utf-8'));
       const servers = parsed.mcpServers || parsed.servers || parsed;
       if (servers && typeof servers === 'object') {
         return servers as Record<string, McpServerConfig>;
       }
     } catch {
       logger.warn(
-        { plugin: path.basename(pluginDir), mcpPath },
-        'Failed to parse plugin MCP config file',
+        { plugin: path.basename(pluginDir), conventionalPath },
+        'Failed to parse plugin .mcp.json',
       );
     }
   }
@@ -416,9 +475,16 @@ async function installPlugin(source: string): Promise<void> {
     console.error(`❌ ${err.message}`);
     return;
   }
+  // Catalog entry kept around so we can synthesize a plugin.json from it
+  // when the source directory has no manifest of its own. CC marketplaces
+  // commonly inline `name`/`version`/`description`/`skills` in the catalog
+  // entry rather than shipping a per-plugin manifest.
+  let catalogEntry: MarketplaceCatalogEntry | undefined;
   if (spec.kind === 'marketplace') {
     try {
-      spec = resolveMarketplacePlugin(spec.plugin, spec.marketplace);
+      const resolved = resolveMarketplacePlugin(spec.plugin, spec.marketplace);
+      spec = resolved.spec;
+      catalogEntry = resolved.entry;
       console.log(
         `Resolved \`${source}\` via marketplace → ${describeSpec(spec)}`,
       );
@@ -463,8 +529,19 @@ async function installPlugin(source: string): Promise<void> {
     return;
   }
 
-  // Read manifest
-  const manifest = loadManifest(srcDir);
+  // Read manifest. Order:
+  //   1. plugin.json at root or .claude-plugin/plugin.json (CC + GHC standard)
+  //   2. catalog entry inline metadata (CC marketplaces commonly inline
+  //      name/version/description/skills in marketplace.json instead of
+  //      shipping a per-plugin plugin.json)
+  //   3. bare SKILL.md → auto-generated single-skill manifest
+  let manifest = loadManifest(srcDir);
+  if (!manifest && catalogEntry) {
+    manifest = synthesizeManifestFromCatalogEntry(catalogEntry);
+    console.log(
+      `No plugin.json found. Using marketplace catalog metadata for: ${manifest.name}`,
+    );
+  }
   if (!manifest) {
     // Try to treat as a bare skill directory (has SKILL.md but no plugin.json)
     const skillMd = path.join(srcDir, 'SKILL.md');
@@ -685,7 +762,11 @@ function syncPluginsToConfig(): void {
       const fullPath = path.join(pDir, entry.name, sd);
       if (fs.existsSync(fullPath)) {
         // Use relative path from workspace so config is portable
-        pluginSkillDirs.push(`./plugins/${entry.name}/${sd}`);
+        // Normalize: catalog entries often use `./skills/foo`, which produces
+        // `./plugins/<n>/./skills/foo` if naively joined. posix.normalize
+        // strips the redundant `./` segment so config paths stay clean.
+        const rel = path.posix.normalize(`./plugins/${entry.name}/${sd}`);
+        pluginSkillDirs.push(rel.startsWith('./') ? rel : `./${rel}`);
       }
     }
 
@@ -917,7 +998,7 @@ async function runMarketplaceCommand(args: string[]): Promise<void> {
 
 function marketplaceList(): void {
   const config = loadConfig();
-  const list = config.plugins?.marketplaces || [];
+  const list = getExtraKnownMarketplaces(config);
   if (list.length === 0) {
     console.log('No marketplaces registered.');
     return;
@@ -931,8 +1012,7 @@ function marketplaceList(): void {
 
 function marketplaceAdd(source: string, explicitName?: string): void {
   const config = loadConfig();
-  if (!config.plugins) config.plugins = {};
-  if (!config.plugins.marketplaces) config.plugins.marketplaces = [];
+  const existingList = getExtraKnownMarketplaces(config);
 
   // Derive a default name from source if not provided.
   let name = explicitName;
@@ -954,7 +1034,7 @@ function marketplaceAdd(source: string, explicitName?: string): void {
     return;
   }
 
-  const existing = config.plugins.marketplaces.find((m) => m.name === name);
+  const existing = existingList.find((m) => m.name === name);
   if (existing) {
     console.error(
       `❌ Marketplace '${name}' already registered (source: ${existing.source}).`,
@@ -965,7 +1045,7 @@ function marketplaceAdd(source: string, explicitName?: string): void {
   // Verify the catalog actually exists by fetching it once.
   try {
     const catalog = fetchMarketplaceCatalog(name, source);
-    config.plugins.marketplaces.push({ name, source });
+    setExtraKnownMarketplaces(config, [...existingList, { name, source }]);
     saveConfig(config);
     console.log(
       `✅ Registered marketplace '${name}' (${catalog.plugins?.length ?? 0} plugins available)`,
@@ -977,7 +1057,7 @@ function marketplaceAdd(source: string, explicitName?: string): void {
 
 function marketplaceBrowse(name: string): void {
   const config = loadConfig();
-  const mp = (config.plugins?.marketplaces || []).find((m) => m.name === name);
+  const mp = getExtraKnownMarketplaces(config).find((m) => m.name === name);
   if (!mp) {
     console.error(`❌ Marketplace '${name}' not registered.`);
     return;
@@ -1009,15 +1089,14 @@ function marketplaceBrowse(name: string): void {
 
 function marketplaceRemove(name: string): void {
   const config = loadConfig();
-  const list = config.plugins?.marketplaces || [];
+  const list = getExtraKnownMarketplaces(config);
   const before = list.length;
-  if (config.plugins) {
-    config.plugins.marketplaces = list.filter((m) => m.name !== name);
-  }
-  if ((config.plugins?.marketplaces?.length ?? 0) === before) {
+  const filtered = list.filter((m) => m.name !== name);
+  if (filtered.length === before) {
     console.error(`❌ Marketplace '${name}' not found.`);
     return;
   }
+  setExtraKnownMarketplaces(config, filtered);
   saveConfig(config);
   // Also wipe the cached clone so a re-add re-fetches.
   const cached = path.join(marketplaceCacheDir(), name);
@@ -1044,7 +1123,7 @@ export async function ensureEnabledPluginsInstalled(): Promise<{
   failed: { name: string; error: string }[];
 }> {
   const config = loadConfig();
-  const enabled = config.plugins?.enabled ?? [];
+  const enabled = getEnabledPlugins(config);
   const result = {
     installed: [] as string[],
     skipped: [] as string[],

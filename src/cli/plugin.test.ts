@@ -11,6 +11,7 @@ import {
   catalogEntryToSpec,
   ensureEnabledPluginsInstalled,
   resolvePluginMcpServers,
+  synthesizeManifestFromCatalogEntry,
   type MarketplaceCatalogEntry,
   type PluginManifest,
 } from './plugin.js';
@@ -240,9 +241,9 @@ describe('ensureEnabledPluginsInstalled', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('returns empty result when no plugins.enabled[]', async () => {
+  it('returns empty result when no plugins.enabledPlugins[]', async () => {
     const config = loadConfig();
-    config.plugins = { enabled: [], marketplaces: [], directories: [] };
+    config.plugins = { enabledPlugins: [], extraKnownMarketplaces: [], directories: [] };
     saveConfig(config);
     const result = await ensureEnabledPluginsInstalled();
     expect(result).toEqual({ installed: [], skipped: [], failed: [] });
@@ -253,8 +254,8 @@ describe('ensureEnabledPluginsInstalled', () => {
     fs.mkdirSync(path.join(tmpDir, 'plugins', 'workiq'), { recursive: true });
     const config = loadConfig();
     config.plugins = {
-      enabled: [{ name: 'workiq', source: 'microsoft/work-iq' }],
-      marketplaces: [],
+      enabledPlugins: [{ name: 'workiq', source: 'microsoft/work-iq' }],
+      extraKnownMarketplaces: [],
       directories: [],
     };
     saveConfig(config);
@@ -267,10 +268,10 @@ describe('ensureEnabledPluginsInstalled', () => {
   it('skips plugins explicitly marked autoInstall:false', async () => {
     const config = loadConfig();
     config.plugins = {
-      enabled: [
+      enabledPlugins: [
         { name: 'workiq', source: 'microsoft/work-iq', autoInstall: false },
       ],
-      marketplaces: [],
+      extraKnownMarketplaces: [],
       directories: [],
     };
     saveConfig(config);
@@ -282,8 +283,8 @@ describe('ensureEnabledPluginsInstalled', () => {
   it('reports failures from invalid specs without throwing', async () => {
     const config = loadConfig();
     config.plugins = {
-      enabled: [{ name: 'broken', source: 'this is not a valid spec' }],
-      marketplaces: [],
+      enabledPlugins: [{ name: 'broken', source: 'this is not a valid spec' }],
+      extraKnownMarketplaces: [],
       directories: [],
     };
     saveConfig(config);
@@ -308,8 +309,8 @@ describe('ensureEnabledPluginsInstalled', () => {
     );
     const config = loadConfig();
     config.plugins = {
-      enabled: [{ name: 'localfoo', source: srcRoot }],
-      marketplaces: [],
+      enabledPlugins: [{ name: 'localfoo', source: srcRoot }],
+      extraKnownMarketplaces: [],
       directories: [],
     };
     saveConfig(config);
@@ -437,5 +438,125 @@ describe('resolvePluginMcpServers', () => {
     expect(resolvePluginMcpServers(tmpDir, manifest)).toEqual(
       manifest.mcpServers,
     );
+  });
+});
+
+describe('synthesizeManifestFromCatalogEntry', () => {
+  it('builds a PluginManifest from CC-style inline catalog entry (workiq case)', () => {
+    // This is the exact shape that github/copilot-plugins ships for `workiq`.
+    // Pre-fix, installPlugin would look for plugin.json inside ./plugins/workiq
+    // (not present) and bail with "No plugin.json or SKILL.md found".
+    const entry: MarketplaceCatalogEntry & {
+      skills: string[];
+      provider: 'both';
+    } = {
+      name: 'workiq',
+      source: './plugins/workiq',
+      description: 'WorkIQ plugin for GitHub Copilot.',
+      version: '1.0.0',
+      skills: ['./skills/workiq'],
+      provider: 'both',
+    };
+    const manifest = synthesizeManifestFromCatalogEntry(entry);
+    expect(manifest).toEqual({
+      name: 'workiq',
+      description: 'WorkIQ plugin for GitHub Copilot.',
+      version: '1.0.0',
+      skills: ['./skills/workiq'],
+      provider: 'both',
+    });
+  });
+
+  it('defaults provider to both when not specified', () => {
+    const entry: MarketplaceCatalogEntry = {
+      name: 'minimal',
+      source: 'owner/repo',
+    };
+    expect(synthesizeManifestFromCatalogEntry(entry).provider).toBe('both');
+  });
+
+  it('passes through inline mcpServers and agents/hooks fields', () => {
+    const entry = {
+      name: 'rich',
+      source: './rich',
+      mcpServers: { srv: { command: 'echo' } },
+      agents: 'agents',
+      hooks: 'hooks.json',
+      author: { name: 'Kenan', email: 'k@example.com' },
+      license: 'MIT',
+    } as MarketplaceCatalogEntry;
+    const manifest = synthesizeManifestFromCatalogEntry(entry);
+    expect(manifest.mcpServers).toEqual({ srv: { command: 'echo' } });
+    expect(manifest.agents).toBe('agents');
+    expect(manifest.hooks).toBe('hooks.json');
+    expect(manifest.author).toEqual({ name: 'Kenan', email: 'k@example.com' });
+    expect(manifest.license).toBe('MIT');
+  });
+
+  it('omits undefined fields rather than emitting `undefined` values', () => {
+    const entry: MarketplaceCatalogEntry = {
+      name: 'sparse',
+      source: 'owner/repo',
+    };
+    const manifest = synthesizeManifestFromCatalogEntry(entry);
+    expect(Object.prototype.hasOwnProperty.call(manifest, 'skills')).toBe(
+      false,
+    );
+    expect(Object.prototype.hasOwnProperty.call(manifest, 'mcpServers')).toBe(
+      false,
+    );
+  });
+});
+
+describe('resolvePluginMcpServers — .mcp.json fallback (CC convention)', () => {
+  // CC plugins commonly ship a sibling `.mcp.json` at the plugin root with no
+  // explicit reference from plugin.json. Auto-detecting it lets such plugins
+  // install into nanoclaw without manifest edits — this is the same pattern
+  // that workiq uses today.
+  const tmpDir = path.join(
+    os.tmpdir(),
+    `nanoclaw-test-mcpfallback-${Date.now()}`,
+  );
+
+  beforeEach(() => {
+    fs.mkdirSync(tmpDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('auto-loads <pluginDir>/.mcp.json when manifest has no mcpServers field', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          workiq: { command: 'npx', args: ['-y', '@microsoft/workiq@latest'] },
+        },
+      }),
+    );
+    const manifest: PluginManifest = { name: 'workiq' };
+    expect(resolvePluginMcpServers(tmpDir, manifest)).toEqual({
+      workiq: { command: 'npx', args: ['-y', '@microsoft/workiq@latest'] },
+    });
+  });
+
+  it('inline mcpServers in manifest takes precedence over .mcp.json sibling', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.mcp.json'),
+      JSON.stringify({ mcpServers: { fromfile: { command: 'a' } } }),
+    );
+    const manifest: PluginManifest = {
+      name: 'p',
+      mcpServers: { inline: { command: 'b' } },
+    };
+    expect(resolvePluginMcpServers(tmpDir, manifest)).toEqual({
+      inline: { command: 'b' },
+    });
+  });
+
+  it('still returns null when neither manifest nor .mcp.json provide servers', () => {
+    const manifest: PluginManifest = { name: 'empty' };
+    expect(resolvePluginMcpServers(tmpDir, manifest)).toBeNull();
   });
 });

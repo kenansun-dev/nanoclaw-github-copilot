@@ -741,7 +741,7 @@ describe('config migration v4→v5: TUI chat consolidation', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(7);
+    expect(config.configVersion).toBe(8);
     expect(config.chats['tui:1']).toBeUndefined();
     expect(config.chats['tui:2']).toBeUndefined();
     expect(config.chats['tui:3']).toBeUndefined();
@@ -761,7 +761,7 @@ describe('config migration v4→v5: TUI chat consolidation', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(7);
+    expect(config.configVersion).toBe(8);
     expect(config.chats['tui:default']).toBeUndefined();
     expect(config.chats['tg:999']).toBeDefined();
   });
@@ -809,20 +809,23 @@ describe('config migration v5→v6: plugins block seed', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('seeds default marketplaces and empty enabled[] when missing', () => {
+  it('seeds default marketplaces and empty enabledPlugins[] when missing', () => {
     fs.writeFileSync(
       path.join(tmpDir, 'nanoclaw.json'),
       JSON.stringify({ configVersion: 5 }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(7);
+    expect(config.configVersion).toBe(8);
     expect(config.plugins).toBeDefined();
-    expect(config.plugins?.enabled).toEqual([]);
-    expect(config.plugins?.marketplaces).toEqual([
+    expect(config.plugins?.enabledPlugins).toEqual([]);
+    expect(config.plugins?.extraKnownMarketplaces).toEqual([
       { name: 'copilot-plugins', source: 'github/copilot-plugins' },
       { name: 'awesome-copilot', source: 'github/awesome-copilot' },
     ]);
     expect(config.plugins?.directories).toEqual([]);
+    // Old field names removed by v8 canonicalization.
+    expect(config.plugins?.enabled).toBeUndefined();
+    expect(config.plugins?.marketplaces).toBeUndefined();
   });
 
   it('preserves user-defined plugins block (only seeds missing keys)', () => {
@@ -841,11 +844,12 @@ describe('config migration v5→v6: plugins block seed', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(7);
-    expect(config.plugins?.enabled).toHaveLength(1);
-    expect(config.plugins?.enabled?.[0].name).toBe('workiq');
+    expect(config.configVersion).toBe(8);
+    // v8 renamed enabled → enabledPlugins
+    expect(config.plugins?.enabledPlugins).toHaveLength(1);
+    expect(config.plugins?.enabledPlugins?.[0].name).toBe('workiq');
     // marketplaces still seeded with defaults because user didn't define them
-    expect(config.plugins?.marketplaces?.length).toBe(2);
+    expect(config.plugins?.extraKnownMarketplaces?.length).toBe(2);
   });
 
   it('does not touch user-defined marketplaces array', () => {
@@ -859,9 +863,11 @@ describe('config migration v5→v6: plugins block seed', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.plugins?.marketplaces).toEqual([
+    // v8 renamed marketplaces → extraKnownMarketplaces; entries preserved.
+    expect(config.plugins?.extraKnownMarketplaces).toEqual([
       { name: 'custom-mp', source: 'kenan/my-marketplace' },
     ]);
+    expect(config.plugins?.marketplaces).toBeUndefined();
   });
 
   it('v7 migration: purges legacy tui:N + other root chats', () => {
@@ -894,7 +900,7 @@ describe('config migration v5→v6: plugins block seed', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(7);
+    expect(config.configVersion).toBe(8);
     expect(Object.keys(config.chats)).toHaveLength(0);
   });
 
@@ -914,7 +920,7 @@ describe('config migration v5→v6: plugins block seed', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(7);
+    expect(config.configVersion).toBe(8);
     expect(config.chats['tui:default']).toBeUndefined();
     expect(config.chats['telegram:12345']).toBeDefined();
     expect(config.chats['discord:67890']).toBeDefined();

@@ -188,9 +188,21 @@ export interface NanoclawConfig {
    *                  (in addition to `<workspace>/plugins/`).
    */
   plugins?: {
-    enabled?: PluginEnabledEntry[];
-    marketplaces?: PluginMarketplaceEntry[];
+    /**
+     * Declarative list of plugins to ensure-installed at startup.
+     * Renamed from `enabled` in v8 to align with CC's `enabledPlugins`.
+     */
+    enabledPlugins?: PluginEnabledEntry[];
+    /**
+     * Registered marketplaces. Renamed from `marketplaces` in v8 to align
+     * with CC's `extraKnownMarketplaces`.
+     */
+    extraKnownMarketplaces?: PluginMarketplaceEntry[];
     directories?: string[];
+    /** @deprecated v8 — renamed to `enabledPlugins`. Read-only back-compat. */
+    enabled?: PluginEnabledEntry[];
+    /** @deprecated v8 — renamed to `extraKnownMarketplaces`. Read-only back-compat. */
+    marketplaces?: PluginMarketplaceEntry[];
   };
 }
 
@@ -270,10 +282,10 @@ const DEFAULTS: NanoclawConfig = {
   chats: {},
   addons: {},
   plugins: {
-    enabled: [],
+    enabledPlugins: [],
     // Default marketplaces mirror GHC's built-ins so the experience matches
     // `copilot plugin install plugin@copilot-plugins` out-of-the-box.
-    marketplaces: [
+    extraKnownMarketplaces: [
       { name: 'copilot-plugins', source: 'github/copilot-plugins' },
       { name: 'awesome-copilot', source: 'github/awesome-copilot' },
     ],
@@ -572,7 +584,7 @@ function distributeChatsToChannels(
 
 // ─── Config Migration ────────────────────────────────────────────────────────
 
-const CURRENT_CONFIG_VERSION = 7;
+const CURRENT_CONFIG_VERSION = 8;
 
 /**
  * Migrate config from older versions. Returns true if migration occurred.
@@ -816,11 +828,17 @@ function migrateConfig(config: Record<string, any>): boolean {
     if (!config.plugins || typeof config.plugins !== 'object') {
       config.plugins = {};
     }
-    if (!Array.isArray(config.plugins.enabled)) {
-      config.plugins.enabled = [];
+    if (
+      !Array.isArray(config.plugins.enabledPlugins) &&
+      !Array.isArray(config.plugins.enabled)
+    ) {
+      config.plugins.enabledPlugins = [];
     }
-    if (!Array.isArray(config.plugins.marketplaces)) {
-      config.plugins.marketplaces = [
+    if (
+      !Array.isArray(config.plugins.extraKnownMarketplaces) &&
+      !Array.isArray(config.plugins.marketplaces)
+    ) {
+      config.plugins.extraKnownMarketplaces = [
         { name: 'copilot-plugins', source: 'github/copilot-plugins' },
         { name: 'awesome-copilot', source: 'github/awesome-copilot' },
       ];
@@ -871,6 +889,32 @@ function migrateConfig(config: Record<string, any>): boolean {
       }
     }
     config.configVersion = 7;
+    migrated = true;
+  }
+
+  if (version < 8) {
+    // v8: rename plugin config fields to match CC's nomenclature.
+    //   enabled        → enabledPlugins
+    //   marketplaces   → extraKnownMarketplaces
+    // Field semantics unchanged. Reads are tolerant of either name in
+    // loadConfig (we re-write to canonical names on first save).
+    if (config.plugins && typeof config.plugins === 'object') {
+      const p = config.plugins as Record<string, any>;
+      if (Array.isArray(p.enabled) && !Array.isArray(p.enabledPlugins)) {
+        p.enabledPlugins = p.enabled;
+        delete p.enabled;
+        migrated = true;
+      }
+      if (
+        Array.isArray(p.marketplaces) &&
+        !Array.isArray(p.extraKnownMarketplaces)
+      ) {
+        p.extraKnownMarketplaces = p.marketplaces;
+        delete p.marketplaces;
+        migrated = true;
+      }
+    }
+    config.configVersion = 8;
     migrated = true;
   }
 
@@ -1416,3 +1460,58 @@ function migrateSecretsToEnv(config: any): void {
     logger.info('Stripped secrets from nanoclaw.json');
   }
 }
+
+// ─── Plugin config field accessors (CC-aligned naming) ──────────────────────
+// v8 renamed `enabled` → `enabledPlugins` and `marketplaces` →
+// `extraKnownMarketplaces` to match CCs nomenclature. These helpers tolerate
+// either field name on read so old configs that have not yet been re-saved
+// still work.
+
+export function getEnabledPlugins(
+  config: Pick<NanoclawConfig, "plugins">,
+): PluginEnabledEntry[] {
+  const p = config.plugins as
+    | (NonNullable<NanoclawConfig["plugins"]> & {
+        enabled?: PluginEnabledEntry[];
+      })
+    | undefined;
+  if (!p) return [];
+  if (Array.isArray(p.enabledPlugins)) return p.enabledPlugins;
+  if (Array.isArray(p.enabled)) return p.enabled;
+  return [];
+}
+
+export function getExtraKnownMarketplaces(
+  config: Pick<NanoclawConfig, "plugins">,
+): PluginMarketplaceEntry[] {
+  const p = config.plugins as
+    | (NonNullable<NanoclawConfig["plugins"]> & {
+        marketplaces?: PluginMarketplaceEntry[];
+      })
+    | undefined;
+  if (!p) return [];
+  if (Array.isArray(p.extraKnownMarketplaces)) return p.extraKnownMarketplaces;
+  if (Array.isArray(p.marketplaces)) return p.marketplaces;
+  return [];
+}
+
+export function setEnabledPlugins(
+  config: NanoclawConfig,
+  list: PluginEnabledEntry[],
+): void {
+  if (!config.plugins) config.plugins = {};
+  const p = config.plugins as Record<string, any>;
+  p.enabledPlugins = list;
+  delete p.enabled; // canonicalize
+}
+
+export function setExtraKnownMarketplaces(
+  config: NanoclawConfig,
+  list: PluginMarketplaceEntry[],
+): void {
+  if (!config.plugins) config.plugins = {};
+  const p = config.plugins as Record<string, any>;
+  p.extraKnownMarketplaces = list;
+  delete p.marketplaces; // canonicalize
+}
+

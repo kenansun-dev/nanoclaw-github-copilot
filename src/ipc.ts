@@ -777,11 +777,15 @@ export async function handlePluginIpc(
           writeResponse({ ok: false, error: 'install requires `source`' });
           break;
         }
-        // Add to plugins.enabled[] if not already there, then auto-install.
-        const { loadConfig, saveConfig } = await import('./config-loader.js');
+        // Add to plugins.enabledPlugins[] if not already there, then auto-install.
+        const {
+          loadConfig,
+          saveConfig,
+          getEnabledPlugins,
+          setEnabledPlugins,
+        } = await import('./config-loader.js');
         const config = loadConfig();
-        if (!config.plugins) config.plugins = {};
-        if (!config.plugins.enabled) config.plugins.enabled = [];
+        const enabledList = getEnabledPlugins(config);
         const name =
           data.name ||
           tryReadPluginName(data.source) ||
@@ -793,9 +797,12 @@ export async function handlePluginIpc(
           });
           break;
         }
-        const existing = config.plugins.enabled.find((e) => e.name === name);
+        const existing = enabledList.find((e) => e.name === name);
         if (!existing) {
-          config.plugins.enabled.push({ name, source: data.source });
+          setEnabledPlugins(config, [
+            ...enabledList,
+            { name, source: data.source },
+          ]);
           saveConfig(config);
         }
         const result = await plugin.ensureEnabledPluginsInstalled();
@@ -808,12 +815,19 @@ export async function handlePluginIpc(
           writeResponse({ ok: false, error: 'uninstall requires `name`' });
           break;
         }
-        const { loadConfig, saveConfig } = await import('./config-loader.js');
+        const {
+          loadConfig,
+          saveConfig,
+          getEnabledPlugins,
+          setEnabledPlugins,
+        } = await import('./config-loader.js');
         const { resolveWorkspace } = await import('./workspace.js');
         const config = loadConfig();
-        if (config.plugins?.enabled) {
-          config.plugins.enabled = config.plugins.enabled.filter(
-            (e) => e.name !== data.name,
+        const enabledList = getEnabledPlugins(config);
+        if (enabledList.length > 0) {
+          setEnabledPlugins(
+            config,
+            enabledList.filter((e) => e.name !== data.name),
           );
           saveConfig(config);
         }
@@ -825,11 +839,13 @@ export async function handlePluginIpc(
         break;
       }
       case 'marketplace_list': {
-        const { loadConfig } = await import('./config-loader.js');
+        const { loadConfig, getExtraKnownMarketplaces } = await import(
+          './config-loader.js'
+        );
         const config = loadConfig();
         writeResponse({
           ok: true,
-          marketplaces: config.plugins?.marketplaces ?? [],
+          marketplaces: getExtraKnownMarketplaces(config),
         });
         break;
       }
