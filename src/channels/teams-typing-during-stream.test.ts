@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
+import type { Activity } from 'botbuilder';
 
 /**
  * Regression tests for fix/2026-04-23-teams-typing-during-stream (PR #23).
@@ -142,9 +143,7 @@ describe('Teams: typing keepalive during native streaming', () => {
     expect(src).toMatch(/ContentStreamNotAllowed/);
     // And the catch-all error handler must early-return (no
     // sendActivity('Sorry...')) for the benign cases.
-    expect(src).toMatch(
-      /isBenignStreamingWireReject[\s\S]{0,500}return;\s*\}/,
-    );
+    expect(src).toMatch(/isBenignStreamingWireReject[\s\S]{0,500}return;\s*\}/);
   });
 
   // ---------- Behaviour: keepalive gate via class instance ----------
@@ -165,7 +164,9 @@ describe('Teams: typing keepalive during native streaming', () => {
   });
 
   function makeStubChannel() {
-    const sendActivityMock = vi.fn(async () => {});
+    const sendActivityMock = vi.fn<
+      (activity: Partial<Activity>) => Promise<void>
+    >(async () => {});
     const continueConversationMock = vi.fn(
       async (_ref: unknown, fn: (ctx: any) => Promise<void>) => {
         await fn({ sendActivity: sendActivityMock });
