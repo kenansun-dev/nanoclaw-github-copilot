@@ -18,6 +18,7 @@ import path from 'path';
 import { CopilotClient, approveAll } from '@github/copilot-sdk';
 import { fileURLToPath } from 'url';
 import { isSessionNotFoundError } from './session-recovery.js';
+import { loadPluginAgents } from './load-plugin-agents.js';
 
 interface ContainerInput {
   prompt: string;
@@ -310,15 +311,36 @@ async function main(): Promise<void> {
 
   const githubToken = resolveGithubToken();
 
-  // Plugin directories (passed from host-runner or set manually)
+  // Plugin directories (passed from host-runner or set manually).
+  //
+  // We pass `--plugin-dir` via cliArgs even though the SDK's server-mode
+  // currently drops it (verified upstream gap, GHC SDK 0.2.2 — see
+  // load-plugin-agents.ts). Keeping the flag costs nothing and lets us shed
+  // the workaround the moment upstream fixes it.
+  //
+  // For the workaround itself we walk the same dirs ourselves and turn each
+  // plugin's agents/*.md into customAgents in the SessionConfig below.
+  const pluginDirs: string[] = [];
   const pluginCliArgs: string[] = [];
   if (process.env.NANOCLAW_PLUGIN_DIRS) {
     for (const dir of process.env.NANOCLAW_PLUGIN_DIRS.split(path.delimiter)) {
       if (dir && fs.existsSync(dir)) {
+        pluginDirs.push(dir);
         pluginCliArgs.push('--plugin-dir', dir);
         log(`Plugin directory: ${dir}`);
       }
     }
+  }
+
+  const pluginCustomAgents = loadPluginAgents(pluginDirs, {
+    onWarn: (msg) => log(msg),
+  });
+  if (pluginCustomAgents.length > 0) {
+    log(
+      `Loaded ${pluginCustomAgents.length} custom agent(s) from plugin dirs: ${pluginCustomAgents
+        .map((a) => `${a.name}@${path.basename(a.pluginDir)}`)
+        .join(', ')}`,
+    );
   }
 
   const clientOpts: any = {};
@@ -353,6 +375,19 @@ async function main(): Promise<void> {
         // instead of ~/.copilot/, breaking auth on Windows.
         // Enable config discovery so CLI reads ~/.mcp.json and other MCP configs
         enableConfigDiscovery: process.env.NANOCLAW_MCP_DISCOVERY === '1',
+        // Workaround for GHC SDK 0.2.2 server-mode --plugin-dir gap: pass
+        // plugin agents directly via SessionConfig.customAgents.
+        ...(pluginCustomAgents.length > 0
+          ? {
+              customAgents: pluginCustomAgents.map((a) => ({
+                name: a.name,
+                ...(a.displayName ? { displayName: a.displayName } : {}),
+                ...(a.description ? { description: a.description } : {}),
+                ...(a.tools ? { tools: a.tools } : {}),
+                prompt: a.prompt,
+              })),
+            }
+          : {}),
         systemMessage,
         workingDirectory: process.env.NANOCLAW_WORK_DIR || '/workspace/group',
         onPermissionRequest: approveAll,
