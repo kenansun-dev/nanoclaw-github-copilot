@@ -124,7 +124,12 @@ describe('handleSlashCommand', () => {
     expect(result.handled).toBe(true);
   });
 
-  it('/status returns handled: true and sends nanoclaw status text directly (no LLM round-trip)', async () => {
+  // Bumped timeout to 30s: collectStatus() does ~10 dynamic imports
+  // (workspace, config-loader, config-extensions, etc) which on a cold
+  // CI runner can exceed the default 5s. Locally it's ~4s; CI saw it
+  // tip over 5s on 2026-04-23 (run 24813239156). The work itself is
+  // file-only reads, no network/LLM, so a generous bound is fine.
+  it('/status returns handled: true and sends nanoclaw status text directly (no LLM round-trip)', { timeout: 30_000 }, async () => {
     // Regression for kenan request 2026-04-23: /status was previously
     // passed to the agent which made it ~5-10s per invocation. We now
     // render `nanoclaw status` directly in the slash handler.
