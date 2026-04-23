@@ -17,6 +17,7 @@ import fs from 'fs';
 import path from 'path';
 import { CopilotClient, approveAll } from '@github/copilot-sdk';
 import { fileURLToPath } from 'url';
+import { isSessionNotFoundError } from './session-recovery.js';
 
 interface ContainerInput {
   prompt: string;
@@ -454,10 +455,19 @@ async function main(): Promise<void> {
         skillDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       };
 
-      if (session) {
-        // Session already exists from previous iteration â reuse it
-        log(`Reusing existing session: ${sessionId}`);
-      } else if (sessionId) {
+      // NOTE: Layer 1 of GHC session recovery — always re-resume by sessionId
+      // on every iteration. We intentionally do NOT short-circuit on `if (session)
+      // reuse`. The Copilot SDK evicts sessions from its in-memory `activeSessions`
+      // map between query iterations (idle timeout / connection touch / process
+      // churn). A stale `session` object only holds an RPC handle; the server-side
+      // state is gone, and `session.send()` then throws `Session not found: <id>`,
+      // killing the agent-runner subprocess and freezing host-side typing.
+      // resumeSession is idempotent and cheap when the session is still alive.
+      //
+      // Layer 2 (mid-turn eviction during send) lives at the session.send call
+      // site below: catch /Session not found/i → set session=null → continue →
+      // loop top re-routes here. Together the layers cover both failure modes.
+      if (sessionId) {
         // Resume existing session (first iteration or after error)
         try {
           session = await client.resumeSession(sessionId, sessionConfig);
@@ -695,8 +705,28 @@ async function main(): Promise<void> {
         }));
       });
 
-      await session.send({ prompt });
-      await idlePromise;
+      // Layer 2 of GHC session-recovery: catch mid-turn `Session not found`.
+      // SDK can evict the session during send (network blip / Copilot CLI
+      // subprocess restart / connection drop). Layer 1 above only handles
+      // between-turn eviction. When this hits, we can't cleanly retry within
+      // the current iteration because the Promise/listeners are bound to the
+      // dead session object. Instead: stop IPC polling, drop the stale session,
+      // and `continue` so the loop top re-resumes (or creates new) and re-binds
+      // listeners fresh. Same `prompt` is preserved (not yet overwritten).
+      try {
+        await session.send({ prompt });
+        await idlePromise;
+      } catch (sendErr) {
+        const sendErrMsg = sendErr instanceof Error ? sendErr.message : String(sendErr);
+        if (isSessionNotFoundError(sendErr) && sessionId) {
+          log(`session.send hit Session not found mid-turn, recovering: ${sendErrMsg}`);
+          ipcPolling = false;
+          session = null; // force loop top to re-resume
+          continue; // re-enter loop with same prompt
+        }
+        // Unrelated error: rethrow to outer handler
+        throw sendErr;
+      }
       ipcPolling = false;
 
       log(`Query done. Streamed ${streamedChunks} result(s).`);
