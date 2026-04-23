@@ -83,7 +83,9 @@ describe('auditConfigDiff', () => {
   it('fires for each changed watched field', () => {
     auditConfigDiff(
       {
-        agents: { defaults: { thinkLevel: 'medium', model: 'claude-sonnet-4' } },
+        agents: {
+          defaults: { thinkLevel: 'medium', model: 'claude-sonnet-4' },
+        },
       },
       {
         agents: { defaults: { thinkLevel: 'high', model: 'claude-opus-4.7' } },
@@ -134,26 +136,18 @@ describe('auditConfigDiff', () => {
 
 describe('saveConfig integration', () => {
   it('emits audit event when thinkLevel changes on disk', async () => {
-    // Isolated workspace
+    // Use the same isolation pattern as config-loader.test.ts:
+    // setWorkspace() updates the cached `paths` so saveConfig writes to
+    // the temp dir, NOT the real ~/.nanoclaw. Critical: process.env
+    // alone is insufficient because workspace.ts caches paths at first call.
+    const { setWorkspace, ensureWorkspace } = await import('./workspace.js');
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-audit-'));
-    process.env.NANOCLAW_WORKSPACE = tmp;
-
-    // Reset module cache so workspace.ts picks up the new env
-    vi.resetModules();
-    // Re-mock logger after reset
-    vi.doMock('./logger.js', () => ({
-      logger: {
-        warn: (...args: unknown[]) => warnSpy(...args),
-        info: vi.fn(),
-        error: vi.fn(),
-        debug: vi.fn(),
-        fatal: vi.fn(),
-      },
-    }));
+    setWorkspace(tmp);
+    ensureWorkspace();
 
     const { saveConfig, loadConfig } = await import('./config-loader.js');
 
-    // First save establishes baseline (before snapshot is undefined → 'medium' watched as <unset>→medium)
+    // First save establishes baseline
     const cfg = loadConfig();
     cfg.agents.defaults.thinkLevel = 'medium';
     saveConfig(cfg, 'cli');
@@ -177,6 +171,5 @@ describe('saveConfig integration', () => {
 
     // Cleanup
     fs.rmSync(tmp, { recursive: true, force: true });
-    delete process.env.NANOCLAW_WORKSPACE;
   });
 });

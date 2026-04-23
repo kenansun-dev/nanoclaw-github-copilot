@@ -38,6 +38,7 @@ export type AuditSource =
   | 'slash-command' // /think, /reasoning in chat
   | 'tui' // interactive TUI
   | 'cli' // `nanoclaw <subcommand>`
+  | 'ipc-agent' // agent inside container called nanoclaw_control set_config
   | 'chat-manager' // chat add/remove/reconcile
   | 'migration' // configVersion bump on load
   | 'secret-migration' // plaintext → ${ENV_VAR}
@@ -58,9 +59,7 @@ function writeAuditLine(event: AuditEvent): void {
   // Render before/after compactly for grep readability
   const beforeStr = renderValue(event.before);
   const afterStr = renderValue(event.after);
-  const ctxStr = event.context
-    ? ` ctx=${JSON.stringify(event.context)}`
-    : '';
+  const ctxStr = event.context ? ` ctx=${JSON.stringify(event.context)}` : '';
   // Use logger.warn so it survives logLevel=warn|error too. (logLevel=info
   // is the default; warn is a safer floor for audit.)
   logger.warn(
