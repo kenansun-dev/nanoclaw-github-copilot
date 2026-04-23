@@ -19,7 +19,12 @@ import {
   TRIGGER_PATTERN,
   getConfig,
 } from './config.js';
-import { runAgentForChat, IS_GHC_PROVIDER } from './config-extensions.js';
+import {
+  runAgentForChat,
+  IS_GHC_PROVIDER,
+  resolveAgentForChat,
+  getAgentProvider,
+} from './config-extensions.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -83,7 +88,9 @@ import { logger } from './logger.js';
 export { escapeXml, formatMessages } from './router.js';
 
 let lastTimestamp = '';
-let sessions: Record<string, string> = {};
+// sessions: groupFolder → provider → sessionId. Each provider stores its
+// CLI sessions in a different on-disk path, so we key by both.
+let sessions: Record<string, Record<string, string>> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
@@ -637,7 +644,12 @@ async function runAgent(
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
-  const sessionId = sessions[group.folder];
+  // Resolve which provider this chat's agent uses, then look up the
+  // sessionId for THAT provider only. A group can have separate
+  // CC and GHC sessions and they don't cross-contaminate.
+  const agent = resolveAgentForChat(chatJid);
+  const provider = getAgentProvider(agent);
+  const sessionId = sessions[group.folder]?.[provider];
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -669,8 +681,9 @@ async function runAgent(
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
-          sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
+          if (!sessions[group.folder]) sessions[group.folder] = {};
+          sessions[group.folder][provider] = output.newSessionId;
+          setSession(group.folder, output.newSessionId, provider);
         }
         await onOutput(output);
       }
@@ -694,8 +707,9 @@ async function runAgent(
     );
 
     if (output.newSessionId) {
-      sessions[group.folder] = output.newSessionId;
-      setSession(group.folder, output.newSessionId);
+      if (!sessions[group.folder]) sessions[group.folder] = {};
+      sessions[group.folder][provider] = output.newSessionId;
+      setSession(group.folder, output.newSessionId, provider);
     }
 
     // Mark idle-waiting so GroupQueue keeps process alive for IPC reuse
@@ -717,11 +731,16 @@ async function runAgent(
 
       if (isStaleSession) {
         logger.warn(
-          { group: group.name, staleSessionId: sessionId, error: output.error },
+          {
+            group: group.name,
+            provider,
+            staleSessionId: sessionId,
+            error: output.error,
+          },
           'Stale session detected — clearing for next retry',
         );
-        delete sessions[group.folder];
-        deleteSession(group.folder);
+        if (sessions[group.folder]) delete sessions[group.folder][provider];
+        deleteSession(group.folder, provider);
       }
 
       logger.error(

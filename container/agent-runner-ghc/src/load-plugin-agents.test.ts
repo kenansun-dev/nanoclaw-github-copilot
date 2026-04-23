@@ -6,7 +6,7 @@ import {
   loadPluginAgents,
   parseAgentFile,
   sanitizeName,
-} from '../container/agent-runner-ghc/src/load-plugin-agents';
+} from './load-plugin-agents.js';
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nc-load-plugin-agents-'));
@@ -119,7 +119,7 @@ describe('loadPluginAgents', () => {
 
     const agents = loadPluginAgents([pA, pB]);
     expect(agents).toHaveLength(2);
-    const byName = Object.fromEntries(agents.map((a) => [a.name, a]));
+    const byName = Object.fromEntries(agents.map((a: any) => [a.name, a]));
     expect(byName.reviewer.description).toBe('reviews PRs');
     expect(byName.reviewer.prompt).toBe('Review things.');
     expect(byName.planner.prompt).toBe('Plan things.');
@@ -144,7 +144,7 @@ describe('loadPluginAgents', () => {
       'empty.md': `---\nname: empty\n---\n   `,
     });
     const warnings: string[] = [];
-    const agents = loadPluginAgents([p], { onWarn: (m) => warnings.push(m) });
+    const agents = loadPluginAgents([p], { onWarn: (m: string) => warnings.push(m) });
     expect(agents).toHaveLength(0);
     expect(warnings.some((w) => w.includes('empty.md'))).toBe(true);
   });
@@ -159,7 +159,7 @@ describe('loadPluginAgents', () => {
     });
     const warnings: string[] = [];
     const agents = loadPluginAgents([pA, pB], {
-      onWarn: (m) => warnings.push(m),
+      onWarn: (m: string) => warnings.push(m),
     });
     expect(agents).toHaveLength(1);
     expect(agents[0].prompt).toBe('from A');

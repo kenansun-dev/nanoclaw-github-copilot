@@ -3,7 +3,11 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
-import { runAgentForChat, resolveAgentForChat } from './config-extensions.js';
+import {
+  runAgentForChat,
+  resolveAgentForChat,
+  getAgentProvider,
+} from './config-extensions.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -78,7 +82,7 @@ export function computeNextRun(task: ScheduledTask): string | null {
 
 export interface SchedulerDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
-  getSessions: () => Record<string, string>;
+  getSessions: () => Record<string, Record<string, string>>;
   queue: GroupQueue;
   onProcess: (
     groupJid: string,
@@ -219,10 +223,14 @@ async function runTask(
   let result: string | null = null;
   let error: string | null = null;
 
-  // For group context mode, use the group's current session
+  // For group context mode, use the group's current session for THIS provider
   const sessions = deps.getSessions();
+  const taskAgent = resolveAgentForChat(task.chat_jid);
+  const taskProvider = getAgentProvider(taskAgent);
   const sessionId =
-    task.context_mode === 'group' ? sessions[task.group_folder] : undefined;
+    task.context_mode === 'group'
+      ? sessions[task.group_folder]?.[taskProvider]
+      : undefined;
 
   // After the task produces a result, close the container promptly.
   // Tasks are single-turn — no need to wait IDLE_TIMEOUT (30 min) for the
@@ -239,7 +247,7 @@ async function runTask(
   };
 
   try {
-    const agent = resolveAgentForChat(task.chat_jid);
+    const agent = taskAgent;
     // Progressive send state for delta streaming
     let progressiveMsgId: string | undefined;
     const output = await runAgentForChat(

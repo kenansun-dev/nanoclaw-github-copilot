@@ -77,9 +77,14 @@ function normalizeModelForProvider(model: string, provider: string): string {
       'claude-sonnet-4': 'claude-sonnet-4-6',
       'claude-opus-4': 'claude-opus-4-6',
       'claude-opus-4.7': 'claude-opus-4-7',
+      'claude-opus-4.6': 'claude-opus-4-6',
+      'claude-sonnet-4.6': 'claude-sonnet-4-6',
       'claude-sonnet-4.5': 'claude-sonnet-4-5',
       'claude-opus-4.5': 'claude-opus-4-5',
       'claude-haiku-4.5': 'claude-haiku-4-5',
+      sonnet: 'claude-sonnet-4-6',
+      opus: 'claude-opus-4-6',
+      haiku: 'claude-haiku-4-5',
     };
     return ghcToCc[model.toLowerCase()] || model;
   }
@@ -127,7 +132,10 @@ export function getAgentImage(agent: AgentConfig): string {
 export function getAgentModelName(agent: AgentConfig): string {
   const model = agent.model || '';
   const slash = model.indexOf('/');
-  return slash > 0 ? model.substring(slash + 1) : model;
+  const raw = slash > 0 ? model.substring(slash + 1) : model;
+  // Resolve provider from agent (explicit field wins, else parsed from model)
+  const provider = agent.provider || getProvider(model);
+  return normalizeModelForProvider(raw, provider);
 }
 
 export function getAgentProvider(agent: AgentConfig): string {
@@ -241,7 +249,7 @@ export function buildProviderMounts(chatJid?: string): VolumeMount[] {
   const ws = resolveWorkspace();
   const mounts: VolumeMount[] = [];
 
-  // GHC-only mounts: skills/ and mcp.json
+  // GHC-only mounts: skills/ (agent-runner-ghc reads from /workspace/skills)
   if (agentIsGHC) {
     const skillsDir = path.join(ws, 'skills');
     if (fs.existsSync(skillsDir)) {
@@ -251,14 +259,18 @@ export function buildProviderMounts(chatJid?: string): VolumeMount[] {
         readonly: true,
       });
     }
-    const mcpConfig = path.join(ws, 'mcp.json');
-    if (fs.existsSync(mcpConfig)) {
-      mounts.push({
-        hostPath: mcpConfig,
-        containerPath: '/workspace/mcp.json',
-        readonly: true,
-      });
-    }
+  }
+
+  // mcp.json: mount for both CC and GHC sandbox so user remote MCP servers
+  // work in sandbox mode. Host-mode reads mcp.json directly via host-runner's
+  // NANOCLAW_MCP_CONFIG env (with auth tokens resolved).
+  const mcpConfig = path.join(ws, 'mcp.json');
+  if (fs.existsSync(mcpConfig)) {
+    mounts.push({
+      hostPath: mcpConfig,
+      containerPath: '/workspace/mcp.json',
+      readonly: true,
+    });
   }
 
   // Plugin directories — mount from 3 sources for ALL providers (CC + GHC).

@@ -117,6 +117,41 @@ describe('getAgentSessionDir', () => {
 // ─── getAgentModelName / getAgentProvider ────────────────────────────────────
 
 describe('getAgentModelName', () => {
+  it('normalizes GHC-format model name when agent provider is anthropic', () => {
+    // The bug: kenan switched provider from github-copilot to anthropic but
+    // model stayed 'claude-opus-4.6' (GHC format). CC SDK errors on this.
+    expect(
+      getAgentModelName(makeAgent({ model: 'anthropic/claude-opus-4.6' })),
+    ).toBe('claude-opus-4-6');
+  });
+
+  it('normalizes CC-format model name when agent provider is github-copilot', () => {
+    expect(
+      getAgentModelName(
+        makeAgent({ model: 'github-copilot/claude-opus-4-6' }),
+      ),
+    ).toBe('claude-opus-4');
+  });
+
+  it('uses agent.provider field over model prefix when both present', () => {
+    expect(
+      getAgentModelName(
+        makeAgent({
+          provider: 'anthropic',
+          model: 'github-copilot/claude-opus-4.6',
+        }),
+      ),
+    ).toBe('claude-opus-4-6');
+  });
+
+  it('passes through unknown model names unchanged', () => {
+    expect(
+      getAgentModelName(
+        makeAgent({ model: 'anthropic/some-future-model' }),
+      ),
+    ).toBe('some-future-model');
+  });
+
   it('extracts model from agent config', () => {
     expect(
       getAgentModelName(makeAgent({ model: 'github-copilot/gpt-5.3' })),
@@ -141,6 +176,39 @@ describe('getAgentProvider', () => {
 
 describe('buildProviderMounts', () => {
   // Defer import + fs + path so we can isolate env per test
+  it('mounts mcp.json for both CC and GHC sandbox', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const pathMod = await import('node:path');
+    const { buildProviderMounts } = await import('./config-extensions.js');
+    const { setWorkspace } = await import('./workspace.js');
+
+    const tmpRoot = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'nc-mcp-mount-'));
+    const wsDir = pathMod.join(tmpRoot, 'workspace');
+    fs.mkdirSync(wsDir, { recursive: true });
+    fs.writeFileSync(
+      pathMod.join(wsDir, 'mcp.json'),
+      JSON.stringify({ mcpServers: { remote1: { url: 'https://x' } } }),
+    );
+
+    const origWs = process.env.NANOCLAW_WORKSPACE;
+    process.env.NANOCLAW_WORKSPACE = wsDir;
+    setWorkspace(wsDir);
+
+    try {
+      const mounts = buildProviderMounts(undefined);
+      const mcpMount = mounts.find(
+        (m) => m.containerPath === '/workspace/mcp.json',
+      );
+      expect(mcpMount).toBeDefined();
+      expect(mcpMount?.readonly).toBe(true);
+    } finally {
+      if (origWs === undefined) delete process.env.NANOCLAW_WORKSPACE;
+      else process.env.NANOCLAW_WORKSPACE = origWs;
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
   it('mounts plugins for both CC and GHC providers', async () => {
     const fs = await import('node:fs');
     const os = await import('node:os');

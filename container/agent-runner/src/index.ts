@@ -508,6 +508,44 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        // Load additional MCP servers from /workspace/mcp.json (mounted from
+        // host-runner's augmented config). Mirrors agent-runner-ghc behavior.
+        // Without this CC sandbox silently drops all user remote MCP servers.
+        ...(() => {
+          const mcpConfigPath =
+            process.env.NANOCLAW_MCP_CONFIG || '/workspace/mcp.json';
+          if (!fs.existsSync(mcpConfigPath)) return {};
+          try {
+            const mcpConfig = JSON.parse(
+              fs.readFileSync(mcpConfigPath, 'utf-8'),
+            );
+            const servers =
+              mcpConfig.mcpServers || mcpConfig.servers || mcpConfig;
+            if (!servers || typeof servers !== 'object') return {};
+            // Filter out the reserved 'nanoclaw' key (we control that one)
+            const out: Record<string, any> = {};
+            for (const [name, cfg] of Object.entries(servers)) {
+              if (name === 'nanoclaw') {
+                log(
+                  `Skipping user MCP server 'nanoclaw' (reserved name)`,
+                );
+                continue;
+              }
+              out[name] = cfg;
+            }
+            log(
+              `Loaded ${Object.keys(out).length} user MCP server(s) from ${mcpConfigPath}`,
+            );
+            return out;
+          } catch (err) {
+            log(
+              `Failed to load MCP config from ${mcpConfigPath}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+            return {};
+          }
+        })(),
       },
       hooks: {
         PreCompact: [
