@@ -22,10 +22,13 @@ import {
 import { resolveWorkspace, paths as wsPaths } from './workspace.js';
 import {
   resolveAgentForChat,
-  getAgentModelName,
   isAgentGHC,
   resolveGithubToken,
 } from './config-extensions.js';
+import {
+  getEffectiveModel,
+  getEffectiveThinkLevel,
+} from './session-overrides.js';
 import type { AgentConfig } from './config-loader.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
@@ -293,12 +296,15 @@ export async function runHostAgent(
     if (token) {
       env.COPILOT_GITHUB_TOKEN = token;
     }
-    const modelName = getAgentModelName(agent);
-    if (modelName) {
-      env.COPILOT_MODEL = modelName;
+    // Effective model/think: per-session override (slash-command) wins
+    // over the agent default. See session-overrides.ts.
+    const effectiveModel = getEffectiveModel(input.chatJid);
+    if (effectiveModel) {
+      env.COPILOT_MODEL = effectiveModel;
     }
-    if (agent.thinkLevel) {
-      env.COPILOT_THINK_LEVEL = agent.thinkLevel;
+    const effectiveThink = getEffectiveThinkLevel(input.chatJid);
+    if (effectiveThink && effectiveThink !== 'off') {
+      env.COPILOT_THINK_LEVEL = effectiveThink;
     }
     // Pass session config dir without overriding COPILOT_HOME
     // (COPILOT_HOME would make CLI look for credentials in sessionDir instead of ~/.copilot)
@@ -316,12 +322,13 @@ export async function runHostAgent(
   } else {
     // CC mode: uses Claude Agent SDK with native host auth (~/.claude/)
     // No token injection needed — CLI handles its own auth
-    const modelName = getAgentModelName(agent);
-    if (modelName) {
-      env.CLAUDE_MODEL = modelName;
+    const effectiveModel = getEffectiveModel(input.chatJid);
+    if (effectiveModel) {
+      env.CLAUDE_MODEL = effectiveModel;
     }
-    if (agent.thinkLevel) {
-      env.CLAUDE_THINK_LEVEL = agent.thinkLevel;
+    const effectiveThink = getEffectiveThinkLevel(input.chatJid);
+    if (effectiveThink && effectiveThink !== 'off') {
+      env.CLAUDE_THINK_LEVEL = effectiveThink;
     }
   }
 
@@ -533,6 +540,10 @@ export async function runHostAgent(
 
   return new Promise<ContainerOutput>((resolve) => {
     let stdout = '';
+    // Serialized callback chain: each onOutput invocation waits for the
+    // previous to settle so the dispatcher in src/index.ts sees partials
+    // strictly in order. Initialized to a resolved promise.
+    let outputCallbackChain: Promise<void> = Promise.resolve();
     let stderr = '';
     let timedOut = false;
     let hadStreamingOutput = false;
@@ -692,12 +703,22 @@ export async function runHostAgent(
           resetTimeout();
 
           if (onOutput) {
-            onOutput(output).catch((err) => {
-              logger.error(
-                { error: err },
-                'Error in host agent output callback',
-              );
-            });
+            // SERIALIZE callbacks: chain via a per-runner promise so partials
+            // arrive at the dispatcher in order AND each callback completes
+            // before the next starts. Without this, fast SDK partials race
+            // past the `if (!progressiveMsgId)` / `if (!flashReasoningMsgId)`
+            // checks in src/index.ts and every concurrent partial sees the
+            // id as undefined → all spawn fresh sendMessages instead of
+            // editing the in-flight message. (kenan TG repro 2026-04-24:
+            // 3 thinking previews + 2 finals from a single short prompt.)
+            outputCallbackChain = outputCallbackChain.then(() =>
+              onOutput(output).catch((err) => {
+                logger.error(
+                  { error: err },
+                  'Error in host agent output callback',
+                );
+              }),
+            );
           }
 
           // Query-complete signal: result is null with newSessionId

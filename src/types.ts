@@ -135,6 +135,13 @@ export interface Channel {
     options?: { parseMode?: 'HTML' | 'Markdown' },
   ): Promise<string | void>;
   /**
+   * Delete a previously sent message. Used by `flash` showThinking mode
+   * to remove the streamed thinking preview once the answer arrives.
+   * Channels that don't support deletion should leave this undefined;
+   * dispatcher falls back to editing the message to a single space.
+   */
+  deleteMessage?(jid: string, messageId: string): Promise<void>;
+  /**
    * When true, multiple final outputs in a single agent turn (e.g.
    * text → tool call → more text) are delivered as separate new messages
    * instead of editing the previous final message. Channels where in-place

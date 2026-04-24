@@ -19,6 +19,7 @@ import {
   TRIGGER_PATTERN,
   getConfig,
 } from './config.js';
+import { getEffectiveShowThinking } from './session-overrides.js';
 import {
   runAgentForChat,
   IS_GHC_PROVIDER,
@@ -304,6 +305,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     groupFolder: group.folder,
     channel: findChannel(channels, chatJid),
     clearSession: (folder: string) => delete sessions[folder],
+    killActiveRunner: (jid: string) => queue.killActive(jid),
   };
   const regularMessages: typeof missedMessages = [];
   for (const msg of missedMessages) {
@@ -389,19 +391,35 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Progressive send state: track message ID for editMessage on partial updates
   let progressiveMsgId: string | undefined;
   let progressiveText = '';
-  // Flash-mode reasoning lane: a SEPARATE message id from progressiveMsgId
+  // Thinking-stream lane: a SEPARATE message id from progressiveMsgId
   // (which carries the answer). SDK emits reasoning_delta and text_delta
   // CONCURRENTLY (no ordering guarantee), so sharing one message id caused
   // the partial answer and reasoning preview to overwrite each other and
   // visually flicker (kenan reported this twice).
   //
   // Two-lane design (mirrors openclaw's bot-message-dispatch.ts):
-  //   reasoning_delta -> render/edit `flashReasoningMsgId` (independent)
+  //   reasoning_delta -> render/edit `thinkingMsgId` (independent)
   //   text_delta      -> render/edit `progressiveMsgId`    (independent)
-  // The reasoning preview is intentionally short (formatThinkingForFlash
-  // single-line, 600-char cap) so leaving it visible alongside the final
-  // answer is fine — no need to delete (channels lack deleteMessage anyway).
-  let flashReasoningMsgId: string | undefined;
+  //
+  // Mode behavior at finalize:
+  //   `flash` -> on first answer chunk, DELETE thinkingMsgId (fallback edit
+  //             to a single space if channel lacks deleteMessage). Spec
+  //             from kenan 2026-04-24: "thinking 内容删掉".
+  //   `on`    -> finalize thinkingMsgId by stripping trailing ◌; KEEP it
+  //             visible above the answer. Spec from kenan 2026-04-24:
+  //             "thinking 和主消息都是 streaming回来, 都保留".
+  //   `off`   -> never opened.
+  let thinkingMsgId: string | undefined;
+  // True once flash mode has cleared its thinking preview on the first
+  // answer chunk; suppresses re-opening a thinking message for the
+  // remainder of the turn (SDK still emits trailing reasoning_delta).
+  let flashThinkingDismissed = false;
+  // Last thinking text we rendered to thinkingMsgId for the CURRENT turn.
+  // Used to dedupe re-edits in `on` mode: result.result fires per partial
+  // answer chunk, but we only need to update the thinking message when its
+  // text actually grew. Skipping no-op edits keeps us off TG's per-chat
+  // 30/sec rate limit. Reset on turn boundary along with thinkingMsgId.
+  let lastThinkingRendered: string | undefined;
   let lastFinalMsgId: string | undefined;
   // Native streaming state: when channel.usesNativeStreaming, we open a
   // StreamHandle on the first partial and feed it cumulative text. The
@@ -440,62 +458,69 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // bookkeeping, then exit naturally on the !result.result guard above.
       }
 
-      // Thinking-only deltas (no result yet). Default behavior is to
-      // skip and let final result merge. In `flash` mode we render the
-      // thinking content into the same in-flight message via editMessage,
-      // then overwrite with the final answer when it arrives — thinking
-      // disappears, leaving only the final.
+      // Thinking-only deltas (no result yet). Modes:
+      //   `flash` -> stream a compact one-line preview into `thinkingMsgId`;
+      //             deleted/cleared on first answer chunk.
+      //   `on`    -> stream the full thinking text into `thinkingMsgId`;
+      //             kept visible above the answer (separate message).
+      //   `off`   -> drop the delta; final result will not include thinking.
       if (result.thinking && !result.result) {
         const thinkingMode = normalizeShowThinking(
-          getConfig().agents?.defaults?.showThinking,
+          getEffectiveShowThinking(chatJid) ??
+            getConfig().agents?.defaults?.showThinking,
         );
+        const streamThinking =
+          (thinkingMode === 'flash' || thinkingMode === 'on') &&
+          !!channel.editMessage &&
+          !channel.usesNativeStreaming;
+        // In flash mode, once we've dismissed the thinking preview on the
+        // first answer chunk, ignore trailing reasoning_delta events for
+        // the rest of the turn (don't re-open it).
         if (
-          thinkingMode === 'flash' &&
+          streamThinking &&
           channel.editMessage &&
-          !channel.usesNativeStreaming
+          !(thinkingMode === 'flash' && flashThinkingDismissed)
         ) {
-          // TWO-LANE: reasoning preview lives in `flashReasoningMsgId`,
-          // independent from `progressiveMsgId` (the answer). SDK streams
-          // reasoning_delta and text_delta concurrently — sharing one
-          // message id caused them to overwrite each other (visible flicker,
-          // kenan reported). Now they write to separate messages.
-          //
-          // The reasoning preview is short (one line, 600-char cap) so
-          // it's fine to leave visible after final. No deletion required
-          // (channels don't expose deleteMessage anyway).
-          //
           // Boundary handling: a new query (queryBoundaryPending=true)
-          // means a fresh turn — drop the previous turn's reasoning preview
+          // means a fresh turn — drop the previous turn's thinking
           // pointer so this turn opens a new one.
           if (queryBoundaryPending) {
-            flashReasoningMsgId = undefined;
+            thinkingMsgId = undefined;
+            flashThinkingDismissed = false;
+            lastThinkingRendered = undefined;
           }
-          const tp = formatThinkingForFlash(result.thinking, chatJid);
+          const tp =
+            thinkingMode === 'flash'
+              ? formatThinkingForFlash(result.thinking, chatJid)
+              : formatThinkingForChannel(result.thinking, chatJid);
           if (tp) {
             const sendOpts = tp.parseMode
               ? { parseMode: tp.parseMode }
               : undefined;
-            if (!flashReasoningMsgId) {
-              await traceSetTyping(
-                channel,
-                chatJid,
-                false,
-                'flash-thinking-first',
-              );
+            if (!thinkingMsgId) {
+              await traceSetTyping(channel, chatJid, false, 'thinking-first');
               const msgId = await channel.sendMessage(
                 chatJid,
                 tp.text + ' ◌',
                 sendOpts,
               );
-              flashReasoningMsgId =
-                typeof msgId === 'string' ? msgId : undefined;
+              thinkingMsgId = typeof msgId === 'string' ? msgId : undefined;
             } else {
-              await channel.editMessage(
+              // Capture return value: editMessage may fall back to
+              // sendMessage (e.g. TG markdown parse failure) and return a
+              // NEW message id. Discarding it would leave thinkingMsgId
+              // pointing at a dead message — every subsequent edit would
+              // also fall back, spawning orphan copies of the thinking
+              // preview. (kenan TG repro 2026-04-24)
+              const editedId = await channel.editMessage(
                 chatJid,
-                flashReasoningMsgId,
+                thinkingMsgId,
                 tp.text + ' ◌',
                 sendOpts,
               );
+              if (typeof editedId === 'string' && editedId !== thinkingMsgId) {
+                thinkingMsgId = editedId;
+              }
             }
           }
         }
@@ -511,7 +536,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           progressiveText = '';
           lastFinalMsgId = undefined;
           outputSentToUser = false;
-          flashReasoningMsgId = undefined;
+          thinkingMsgId = undefined;
+          flashThinkingDismissed = false;
+          lastThinkingRendered = undefined;
           // Cancel any leftover native stream from the previous turn so
           // the next turn opens a fresh stream. cancel() is idempotent.
           if (streamHandle) {
@@ -530,58 +557,82 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             'IPC turn boundary: reset per-turn message-id state',
           );
         }
-        // Merge thinking into result as one message (only when
-        // showThinking === 'on' / true). In `flash` mode we leave
-        // result.result alone — the editMessage path below replaces
-        // the thinking-preview with just the final answer.
-        let thinkingParseMode: 'HTML' | 'Markdown' | undefined;
+        // Mode behavior on first answer event:
+        //   `on`    -> finalize thinkingMsgId in place (strip ◌ cursor),
+        //              keep it visible. Answer streams into progressiveMsgId.
+        //              Do NOT prepend thinking to result.result anymore.
+        //   `flash` -> delete thinkingMsgId (or edit to a single space if
+        //              channel lacks deleteMessage). Set flashThinkingDismissed
+        //              so trailing reasoning_delta events don't re-open it.
+        //   `off`   -> nothing to do.
         const thinkingMode = normalizeShowThinking(
-          getConfig().agents?.defaults?.showThinking,
+          getEffectiveShowThinking(chatJid) ??
+            getConfig().agents?.defaults?.showThinking,
         );
-        if (result.thinking && !result.partial && thinkingMode === 'on') {
-          const tp = formatThinkingForChannel(result.thinking, chatJid);
-          if (tp) {
-            thinkingParseMode = tp.parseMode;
-            // Don't escape the answer — let Telegram fallback handle parse errors
-            result.result = tp.text + '\n\n' + result.result;
-          }
-        }
-        // FLASH: finalize the reasoning preview — strip the trailing ◌ cursor
-        // so it doesn't look stuck. We do this lazily on the first answer event
-        // so reasoning_delta updates can keep flowing while reasoning is still
-        // streaming. The preview itself stays visible alongside the final answer
-        // (channels lack deleteMessage and the one-line cap makes it harmless).
-        if (
-          flashReasoningMsgId &&
-          thinkingMode === 'flash' &&
-          channel.editMessage
-        ) {
-          try {
-            // Re-render the latest thinking content WITHOUT the cursor.
-            // result.thinking carries the full thinking text on the same
-            // event that delivers result.result.
-            const tp = result.thinking
-              ? formatThinkingForFlash(result.thinking, chatJid)
-              : null;
-            if (tp) {
-              const sendOpts = tp.parseMode
-                ? { parseMode: tp.parseMode }
-                : undefined;
-              await channel.editMessage(
-                chatJid,
-                flashReasoningMsgId,
-                tp.text,
-                sendOpts,
+        if (thinkingMsgId && thinkingMode === 'on' && channel.editMessage) {
+          const fullThinking = result.thinking ?? '';
+          // Dedupe: skip the edit when content hasn't changed since the last
+          // render in this turn. Per-partial-chunk re-edits otherwise pile up
+          // (long answers → many partials → N redundant edits → TG 30/sec
+          // rate limit risk). rpi5 review 2026-04-24.
+          if (fullThinking && fullThinking !== lastThinkingRendered) {
+            try {
+              const tp = formatThinkingForChannel(fullThinking, chatJid);
+              if (tp) {
+                const sendOpts = tp.parseMode
+                  ? { parseMode: tp.parseMode }
+                  : undefined;
+                const editedId = await channel.editMessage(
+                  chatJid,
+                  thinkingMsgId,
+                  tp.text,
+                  sendOpts,
+                );
+                if (
+                  typeof editedId === 'string' &&
+                  editedId !== thinkingMsgId
+                ) {
+                  thinkingMsgId = editedId;
+                }
+                lastThinkingRendered = fullThinking;
+              }
+            } catch (err) {
+              logger.warn(
+                { chatJid, err: (err as Error).message },
+                'on-mode thinking finalize failed (non-fatal)',
               );
+            }
+          }
+          // Keep thinkingMsgId set so trailing reasoning_delta events (rare)
+          // can still update it. Cleared on next turn boundary.
+        } else if (
+          thinkingMsgId &&
+          thinkingMode === 'flash' &&
+          !flashThinkingDismissed
+        ) {
+          // Flash spec (kenan 2026-04-24): "thinking 内容删掉".
+          // Try deleteMessage first; fall back to editing to a single
+          // space (channels reject empty text) if the channel doesn't
+          // expose deleteMessage. Better than the prior behavior of
+          // leaving the full thinking preview visible.
+          try {
+            if (channel.deleteMessage) {
+              await channel.deleteMessage(chatJid, thinkingMsgId);
+            } else if (channel.editMessage) {
+              await channel.editMessage(chatJid, thinkingMsgId, ' ');
             }
           } catch (err) {
             logger.warn(
               { chatJid, err: (err as Error).message },
-              'flash reasoning preview finalize failed (non-fatal)',
+              'flash thinking dismiss failed (non-fatal)',
             );
           }
-          flashReasoningMsgId = undefined;
+          thinkingMsgId = undefined;
+          flashThinkingDismissed = true;
         }
+        // (Pre-2026-04-24 behavior of merging thinking into result.result
+        //  for `on` mode is gone: thinking now lives in its own streamed
+        //  message above the answer.)
         const raw =
           typeof result.result === 'string'
             ? result.result
@@ -596,9 +647,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // future silent stretch on a follow-up message can be acked again.
         queue.notifyAgentOutput(chatJid);
 
-        const sendOpts = thinkingParseMode
-          ? { parseMode: thinkingParseMode }
-          : undefined;
+        const sendOpts = undefined;
 
         if (
           result.partial &&
@@ -635,13 +684,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             );
             progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;
           } else {
-            // Subsequent partial — edit existing message
-            await channel.editMessage(
+            // Subsequent partial — edit existing message. Capture id in
+            // case editMessage falls back to a fresh sendMessage (returns
+            // a new id) so we keep editing the live message instead of
+            // spawning duplicates. (kenan TG repro 2026-04-24)
+            const editedId = await channel.editMessage(
               chatJid,
               progressiveMsgId,
               text + ' ◌',
               sendOpts,
             );
+            if (typeof editedId === 'string' && editedId !== progressiveMsgId) {
+              progressiveMsgId = editedId;
+            }
           }
         } else {
           // Final message (or channel doesn't support edit)
@@ -654,13 +709,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             streamHandle = undefined;
             lastFinalMsgId = typeof msgId === 'string' ? msgId : undefined;
           } else if (progressiveMsgId && channel.editMessage) {
-            // Replace the progressive message with final content
-            await channel.editMessage(
+            // Replace the progressive message with final content. Capture
+            // the (possibly new) id from the editMessage fallback path so
+            // lastFinalMsgId tracks the actual visible message.
+            const editedId = await channel.editMessage(
               chatJid,
               progressiveMsgId,
               text,
               sendOpts,
             );
+            if (typeof editedId === 'string') {
+              lastFinalMsgId = editedId;
+            }
           } else if (
             outputSentToUser &&
             lastFinalMsgId &&
@@ -672,7 +732,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             // (Telegram). Channels with prefersNewMessageForFinal (Teams)
             // skip this branch and send a new message instead, otherwise
             // each subsequent final silently overwrites the previous one.
-            await channel.editMessage(chatJid, lastFinalMsgId, text, sendOpts);
+            const editedId = await channel.editMessage(
+              chatJid,
+              lastFinalMsgId,
+              text,
+              sendOpts,
+            );
+            if (typeof editedId === 'string' && editedId !== lastFinalMsgId) {
+              lastFinalMsgId = editedId;
+            }
           } else {
             const msgId = await channel.sendMessage(chatJid, text, sendOpts);
             lastFinalMsgId = typeof msgId === 'string' ? msgId : undefined;
@@ -1034,6 +1102,7 @@ async function startMessageLoop(): Promise<void> {
               groupFolder: group.folder,
               channel: findChannel(channels, chatJid),
               clearSession: (folder: string) => delete sessions[folder],
+              killActiveRunner: (jid: string) => queue.killActive(jid),
             };
             const nonSlash: typeof messagesToSend = [];
             for (const msg of messagesToSend) {

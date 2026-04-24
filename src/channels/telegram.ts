@@ -533,6 +533,22 @@ export class TelegramChannel implements Channel {
     }
   }
 
+  async deleteMessage(jid: string, messageId: string): Promise<void> {
+    if (!this.bot) return;
+    const numericId = jid.split(':').pop()!;
+    const msgId = parseInt(messageId);
+    try {
+      await this.bot.api.deleteMessage(numericId, msgId);
+    } catch (err: any) {
+      // Common: message too old (>48h), already deleted, or no permission.
+      // Non-fatal — caller (dispatcher flash mode) will fall back to edit.
+      logger.debug(
+        { jid, messageId, err: err?.message ?? String(err) },
+        'Telegram deleteMessage failed (non-fatal)',
+      );
+    }
+  }
+
   async disconnect(): Promise<void> {
     if (this.bot) {
       this.bot.stop();
