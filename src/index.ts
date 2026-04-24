@@ -441,7 +441,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           channel.editMessage &&
           !channel.usesNativeStreaming
         ) {
-          const tp = formatThinkingForChannel(result.thinking, chatJid);
+          // Suppress flash previews after a final has already been sent
+          // this turn (multi-step / tool-call interleaving). Otherwise
+          // each intermediate thinking phase would pop a brand new
+          // message after the visible final, making it look like
+          // "thinking came back" at the end of the turn.
+          const inFlight = !!progressiveMsgId;
+          if (!inFlight && outputSentToUser) {
+            return;
+          }
+          const tp = formatThinkingForFlash(result.thinking, chatJid);
           if (tp) {
             // We're about to claim progressiveMsgId for this turn's flash
             // preview. Flush the queryBoundary now so the upcoming first
@@ -471,8 +480,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 'IPC turn boundary flushed by flash thinking preview',
               );
             }
-            const previewText = '🧠 _thinking…_\n\n' + tp.text;
-            const sendOpts = { parseMode: tp.parseMode };
+            const sendOpts = tp.parseMode
+              ? { parseMode: tp.parseMode }
+              : undefined;
             if (!progressiveMsgId) {
               await traceSetTyping(
                 channel,
@@ -482,7 +492,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               );
               const msgId = await channel.sendMessage(
                 chatJid,
-                previewText + ' ◌',
+                tp.text + ' ◌',
                 sendOpts,
               );
               progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;
@@ -490,7 +500,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               await channel.editMessage(
                 chatJid,
                 progressiveMsgId,
-                previewText + ' ◌',
+                tp.text + ' ◌',
                 sendOpts,
               );
             }
@@ -1189,6 +1199,46 @@ export function formatThinkingForChannel(
           .split('\n')
           .map((l) => `> ${l}`)
           .join('\n'),
+    };
+  }
+}
+
+/**
+ * Format thinking/reasoning content for FLASH mode (transient inline preview).
+ * Lightweight: no blockquote, italicized prefix, single-line collapse, channel-aware
+ * parseMode. The flash UI is a placeholder that will be overwritten by the final
+ * answer, so it should be visually quiet and not look like a persistent quote.
+ */
+export function formatThinkingForFlash(
+  thinking: string,
+  chatJid: string,
+): ThinkingFormat | null {
+  const trimmed = thinking.trim();
+  if (!trimmed) return null;
+
+  // Tighter cap than persistent mode — this is meant to be transient.
+  const maxLen = 600;
+  // Collapse newlines into spaces so the preview stays compact (1–2 lines).
+  const oneLine = trimmed.replace(/\s+/g, ' ');
+  const content =
+    oneLine.length > maxLen ? oneLine.substring(0, maxLen) + '…' : oneLine;
+
+  if (chatJid.startsWith('tg:')) {
+    const escapeHtml = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return {
+      text: `🧠 <i>thinking…</i> <i>${escapeHtml(content)}</i>`,
+      parseMode: 'HTML',
+    };
+  } else if (chatJid.startsWith('discord:')) {
+    // Discord: markdown italic.
+    return {
+      text: `🧠 _thinking…_ _${content.replace(/_/g, '\\_')}_`,
+    };
+  } else {
+    // Teams / TUI / unknown: plain text. Markdown markers would just leak.
+    return {
+      text: `🧠 thinking… ${content}`,
     };
   }
 }
