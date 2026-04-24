@@ -1468,10 +1468,10 @@ function migrateSecretsToEnv(config: any): void {
 // still work.
 
 export function getEnabledPlugins(
-  config: Pick<NanoclawConfig, "plugins">,
+  config: Pick<NanoclawConfig, 'plugins'>,
 ): PluginEnabledEntry[] {
   const p = config.plugins as
-    | (NonNullable<NanoclawConfig["plugins"]> & {
+    | (NonNullable<NanoclawConfig['plugins']> & {
         enabled?: PluginEnabledEntry[];
       })
     | undefined;
@@ -1482,10 +1482,10 @@ export function getEnabledPlugins(
 }
 
 export function getExtraKnownMarketplaces(
-  config: Pick<NanoclawConfig, "plugins">,
+  config: Pick<NanoclawConfig, 'plugins'>,
 ): PluginMarketplaceEntry[] {
   const p = config.plugins as
-    | (NonNullable<NanoclawConfig["plugins"]> & {
+    | (NonNullable<NanoclawConfig['plugins']> & {
         marketplaces?: PluginMarketplaceEntry[];
       })
     | undefined;
@@ -1514,4 +1514,3 @@ export function setExtraKnownMarketplaces(
   p.extraKnownMarketplaces = list;
   delete p.marketplaces; // canonicalize
 }
-

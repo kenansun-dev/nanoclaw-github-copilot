@@ -243,7 +243,11 @@ describe('ensureEnabledPluginsInstalled', () => {
 
   it('returns empty result when no plugins.enabledPlugins[]', async () => {
     const config = loadConfig();
-    config.plugins = { enabledPlugins: [], extraKnownMarketplaces: [], directories: [] };
+    config.plugins = {
+      enabledPlugins: [],
+      extraKnownMarketplaces: [],
+      directories: [],
+    };
     saveConfig(config);
     const result = await ensureEnabledPluginsInstalled();
     expect(result).toEqual({ installed: [], skipped: [], failed: [] });

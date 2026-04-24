@@ -778,12 +778,8 @@ export async function handlePluginIpc(
           break;
         }
         // Add to plugins.enabledPlugins[] if not already there, then auto-install.
-        const {
-          loadConfig,
-          saveConfig,
-          getEnabledPlugins,
-          setEnabledPlugins,
-        } = await import('./config-loader.js');
+        const { loadConfig, saveConfig, getEnabledPlugins, setEnabledPlugins } =
+          await import('./config-loader.js');
         const config = loadConfig();
         const enabledList = getEnabledPlugins(config);
         const name =
@@ -815,12 +811,8 @@ export async function handlePluginIpc(
           writeResponse({ ok: false, error: 'uninstall requires `name`' });
           break;
         }
-        const {
-          loadConfig,
-          saveConfig,
-          getEnabledPlugins,
-          setEnabledPlugins,
-        } = await import('./config-loader.js');
+        const { loadConfig, saveConfig, getEnabledPlugins, setEnabledPlugins } =
+          await import('./config-loader.js');
         const { resolveWorkspace } = await import('./workspace.js');
         const config = loadConfig();
         const enabledList = getEnabledPlugins(config);
@@ -839,9 +831,8 @@ export async function handlePluginIpc(
         break;
       }
       case 'marketplace_list': {
-        const { loadConfig, getExtraKnownMarketplaces } = await import(
-          './config-loader.js'
-        );
+        const { loadConfig, getExtraKnownMarketplaces } =
+          await import('./config-loader.js');
         const config = loadConfig();
         writeResponse({
           ok: true,

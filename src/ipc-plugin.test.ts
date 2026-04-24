@@ -166,7 +166,9 @@ describe('handlePluginIpc', () => {
     expect(res.name).toBe('rmme');
     expect(fs.existsSync(path.join(tmpDir, 'plugins', 'rmme'))).toBe(false);
     const config = loadConfig();
-    expect(config.plugins?.enabledPlugins?.find((e) => e.name === 'rmme')).toBeFalsy();
+    expect(
+      config.plugins?.enabledPlugins?.find((e) => e.name === 'rmme'),
+    ).toBeFalsy();
   });
 
   it('uninstall rejects missing name', async () => {
