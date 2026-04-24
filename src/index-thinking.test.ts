@@ -3,7 +3,19 @@ import {
   normalizeShowThinking,
   formatThinkingForChannel,
   formatThinkingForFlash,
+  decideFlashLane,
+  type FlashLaneState,
 } from './index.js';
+
+const baseState = (
+  overrides: Partial<FlashLaneState> = {},
+): FlashLaneState => ({
+  answerLaneActive: false,
+  outputSentToUser: false,
+  queryBoundaryPending: false,
+  inFlightMsg: false,
+  ...overrides,
+});
 
 describe('normalizeShowThinking', () => {
   it('returns "off" for undefined', () => {
@@ -57,6 +69,95 @@ describe('formatThinkingForChannel (persistent on mode)', () => {
     const r = formatThinkingForChannel(long, 'discord:1');
     expect(r!.text).toContain('...(truncated)');
     expect(r!.text.length).toBeLessThan(2200);
+  });
+});
+
+describe('decideFlashLane (state machine for flash interleave)', () => {
+  it('reasoning_delta on fresh turn -> render preview', () => {
+    const d = decideFlashLane({ kind: 'reasoning_delta' }, baseState());
+    expect(d.render).toBe(true);
+    expect(d.activateAnswerLane).toBe(false);
+  });
+  it('reasoning_delta when answer lane already active -> SKIP (frozen)', () => {
+    // Critical: this is the kenan bug. Late reasoning after first text
+    // chunk MUST NOT overwrite the partial answer.
+    const d = decideFlashLane(
+      { kind: 'reasoning_delta' },
+      baseState({ answerLaneActive: true, inFlightMsg: true }),
+    );
+    expect(d.render).toBe(false);
+    expect(d.activateAnswerLane).toBe(false);
+  });
+  it('reasoning_delta after final shipped (no boundary, no in-flight) -> SKIP', () => {
+    // Multi-step turn: answer shipped, then more thinking. Don't pop a new preview.
+    const d = decideFlashLane(
+      { kind: 'reasoning_delta' },
+      baseState({ outputSentToUser: true }),
+    );
+    expect(d.render).toBe(false);
+  });
+  it('reasoning_delta on new turn boundary (outputSentToUser leftover) -> render', () => {
+    const d = decideFlashLane(
+      { kind: 'reasoning_delta' },
+      baseState({ outputSentToUser: true, queryBoundaryPending: true }),
+    );
+    expect(d.render).toBe(true);
+    expect(d.resetBoundary).toBe(true);
+  });
+  it('reasoning_delta with in-flight preview msg -> render (continuing same preview)', () => {
+    const d = decideFlashLane(
+      { kind: 'reasoning_delta' },
+      baseState({ inFlightMsg: true, outputSentToUser: true }),
+    );
+    expect(d.render).toBe(true);
+  });
+  it('text_delta first time -> render + activate lane', () => {
+    const d = decideFlashLane({ kind: 'text_delta' }, baseState());
+    expect(d.render).toBe(true);
+    expect(d.activateAnswerLane).toBe(true);
+  });
+  it('text_delta when reasoning was in-flight -> render + activate (transitions message)', () => {
+    const d = decideFlashLane(
+      { kind: 'text_delta' },
+      baseState({ inFlightMsg: true }),
+    );
+    expect(d.render).toBe(true);
+    expect(d.activateAnswerLane).toBe(true);
+  });
+  it('final -> render + activate lane', () => {
+    const d = decideFlashLane({ kind: 'final' }, baseState());
+    expect(d.render).toBe(true);
+    expect(d.activateAnswerLane).toBe(true);
+  });
+  it('text_delta on new turn boundary -> resets boundary + activates', () => {
+    const d = decideFlashLane(
+      { kind: 'text_delta' },
+      baseState({ queryBoundaryPending: true, outputSentToUser: true }),
+    );
+    expect(d.render).toBe(true);
+    expect(d.resetBoundary).toBe(true);
+    expect(d.activateAnswerLane).toBe(true);
+  });
+  it('interleave scenario: reasoning -> text -> reasoning -> reasoning ignored', () => {
+    let s = baseState();
+    // Initial reasoning
+    let d = decideFlashLane({ kind: 'reasoning_delta' }, s);
+    expect(d.render).toBe(true);
+    s = { ...s, inFlightMsg: true };
+    // First text chunk activates lane
+    d = decideFlashLane({ kind: 'text_delta' }, s);
+    expect(d.render).toBe(true);
+    expect(d.activateAnswerLane).toBe(true);
+    s = { ...s, answerLaneActive: true };
+    // Late reasoning_delta MUST be skipped
+    d = decideFlashLane({ kind: 'reasoning_delta' }, s);
+    expect(d.render).toBe(false);
+    // More late reasoning still skipped
+    d = decideFlashLane({ kind: 'reasoning_delta' }, s);
+    expect(d.render).toBe(false);
+    // Final renders + keeps lane
+    d = decideFlashLane({ kind: 'final' }, s);
+    expect(d.render).toBe(true);
   });
 });
 
