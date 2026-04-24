@@ -446,8 +446,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           // each intermediate thinking phase would pop a brand new
           // message after the visible final, making it look like
           // "thinking came back" at the end of the turn.
+          //
+          // Important: only suppress within the SAME turn. If
+          // queryBoundaryPending is true a new turn is starting and the
+          // outputSentToUser=true is leftover from the previous turn —
+          // we must still render this turn's first preview.
           const inFlight = !!progressiveMsgId;
-          if (!inFlight && outputSentToUser) {
+          if (!inFlight && outputSentToUser && !queryBoundaryPending) {
             return;
           }
           const tp = formatThinkingForFlash(result.thinking, chatJid);
