@@ -414,6 +414,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // answer chunk; suppresses re-opening a thinking message for the
   // remainder of the turn (SDK still emits trailing reasoning_delta).
   let flashThinkingDismissed = false;
+  // Last thinking text we rendered to thinkingMsgId for the CURRENT turn.
+  // Used to dedupe re-edits in `on` mode: result.result fires per partial
+  // answer chunk, but we only need to update the thinking message when its
+  // text actually grew. Skipping no-op edits keeps us off TG's per-chat
+  // 30/sec rate limit. Reset on turn boundary along with thinkingMsgId.
+  let lastThinkingRendered: string | undefined;
   let lastFinalMsgId: string | undefined;
   // Native streaming state: when channel.usesNativeStreaming, we open a
   // StreamHandle on the first partial and feed it cumulative text. The
@@ -481,6 +487,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           if (queryBoundaryPending) {
             thinkingMsgId = undefined;
             flashThinkingDismissed = false;
+            lastThinkingRendered = undefined;
           }
           const tp =
             thinkingMode === 'flash'
@@ -531,6 +538,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           outputSentToUser = false;
           thinkingMsgId = undefined;
           flashThinkingDismissed = false;
+          lastThinkingRendered = undefined;
           // Cancel any leftover native stream from the previous turn so
           // the next turn opens a fresh stream. cancel() is idempotent.
           if (streamHandle) {
@@ -557,39 +565,43 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         //              channel lacks deleteMessage). Set flashThinkingDismissed
         //              so trailing reasoning_delta events don't re-open it.
         //   `off`   -> nothing to do.
-        let thinkingParseMode: 'HTML' | 'Markdown' | undefined;
-        // (thinkingParseMode is unused now that thinking lives in its own
-        //  message; kept declared so the answer-send path — below — stays
-        //  identical to the historical shape. Dead-code lint is acceptable
-        //  here in exchange for a smaller diff.)
         const thinkingMode = normalizeShowThinking(
           getEffectiveShowThinking(chatJid) ??
             getConfig().agents?.defaults?.showThinking,
         );
         if (thinkingMsgId && thinkingMode === 'on' && channel.editMessage) {
-          try {
-            const tp = result.thinking
-              ? formatThinkingForChannel(result.thinking, chatJid)
-              : null;
-            if (tp) {
-              const sendOpts = tp.parseMode
-                ? { parseMode: tp.parseMode }
-                : undefined;
-              const editedId = await channel.editMessage(
-                chatJid,
-                thinkingMsgId,
-                tp.text,
-                sendOpts,
-              );
-              if (typeof editedId === 'string' && editedId !== thinkingMsgId) {
-                thinkingMsgId = editedId;
+          const fullThinking = result.thinking ?? '';
+          // Dedupe: skip the edit when content hasn't changed since the last
+          // render in this turn. Per-partial-chunk re-edits otherwise pile up
+          // (long answers → many partials → N redundant edits → TG 30/sec
+          // rate limit risk). rpi5 review 2026-04-24.
+          if (fullThinking && fullThinking !== lastThinkingRendered) {
+            try {
+              const tp = formatThinkingForChannel(fullThinking, chatJid);
+              if (tp) {
+                const sendOpts = tp.parseMode
+                  ? { parseMode: tp.parseMode }
+                  : undefined;
+                const editedId = await channel.editMessage(
+                  chatJid,
+                  thinkingMsgId,
+                  tp.text,
+                  sendOpts,
+                );
+                if (
+                  typeof editedId === 'string' &&
+                  editedId !== thinkingMsgId
+                ) {
+                  thinkingMsgId = editedId;
+                }
+                lastThinkingRendered = fullThinking;
               }
+            } catch (err) {
+              logger.warn(
+                { chatJid, err: (err as Error).message },
+                'on-mode thinking finalize failed (non-fatal)',
+              );
             }
-          } catch (err) {
-            logger.warn(
-              { chatJid, err: (err as Error).message },
-              'on-mode thinking finalize failed (non-fatal)',
-            );
           }
           // Keep thinkingMsgId set so trailing reasoning_delta events (rare)
           // can still update it. Cleared on next turn boundary.
@@ -635,9 +647,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // future silent stretch on a follow-up message can be acked again.
         queue.notifyAgentOutput(chatJid);
 
-        const sendOpts = thinkingParseMode
-          ? { parseMode: thinkingParseMode }
-          : undefined;
+        const sendOpts = undefined;
 
         if (
           result.partial &&
