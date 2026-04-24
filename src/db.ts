@@ -168,6 +168,9 @@ function createSchema(database: Database.Database): void {
       group_folder TEXT NOT NULL,
       provider TEXT NOT NULL DEFAULT 'anthropic',
       session_id TEXT NOT NULL,
+      think_level TEXT,
+      model TEXT,
+      show_thinking TEXT,
       PRIMARY KEY (group_folder, provider)
     );
     CREATE TABLE IF NOT EXISTS registered_groups (
@@ -225,6 +228,18 @@ function createSchema(database: Database.Database): void {
     database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN script TEXT`);
   } catch {
     /* column already exists */
+  }
+
+  // Add session-level slash overrides (think_level, model, show_thinking).
+  // Adopts OpenClaw's per-session-override + global-default model: slash
+  // commands write here by default; --default flag writes global config.
+  // See PR #26 (2026-04-24).
+  for (const col of ['think_level', 'model', 'show_thinking']) {
+    try {
+      database.exec(`ALTER TABLE sessions ADD COLUMN ${col} TEXT`);
+    } catch {
+      /* column already exists */
+    }
   }
 
   // Add consecutive_group_missing column for orphan-task detection.
@@ -822,9 +837,68 @@ export function setSession(
   sessionId: string,
   provider: string = 'anthropic',
 ): void {
+  // Preserve any existing session-level overrides (think_level, model,
+  // show_thinking) by using INSERT … ON CONFLICT instead of REPLACE,
+  // which would NULL them out on every session refresh.
   db.prepare(
-    'INSERT OR REPLACE INTO sessions (group_folder, provider, session_id) VALUES (?, ?, ?)',
+    `INSERT INTO sessions (group_folder, provider, session_id)
+       VALUES (?, ?, ?)
+     ON CONFLICT(group_folder, provider)
+       DO UPDATE SET session_id = excluded.session_id`,
   ).run(groupFolder, provider, sessionId);
+}
+
+/**
+ * Per-session slash-command overrides. Each row may carry a think_level /
+ * model / show_thinking value that takes precedence over global config
+ * defaults for THAT chat's runtime invocations. NULL = inherit global default.
+ */
+export interface SessionOverrides {
+  thinkLevel?: string;
+  model?: string;
+  showThinking?: string;
+}
+
+export function getSessionOverrides(
+  groupFolder: string,
+  provider: string = 'anthropic',
+): SessionOverrides {
+  const row = db
+    .prepare(
+      'SELECT think_level, model, show_thinking FROM sessions WHERE group_folder = ? AND provider = ?',
+    )
+    .get(groupFolder, provider) as
+    | { think_level: string | null; model: string | null; show_thinking: string | null }
+    | undefined;
+  if (!row) return {};
+  return {
+    thinkLevel: row.think_level ?? undefined,
+    model: row.model ?? undefined,
+    showThinking: row.show_thinking ?? undefined,
+  };
+}
+
+/**
+ * Set a single session-level override. Pass `null` to clear (inherit global).
+ * Auto-creates the row if no session exists yet (with a placeholder session_id
+ * that will be replaced on next createSession).
+ */
+export function setSessionOverride(
+  groupFolder: string,
+  field: 'think_level' | 'model' | 'show_thinking',
+  value: string | null,
+  provider: string = 'anthropic',
+): void {
+  // Insert a placeholder row if none exists. The placeholder session_id
+  // will be overwritten by setSession() on the next runner createSession.
+  // We use a sentinel UUID so a stale row with no real session can be
+  // distinguished from a live one if needed.
+  db.prepare(
+    `INSERT INTO sessions (group_folder, provider, session_id, ${field})
+       VALUES (?, ?, '__pending__', ?)
+     ON CONFLICT(group_folder, provider)
+       DO UPDATE SET ${field} = excluded.${field}`,
+  ).run(groupFolder, provider, value);
 }
 
 export function deleteSession(groupFolder: string, provider?: string): void {

@@ -40,6 +40,9 @@ afterAll(() => {
 // Mock DB to avoid needing real SQLite for /new and /reset
 vi.mock('./db.js', () => ({
   deleteSession: vi.fn(),
+  getSessionOverrides: vi.fn(() => ({})),
+  setSessionOverride: vi.fn(),
+  getRegisteredGroup: vi.fn(() => undefined),
 }));
 
 // ─── Mock context factory ────────────────────────────────────────────────────
@@ -146,31 +149,50 @@ describe('handleSlashCommand', () => {
     expect(result.handled).toBe(true);
   });
 
-  it('/reasoning flash returns handled and writes "flash" to config', async () => {
+  it('/reasoning flash --default writes "flash" to global config', async () => {
     const ctx = makeCtx();
-    const result = await handleSlashCommand('/reasoning flash', ctx);
+    const result = await handleSlashCommand('/reasoning flash --default', ctx);
     expect(result.handled).toBe(true);
     const { loadConfig } = await import('./config-loader.js');
     expect(loadConfig().agents?.defaults?.showThinking).toBe('flash');
   });
 
-  it('/reasoning on writes "on" (string enum, not boolean) to config', async () => {
+  it('/reasoning on --default writes "on" (string enum, not boolean) to global config', async () => {
     const ctx = makeCtx();
-    await handleSlashCommand('/reasoning on', ctx);
+    await handleSlashCommand('/reasoning on --default', ctx);
     const { loadConfig } = await import('./config-loader.js');
     expect(loadConfig().agents?.defaults?.showThinking).toBe('on');
   });
 
-  it('/reasoning off writes "off" to config', async () => {
+  it('/reasoning off --default writes "off" to global config', async () => {
     const ctx = makeCtx();
-    await handleSlashCommand('/reasoning off', ctx);
+    await handleSlashCommand('/reasoning off --default', ctx);
     const { loadConfig } = await import('./config-loader.js');
     expect(loadConfig().agents?.defaults?.showThinking).toBe('off');
   });
 
+  it('/reasoning flash (no --default) writes session override, leaves global config alone', async () => {
+    // First set a known global value via --default so we can verify it
+    // doesn't get clobbered by a per-session call.
+    await handleSlashCommand('/reasoning on --default', makeCtx());
+    const db = await import('./db.js');
+    (db.setSessionOverride as any).mockClear();
+    const ctx = makeCtx();
+    await handleSlashCommand('/reasoning flash', ctx);
+    expect(db.setSessionOverride).toHaveBeenCalledWith(
+      'test-group',
+      'show_thinking',
+      'flash',
+      expect.any(String),
+    );
+    const { loadConfig } = await import('./config-loader.js');
+    // Global stays 'on' — per-session write does NOT touch nanoclaw.json.
+    expect(loadConfig().agents?.defaults?.showThinking).toBe('on');
+  });
+
   it('/reasoning rejects bogus values (returns not handled, leaves config alone)', async () => {
-    // Set a known good value first
-    await handleSlashCommand('/reasoning flash', makeCtx());
+    // Set a known good value first via --default
+    await handleSlashCommand('/reasoning flash --default', makeCtx());
     const result = await handleSlashCommand('/reasoning bogus', makeCtx());
     // Match regex fails, so it's not handled by the reasoning handler
     // (and should not stomp on the prior value).
@@ -419,16 +441,32 @@ describe('/model + /models', () => {
     expect(calls).toBeGreaterThanOrEqual(1);
   });
 
-  it('/model <valid-id> updates config', async () => {
+  it('/model <valid-id> writes session override (default scope)', async () => {
     const ctx = makeCtx();
+    const db = await import('./db.js');
+    (db.setSessionOverride as any).mockClear();
     const res = await handleSlashCommand('/model claude-opus-4.6', ctx);
     expect(res.handled).toBe(true);
     expect(ctx.channel!.sendMessage).toHaveBeenCalledOnce();
     const msg = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
     expect(msg).toContain('claude-opus-4.6');
     expect(msg).toMatch(/set to/i);
+    // Session-scope write goes to db, NOT to global config.
+    expect(db.setSessionOverride).toHaveBeenCalledWith(
+      'test-group',
+      'model',
+      'claude-opus-4.6',
+      expect.any(String),
+    );
+  });
 
-    // Verify config was actually persisted.
+  it('/model <valid-id> --default updates global config', async () => {
+    const ctx = makeCtx();
+    const res = await handleSlashCommand(
+      '/model claude-opus-4.6 --default',
+      ctx,
+    );
+    expect(res.handled).toBe(true);
     const { loadConfig } = await import('./config-loader.js');
     const cfg = loadConfig();
     expect(cfg.agents?.defaults?.model).toBe('claude-opus-4.6');
@@ -453,10 +491,10 @@ describe('/model + /models', () => {
     expect(msg).toMatch(/disabled/i);
   });
 
-  it('/model accepts <provider>/<id> form and strips prefix on write', async () => {
+  it('/model accepts <provider>/<id> --default form and strips prefix on global write', async () => {
     const ctx = makeCtx();
     const res = await handleSlashCommand(
-      '/model github-copilot/gpt-4.1',
+      '/model github-copilot/gpt-4.1 --default',
       ctx,
     );
     expect(res.handled).toBe(true);
