@@ -443,6 +443,34 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         ) {
           const tp = formatThinkingForChannel(result.thinking, chatJid);
           if (tp) {
+            // We're about to claim progressiveMsgId for this turn's flash
+            // preview. Flush the queryBoundary now so the upcoming first
+            // partial result EDITS this preview (overwriting it) instead
+            // of seeing queryBoundaryPending=true and resetting
+            // progressiveMsgId to undefined (which would orphan the
+            // preview and send the partial as a brand-new message).
+            if (queryBoundaryPending) {
+              queryBoundaryPending = false;
+              progressiveMsgId = undefined;
+              progressiveText = '';
+              lastFinalMsgId = undefined;
+              outputSentToUser = false;
+              if (streamHandle) {
+                try {
+                  await streamHandle.cancel();
+                } catch (err) {
+                  logger.warn(
+                    { chatJid, err: (err as Error).message },
+                    'streamHandle.cancel during flash boundary failed (non-fatal)',
+                  );
+                }
+                streamHandle = undefined;
+              }
+              logger.debug(
+                { chatJid, group: group.name },
+                'IPC turn boundary flushed by flash thinking preview',
+              );
+            }
             const previewText = '🧠 _thinking…_\n\n' + tp.text;
             const sendOpts = { parseMode: tp.parseMode };
             if (!progressiveMsgId) {
