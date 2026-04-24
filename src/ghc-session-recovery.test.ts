@@ -161,4 +161,3 @@ describe('isSessionNotFoundError (recovery decision)', () => {
     expect(isSessionNotFoundError(new Error(''))).toBe(false);
   });
 });
-

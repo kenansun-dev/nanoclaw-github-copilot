@@ -455,10 +455,7 @@ describe('/model + /models', () => {
 
   it('/model accepts <provider>/<id> form and strips prefix on write', async () => {
     const ctx = makeCtx();
-    const res = await handleSlashCommand(
-      '/model github-copilot/gpt-4.1',
-      ctx,
-    );
+    const res = await handleSlashCommand('/model github-copilot/gpt-4.1', ctx);
     expect(res.handled).toBe(true);
     const { loadConfig } = await import('./config-loader.js');
     const cfg = loadConfig();

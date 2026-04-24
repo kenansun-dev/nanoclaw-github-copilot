@@ -86,7 +86,8 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: 'model',
-    description: 'Show or set active model (validates against provider catalog)',
+    description:
+      'Show or set active model (validates against provider catalog)',
     args: '[<model-id>]',
   },
   {
@@ -343,10 +344,8 @@ interface ModelEntry {
   family?: string;
   reasoningEfforts?: string[];
 }
-const modelCatalogCache: Map<
-  string,
-  { ts: number; models: ModelEntry[] }
-> = new Map();
+const modelCatalogCache: Map<string, { ts: number; models: ModelEntry[] }> =
+  new Map();
 const MODEL_CATALOG_TTL_MS = 5 * 60 * 1000;
 
 /**
