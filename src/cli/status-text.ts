@@ -97,11 +97,23 @@ export async function collectStatus(): Promise<StatusInfo> {
       const copilotConfig = path.join(os.homedir(), '.copilot', 'config.json');
       if (fs.existsSync(copilotConfig)) {
         const cc = JSON.parse(fs.readFileSync(copilotConfig, 'utf-8'));
-        if (cc.logged_in_users?.length > 0 || cc.last_logged_in_user) {
+        // Schema compat: snake_case (older CLI) + camelCase (newer CLI,
+        // confirmed on rpi5 2026-04-24). Both shapes coexist in the wild
+        // depending on which copilot CLI version provisioned the file.
+        const loggedIn = cc.loggedInUsers ?? cc.logged_in_users;
+        const lastUser = cc.lastLoggedInUser ?? cc.last_logged_in_user;
+        const tokenBag = cc.copilotTokens ?? cc.copilot_tokens;
+        const userPresent =
+          (Array.isArray(loggedIn) && loggedIn.length > 0) || !!lastUser;
+        const tokenPresent =
+          tokenBag &&
+          typeof tokenBag === 'object' &&
+          Object.keys(tokenBag).length > 0;
+        if (userPresent || tokenPresent) {
           hasAuth = true;
           const user =
-            cc.last_logged_in_user?.login ||
-            cc.logged_in_users?.[0]?.login ||
+            lastUser?.login ||
+            (Array.isArray(loggedIn) && loggedIn[0]?.login) ||
             '';
           authLabel = `${provider} (CLI: ${user})`;
         }

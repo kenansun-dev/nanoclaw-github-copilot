@@ -32,7 +32,15 @@ export function resolveGithubToken(): string | undefined {
 
   const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
 
-  // 2. ~/.copilot/config.json copilot_tokens (CLI file-based storage)
+  // 2. ~/.copilot/config.json copilot tokens (CLI file-based storage)
+  //
+  // Schema compatibility: older copilot CLI versions used snake_case
+  // (`copilot_tokens`, `last_logged_in_user`, `logged_in_users`). Newer
+  // versions (verified on rpi5 2026-04-24, copilot CLI installed via
+  // npm-global) switched to camelCase (`copilotTokens`,
+  // `lastLoggedInUser`, `loggedInUsers`). We read both so both layouts
+  // work; if both are present we prefer the newer camelCase since that's
+  // the active CLI's source of truth.
   const copilotConfigPaths = [
     path.join(home, '.copilot', 'config.json'),
     path.join(home, '.config', 'github-copilot', 'config.json'),
@@ -41,8 +49,9 @@ export function resolveGithubToken(): string | undefined {
     try {
       if (!fs.existsSync(configFile)) continue;
       const config = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
-      if (config.copilot_tokens && typeof config.copilot_tokens === 'object') {
-        for (const [, token] of Object.entries(config.copilot_tokens)) {
+      const tokenBag = config.copilotTokens ?? config.copilot_tokens;
+      if (tokenBag && typeof tokenBag === 'object') {
+        for (const [, token] of Object.entries(tokenBag)) {
           if (typeof token === 'string' && token.length > 4) return token;
         }
       }
@@ -74,7 +83,10 @@ function readWindowsCredential(): string | null {
     try {
       if (fs.existsSync(configPath)) {
         const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        preferredUser = config.last_logged_in_user?.login || null;
+        preferredUser =
+          config.lastLoggedInUser?.login ||
+          config.last_logged_in_user?.login ||
+          null;
       }
     } catch {
       /* ignore */
