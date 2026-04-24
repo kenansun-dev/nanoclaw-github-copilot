@@ -43,12 +43,25 @@ export interface StatusInfo {
   tunnelRunning: boolean;
   workspace: string;
   logFile: string;
+  /** When chatJid was supplied, true if any field came from the per-session
+   * sessions-table override (instead of the global agents.defaults config). */
+  hasSessionOverride?: boolean;
+  /** Names of fields overridden by the session row (model/thinkLevel/showThinking). */
+  sessionOverrideFields?: string[];
+  /** When chatJid was supplied, the chat the status is scoped to. */
+  chatJid?: string;
 }
 
 /**
  * Collect status — fast file-only read. ~5-30ms on a warm Pi.
+ *
+ * @param chatJid — optional. When provided, model/thinkLevel/showThinking
+ *   reflect the per-session sessions-table override for that chat (set via
+ *   slash `/model`, `/think`, `/reasoning`). Falls through to global config
+ *   when no override exists. When omitted, only global defaults are read —
+ *   used by the CLI `nanoclaw status` which has no chat context.
  */
-export async function collectStatus(): Promise<StatusInfo> {
+export async function collectStatus(chatJid?: string): Promise<StatusInfo> {
   const { resolveWorkspace } = await import('../workspace.js');
   const { loadConfig } = await import('../config-loader.js');
   const { resolveGithubToken, isCopilotAuthenticated } =
@@ -61,11 +74,46 @@ export async function collectStatus(): Promise<StatusInfo> {
   const cfg = loadConfig();
   const agent = (cfg.agents?.defaults || {}) as any;
   const provider = agent.provider || 'github-copilot';
-  const model = agent.model || 'default';
+  let model = agent.model || 'default';
   const mode = agent.mode || 'host';
   const agentName = agent.name || 'NanoClaw';
-  const thinkLevel = agent.thinkLevel;
-  const showThinking = agent.showThinking;
+  let thinkLevel = agent.thinkLevel;
+  let showThinking = agent.showThinking;
+
+  // When called from a slash-command in a chat, surface the session-scoped
+  // effective values that the runner actually uses on the next message,
+  // not the bare global config. Without this, `/status` keeps showing the
+  // OLD global values after the user ran `/model X` (per-session) because
+  // PR #27 writes overrides into the sessions table, not into the config.
+  const overrideFields: string[] = [];
+  if (chatJid) {
+    try {
+      const {
+        getEffectiveModel,
+        getEffectiveThinkLevel,
+        getEffectiveShowThinking,
+        resolveSessionScope,
+      } = await import('../session-overrides.js');
+      const { getSessionOverrides } = await import('../db.js');
+      const scope = resolveSessionScope(chatJid);
+      const ov = scope
+        ? getSessionOverrides(scope.groupFolder, scope.provider)
+        : {};
+      const eModel = getEffectiveModel(chatJid);
+      if (eModel) model = eModel;
+      const eThink = getEffectiveThinkLevel(chatJid);
+      if (eThink !== undefined)
+        thinkLevel = eThink === 'off' ? undefined : eThink;
+      const eShow = getEffectiveShowThinking(chatJid);
+      if (eShow !== undefined) showThinking = eShow;
+      if (ov.model) overrideFields.push('model');
+      if (ov.thinkLevel) overrideFields.push('think');
+      if (ov.showThinking) overrideFields.push('reasoning');
+    } catch {
+      /* if session-overrides module fails for any reason fall back to
+         global config — status must never throw. */
+    }
+  }
 
   // Running status from PID file
   let running = false;
@@ -182,6 +230,9 @@ export async function collectStatus(): Promise<StatusInfo> {
     tunnelRunning,
     workspace: ws,
     logFile,
+    chatJid,
+    hasSessionOverride: overrideFields.length > 0,
+    sessionOverrideFields: overrideFields,
   };
 }
 
@@ -211,6 +262,13 @@ export function formatStatusText(s: StatusInfo): string {
           : ''
     } [${s.mode}]`,
   );
+  if (s.hasSessionOverride) {
+    lines.push(
+      `🎯 Scope:     this chat (override: ${s.sessionOverrideFields!.join(', ')})`,
+    );
+  } else if (s.chatJid) {
+    lines.push(`🎯 Scope:     this chat (using global default)`);
+  }
   lines.push(`👤 Agent:     ${s.agentName} (${s.provider})`);
   lines.push(
     `🔑 Auth:      ${s.hasAuth ? `✅ ${s.authLabel}` : '❌ not configured'}`,
@@ -233,7 +291,7 @@ export function formatStatusText(s: StatusInfo): string {
  * handler. Returns a single string suitable for `console.log()` or
  * `channel.sendMessage()`.
  */
-export async function getStatusText(): Promise<string> {
-  const info = await collectStatus();
+export async function getStatusText(chatJid?: string): Promise<string> {
+  const info = await collectStatus(chatJid);
   return formatStatusText(info);
 }

@@ -223,7 +223,7 @@ export async function handleSlashCommand(
     if (ctx.channel) {
       try {
         const { getStatusText } = await import('./cli/status-text.js');
-        const text = await getStatusText();
+        const text = await getStatusText(ctx.chatJid);
         // Wrap in a code fence so emoji-aligned columns render correctly
         // on Telegram/Teams/Discord (their default proportional fonts
         // would otherwise scramble the column alignment).
