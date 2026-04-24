@@ -470,7 +470,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             getConfig().agents?.defaults?.showThinking,
         );
         const streamThinking =
-          (thinkingMode === 'flash' || thinkingMode === 'on') &&
+          thinkingMode === 'flash' &&
           !!channel.editMessage &&
           !channel.usesNativeStreaming;
         // In flash mode, once we've dismissed the thinking preview on the
@@ -489,10 +489,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             flashThinkingDismissed = false;
             lastThinkingRendered = undefined;
           }
-          const tp =
-            thinkingMode === 'flash'
-              ? formatThinkingForFlash(result.thinking, chatJid)
-              : formatThinkingForChannel(result.thinking, chatJid);
+          const tp = formatThinkingForFlash(result.thinking, chatJid);
           if (tp) {
             const sendOpts = tp.parseMode
               ? { parseMode: tp.parseMode }
@@ -558,54 +555,33 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           );
         }
         // Mode behavior on first answer event:
-        //   `on`    -> finalize thinkingMsgId in place (strip ◌ cursor),
-        //              keep it visible. Answer streams into progressiveMsgId.
-        //              Do NOT prepend thinking to result.result anymore.
+        //   `on`    -> prepend thinking to result.result as ONE message
+        //              (legacy behavior, restored 2026-04-25 after PR #27
+        //              regression — the per-delta streaming path is too
+        //              fragile for long thinking text and produced N
+        //              orphan bubbles when editMessage hit any failure).
         //   `flash` -> delete thinkingMsgId (or edit to a single space if
         //              channel lacks deleteMessage). Set flashThinkingDismissed
         //              so trailing reasoning_delta events don't re-open it.
         //   `off`   -> nothing to do.
+        let thinkingParseMode: 'HTML' | 'Markdown' | undefined;
         const thinkingMode = normalizeShowThinking(
           getEffectiveShowThinking(chatJid) ??
             getConfig().agents?.defaults?.showThinking,
         );
-        if (thinkingMsgId && thinkingMode === 'on' && channel.editMessage) {
-          const fullThinking = result.thinking ?? '';
-          // Dedupe: skip the edit when content hasn't changed since the last
-          // render in this turn. Per-partial-chunk re-edits otherwise pile up
-          // (long answers → many partials → N redundant edits → TG 30/sec
-          // rate limit risk). rpi5 review 2026-04-24.
-          if (fullThinking && fullThinking !== lastThinkingRendered) {
-            try {
-              const tp = formatThinkingForChannel(fullThinking, chatJid);
-              if (tp) {
-                const sendOpts = tp.parseMode
-                  ? { parseMode: tp.parseMode }
-                  : undefined;
-                const editedId = await channel.editMessage(
-                  chatJid,
-                  thinkingMsgId,
-                  tp.text,
-                  sendOpts,
-                );
-                if (
-                  typeof editedId === 'string' &&
-                  editedId !== thinkingMsgId
-                ) {
-                  thinkingMsgId = editedId;
-                }
-                lastThinkingRendered = fullThinking;
-              }
-            } catch (err) {
-              logger.warn(
-                { chatJid, err: (err as Error).message },
-                'on-mode thinking finalize failed (non-fatal)',
-              );
-            }
+        if (result.thinking && !result.partial && thinkingMode === 'on') {
+          const tp = formatThinkingForChannel(result.thinking, chatJid);
+          if (tp) {
+            thinkingParseMode = tp.parseMode;
+            const merged = `${tp.text}\n\n${
+              typeof result.result === 'string'
+                ? result.result
+                : JSON.stringify(result.result)
+            }`;
+            result.result = merged;
           }
-          // Keep thinkingMsgId set so trailing reasoning_delta events (rare)
-          // can still update it. Cleared on next turn boundary.
-        } else if (
+        }
+        if (
           thinkingMsgId &&
           thinkingMode === 'flash' &&
           !flashThinkingDismissed
@@ -630,9 +606,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           thinkingMsgId = undefined;
           flashThinkingDismissed = true;
         }
-        // (Pre-2026-04-24 behavior of merging thinking into result.result
-        //  for `on` mode is gone: thinking now lives in its own streamed
-        //  message above the answer.)
+        // (`on` mode now merges thinking into result.result above; the
+        //  streamed-thinking-message design from PR #27 was reverted on
+        //  2026-04-25 after producing orphan-bubble regression on TG.)
         const raw =
           typeof result.result === 'string'
             ? result.result
@@ -647,7 +623,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // future silent stretch on a follow-up message can be acked again.
         queue.notifyAgentOutput(chatJid);
 
-        const sendOpts = undefined;
+        const sendOpts = thinkingParseMode
+          ? { parseMode: thinkingParseMode }
+          : undefined;
 
         if (
           result.partial &&
