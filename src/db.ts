@@ -868,7 +868,11 @@ export function getSessionOverrides(
       'SELECT think_level, model, show_thinking FROM sessions WHERE group_folder = ? AND provider = ?',
     )
     .get(groupFolder, provider) as
-    | { think_level: string | null; model: string | null; show_thinking: string | null }
+    | {
+        think_level: string | null;
+        model: string | null;
+        show_thinking: string | null;
+      }
     | undefined;
   if (!row) return {};
   return {

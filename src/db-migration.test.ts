@@ -133,7 +133,12 @@ describe('database migrations', () => {
       });
 
       // Setting override on a fresh group creates a placeholder row.
-      setSessionOverride('newgrp', 'model', 'claude-opus-4.6', 'github-copilot');
+      setSessionOverride(
+        'newgrp',
+        'model',
+        'claude-opus-4.6',
+        'github-copilot',
+      );
       expect(getSessionOverrides('newgrp', 'github-copilot')).toEqual({
         model: 'claude-opus-4.6',
       });

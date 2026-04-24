@@ -30,7 +30,9 @@ import {
 export type ThinkLevel = 'off' | 'low' | 'medium' | 'high' | 'xhigh';
 export type ShowThinking = 'on' | 'off' | 'flash';
 
-export function providerForChat(chatJid: string): 'github-copilot' | 'anthropic' {
+export function providerForChat(
+  chatJid: string,
+): 'github-copilot' | 'anthropic' {
   const agent = resolveAgentForChat(chatJid);
   return isAgentGHC(agent) ? 'github-copilot' : 'anthropic';
 }
@@ -51,13 +53,17 @@ export function resolveSessionScope(
   return { groupFolder: group.folder, provider: providerForChat(chatJid) };
 }
 
-export function getEffectiveThinkLevel(chatJid: string): ThinkLevel | undefined {
+export function getEffectiveThinkLevel(
+  chatJid: string,
+): ThinkLevel | undefined {
   const scope = resolveSessionScope(chatJid);
   if (scope) {
     const ov = getSessionOverrides(scope.groupFolder, scope.provider);
     if (ov.thinkLevel) return ov.thinkLevel as ThinkLevel;
   }
-  const cfg = getConfig().agents?.defaults?.thinkLevel as ThinkLevel | undefined;
+  const cfg = getConfig().agents?.defaults?.thinkLevel as
+    | ThinkLevel
+    | undefined;
   return cfg;
 }
 

@@ -13,7 +13,11 @@
 import fs from 'fs';
 import path from 'path';
 import { DATA_DIR, getConfig, reloadConfig } from './config.js';
-import { deleteSession, getSessionOverrides, setSessionOverride } from './db.js';
+import {
+  deleteSession,
+  getSessionOverrides,
+  setSessionOverride,
+} from './db.js';
 import {
   getEffectiveThinkLevel,
   getEffectiveModel,
@@ -518,7 +522,9 @@ async function handleModel(
     if (!ctx.channel) return;
     const effective = getEffectiveModel(ctx.chatJid) || '(unset)';
     const overrides = getSessionOverrides(ctx.groupFolder, sessionProvider);
-    const scopeLabel = overrides.model ? '(session override)' : '(global default)';
+    const scopeLabel = overrides.model
+      ? '(session override)'
+      : '(global default)';
     let topModels: ModelEntry[] = [];
     try {
       const catalog = await getModelCatalog(provider);
@@ -687,7 +693,11 @@ async function handleThink(
     if (level === 'off') {
       delete config.agents.defaults.thinkLevel;
     } else {
-      config.agents.defaults.thinkLevel = level as 'low' | 'medium' | 'high' | 'xhigh';
+      config.agents.defaults.thinkLevel = level as
+        | 'low'
+        | 'medium'
+        | 'high'
+        | 'xhigh';
     }
     saveConfig(config, 'slash-command', {
       command: '/think --default',
