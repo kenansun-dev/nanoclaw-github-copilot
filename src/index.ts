@@ -1116,7 +1116,7 @@ interface ThinkingFormat {
  * the dispatcher. Accepts legacy boolean shape (true=on, false=off) and
  * the new string enum ('on' | 'off' | 'flash').
  */
-function normalizeShowThinking(
+export function normalizeShowThinking(
   raw: boolean | 'on' | 'off' | 'flash' | undefined,
 ): 'on' | 'off' | 'flash' {
   if (raw === true) return 'on';
@@ -1129,7 +1129,7 @@ function normalizeShowThinking(
  * Format thinking/reasoning content for channel display.
  * Returns structured data so callers can set parse mode correctly.
  */
-function formatThinkingForChannel(
+export function formatThinkingForChannel(
   thinking: string,
   chatJid: string,
 ): ThinkingFormat | null {
