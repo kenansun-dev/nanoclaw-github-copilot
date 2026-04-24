@@ -389,20 +389,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Progressive send state: track message ID for editMessage on partial updates
   let progressiveMsgId: string | undefined;
   let progressiveText = '';
-  // Flash-mode lane state. The flash UI uses a SINGLE message per turn,
-  // but reasoning_delta and text_delta events from the SDK are
-  // INTERLEAVED, not strictly ordered. Without lane tracking, a late
-  // reasoning_delta arriving after the first answer chunk would overwrite
-  // the partial answer with reasoning text again — the user sees the
-  // message flicker between thinking and answer (kenan's bug report).
+  // Flash-mode reasoning lane: a SEPARATE message id from progressiveMsgId
+  // (which carries the answer). SDK emits reasoning_delta and text_delta
+  // CONCURRENTLY (no ordering guarantee), so sharing one message id caused
+  // the partial answer and reasoning preview to overwrite each other and
+  // visually flicker (kenan reported this twice).
   //
-  // Lane semantics for flash mode:
-  //   answerLaneActive=false: reasoning_delta updates the message
-  //     in place (transient preview). First text_delta flips the lane.
-  //   answerLaneActive=true: reasoning_delta is IGNORED (frozen)
-  //     for the rest of this turn. Only answer text updates the message.
-  // The lane resets at each query boundary (new turn).
-  let flashAnswerLaneActive = false;
+  // Two-lane design (mirrors openclaw's bot-message-dispatch.ts):
+  //   reasoning_delta -> render/edit `flashReasoningMsgId` (independent)
+  //   text_delta      -> render/edit `progressiveMsgId`    (independent)
+  // The reasoning preview is intentionally short (formatThinkingForFlash
+  // single-line, 600-char cap) so leaving it visible alongside the final
+  // answer is fine — no need to delete (channels lack deleteMessage anyway).
+  let flashReasoningMsgId: string | undefined;
   let lastFinalMsgId: string | undefined;
   // Native streaming state: when channel.usesNativeStreaming, we open a
   // StreamHandle on the first partial and feed it cumulative text. The
@@ -455,64 +454,28 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           channel.editMessage &&
           !channel.usesNativeStreaming
         ) {
-          // LANE GUARD: once any answer text has started this turn, freeze
-          // reasoning. SDK emits reasoning_delta and text_delta concurrently
-          // (not strictly ordered), so a late reasoning_delta arriving
-          // after the first answer chunk would otherwise overwrite the
-          // partial answer with thinking text again — the message would
-          // flicker between modes (kenan reported this).
-          if (flashAnswerLaneActive) {
-            return;
-          }
-          // Suppress flash previews after a final has already been sent
-          // this turn (multi-step / tool-call interleaving). Otherwise
-          // each intermediate thinking phase would pop a brand new
-          // message after the visible final, making it look like
-          // "thinking came back" at the end of the turn.
+          // TWO-LANE: reasoning preview lives in `flashReasoningMsgId`,
+          // independent from `progressiveMsgId` (the answer). SDK streams
+          // reasoning_delta and text_delta concurrently — sharing one
+          // message id caused them to overwrite each other (visible flicker,
+          // kenan reported). Now they write to separate messages.
           //
-          // Important: only suppress within the SAME turn. If
-          // queryBoundaryPending is true a new turn is starting and the
-          // outputSentToUser=true is leftover from the previous turn —
-          // we must still render this turn's first preview.
-          const inFlight = !!progressiveMsgId;
-          if (!inFlight && outputSentToUser && !queryBoundaryPending) {
-            return;
+          // The reasoning preview is short (one line, 600-char cap) so
+          // it's fine to leave visible after final. No deletion required
+          // (channels don't expose deleteMessage anyway).
+          //
+          // Boundary handling: a new query (queryBoundaryPending=true)
+          // means a fresh turn — drop the previous turn's reasoning preview
+          // pointer so this turn opens a new one.
+          if (queryBoundaryPending) {
+            flashReasoningMsgId = undefined;
           }
           const tp = formatThinkingForFlash(result.thinking, chatJid);
           if (tp) {
-            // We're about to claim progressiveMsgId for this turn's flash
-            // preview. Flush the queryBoundary now so the upcoming first
-            // partial result EDITS this preview (overwriting it) instead
-            // of seeing queryBoundaryPending=true and resetting
-            // progressiveMsgId to undefined (which would orphan the
-            // preview and send the partial as a brand-new message).
-            if (queryBoundaryPending) {
-              queryBoundaryPending = false;
-              progressiveMsgId = undefined;
-              progressiveText = '';
-              lastFinalMsgId = undefined;
-              outputSentToUser = false;
-              flashAnswerLaneActive = false;
-              if (streamHandle) {
-                try {
-                  await streamHandle.cancel();
-                } catch (err) {
-                  logger.warn(
-                    { chatJid, err: (err as Error).message },
-                    'streamHandle.cancel during flash boundary failed (non-fatal)',
-                  );
-                }
-                streamHandle = undefined;
-              }
-              logger.debug(
-                { chatJid, group: group.name },
-                'IPC turn boundary flushed by flash thinking preview',
-              );
-            }
             const sendOpts = tp.parseMode
               ? { parseMode: tp.parseMode }
               : undefined;
-            if (!progressiveMsgId) {
+            if (!flashReasoningMsgId) {
               await traceSetTyping(
                 channel,
                 chatJid,
@@ -524,11 +487,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 tp.text + ' ◌',
                 sendOpts,
               );
-              progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;
+              flashReasoningMsgId =
+                typeof msgId === 'string' ? msgId : undefined;
             } else {
               await channel.editMessage(
                 chatJid,
-                progressiveMsgId,
+                flashReasoningMsgId,
                 tp.text + ' ◌',
                 sendOpts,
               );
@@ -547,7 +511,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           progressiveText = '';
           lastFinalMsgId = undefined;
           outputSentToUser = false;
-          flashAnswerLaneActive = false;
+          flashReasoningMsgId = undefined;
           // Cancel any leftover native stream from the previous turn so
           // the next turn opens a fresh stream. cancel() is idempotent.
           if (streamHandle) {
@@ -582,6 +546,42 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             result.result = tp.text + '\n\n' + result.result;
           }
         }
+        // FLASH: finalize the reasoning preview — strip the trailing ◌ cursor
+        // so it doesn't look stuck. We do this lazily on the first answer event
+        // so reasoning_delta updates can keep flowing while reasoning is still
+        // streaming. The preview itself stays visible alongside the final answer
+        // (channels lack deleteMessage and the one-line cap makes it harmless).
+        if (
+          flashReasoningMsgId &&
+          thinkingMode === 'flash' &&
+          channel.editMessage
+        ) {
+          try {
+            // Re-render the latest thinking content WITHOUT the cursor.
+            // result.thinking carries the full thinking text on the same
+            // event that delivers result.result.
+            const tp = result.thinking
+              ? formatThinkingForFlash(result.thinking, chatJid)
+              : null;
+            if (tp) {
+              const sendOpts = tp.parseMode
+                ? { parseMode: tp.parseMode }
+                : undefined;
+              await channel.editMessage(
+                chatJid,
+                flashReasoningMsgId,
+                tp.text,
+                sendOpts,
+              );
+            }
+          } catch (err) {
+            logger.warn(
+              { chatJid, err: (err as Error).message },
+              'flash reasoning preview finalize failed (non-fatal)',
+            );
+          }
+          flashReasoningMsgId = undefined;
+        }
         const raw =
           typeof result.result === 'string'
             ? result.result
@@ -611,7 +611,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           // that reject mid-stream. We never call sendMessage/editMessage
           // here, so updateActivity races (the partial+final duplicate
           // bug) cannot occur on this path.
-          flashAnswerLaneActive = true;
           progressiveText = text;
           if (!streamHandle) {
             await traceSetTyping(channel, chatJid, false, 'native-stream-open');
@@ -620,13 +619,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           await streamHandle.chunk(text);
         } else if (result.partial && channel.editMessage) {
           // Delta/partial: accumulate and edit existing message.
-          //
-          // FLASH LANE FLIP: first answer chunk this turn flips the
-          // lane to ACTIVE so any subsequent reasoning_delta is frozen.
-          // If a flash thinking-preview is currently in progressiveMsgId,
-          // this edit overwrites it with answer text — same message,
-          // smooth transition.
-          flashAnswerLaneActive = true;
           progressiveText = text; // delta buffer already accumulated in agent-runner
           if (!progressiveMsgId) {
             // First partial — send new message
@@ -653,7 +645,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           }
         } else {
           // Final message (or channel doesn't support edit)
-          flashAnswerLaneActive = true;
           await traceSetTyping(channel, chatJid, false, 'final-output');
           if (streamHandle) {
             // Native streaming path: close the stream with the final text.
@@ -1280,72 +1271,6 @@ export function formatThinkingForFlash(
       text: `🧠 thinking… ${content}`,
     };
   }
-}
-
-/**
- * Pure state-machine helper for flash-mode lane decisions. Extracted so the
- * dispatcher's interleave-correctness can be unit-tested without booting
- * a full channel/IPC stack.
- *
- * Inputs describe the current dispatch event + lane state; output tells the
- * caller whether to render this event in the flash UI.
- *
- * State diagram:
- *   reasoning_delta + answerLaneActive=false       -> render preview
- *   reasoning_delta + answerLaneActive=true        -> SKIP (frozen)
- *   reasoning_delta + outputSentToUser=true        -> SKIP unless boundaryPending
- *                                                     (post-final intermediate think)
- *   text_delta or final                            -> render + flip lane active
- *   queryBoundaryPending=true                      -> reset before render
- */
-export type FlashLaneEvent =
-  | { kind: 'reasoning_delta' }
-  | { kind: 'text_delta' }
-  | { kind: 'final' };
-
-export interface FlashLaneState {
-  answerLaneActive: boolean;
-  outputSentToUser: boolean;
-  queryBoundaryPending: boolean;
-  inFlightMsg: boolean;
-}
-
-export interface FlashLaneDecision {
-  render: boolean;
-  /** When true, callers should clear per-turn state (queryBoundaryPending
-   *  flush). Returned even when render=false so callers stay consistent. */
-  resetBoundary: boolean;
-  /** When true, callers should set answerLaneActive=true after rendering. */
-  activateAnswerLane: boolean;
-}
-
-export function decideFlashLane(
-  event: FlashLaneEvent,
-  state: FlashLaneState,
-): FlashLaneDecision {
-  if (event.kind === 'reasoning_delta') {
-    if (state.answerLaneActive) {
-      return { render: false, resetBoundary: false, activateAnswerLane: false };
-    }
-    if (
-      !state.inFlightMsg &&
-      state.outputSentToUser &&
-      !state.queryBoundaryPending
-    ) {
-      return { render: false, resetBoundary: false, activateAnswerLane: false };
-    }
-    return {
-      render: true,
-      resetBoundary: state.queryBoundaryPending,
-      activateAnswerLane: false,
-    };
-  }
-  // text_delta / final: always render, always activate lane
-  return {
-    render: true,
-    resetBoundary: state.queryBoundaryPending,
-    activateAnswerLane: true,
-  };
 }
 
 async function main(): Promise<void> {
