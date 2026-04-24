@@ -21,12 +21,3 @@ export function isSessionNotFoundError(err: unknown): boolean {
   return /session\s*not\s*found/i.test(msg);
 }
 
-/**
- * Returns true if the error indicates the model rejected `reasoningEffort`
- * and we should retry without it. Matches existing fallback logic at
- * index.ts ~line 484 (resume) and ~line 504 (create).
- */
-export function isReasoningEffortError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err ?? '');
-  return /reasoning(Effort)?/i.test(msg);
-}

@@ -34,16 +34,10 @@ import * as path from 'node:path';
 // import + helper-name string check below stops matching.
 
 const SESSION_NOT_FOUND_RE = /session\s*not\s*found/i;
-const REASONING_EFFORT_RE = /reasoning(Effort)?/i;
 
 function isSessionNotFoundError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err ?? '');
   return SESSION_NOT_FOUND_RE.test(msg);
-}
-
-function isReasoningEffortError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err ?? '');
-  return REASONING_EFFORT_RE.test(msg);
 }
 
 const HELPER_SOURCE = path.join(
@@ -109,7 +103,6 @@ describe('GHC session-not-found recovery (regression guard on index.ts)', () => 
     expect(src).toMatch(/from '\.\/session-recovery\.js'/);
     expect(src).toMatch(/isSessionNotFoundError\(sendErr\)/);
     expect(helperSrc).toMatch(/\/session\\s\*not\\s\*found\/i/);
-    expect(helperSrc).toMatch(/\/reasoning\(Effort\)\?\/i/);
   });
 });
 
@@ -169,22 +162,3 @@ describe('isSessionNotFoundError (recovery decision)', () => {
   });
 });
 
-describe('isReasoningEffortError (existing fallback logic)', () => {
-  it('matches both reasoning and reasoningEffort variants', () => {
-    expect(
-      isReasoningEffortError(new Error('reasoningEffort not supported')),
-    ).toBe(true);
-    expect(
-      isReasoningEffortError(new Error('Model does not support reasoning')),
-    ).toBe(true);
-  });
-
-  it('does NOT match unrelated errors', () => {
-    expect(isReasoningEffortError(new Error('Session not found: abc'))).toBe(
-      false,
-    );
-    expect(isReasoningEffortError(new Error('Network unreachable'))).toBe(
-      false,
-    );
-  });
-});
