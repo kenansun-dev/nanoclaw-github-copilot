@@ -493,12 +493,24 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               flashReasoningMsgId =
                 typeof msgId === 'string' ? msgId : undefined;
             } else {
-              await channel.editMessage(
+              // Capture return value: editMessage may fall back to
+              // sendMessage (e.g. TG markdown parse failure) and return a
+              // NEW message id. Discarding it would leave
+              // flashReasoningMsgId pointing at a dead message — every
+              // subsequent edit would also fall back, spawning orphan
+              // copies of the thinking preview. (kenan TG repro 2026-04-24)
+              const editedId = await channel.editMessage(
                 chatJid,
                 flashReasoningMsgId,
                 tp.text + ' ◌',
                 sendOpts,
               );
+              if (
+                typeof editedId === 'string' &&
+                editedId !== flashReasoningMsgId
+              ) {
+                flashReasoningMsgId = editedId;
+              }
             }
           }
         }
@@ -571,12 +583,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               const sendOpts = tp.parseMode
                 ? { parseMode: tp.parseMode }
                 : undefined;
-              await channel.editMessage(
+              const editedId = await channel.editMessage(
                 chatJid,
                 flashReasoningMsgId,
                 tp.text,
                 sendOpts,
               );
+              if (
+                typeof editedId === 'string' &&
+                editedId !== flashReasoningMsgId
+              ) {
+                flashReasoningMsgId = editedId;
+              }
             }
           } catch (err) {
             logger.warn(
@@ -639,13 +657,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             );
             progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;
           } else {
-            // Subsequent partial — edit existing message
-            await channel.editMessage(
+            // Subsequent partial — edit existing message. Capture id in
+            // case editMessage falls back to a fresh sendMessage (returns
+            // a new id) so we keep editing the live message instead of
+            // spawning duplicates. (kenan TG repro 2026-04-24)
+            const editedId = await channel.editMessage(
               chatJid,
               progressiveMsgId,
               text + ' ◌',
               sendOpts,
             );
+            if (typeof editedId === 'string' && editedId !== progressiveMsgId) {
+              progressiveMsgId = editedId;
+            }
           }
         } else {
           // Final message (or channel doesn't support edit)
@@ -658,13 +682,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             streamHandle = undefined;
             lastFinalMsgId = typeof msgId === 'string' ? msgId : undefined;
           } else if (progressiveMsgId && channel.editMessage) {
-            // Replace the progressive message with final content
-            await channel.editMessage(
+            // Replace the progressive message with final content. Capture
+            // the (possibly new) id from the editMessage fallback path so
+            // lastFinalMsgId tracks the actual visible message.
+            const editedId = await channel.editMessage(
               chatJid,
               progressiveMsgId,
               text,
               sendOpts,
             );
+            if (typeof editedId === 'string') {
+              lastFinalMsgId = editedId;
+            }
           } else if (
             outputSentToUser &&
             lastFinalMsgId &&
@@ -676,7 +705,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             // (Telegram). Channels with prefersNewMessageForFinal (Teams)
             // skip this branch and send a new message instead, otherwise
             // each subsequent final silently overwrites the previous one.
-            await channel.editMessage(chatJid, lastFinalMsgId, text, sendOpts);
+            const editedId = await channel.editMessage(
+              chatJid,
+              lastFinalMsgId,
+              text,
+              sendOpts,
+            );
+            if (typeof editedId === 'string' && editedId !== lastFinalMsgId) {
+              lastFinalMsgId = editedId;
+            }
           } else {
             const msgId = await channel.sendMessage(chatJid, text, sendOpts);
             lastFinalMsgId = typeof msgId === 'string' ? msgId : undefined;
