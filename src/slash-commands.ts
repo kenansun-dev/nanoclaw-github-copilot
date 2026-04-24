@@ -107,6 +107,12 @@ export const COMMANDS: SlashCommand[] = [
     description: 'List models available from the active provider',
     noArgs: true,
   },
+  {
+    name: 'plugin',
+    description:
+      'Manage plugins: list/install/remove/info/marketplace/reload (parity with `nanoclaw plugin` CLI; CC `/plugin` slash + GHC `nanoclaw plugin` shape)',
+    args: '[list|install|remove|info|marketplace|reload] [args]',
+  },
 ];
 
 // ─── Command execution ───────────────────────────────────────────────────────
@@ -279,6 +285,31 @@ export async function handleSlashCommand(
     return { handled: false };
   }
 
+  // /plugin [sub] [args] — manage plugins from chat. Mirrors the existing
+  // `nanoclaw plugin <sub>` CLI exactly (delegates to runPluginCommand);
+  // captures stdout/stderr and ships back as a code-fenced reply so the
+  // user gets identical output to the CLI without leaving the chat.
+  //
+  // Compatibility intent (kenan 2026-04-25):
+  //   * CC's `/plugin` interactive UI exposes list/install/uninstall/info +
+  //     marketplace browse/add. We expose the SAME set, plus `reload`.
+  //   * GHC's CLI is `gh copilot plugin <sub>`; nanoclaw already ships the
+  //     `nanoclaw plugin <sub>` CLI. The slash command is a thin chat
+  //     surface over that CLI — no behaviour drift.
+  //   * `reload`: re-read nanoclaw.json + run ensureEnabledPluginsInstalled
+  //     + kill the active runner so the next message respawns with the
+  //     refreshed plugin set / MCP server list. Closest to CC's hot-reload
+  //     semantics without requiring per-channel runtime injection.
+  if (input === '/plugin' || input.startsWith('/plugin ')) {
+    const argv = input
+      .slice('/plugin'.length)
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    await handlePluginSlash(argv, ctx);
+    return { handled: true };
+  }
+
   // /wiki [topic|search <query>] — pass to agent with wiki skill context
   if (input === '/wiki' || input.startsWith('/wiki ')) {
     // Ensure wiki directory exists
@@ -303,6 +334,115 @@ export async function handleSlashCommand(
   }
 
   return { handled: false };
+}
+
+// ─── /plugin implementation ───────────────────────────────────────────
+
+/**
+ * Run a function while capturing whatever it writes to console.log /
+ * console.error / process.stdout / process.stderr. Used by /plugin to
+ * reuse the existing CLI handler (which prints to stdout) without
+ * splitting its formatting logic.
+ *
+ * Restores the original handles in a finally so a thrown error inside
+ * fn() can't permanently silence logs. Synchronous capture only — the
+ * captured fn must await all its own work before returning.
+ */
+async function captureStdout(fn: () => Promise<void> | void): Promise<string> {
+  const chunks: string[] = [];
+  const origLog = console.log;
+  const origError = console.error;
+  const origWarn = console.warn;
+  const push = (...args: unknown[]) => {
+    chunks.push(
+      args
+        .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
+        .join(' '),
+    );
+  };
+  console.log = (...args: unknown[]) => push(...args);
+  console.error = (...args: unknown[]) => push(...args);
+  console.warn = (...args: unknown[]) => push(...args);
+  try {
+    await fn();
+  } finally {
+    console.log = origLog;
+    console.error = origError;
+    console.warn = origWarn;
+  }
+  return chunks.join('\n');
+}
+
+async function handlePluginSlash(
+  argv: string[],
+  ctx: SlashCommandContext,
+): Promise<void> {
+  if (!ctx.channel) return;
+  const sub = (argv[0] ?? 'list').toLowerCase();
+
+  // /plugin reload — nanoclaw-specific (no CLI equivalent yet). Re-reads
+  // nanoclaw.json, ensures enabled plugins are installed, and kills the
+  // active runner so the next message respawns with the refreshed plugin
+  // set. Closest analogue to CC's hot-reload (CC reloads MCP servers
+  // when a plugin is added; nanoclaw spawns MCP servers at runner start,
+  // so killing the runner is the only safe path).
+  if (sub === 'reload') {
+    try {
+      reloadConfig();
+      const { ensureEnabledPluginsInstalled } = await import('./cli/plugin.js');
+      const result = await ensureEnabledPluginsInstalled();
+      let killed = false;
+      if (ctx.killActiveRunner) {
+        killed = ctx.killActiveRunner(ctx.chatJid);
+      }
+      const lines: string[] = ['🔄 Plugin reload:'];
+      if (result.installed.length)
+        lines.push(`  installed: ${result.installed.join(', ')}`);
+      if (result.skipped.length)
+        lines.push(`  already-installed: ${result.skipped.join(', ')}`);
+      if (result.failed.length) {
+        for (const f of result.failed) {
+          lines.push(`  ❌ ${f.name}: ${f.error}`);
+        }
+      }
+      if (
+        !result.installed.length &&
+        !result.skipped.length &&
+        !result.failed.length
+      ) {
+        lines.push('  (no enabled plugins in nanoclaw.json)');
+      }
+      lines.push(
+        killed
+          ? '🔌 Active runner killed — next message respawns with refreshed plugins.'
+          : 'ℹ️  No active runner; next message will pick up new plugin set.',
+      );
+      await ctx.channel.sendMessage(ctx.chatJid, lines.join('\n'));
+    } catch (err: any) {
+      await ctx.channel.sendMessage(
+        ctx.chatJid,
+        `❌ Plugin reload failed: ${err?.message ?? err}`,
+      );
+    }
+    return;
+  }
+
+  // All other subcommands delegate verbatim to the existing CLI handler
+  // so behavior stays identical to `nanoclaw plugin <sub>`.
+  try {
+    const { runPluginCommand } = await import('./cli/plugin.js');
+    const out = await captureStdout(() => runPluginCommand(argv));
+    const trimmed = out.trim();
+    const body = trimmed || '(no output)';
+    // Code-fenced so emoji/columns/usage hints render verbatim across
+    // Telegram/Teams/Discord proportional fonts.
+    await ctx.channel.sendMessage(ctx.chatJid, '```\n' + body + '\n```');
+  } catch (err: any) {
+    await ctx.channel.sendMessage(
+      ctx.chatJid,
+      `❌ /plugin ${sub} failed: ${err?.message ?? err}`,
+    );
+  }
 }
 
 // ─── /reasoning implementation ───────────────────────────────────────────────
