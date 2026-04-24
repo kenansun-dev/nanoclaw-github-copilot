@@ -20,6 +20,7 @@ import {
   getConfig,
 } from './config.js';
 import { getEffectiveShowThinking } from './session-overrides.js';
+import { createFlashEditCoalescer } from './flash-edit-coalescer.js';
 import {
   runAgentForChat,
   IS_GHC_PROVIDER,
@@ -420,6 +421,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // text actually grew. Skipping no-op edits keeps us off TG's per-chat
   // 30/sec rate limit. Reset on turn boundary along with thinkingMsgId.
   let lastThinkingRendered: string | undefined;
+  // Flash thinking edit coalescer: see src/flash-edit-coalescer.ts.
+  // Cleared on every turn boundary along with thinkingMsgId.
+  const flashEditCoalescer = createFlashEditCoalescer({
+    channel,
+    chatJid,
+    onOrphan: () => {
+      flashThinkingDismissed = true;
+      thinkingMsgId = undefined;
+    },
+  });
   let lastFinalMsgId: string | undefined;
   // Native streaming state: when channel.usesNativeStreaming, we open a
   // StreamHandle on the first partial and feed it cumulative text. The
@@ -488,6 +499,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             thinkingMsgId = undefined;
             flashThinkingDismissed = false;
             lastThinkingRendered = undefined;
+            flashEditCoalescer.clear();
           }
           const tp = formatThinkingForFlash(result.thinking, chatJid);
           if (tp) {
@@ -503,21 +515,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               );
               thinkingMsgId = typeof msgId === 'string' ? msgId : undefined;
             } else {
-              // Capture return value: editMessage may fall back to
-              // sendMessage (e.g. TG markdown parse failure) and return a
-              // NEW message id. Discarding it would leave thinkingMsgId
-              // pointing at a dead message — every subsequent edit would
-              // also fall back, spawning orphan copies of the thinking
-              // preview. (kenan TG repro 2026-04-24)
-              const editedId = await channel.editMessage(
-                chatJid,
+              // Coalescer path: enqueue the latest text instead of
+              // awaiting editMessage directly. This caps in-flight edits at
+              // one per msgId, drops intermediate frames automatically, and
+              // detects + cleans up the editMessage→sendMessage fallback
+              // orphan instead of letting it stay on screen as a duplicate.
+              // (kenan TG repro 2026-04-25 00:35: long thinking text in
+              // flash mode produced N orphan thinking bubbles.)
+              flashEditCoalescer.enqueue(
                 thinkingMsgId,
                 tp.text + ' ◌',
                 sendOpts,
               );
-              if (typeof editedId === 'string' && editedId !== thinkingMsgId) {
-                thinkingMsgId = editedId;
-              }
             }
           }
         }
@@ -536,6 +545,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           thinkingMsgId = undefined;
           flashThinkingDismissed = false;
           lastThinkingRendered = undefined;
+          flashEditCoalescer.clear();
           // Cancel any leftover native stream from the previous turn so
           // the next turn opens a fresh stream. cancel() is idempotent.
           if (streamHandle) {
@@ -586,6 +596,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           thinkingMode === 'flash' &&
           !flashThinkingDismissed
         ) {
+          // Drain coalescer first: a pending edit on this msgId would
+          // race with the delete (delete succeeds → edit hits a deleted
+          // msg → logs warn, harmless but noisy). Also remove the slot so
+          // any trailing reasoning_delta that sneaks past the
+          // flashThinkingDismissed gate is a no-op.
+          await flashEditCoalescer.drain(thinkingMsgId);
           // Flash spec (kenan 2026-04-24): "thinking 内容删掉".
           // Try deleteMessage first; fall back to editing to a single
           // space (channels reject empty text) if the channel doesn't
