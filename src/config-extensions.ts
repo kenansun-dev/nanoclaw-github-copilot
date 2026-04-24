@@ -77,9 +77,14 @@ function normalizeModelForProvider(model: string, provider: string): string {
       'claude-sonnet-4': 'claude-sonnet-4-6',
       'claude-opus-4': 'claude-opus-4-6',
       'claude-opus-4.7': 'claude-opus-4-7',
+      'claude-opus-4.6': 'claude-opus-4-6',
+      'claude-sonnet-4.6': 'claude-sonnet-4-6',
       'claude-sonnet-4.5': 'claude-sonnet-4-5',
       'claude-opus-4.5': 'claude-opus-4-5',
       'claude-haiku-4.5': 'claude-haiku-4-5',
+      sonnet: 'claude-sonnet-4-6',
+      opus: 'claude-opus-4-6',
+      haiku: 'claude-haiku-4-5',
     };
     return ghcToCc[model.toLowerCase()] || model;
   }
@@ -127,7 +132,10 @@ export function getAgentImage(agent: AgentConfig): string {
 export function getAgentModelName(agent: AgentConfig): string {
   const model = agent.model || '';
   const slash = model.indexOf('/');
-  return slash > 0 ? model.substring(slash + 1) : model;
+  const raw = slash > 0 ? model.substring(slash + 1) : model;
+  // Resolve provider from agent (explicit field wins, else parsed from model)
+  const provider = agent.provider || getProvider(model);
+  return normalizeModelForProvider(raw, provider);
 }
 
 export function getAgentProvider(agent: AgentConfig): string {
@@ -229,27 +237,33 @@ export interface VolumeMount {
 }
 
 /**
- * Build GHC-specific extra volume mounts (skills, mcp.json).
- * Returns empty array for CC provider.
+ * Build provider-specific extra volume mounts.
+ * - GHC-only: skills/, mcp.json (consumed by agent-runner-ghc).
+ * - All providers: plugin directories from 3 sources (workspace, ~/.copilot, ~/.claude).
+ *   CC consumes via additionalDirectories; GHC consumes via --plugin-dir.
  */
 export function buildProviderMounts(chatJid?: string): VolumeMount[] {
   const agent = chatJid ? resolveAgentForChat(chatJid) : undefined;
   const agentIsGHC = agent ? isAgentGHC(agent) : IS_GHC_PROVIDER;
-  if (!agentIsGHC) return [];
 
   const ws = resolveWorkspace();
   const mounts: VolumeMount[] = [];
 
-  // User skills directory
-  const skillsDir = path.join(ws, 'skills');
-  if (fs.existsSync(skillsDir)) {
-    mounts.push({
-      hostPath: skillsDir,
-      containerPath: '/workspace/skills',
-      readonly: true,
-    });
+  // GHC-only mounts: skills/ (agent-runner-ghc reads from /workspace/skills)
+  if (agentIsGHC) {
+    const skillsDir = path.join(ws, 'skills');
+    if (fs.existsSync(skillsDir)) {
+      mounts.push({
+        hostPath: skillsDir,
+        containerPath: '/workspace/skills',
+        readonly: true,
+      });
+    }
   }
-  // MCP config
+
+  // mcp.json: mount for both CC and GHC sandbox so user remote MCP servers
+  // work in sandbox mode. Host-mode reads mcp.json directly via host-runner's
+  // NANOCLAW_MCP_CONFIG env (with auth tokens resolved).
   const mcpConfig = path.join(ws, 'mcp.json');
   if (fs.existsSync(mcpConfig)) {
     mounts.push({
@@ -259,37 +273,39 @@ export function buildProviderMounts(chatJid?: string): VolumeMount[] {
     });
   }
 
-  // Plugin directories — mount from 3 sources
-  const pluginDirs: string[] = [];
+  // Plugin directories — mount from 3 sources for ALL providers (CC + GHC).
+  // env NANOCLAW_PLUGIN_DIRS is set unconditionally in container-runner; without
+  // these mounts CC sandbox would silently drop all plugins (paths nonexistent).
   const pluginSources = [
     path.join(ws, 'plugins'),
     path.join(os.homedir(), '.copilot', 'plugins'),
     path.join(os.homedir(), '.claude', 'plugins'),
   ];
+  const seenContainerPaths = new Set<string>();
   for (const src of pluginSources) {
-    if (fs.existsSync(src)) {
-      try {
-        for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-          if (entry.isDirectory()) {
-            const pluginPath = path.join(src, entry.name);
-            if (
-              fs.existsSync(path.join(pluginPath, 'plugin.json')) ||
-              fs.existsSync(
-                path.join(pluginPath, '.claude-plugin', 'plugin.json'),
-              )
-            ) {
-              pluginDirs.push(pluginPath);
-              mounts.push({
-                hostPath: pluginPath,
-                containerPath: `/workspace/plugins/${entry.name}`,
-                readonly: true,
-              });
-            }
-          }
+    if (!fs.existsSync(src)) continue;
+    try {
+      for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const pluginPath = path.join(src, entry.name);
+        if (
+          !fs.existsSync(path.join(pluginPath, 'plugin.json')) &&
+          !fs.existsSync(path.join(pluginPath, '.claude-plugin', 'plugin.json'))
+        ) {
+          continue;
         }
-      } catch {
-        /* skip */
+        const containerPath = `/workspace/plugins/${entry.name}`;
+        // Earlier sources win on name collision (workspace > .copilot > .claude)
+        if (seenContainerPaths.has(containerPath)) continue;
+        seenContainerPaths.add(containerPath);
+        mounts.push({
+          hostPath: pluginPath,
+          containerPath,
+          readonly: true,
+        });
       }
+    } catch {
+      /* skip unreadable dirs */
     }
   }
 

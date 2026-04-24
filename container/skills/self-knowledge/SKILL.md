@@ -89,8 +89,13 @@ cat /workspace/project/nanoclaw.json 2>/dev/null
 | `nanoclaw channel list` | List configured channels |
 | `nanoclaw provider login` | Login to LLM provider |
 | `nanoclaw provider list` | List available providers |
-| `nanoclaw plugin install <path>` | Install a plugin |
+| `nanoclaw plugin install <spec>` | Install a plugin (spec: `name@marketplace`, `owner/repo[:subdir]`, git URL, or local path) |
 | `nanoclaw plugin list` | List installed plugins |
+| `nanoclaw plugin remove <name>` | Uninstall a plugin (removes from `plugins.enabled[]` + deletes dir) |
+| `nanoclaw plugin marketplace add <source>` | Register a plugin marketplace |
+| `nanoclaw plugin marketplace list` | List registered marketplaces |
+| `nanoclaw plugin marketplace browse [name]` | Browse plugins available in a marketplace |
+| `nanoclaw plugin marketplace remove <name>` | Unregister a marketplace |
 | `nanoclaw addon list` | List registered addons |
 | `nanoclaw config get [path]` | Read config value |
 | `nanoclaw config set <path> <value>` | Set config value |
@@ -181,6 +186,8 @@ These are your custom tools (provided by NanoClaw IPC MCP server):
 | `nanoclaw-register_group` | Register a new chat/group (main only) |
 | `nanoclaw-react` | React to a message with an emoji |
 | `nanoclaw-pdf-read_pdf` | Extract text from a PDF file |
+| `nanoclaw_plugin` | List/install/uninstall plugins (mutating actions = main chat only) |
+| `nanoclaw_control` | Restart daemon, reload config, or set a config field (main chat only) |
 
 Plus GitHub MCP tools (when `githubMcp` enabled): `web_search`, `web_fetch`, `issue_read`, `search_code`, etc.
 
@@ -216,16 +223,64 @@ If auth is needed and the user hasn't logged in, the agent will receive a `login
 
 ## Plugin system
 
-NanoClaw supports plugins (dual manifest for GHC + CC compatibility):
+NanoClaw supports plugins (dual manifest for GHC + CC compatibility). A
+plugin is a directory bundling skills + MCP servers + agents declared
+via a `plugin.json` manifest (root or `.claude-plugin/plugin.json`).
 
-```bash
-nanoclaw plugin install /path/to/plugin
-nanoclaw plugin list
-nanoclaw plugin remove <name>
-nanoclaw plugin info <name>
+### Declarative config (`plugins` block in `nanoclaw.json`)
+
+```json
+{
+  "plugins": {
+    "enabled": [
+      { "name": "workiq", "source": "microsoft/work-iq" },
+      { "name": "local-tool", "source": "/abs/path/to/plugin", "autoInstall": false }
+    ],
+    "marketplaces": [
+      { "name": "acme", "source": "https://github.com/acme/marketplace" }
+    ],
+    "directories": ["~/.nanoclaw/plugins"]
+  }
+}
 ```
 
-Plugin directories: `~/.nanoclaw/plugins/`, `~/.copilot/plugins/`, `~/.claude/plugins/`
+On daemon startup, every entry in `plugins.enabled[]` is auto-installed
+if the plugin's target directory does not yet exist (idempotent).
+`autoInstall: false` skips fetch — useful for marking a plugin as
+declared on this machine but pre-populated externally.
+
+### Source spec formats (parseInstallSpec accepts all of these)
+
+- `name@marketplace` — plugin from a registered marketplace catalog
+- `owner/repo` or `owner/repo:subdir` — GitHub shorthand
+- `https://...git`, `git@...` — full git URL
+- `/abs/path` or `./relative` or `~/path` — local directory
+
+### CLI
+
+```bash
+nanoclaw plugin install <spec>
+nanoclaw plugin list
+nanoclaw plugin remove <name>
+nanoclaw plugin marketplace add|list|browse|remove
+```
+
+### MCP tool: `nanoclaw_plugin`
+
+From inside chat, the agent can call `nanoclaw_plugin` directly:
+
+- `action: list` — enumerate installed plugins (works in any chat)
+- `action: install` with `source` — main chat only
+- `action: uninstall` with `name` — main chat only
+- `action: marketplace_list` — enumerate marketplaces (works in any chat)
+
+After installing a plugin that ships **MCP servers**, restart the
+daemon with `nanoclaw_control(restart)` so the new servers register.
+Pure-skill plugins are picked up on the next agent invocation without
+a restart.
+
+Plugin directories searched: `~/.nanoclaw/plugins/`,
+`~/.copilot/plugins/`, `~/.claude/plugins/`.
 
 ## Logging
 

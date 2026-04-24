@@ -165,8 +165,10 @@ function createSchema(database: Database.Database): void {
       value TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS sessions (
-      group_folder TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL
+      group_folder TEXT NOT NULL,
+      provider TEXT NOT NULL DEFAULT 'anthropic',
+      session_id TEXT NOT NULL,
+      PRIMARY KEY (group_folder, provider)
     );
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
@@ -186,6 +188,36 @@ function createSchema(database: Database.Database): void {
     );
   } catch {
     /* column already exists */
+  }
+
+  // Migration: sessions table from (group_folder PK) to (group_folder, provider PK)
+  // Old rows are assumed to be 'anthropic' since CC was the original default.
+  // Existing GHC sessions in old schema get tagged 'anthropic' which may cause
+  // a one-time fresh session on next GHC use — acceptable trade-off vs trying
+  // to retro-detect provider from session UUID format.
+  try {
+    const cols = database
+      .prepare(`PRAGMA table_info(sessions)`)
+      .all() as Array<{ name: string }>;
+    const hasProvider = cols.some((c) => c.name === 'provider');
+    if (!hasProvider) {
+      // Rebuild table with composite PK (SQLite can't change PK in place)
+      database.exec(`
+        CREATE TABLE sessions_new (
+          group_folder TEXT NOT NULL,
+          provider TEXT NOT NULL DEFAULT 'anthropic',
+          session_id TEXT NOT NULL,
+          PRIMARY KEY (group_folder, provider)
+        );
+        INSERT INTO sessions_new (group_folder, provider, session_id)
+          SELECT group_folder, 'anthropic', session_id FROM sessions;
+        DROP TABLE sessions;
+        ALTER TABLE sessions_new RENAME TO sessions;
+      `);
+    }
+  } catch (err) {
+    // If migration fails (e.g. fresh DB just created with new schema), ignore.
+    void err;
   }
 
   // Add script column if it doesn't exist (migration for existing DBs)
@@ -764,30 +796,67 @@ export function setRouterState(key: string, value: string): void {
 
 // --- Session accessors ---
 
-export function getSession(groupFolder: string): string | undefined {
+/**
+ * Get the agent CLI session id for a (group, provider) tuple.
+ *
+ * Each provider stores its sessions in a different on-disk location
+ * (CC: ~/.claude/sessions/, GHC: ~/.copilot/sessions/), so a sessionId
+ * from one provider is meaningless to the other. We key by both so a
+ * group can independently resume CC and GHC sessions when its bound
+ * agent is switched.
+ */
+export function getSession(
+  groupFolder: string,
+  provider: string = 'anthropic',
+): string | undefined {
   const row = db
-    .prepare('SELECT session_id FROM sessions WHERE group_folder = ?')
-    .get(groupFolder) as { session_id: string } | undefined;
+    .prepare(
+      'SELECT session_id FROM sessions WHERE group_folder = ? AND provider = ?',
+    )
+    .get(groupFolder, provider) as { session_id: string } | undefined;
   return row?.session_id;
 }
 
-export function setSession(groupFolder: string, sessionId: string): void {
+export function setSession(
+  groupFolder: string,
+  sessionId: string,
+  provider: string = 'anthropic',
+): void {
   db.prepare(
-    'INSERT OR REPLACE INTO sessions (group_folder, session_id) VALUES (?, ?)',
-  ).run(groupFolder, sessionId);
+    'INSERT OR REPLACE INTO sessions (group_folder, provider, session_id) VALUES (?, ?, ?)',
+  ).run(groupFolder, provider, sessionId);
 }
 
-export function deleteSession(groupFolder: string): void {
-  db.prepare('DELETE FROM sessions WHERE group_folder = ?').run(groupFolder);
+export function deleteSession(groupFolder: string, provider?: string): void {
+  if (provider) {
+    db.prepare(
+      'DELETE FROM sessions WHERE group_folder = ? AND provider = ?',
+    ).run(groupFolder, provider);
+  } else {
+    // Provider omitted = clear all providers for this group (legacy behavior)
+    db.prepare('DELETE FROM sessions WHERE group_folder = ?').run(groupFolder);
+  }
 }
 
-export function getAllSessions(): Record<string, string> {
+/**
+ * Returns all sessions as a nested map: groupFolder → provider → sessionId.
+ *
+ * Older callers expecting `Record<groupFolder, sessionId>` should migrate
+ * to use `getSession(folder, provider)` directly. The flat shape couldn't
+ * represent dual-provider state.
+ */
+export function getAllSessions(): Record<string, Record<string, string>> {
   const rows = db
-    .prepare('SELECT group_folder, session_id FROM sessions')
-    .all() as Array<{ group_folder: string; session_id: string }>;
-  const result: Record<string, string> = {};
+    .prepare('SELECT group_folder, provider, session_id FROM sessions')
+    .all() as Array<{
+    group_folder: string;
+    provider: string;
+    session_id: string;
+  }>;
+  const result: Record<string, Record<string, string>> = {};
   for (const row of rows) {
-    result[row.group_folder] = row.session_id;
+    if (!result[row.group_folder]) result[row.group_folder] = {};
+    result[row.group_folder][row.provider] = row.session_id;
   }
   return result;
 }
@@ -959,7 +1028,9 @@ function migrateJsonState(): void {
   > | null;
   if (sessions) {
     for (const [folder, sessionId] of Object.entries(sessions)) {
-      setSession(folder, sessionId);
+      // Old sessions.json predates per-provider sessions — assume CC
+      // since CC was the original (and only) provider at that time.
+      setSession(folder, sessionId, 'anthropic');
     }
   }
 

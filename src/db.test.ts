@@ -848,3 +848,68 @@ describe('getMessageById', () => {
     expect(getMessageById('tg:8731187021', 'msg-300')).toBeUndefined();
   });
 });
+
+describe('per-provider session keying (Q1: GHC vs CC switch)', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+  });
+
+  it('stores and retrieves sessions independently per provider', async () => {
+    const { setSession, getSession } = await import('./db.js');
+    setSession('group-A', 'cc-uuid-123', 'anthropic');
+    setSession('group-A', 'ghc-uuid-456', 'github-copilot');
+    expect(getSession('group-A', 'anthropic')).toBe('cc-uuid-123');
+    expect(getSession('group-A', 'github-copilot')).toBe('ghc-uuid-456');
+  });
+
+  it('upserts within a provider key (last write wins)', async () => {
+    const { setSession, getSession } = await import('./db.js');
+    setSession('group-B', 'first', 'anthropic');
+    setSession('group-B', 'second', 'anthropic');
+    expect(getSession('group-B', 'anthropic')).toBe('second');
+  });
+
+  it('returns undefined when provider has no session for the group', async () => {
+    const { setSession, getSession } = await import('./db.js');
+    setSession('group-C', 'cc-only', 'anthropic');
+    expect(getSession('group-C', 'github-copilot')).toBeUndefined();
+  });
+
+  it('deleteSession with provider only clears that provider', async () => {
+    const { setSession, getSession, deleteSession } = await import('./db.js');
+    setSession('group-D', 'cc-uuid', 'anthropic');
+    setSession('group-D', 'ghc-uuid', 'github-copilot');
+    deleteSession('group-D', 'anthropic');
+    expect(getSession('group-D', 'anthropic')).toBeUndefined();
+    expect(getSession('group-D', 'github-copilot')).toBe('ghc-uuid');
+  });
+
+  it('deleteSession without provider clears all providers for the group', async () => {
+    const { setSession, getSession, deleteSession } = await import('./db.js');
+    setSession('group-E', 'cc-uuid', 'anthropic');
+    setSession('group-E', 'ghc-uuid', 'github-copilot');
+    deleteSession('group-E');
+    expect(getSession('group-E', 'anthropic')).toBeUndefined();
+    expect(getSession('group-E', 'github-copilot')).toBeUndefined();
+  });
+
+  it('getAllSessions returns nested provider map', async () => {
+    const { setSession, getAllSessions } = await import('./db.js');
+    setSession('group-F', 'cc-1', 'anthropic');
+    setSession('group-F', 'ghc-1', 'github-copilot');
+    setSession('group-G', 'ghc-2', 'github-copilot');
+    const all = getAllSessions();
+    expect(all['group-F']).toEqual({
+      anthropic: 'cc-1',
+      'github-copilot': 'ghc-1',
+    });
+    expect(all['group-G']).toEqual({ 'github-copilot': 'ghc-2' });
+  });
+
+  it('default provider is anthropic when omitted', async () => {
+    const { setSession, getSession } = await import('./db.js');
+    setSession('group-H', 'default-cc');
+    expect(getSession('group-H')).toBe('default-cc');
+    expect(getSession('group-H', 'anthropic')).toBe('default-cc');
+  });
+});

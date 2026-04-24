@@ -20,7 +20,7 @@ export interface AgentConfig {
   hasOwnNumber: boolean;
   mode: 'host' | 'sandbox';
   thinkLevel?: 'low' | 'medium' | 'high' | 'xhigh'; // GHC: --effort flag; CC: --thinking flag
-  showThinking?: boolean; // Show thinking/reasoning in channel messages (default: false)
+  showThinking?: boolean | 'on' | 'off' | 'flash'; // Show thinking/reasoning in channel messages. boolean kept for back-compat (true=on, false=off). 'flash' = stream thinking as transient placeholder, replaced by final answer (Discord-style edit-only). Default: off.
   timeoutSeconds?: number; // Max agent run duration in seconds (default: 600 = 10 min). 0 = no timeout.
   githubMcp?: boolean; // GHC: register GitHub MCP server (web_search, issues, PRs, etc.)
 }
@@ -172,6 +172,74 @@ export interface NanoclawConfig {
     thinkLevel?: 'low' | 'medium' | 'high' | 'xhigh';
     name?: string;
   };
+  /**
+   * Plugin configuration. Plugins extend nanoclaw with skills, MCP servers,
+   * agents, and hooks. Format is intentionally compatible with both Claude Code
+   * (`.claude-plugin/plugin.json` + `marketplace.json`) and GitHub Copilot CLI
+   * (`copilot plugin` semantics: `plugin@marketplace`, `owner/repo`, URLs).
+   *
+   * - `enabled[]`  — declarative list of plugins to ensure-installed at startup
+   *                  (similar to CC's `enabledPlugins` + `autoInstallEnabledPlugins`).
+   * - `marketplaces[]` — registered marketplaces (CC + GHC use the same
+   *                  `marketplace.json` catalog format under `.claude-plugin/`).
+   *                  Two defaults are seeded automatically:
+   *                  `github/copilot-plugins` and `github/awesome-copilot`.
+   * - `directories[]` — extra local directories scanned for plugin manifests
+   *                  (in addition to `<workspace>/plugins/`).
+   */
+  plugins?: {
+    /**
+     * Declarative list of plugins to ensure-installed at startup.
+     * Renamed from `enabled` in v8 to align with CC's `enabledPlugins`.
+     */
+    enabledPlugins?: PluginEnabledEntry[];
+    /**
+     * Registered marketplaces. Renamed from `marketplaces` in v8 to align
+     * with CC's `extraKnownMarketplaces`.
+     */
+    extraKnownMarketplaces?: PluginMarketplaceEntry[];
+    directories?: string[];
+    /** @deprecated v8 — renamed to `enabledPlugins`. Read-only back-compat. */
+    enabled?: PluginEnabledEntry[];
+    /** @deprecated v8 — renamed to `extraKnownMarketplaces`. Read-only back-compat. */
+    marketplaces?: PluginMarketplaceEntry[];
+  };
+}
+
+/**
+ * Declarative plugin entry — "this plugin should be installed".
+ * On nanoclaw startup the host-runner ensures each entry is present under
+ * `<workspace>/plugins/<name>/`, installing it if missing.
+ *
+ * Source formats (parsed in this order, mirroring `copilot plugin install`):
+ *   - `name@marketplace`            — pull from a registered marketplace
+ *   - `owner/repo`                  — `https://github.com/owner/repo`
+ *   - `owner/repo:path/to/sub`      — subdirectory inside a repo
+ *   - `https://...` / `git@...`     — raw git URL
+ *   - `./local/path` / `/abs/path`  — local directory
+ */
+export interface PluginEnabledEntry {
+  /** Plugin name as installed under `<workspace>/plugins/<name>/`. */
+  name: string;
+  /** Where to install from. See spec formats above. */
+  source: string;
+  /** Optional git ref (branch / tag / sha). Default: marketplace's pinned version, or `HEAD`. */
+  version?: string;
+  /** Whether to auto-install if missing. Default: true. */
+  autoInstall?: boolean;
+  /** Whether the plugin is enabled (loaded at runtime). Default: true. */
+  enabled?: boolean;
+}
+
+/**
+ * Registered marketplace entry. A marketplace is a git repo (or local path)
+ * containing `.claude-plugin/marketplace.json` (CC + GHC compatible).
+ */
+export interface PluginMarketplaceEntry {
+  /** Marketplace name (used as `plugin@<name>` install spec). */
+  name: string;
+  /** Source URL or `owner/repo` short form, or local path. */
+  source: string;
 }
 
 // ─── Defaults ────────────────────────────────────────────────────────────────
@@ -213,6 +281,16 @@ const DEFAULTS: NanoclawConfig = {
   },
   chats: {},
   addons: {},
+  plugins: {
+    enabledPlugins: [],
+    // Default marketplaces mirror GHC's built-ins so the experience matches
+    // `copilot plugin install plugin@copilot-plugins` out-of-the-box.
+    extraKnownMarketplaces: [
+      { name: 'copilot-plugins', source: 'github/copilot-plugins' },
+      { name: 'awesome-copilot', source: 'github/awesome-copilot' },
+    ],
+    directories: [],
+  },
   pairing: { mode: 'disabled' },
   credentialProxy: { port: 3001 },
   logLevel: 'info',
@@ -506,7 +584,7 @@ function distributeChatsToChannels(
 
 // ─── Config Migration ────────────────────────────────────────────────────────
 
-const CURRENT_CONFIG_VERSION = 5;
+const CURRENT_CONFIG_VERSION = 8;
 
 /**
  * Migrate config from older versions. Returns true if migration occurred.
@@ -737,6 +815,106 @@ function migrateConfig(config: Record<string, any>): boolean {
     }
 
     config.configVersion = 5;
+    migrated = true;
+  }
+
+  if (version < 6) {
+    // v6: introduce `plugins` config block. Seeds default marketplaces so
+    // `nanoclaw plugin install <name>@copilot-plugins` works out-of-the-box,
+    // and creates an empty `enabled[]` so users can declaratively pin
+    // plugins in nanoclaw.json (akin to CC's `enabledPlugins` /
+    // `autoInstallEnabledPlugins`). Existing user-defined `plugins` blocks
+    // are preserved — we only seed missing keys.
+    if (!config.plugins || typeof config.plugins !== 'object') {
+      config.plugins = {};
+    }
+    if (
+      !Array.isArray(config.plugins.enabledPlugins) &&
+      !Array.isArray(config.plugins.enabled)
+    ) {
+      config.plugins.enabledPlugins = [];
+    }
+    if (
+      !Array.isArray(config.plugins.extraKnownMarketplaces) &&
+      !Array.isArray(config.plugins.marketplaces)
+    ) {
+      config.plugins.extraKnownMarketplaces = [
+        { name: 'copilot-plugins', source: 'github/copilot-plugins' },
+        { name: 'awesome-copilot', source: 'github/awesome-copilot' },
+      ];
+    }
+    if (!Array.isArray(config.plugins.directories)) {
+      config.plugins.directories = [];
+    }
+    config.configVersion = 6;
+    migrated = true;
+  }
+
+  if (version < 7) {
+    // v7: purge legacy tui:* and 'other' placeholders from root `chats`.
+    //
+    // Reason: the TUI channel auto-registers `tui:default` on connect
+    // (see channels/tui.ts), so config entries for it are pure noise.
+    // Pre-v5 left tui:1, tui:2, ... behind; v5 consolidated to
+    // tui:default but kept it in root `chats`. v7 finishes the cleanup
+    // by removing all tui:* (auto-registered on next TUI connect) plus
+    // the deprecated `other` placeholder.
+    //
+    // Real-jid entries (telegram:*, discord:*, etc.) are LEFT IN PLACE
+    // — callers (loadConfig:684+) preserve them as orphans when their
+    // channel has no config block, and reconciliation in cli.ts owns
+    // the migration to channels.<name>.chats[].
+    if (config.chats && typeof config.chats === 'object') {
+      const keys = Object.keys(config.chats);
+      let removed = 0;
+      for (const jid of keys) {
+        // tui:* (any subkey) — tui channel auto-registers tui:default
+        if (jid.startsWith('tui:')) {
+          delete config.chats[jid];
+          removed++;
+          continue;
+        }
+        // 'other' placeholder — deprecated, never wired up
+        if (jid === 'other') {
+          delete config.chats[jid];
+          removed++;
+          continue;
+        }
+      }
+      if (removed > 0) {
+        logger.info(
+          { removed },
+          'v7 migration: purged legacy tui:* and other entries from root chats',
+        );
+      }
+    }
+    config.configVersion = 7;
+    migrated = true;
+  }
+
+  if (version < 8) {
+    // v8: rename plugin config fields to match CC's nomenclature.
+    //   enabled        → enabledPlugins
+    //   marketplaces   → extraKnownMarketplaces
+    // Field semantics unchanged. Reads are tolerant of either name in
+    // loadConfig (we re-write to canonical names on first save).
+    if (config.plugins && typeof config.plugins === 'object') {
+      const p = config.plugins as Record<string, any>;
+      if (Array.isArray(p.enabled) && !Array.isArray(p.enabledPlugins)) {
+        p.enabledPlugins = p.enabled;
+        delete p.enabled;
+        migrated = true;
+      }
+      if (
+        Array.isArray(p.marketplaces) &&
+        !Array.isArray(p.extraKnownMarketplaces)
+      ) {
+        p.extraKnownMarketplaces = p.marketplaces;
+        delete p.marketplaces;
+        migrated = true;
+      }
+    }
+    config.configVersion = 8;
     migrated = true;
   }
 
@@ -1281,4 +1459,58 @@ function migrateSecretsToEnv(config: any): void {
     saveConfig(config, 'secret-migration', { migratedKeys: lines.length });
     logger.info('Stripped secrets from nanoclaw.json');
   }
+}
+
+// ─── Plugin config field accessors (CC-aligned naming) ──────────────────────
+// v8 renamed `enabled` → `enabledPlugins` and `marketplaces` →
+// `extraKnownMarketplaces` to match CCs nomenclature. These helpers tolerate
+// either field name on read so old configs that have not yet been re-saved
+// still work.
+
+export function getEnabledPlugins(
+  config: Pick<NanoclawConfig, 'plugins'>,
+): PluginEnabledEntry[] {
+  const p = config.plugins as
+    | (NonNullable<NanoclawConfig['plugins']> & {
+        enabled?: PluginEnabledEntry[];
+      })
+    | undefined;
+  if (!p) return [];
+  if (Array.isArray(p.enabledPlugins)) return p.enabledPlugins;
+  if (Array.isArray(p.enabled)) return p.enabled;
+  return [];
+}
+
+export function getExtraKnownMarketplaces(
+  config: Pick<NanoclawConfig, 'plugins'>,
+): PluginMarketplaceEntry[] {
+  const p = config.plugins as
+    | (NonNullable<NanoclawConfig['plugins']> & {
+        marketplaces?: PluginMarketplaceEntry[];
+      })
+    | undefined;
+  if (!p) return [];
+  if (Array.isArray(p.extraKnownMarketplaces)) return p.extraKnownMarketplaces;
+  if (Array.isArray(p.marketplaces)) return p.marketplaces;
+  return [];
+}
+
+export function setEnabledPlugins(
+  config: NanoclawConfig,
+  list: PluginEnabledEntry[],
+): void {
+  if (!config.plugins) config.plugins = {};
+  const p = config.plugins as Record<string, any>;
+  p.enabledPlugins = list;
+  delete p.enabled; // canonicalize
+}
+
+export function setExtraKnownMarketplaces(
+  config: NanoclawConfig,
+  list: PluginMarketplaceEntry[],
+): void {
+  if (!config.plugins) config.plugins = {};
+  const p = config.plugins as Record<string, any>;
+  p.extraKnownMarketplaces = list;
+  delete p.marketplaces; // canonicalize
 }

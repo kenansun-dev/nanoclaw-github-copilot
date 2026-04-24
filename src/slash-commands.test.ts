@@ -146,6 +146,39 @@ describe('handleSlashCommand', () => {
     expect(result.handled).toBe(true);
   });
 
+  it('/reasoning flash returns handled and writes "flash" to config', async () => {
+    const ctx = makeCtx();
+    const result = await handleSlashCommand('/reasoning flash', ctx);
+    expect(result.handled).toBe(true);
+    const { loadConfig } = await import('./config-loader.js');
+    expect(loadConfig().agents?.defaults?.showThinking).toBe('flash');
+  });
+
+  it('/reasoning on writes "on" (string enum, not boolean) to config', async () => {
+    const ctx = makeCtx();
+    await handleSlashCommand('/reasoning on', ctx);
+    const { loadConfig } = await import('./config-loader.js');
+    expect(loadConfig().agents?.defaults?.showThinking).toBe('on');
+  });
+
+  it('/reasoning off writes "off" to config', async () => {
+    const ctx = makeCtx();
+    await handleSlashCommand('/reasoning off', ctx);
+    const { loadConfig } = await import('./config-loader.js');
+    expect(loadConfig().agents?.defaults?.showThinking).toBe('off');
+  });
+
+  it('/reasoning rejects bogus values (returns not handled, leaves config alone)', async () => {
+    // Set a known good value first
+    await handleSlashCommand('/reasoning flash', makeCtx());
+    const result = await handleSlashCommand('/reasoning bogus', makeCtx());
+    // Match regex fails, so it's not handled by the reasoning handler
+    // (and should not stomp on the prior value).
+    expect(result.handled).toBe(false);
+    const { loadConfig } = await import('./config-loader.js');
+    expect(loadConfig().agents?.defaults?.showThinking).toBe('flash');
+  });
+
   // Bumped timeout to 30s: collectStatus() does ~10 dynamic imports
   // (workspace, config-loader, config-extensions, etc) which on a cold
   // CI runner can exceed the default 5s. Locally it's ~4s; CI saw it
@@ -301,6 +334,133 @@ describe('COMMANDS registry', () => {
     expect(names).toContain('think');
     expect(names).toContain('status');
     expect(names).toContain('tasks');
+  });
+
+  it('includes /model and /models', () => {
+    const names = COMMANDS.map((c) => c.name);
+    expect(names).toContain('model');
+    expect(names).toContain('models');
+  });
+});
+
+// ─── /model + /models ─────────────────────────────────────────────────
+
+describe('/model + /models', () => {
+  // The catalog calls into @github/copilot-sdk and would hit the live API
+  // (slow + flaky in CI). Mock the SDK module so tests run hermetically.
+  // Keep mocks scoped to this describe block via beforeAll/afterAll.
+  const fakeCatalog = [
+    {
+      id: 'claude-opus-4.6',
+      name: 'Claude Opus 4.6',
+      billing: { is_premium: true },
+      policy: { state: 'enabled' },
+    },
+    {
+      id: 'claude-sonnet-4.6',
+      name: 'Claude Sonnet 4.6',
+      billing: { is_premium: true },
+      policy: { state: 'enabled' },
+    },
+    {
+      id: 'gpt-4.1',
+      name: 'GPT-4.1',
+      billing: { is_premium: false },
+      policy: { state: 'enabled' },
+    },
+    {
+      id: 'gpt-5.4-mini',
+      name: 'GPT-5.4 mini',
+      billing: { is_premium: true },
+      policy: { state: 'disabled' },
+    },
+  ];
+
+  beforeAll(async () => {
+    vi.doMock('@github/copilot-sdk', () => ({
+      CopilotClient: class FakeClient {
+        async start() {}
+        async stop() {}
+        async listModels() {
+          return fakeCatalog;
+        }
+      },
+    }));
+    const mod = await import('./slash-commands.js');
+    mod._resetModelCatalogCache();
+  });
+
+  afterAll(async () => {
+    vi.doUnmock('@github/copilot-sdk');
+    const mod = await import('./slash-commands.js');
+    mod._resetModelCatalogCache();
+  });
+
+  it('/models lists catalog with current marker', async () => {
+    const ctx = makeCtx();
+    const res = await handleSlashCommand('/models', ctx);
+    expect(res.handled).toBe(true);
+    expect(ctx.channel!.sendMessage).toHaveBeenCalledOnce();
+    const msg = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    expect(msg).toContain('claude-opus-4.6');
+    expect(msg).toContain('gpt-4.1');
+    // disabled models still listed (with state column)
+    expect(msg).toContain('gpt-5.4-mini');
+  });
+
+  it('/model with no args shows current model', async () => {
+    const ctx = makeCtx();
+    const res = await handleSlashCommand('/model', ctx);
+    expect(res.handled).toBe(true);
+    // Either sendCard or sendMessage will fire depending on channel caps.
+    const calls =
+      (ctx.channel!.sendCard as any).mock.calls.length +
+      (ctx.channel!.sendMessage as any).mock.calls.length;
+    expect(calls).toBeGreaterThanOrEqual(1);
+  });
+
+  it('/model <valid-id> updates config', async () => {
+    const ctx = makeCtx();
+    const res = await handleSlashCommand('/model claude-opus-4.6', ctx);
+    expect(res.handled).toBe(true);
+    expect(ctx.channel!.sendMessage).toHaveBeenCalledOnce();
+    const msg = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    expect(msg).toContain('claude-opus-4.6');
+    expect(msg).toMatch(/set to/i);
+
+    // Verify config was actually persisted.
+    const { loadConfig } = await import('./config-loader.js');
+    const cfg = loadConfig();
+    expect(cfg.agents?.defaults?.model).toBe('claude-opus-4.6');
+  });
+
+  it('/model <invalid-id> rejects with suggestion when family matches', async () => {
+    const ctx = makeCtx();
+    const res = await handleSlashCommand('/model claude-opus-9.9', ctx);
+    expect(res.handled).toBe(true);
+    expect(ctx.channel!.sendMessage).toHaveBeenCalledOnce();
+    const msg = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    expect(msg).toMatch(/not available/i);
+    expect(msg).toContain('claude-opus-4.6'); // family-prefix suggestion
+  });
+
+  it('/model <disabled-id> refuses to switch', async () => {
+    const ctx = makeCtx();
+    const res = await handleSlashCommand('/model gpt-5.4-mini', ctx);
+    expect(res.handled).toBe(true);
+    expect(ctx.channel!.sendMessage).toHaveBeenCalledOnce();
+    const msg = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    expect(msg).toMatch(/disabled/i);
+  });
+
+  it('/model accepts <provider>/<id> form and strips prefix on write', async () => {
+    const ctx = makeCtx();
+    const res = await handleSlashCommand('/model github-copilot/gpt-4.1', ctx);
+    expect(res.handled).toBe(true);
+    const { loadConfig } = await import('./config-loader.js');
+    const cfg = loadConfig();
+    expect(cfg.agents?.defaults?.model).toBe('gpt-4.1');
+    expect(cfg.agents?.defaults?.provider).toBe('github-copilot');
   });
 });
 

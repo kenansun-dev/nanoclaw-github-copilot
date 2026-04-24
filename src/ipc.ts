@@ -153,6 +153,22 @@ export function startIpcWatcher(deps: IpcDeps): void {
               if (data.type === 'control' && isMain) {
                 await handleControlIpc(data, deps);
               }
+              // Handle nanoclaw_plugin IPC (list/install/uninstall/marketplace_*).
+              // Plugin reads are safe everywhere, but mutating actions are
+              // restricted to the main chat (same model as control).
+              if (data.type === 'plugin') {
+                if (
+                  ['list', 'marketplace_list'].includes(data.action) ||
+                  isMain
+                ) {
+                  const responseDir = path.join(
+                    ipcBaseDir,
+                    sourceGroup,
+                    'responses',
+                  );
+                  await handlePluginIpc(data, responseDir);
+                }
+              }
               fs.unlinkSync(filePath);
             } catch (err) {
               logger.error(
@@ -211,6 +227,44 @@ export function startIpcWatcher(deps: IpcDeps): void {
   };
 
   processIpcFiles();
+
+  // Orphan sweeper for plugin response files. The agent unlinks the
+  // response after reading it, but if the agent process dies between
+  // "host wrote response" and "agent read it", the file would sit forever.
+  // Sweep on startup + every hour, deleting responses older than 5 minutes
+  // (well beyond the agent's 30s poll timeout).
+  const sweepOrphanResponses = () => {
+    try {
+      if (!fs.existsSync(ipcBaseDir)) return;
+      const cutoff = Date.now() - 5 * 60 * 1000;
+      let swept = 0;
+      for (const group of fs.readdirSync(ipcBaseDir)) {
+        const responsesDir = path.join(ipcBaseDir, group, 'responses');
+        if (!fs.existsSync(responsesDir)) continue;
+        for (const file of fs.readdirSync(responsesDir)) {
+          if (!file.endsWith('.json')) continue;
+          const fp = path.join(responsesDir, file);
+          try {
+            const stat = fs.statSync(fp);
+            if (stat.mtimeMs < cutoff) {
+              fs.unlinkSync(fp);
+              swept++;
+            }
+          } catch {
+            // ignore per-file errors (raced unlink, etc)
+          }
+        }
+      }
+      if (swept > 0) {
+        logger.info({ swept }, 'Swept orphan plugin response files');
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Orphan response sweep failed');
+    }
+  };
+  sweepOrphanResponses();
+  setInterval(sweepOrphanResponses, 60 * 60 * 1000);
+
   logger.info('IPC watcher started (per-group namespaces)');
 }
 
@@ -606,4 +660,231 @@ async function handleControlIpc(data: any, deps: IpcDeps): Promise<void> {
     default:
       logger.warn({ action }, 'Unknown IPC control action');
   }
+}
+
+/**
+ * Sweep orphaned plugin response files. The agent unlinks each response
+ * after reading it, but if the agent process dies between "host wrote
+ * response" and "agent read it", the file would sit forever. Files older
+ * than `maxAgeMs` (default 5 min, well beyond the agent's 30s poll
+ * timeout) are deleted. Returns the number of files swept.
+ */
+export function sweepOrphanResponses(
+  ipcBaseDir: string,
+  maxAgeMs = 5 * 60 * 1000,
+): number {
+  let swept = 0;
+  try {
+    if (!fs.existsSync(ipcBaseDir)) return 0;
+    const cutoff = Date.now() - maxAgeMs;
+    for (const group of fs.readdirSync(ipcBaseDir)) {
+      const responsesDir = path.join(ipcBaseDir, group, 'responses');
+      if (!fs.existsSync(responsesDir)) continue;
+      for (const file of fs.readdirSync(responsesDir)) {
+        if (!file.endsWith('.json')) continue;
+        const fp = path.join(responsesDir, file);
+        try {
+          const stat = fs.statSync(fp);
+          if (stat.mtimeMs < cutoff) {
+            fs.unlinkSync(fp);
+            swept++;
+          }
+        } catch {
+          // ignore per-file errors (raced unlink, etc)
+        }
+      }
+    }
+    if (swept > 0) {
+      logger.info({ swept }, 'Swept orphan plugin response files');
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Orphan response sweep failed');
+  }
+  return swept;
+}
+
+export async function handlePluginIpc(
+  data: any,
+  responseDir: string,
+): Promise<void> {
+  const requestId: string | undefined = data.requestId;
+  const writeResponse = (payload: unknown) => {
+    if (!requestId) return;
+    try {
+      fs.mkdirSync(responseDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(responseDir, `${requestId}.json`),
+        JSON.stringify(payload),
+      );
+    } catch (err) {
+      logger.error({ err, requestId }, 'Failed to write plugin IPC response');
+    }
+  };
+
+  try {
+    const action = data.action;
+    const plugin = await import('./cli/plugin.js');
+    switch (action) {
+      case 'list': {
+        const pluginsDir = path.join(
+          (await import('./workspace.js')).resolveWorkspace(),
+          'plugins',
+        );
+        const out: Array<{
+          name: string;
+          version?: string;
+          description?: string;
+          provider?: string;
+        }> = [];
+        if (fs.existsSync(pluginsDir)) {
+          for (const entry of fs.readdirSync(pluginsDir, {
+            withFileTypes: true,
+          })) {
+            if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+            // Try both manifest layouts (root and .claude-plugin/)
+            const candidates = [
+              path.join(pluginsDir, entry.name, 'plugin.json'),
+              path.join(
+                pluginsDir,
+                entry.name,
+                '.claude-plugin',
+                'plugin.json',
+              ),
+            ];
+            for (const mp of candidates) {
+              if (!fs.existsSync(mp)) continue;
+              try {
+                const m = JSON.parse(fs.readFileSync(mp, 'utf-8'));
+                out.push({
+                  name:
+                    m?.name && typeof m.name === 'string' ? m.name : entry.name,
+                  version: m.version,
+                  description: m.description,
+                  provider: m.provider,
+                });
+                break;
+              } catch {
+                /* try next */
+              }
+            }
+          }
+        }
+        writeResponse({ ok: true, plugins: out });
+        break;
+      }
+      case 'install': {
+        if (!data.source) {
+          writeResponse({ ok: false, error: 'install requires `source`' });
+          break;
+        }
+        // Add to plugins.enabledPlugins[] if not already there, then auto-install.
+        const { loadConfig, saveConfig, getEnabledPlugins, setEnabledPlugins } =
+          await import('./config-loader.js');
+        const config = loadConfig();
+        const enabledList = getEnabledPlugins(config);
+        const name =
+          data.name ||
+          tryReadPluginName(data.source) ||
+          deriveNameFromSource(data.source);
+        if (!name) {
+          writeResponse({
+            ok: false,
+            error: 'Could not derive plugin name from source; pass `name`',
+          });
+          break;
+        }
+        const existing = enabledList.find((e) => e.name === name);
+        if (!existing) {
+          setEnabledPlugins(config, [
+            ...enabledList,
+            { name, source: data.source },
+          ]);
+          saveConfig(config);
+        }
+        const result = await plugin.ensureEnabledPluginsInstalled();
+        writeResponse({ ok: true, name, result });
+        break;
+      }
+      case 'uninstall':
+      case 'remove': {
+        if (!data.name) {
+          writeResponse({ ok: false, error: 'uninstall requires `name`' });
+          break;
+        }
+        const { loadConfig, saveConfig, getEnabledPlugins, setEnabledPlugins } =
+          await import('./config-loader.js');
+        const { resolveWorkspace } = await import('./workspace.js');
+        const config = loadConfig();
+        const enabledList = getEnabledPlugins(config);
+        if (enabledList.length > 0) {
+          setEnabledPlugins(
+            config,
+            enabledList.filter((e) => e.name !== data.name),
+          );
+          saveConfig(config);
+        }
+        const target = path.join(resolveWorkspace(), 'plugins', data.name);
+        if (fs.existsSync(target)) {
+          fs.rmSync(target, { recursive: true });
+        }
+        writeResponse({ ok: true, name: data.name });
+        break;
+      }
+      case 'marketplace_list': {
+        const { loadConfig, getExtraKnownMarketplaces } =
+          await import('./config-loader.js');
+        const config = loadConfig();
+        writeResponse({
+          ok: true,
+          marketplaces: getExtraKnownMarketplaces(config),
+        });
+        break;
+      }
+      default:
+        writeResponse({ ok: false, error: `unknown action: ${action}` });
+    }
+  } catch (err: any) {
+    logger.error({ err }, 'Failed to handle plugin IPC');
+    writeResponse({ ok: false, error: err.message ?? String(err) });
+  }
+}
+
+function deriveNameFromSource(source: string): string | null {
+  // Mirrors the logic in cli/plugin.ts marketplaceAdd: prefer the repo half
+  // of owner/repo, fall back to the basename of a path/URL.
+  if (/^[\w.-]+\/[\w.-]+(?::|$)/.test(source)) {
+    // owner/repo or owner/repo:subdir
+    const repo = source.split('/')[1].split(':')[0];
+    return repo;
+  }
+  const m = source.match(/\/([\w.-]+?)(?:\.git)?\/?$/);
+  if (m) return m[1];
+  const base = path.basename(source.replace(/\.git$/, ''));
+  return base || null;
+}
+
+/**
+ * Last-resort: if `source` is a local directory and contains a plugin.json
+ * (or .claude-plugin/plugin.json), read the canonical `name` field from it.
+ * This wins over directory-basename so users can clone a plugin into any
+ * folder and still get the declared name registered in plugins.enabled[].
+ */
+function tryReadPluginName(source: string): string | null {
+  try {
+    if (!fs.existsSync(source)) return null;
+    const stat = fs.statSync(source);
+    if (!stat.isDirectory()) return null;
+    const candidates = [
+      path.join(source, 'plugin.json'),
+      path.join(source, '.claude-plugin', 'plugin.json'),
+    ];
+    for (const p of candidates) {
+      if (!fs.existsSync(p)) continue;
+      const m = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      if (m?.name && typeof m.name === 'string') return m.name;
+    }
+  } catch {
+    // ignore — fall through to caller's null path
+  }
+  return null;
 }

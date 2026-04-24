@@ -47,9 +47,10 @@ export const COMMANDS: SlashCommand[] = [
   {
     name: 'reasoning',
     description: 'Show or hide reasoning/thinking in messages',
-    args: 'on|off',
+    args: 'on|off|flash',
     choices: [
-      { title: 'On — show reasoning', value: 'on' },
+      { title: 'On — show reasoning (kept after final)', value: 'on' },
+      { title: 'Flash — stream then replace with final', value: 'flash' },
       { title: 'Off — hide reasoning (default)', value: 'off' },
     ],
   },
@@ -82,6 +83,17 @@ export const COMMANDS: SlashCommand[] = [
     name: 'wiki',
     description: 'Knowledge base — ingest, query, or maintain your wiki',
     args: '[topic|search <query>]',
+  },
+  {
+    name: 'model',
+    description:
+      'Show or set active model (validates against provider catalog)',
+    args: '[<model-id>]',
+  },
+  {
+    name: 'models',
+    description: 'List models available from the active provider',
+    noArgs: true,
   },
 ];
 
@@ -161,10 +173,10 @@ export async function handleSlashCommand(
     return { handled: true };
   }
 
-  // /reasoning [on|off] — show/hide thinking output in messages
-  const reasoningMatch = input.match(/^\/reasoning(?:\s+(on|off))?$/);
+  // /reasoning [on|off|flash] — show/hide/flash thinking output in messages
+  const reasoningMatch = input.match(/^\/reasoning(?:\s+(on|off|flash))?$/);
   if (reasoningMatch) {
-    const mode = reasoningMatch[1] as 'on' | 'off' | undefined;
+    const mode = reasoningMatch[1] as 'on' | 'off' | 'flash' | undefined;
     await handleReasoning(mode, ctx);
     return { handled: true };
   }
@@ -199,6 +211,35 @@ export async function handleSlashCommand(
         );
       }
     }
+    return { handled: true };
+  }
+
+  // /models — list available models from provider catalog (file-only/SDK call,
+  // no LLM round-trip).
+  if (input === '/models') {
+    if (ctx.channel) {
+      try {
+        const text = await buildModelsListText();
+        await ctx.channel.sendMessage(
+          ctx.chatJid,
+          '```\n' + text.trim() + '\n```',
+        );
+      } catch (err: any) {
+        await ctx.channel.sendMessage(
+          ctx.chatJid,
+          `Failed to list models: ${err?.message ?? err}`,
+        );
+      }
+    }
+    return { handled: true };
+  }
+
+  // /model [id] — show or set the active model. Validates against provider
+  // catalog (cached 5min) and refuses invalid IDs with a suggestion.
+  const modelMatch = input.match(/^\/model(?:\s+(.+))?$/);
+  if (modelMatch) {
+    const arg = modelMatch[1]?.trim();
+    await handleModel(arg, ctx);
     return { handled: true };
   }
 
@@ -238,15 +279,19 @@ export async function handleSlashCommand(
 // ─── /reasoning implementation ───────────────────────────────────────────────
 
 async function handleReasoning(
-  mode: 'on' | 'off' | undefined,
+  mode: 'on' | 'off' | 'flash' | undefined,
   ctx: SlashCommandContext,
 ): Promise<void> {
   const { loadConfig, saveConfig } = await import('./config-loader.js');
   const config = loadConfig();
 
+  // Normalize current value: legacy boolean (true=on, false=off) +
+  // new string enum ('on' | 'off' | 'flash').
+  const raw = config.agents?.defaults?.showThinking;
+  const current: 'on' | 'off' | 'flash' =
+    raw === true ? 'on' : raw === 'flash' ? 'flash' : 'off';
+
   if (!mode) {
-    // Show current state
-    const current = config.agents?.defaults?.showThinking ? 'on' : 'off';
     if (ctx.channel) {
       if (ctx.channel.sendCard) {
         const cmd = COMMANDS.find((c) => c.name === 'reasoning')!;
@@ -256,12 +301,12 @@ async function handleReasoning(
         await ctx.channel.sendCard(
           ctx.chatJid,
           card,
-          `🧠 Reasoning display: **${current}**\nUsage: /reasoning on|off`,
+          `🧠 Reasoning display: **${current}**\nUsage: /reasoning on|off|flash`,
         );
       } else {
         await ctx.channel.sendMessage(
           ctx.chatJid,
-          `🧠 Reasoning display: **${current}**\nUsage: /reasoning on|off`,
+          `🧠 Reasoning display: **${current}**\nUsage: /reasoning on|off|flash`,
         );
       }
     }
@@ -270,7 +315,8 @@ async function handleReasoning(
 
   if (!config.agents) config.agents = {} as any;
   if (!config.agents.defaults) config.agents.defaults = {} as any;
-  config.agents.defaults.showThinking = mode === 'on';
+  // Store as string enum (drop legacy boolean shape on write).
+  config.agents.defaults.showThinking = mode;
   saveConfig(config, 'slash-command', {
     command: '/reasoning',
     mode,
@@ -278,13 +324,255 @@ async function handleReasoning(
   });
   reloadConfig();
   if (ctx.channel) {
-    await ctx.channel.sendMessage(
-      ctx.chatJid,
+    const blurb =
       mode === 'on'
-        ? '🧠 Reasoning is now **visible** in messages. Use `/reasoning off` to hide.'
-        : '🧠 Reasoning is now **hidden**. Use `/reasoning on` to show.',
+        ? '🧠 Reasoning is now **visible** (kept after final answer). Use `/reasoning off` to hide or `/reasoning flash` for transient mode.'
+        : mode === 'flash'
+          ? '🧠 Reasoning set to **flash** — streamed live, replaced by the final answer. Use `/reasoning on` to keep it, or `/reasoning off` to hide.'
+          : '🧠 Reasoning is now **hidden**. Use `/reasoning on` to show, or `/reasoning flash` for transient.';
+    await ctx.channel.sendMessage(ctx.chatJid, blurb);
+  }
+}
+
+// ─── /model + /models implementation ────────────────────────────────────────
+
+interface ModelEntry {
+  id: string;
+  name?: string;
+  premium: boolean;
+  enabled: boolean;
+  family?: string;
+  reasoningEfforts?: string[];
+}
+const modelCatalogCache: Map<string, { ts: number; models: ModelEntry[] }> =
+  new Map();
+const MODEL_CATALOG_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Fetch the provider's model catalog. Currently only github-copilot via SDK
+ * is supported; other providers fall back to an empty list (no validation).
+ */
+async function getModelCatalog(provider: string): Promise<ModelEntry[]> {
+  const now = Date.now();
+  const cached = modelCatalogCache.get(provider);
+  if (cached && now - cached.ts < MODEL_CATALOG_TTL_MS) {
+    return cached.models;
+  }
+  if (provider !== 'github-copilot') {
+    modelCatalogCache.set(provider, { ts: now, models: [] });
+    return [];
+  }
+  let sdk: any;
+  try {
+    sdk = await import('@github/copilot-sdk');
+  } catch (err: any) {
+    throw new Error(
+      `@github/copilot-sdk not installed: ${err?.message ?? err}`,
     );
   }
+  const client = new sdk.CopilotClient();
+  await client.start();
+  let raw: any;
+  try {
+    raw = await client.listModels();
+  } finally {
+    try {
+      await client.stop();
+    } catch {
+      /* ignore */
+    }
+  }
+  const list = Array.isArray(raw) ? raw : raw?.models || raw?.data || [];
+  const models: ModelEntry[] = list.map((m: any) => ({
+    id: String(m.id ?? m.model ?? ''),
+    name: m.name,
+    premium: !!m.billing?.is_premium,
+    enabled: m.policy?.state !== 'disabled',
+    family: m.capabilities?.family,
+    reasoningEfforts: m.supportedReasoningEfforts,
+  }));
+  modelCatalogCache.set(provider, { ts: now, models });
+  return models;
+}
+
+function stripProviderPrefix(id: string): string {
+  const slash = id.indexOf('/');
+  return slash > 0 ? id.substring(slash + 1) : id;
+}
+
+function suggestClosestModel(
+  candidate: string,
+  models: ModelEntry[],
+): string | undefined {
+  const lower = candidate.toLowerCase();
+  const exact = models.find((m) => m.id === candidate);
+  if (exact) return exact.id;
+  const ci = models.find((m) => m.id.toLowerCase() === lower);
+  if (ci) return ci.id;
+  const prefix = models.find((m) => m.id.toLowerCase().startsWith(lower));
+  if (prefix) return prefix.id;
+  // Try same family ("claude-opus-4.7" → "claude-opus-4.6")
+  const familyPrefix = lower.split(/[-.]/).slice(0, 2).join('-');
+  if (familyPrefix) {
+    const fam = models
+      .filter((m) => m.id.toLowerCase().startsWith(familyPrefix))
+      .sort((a, b) => b.id.localeCompare(a.id))[0];
+    if (fam) return fam.id;
+  }
+  return undefined;
+}
+
+export async function buildModelsListText(): Promise<string> {
+  const config = getConfig();
+  const provider = config.agents?.defaults?.provider || 'github-copilot';
+  const currentModel = config.agents?.defaults?.model || '(unset)';
+  let models: ModelEntry[];
+  try {
+    models = await getModelCatalog(provider);
+  } catch (err: any) {
+    return `Provider: ${provider}\nCurrent model: ${currentModel}\n\nFailed to fetch catalog: ${err?.message ?? err}`;
+  }
+  const lines: string[] = [
+    `Provider: ${provider}`,
+    `Current model: ${currentModel}`,
+    '',
+  ];
+  if (models.length === 0) {
+    lines.push(
+      `No catalog available for provider "${provider}". /model <id> still accepts any value (no validation).`,
+    );
+    return lines.join('\n');
+  }
+  const sorted = [...models].sort((a, b) => {
+    if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+    return a.id.localeCompare(b.id);
+  });
+  const idWidth = Math.max(...sorted.map((m) => m.id.length), 6);
+  lines.push(`${'MODEL'.padEnd(idWidth)}  TIER     STATE`);
+  for (const m of sorted) {
+    const marker = m.id === currentModel ? '▸ ' : '  ';
+    const tier = m.premium ? 'premium' : 'free   ';
+    const state = m.enabled ? 'enabled ' : 'disabled';
+    lines.push(`${marker}${m.id.padEnd(idWidth)}  ${tier}  ${state}`);
+  }
+  lines.push('');
+  lines.push(`Use /model <id> to switch (e.g. /model ${sorted[0]?.id}).`);
+  return lines.join('\n');
+}
+
+async function handleModel(
+  arg: string | undefined,
+  ctx: SlashCommandContext,
+): Promise<void> {
+  const config = getConfig();
+  const provider = config.agents?.defaults?.provider || 'github-copilot';
+  const currentModel = config.agents?.defaults?.model || '(unset)';
+
+  if (!arg) {
+    if (!ctx.channel) return;
+    let topModels: ModelEntry[] = [];
+    try {
+      const catalog = await getModelCatalog(provider);
+      topModels = catalog
+        .filter((m) => m.enabled)
+        .sort((a, b) => a.id.localeCompare(b.id));
+    } catch {
+      // fall through to plain text
+    }
+    if (ctx.channel.sendCard && topModels.length > 0) {
+      const choices = topModels.slice(0, 25).map((m) => ({
+        title: `${m.name || m.id}${m.premium ? ' (premium)' : ''}`,
+        value: m.id,
+      }));
+      const fakeCmd: SlashCommand = {
+        name: 'model',
+        description: 'Set active model',
+        args: '<model-id>',
+        choices,
+      };
+      const card = ctx.chatJid.startsWith('teams:')
+        ? buildTeamsAdaptiveCard(fakeCmd, currentModel)
+        : { command: 'model', choices };
+      await ctx.channel.sendCard(
+        ctx.chatJid,
+        card,
+        `🧠 Model: **${currentModel}** (${provider})\nUsage: /model <id> — see /models for the full list.`,
+      );
+    } else {
+      await ctx.channel.sendMessage(
+        ctx.chatJid,
+        `🧠 Model: **${currentModel}** (${provider})\nUsage: /model <id> — see /models for the full list.`,
+      );
+    }
+    return;
+  }
+
+  const requested = stripProviderPrefix(arg);
+  let catalog: ModelEntry[] = [];
+  try {
+    catalog = await getModelCatalog(provider);
+  } catch (err: any) {
+    if (ctx.channel) {
+      await ctx.channel.sendMessage(
+        ctx.chatJid,
+        `⚠️ Could not validate against ${provider} catalog (${err?.message ?? err}). Setting anyway.`,
+      );
+    }
+  }
+  if (catalog.length > 0) {
+    const match = catalog.find((m) => m.id === requested);
+    if (!match) {
+      const suggestion = suggestClosestModel(requested, catalog);
+      if (ctx.channel) {
+        const hint = suggestion
+          ? `\nDid you mean **${suggestion}**? Run \`/model ${suggestion}\`.`
+          : '\nRun /models to see what is available.';
+        await ctx.channel.sendMessage(
+          ctx.chatJid,
+          `❌ Model **${requested}** is not available from ${provider}.${hint}`,
+        );
+      }
+      return;
+    }
+    if (!match.enabled) {
+      if (ctx.channel) {
+        await ctx.channel.sendMessage(
+          ctx.chatJid,
+          `⚠️ Model **${match.id}** is disabled by your provider's policy. Run /models to see enabled options.`,
+        );
+      }
+      return;
+    }
+  }
+
+  const { loadConfig, saveConfig } = await import('./config-loader.js');
+  const fresh = loadConfig();
+  if (!fresh.agents) fresh.agents = {} as any;
+  if (!fresh.agents.defaults) fresh.agents.defaults = {} as any;
+  const previous = fresh.agents.defaults.model;
+  fresh.agents.defaults.model = requested;
+  const slashIdx = arg.indexOf('/');
+  if (slashIdx > 0) {
+    fresh.agents.defaults.provider = arg.substring(0, slashIdx);
+  }
+  saveConfig(fresh, 'slash-command', {
+    command: '/model',
+    previous,
+    next: requested,
+    chatJid: ctx.chatJid,
+  });
+  reloadConfig();
+  if (ctx.channel) {
+    await ctx.channel.sendMessage(
+      ctx.chatJid,
+      `🧠 Model set to **${requested}** (${provider}). Takes effect on the next message.`,
+    );
+  }
+}
+
+/** Test-only: clear the catalog cache. */
+export function _resetModelCatalogCache(): void {
+  modelCatalogCache.clear();
 }
 
 // ─── /think implementation ───────────────────────────────────────────────────

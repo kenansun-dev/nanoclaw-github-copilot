@@ -741,13 +741,13 @@ describe('config migration v4→v5: TUI chat consolidation', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(5);
+    expect(config.configVersion).toBe(8);
     expect(config.chats['tui:1']).toBeUndefined();
     expect(config.chats['tui:2']).toBeUndefined();
     expect(config.chats['tui:3']).toBeUndefined();
-    expect(config.chats['tui:default']).toBeDefined();
-    expect(config.chats['tui:default'].name).toBe('tui');
-    expect(config.chats['tui:default'].isMain).toBe(true);
+    // v5 creates tui:default but v7 then purges all tui:* entries
+    // (tui channel auto-registers on connect, no config entry needed).
+    expect(config.chats['tui:default']).toBeUndefined();
     // Non-TUI chats are untouched.
     expect(config.chats['tg:999']).toBeDefined();
   });
@@ -761,12 +761,12 @@ describe('config migration v4→v5: TUI chat consolidation', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(5);
+    expect(config.configVersion).toBe(8);
     expect(config.chats['tui:default']).toBeUndefined();
     expect(config.chats['tg:999']).toBeDefined();
   });
 
-  it('preserves an existing tui:default if it is already present', () => {
+  it('v7 supersedes v5 preservation: tui:default is purged (auto-registered by tui channel)', () => {
     fs.writeFileSync(
       path.join(tmpDir, 'nanoclaw.json'),
       JSON.stringify({
@@ -779,11 +779,10 @@ describe('config migration v4→v5: TUI chat consolidation', () => {
     );
     const config = loadConfig();
     expect(config.chats['tui:1']).toBeUndefined();
-    expect(config.chats['tui:default']).toBeDefined();
-    expect((config.chats['tui:default'] as any).custom).toBe('kept');
+    expect(config.chats['tui:default']).toBeUndefined();
   });
 
-  it('does not touch tui: entries that are not pure-numeric (defensive)', () => {
+  it('v7 purges all tui:* entries including non-numeric subkeys', () => {
     fs.writeFileSync(
       path.join(tmpDir, 'nanoclaw.json'),
       JSON.stringify({
@@ -794,8 +793,136 @@ describe('config migration v4→v5: TUI chat consolidation', () => {
       }),
     );
     const config = loadConfig();
-    // Only `tui:N` (digits) get consolidated. `tui:custom-name` is left alone.
-    expect(config.chats['tui:custom-name']).toBeDefined();
+    expect(config.chats['tui:custom-name']).toBeUndefined();
+  });
+});
+
+describe('config migration v5→v6: plugins block seed', () => {
+  const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-pluginv6-${Date.now()}`);
+
+  beforeEach(() => {
+    setWorkspace(tmpDir);
+    ensureWorkspace();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('seeds default marketplaces and empty enabledPlugins[] when missing', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({ configVersion: 5 }),
+    );
+    const config = loadConfig();
+    expect(config.configVersion).toBe(8);
+    expect(config.plugins).toBeDefined();
+    expect(config.plugins?.enabledPlugins).toEqual([]);
+    expect(config.plugins?.extraKnownMarketplaces).toEqual([
+      { name: 'copilot-plugins', source: 'github/copilot-plugins' },
+      { name: 'awesome-copilot', source: 'github/awesome-copilot' },
+    ]);
+    expect(config.plugins?.directories).toEqual([]);
+    // Old field names removed by v8 canonicalization.
+    expect(config.plugins?.enabled).toBeUndefined();
+    expect(config.plugins?.marketplaces).toBeUndefined();
+  });
+
+  it('preserves user-defined plugins block (only seeds missing keys)', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 5,
+        plugins: {
+          enabled: [
+            {
+              name: 'workiq',
+              source: 'microsoft/work-iq',
+            },
+          ],
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.configVersion).toBe(8);
+    // v8 renamed enabled → enabledPlugins
+    expect(config.plugins?.enabledPlugins).toHaveLength(1);
+    expect(config.plugins?.enabledPlugins?.[0].name).toBe('workiq');
+    // marketplaces still seeded with defaults because user didn't define them
+    expect(config.plugins?.extraKnownMarketplaces?.length).toBe(2);
+  });
+
+  it('does not touch user-defined marketplaces array', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 5,
+        plugins: {
+          marketplaces: [{ name: 'custom-mp', source: 'kenan/my-marketplace' }],
+        },
+      }),
+    );
+    const config = loadConfig();
+    // v8 renamed marketplaces → extraKnownMarketplaces; entries preserved.
+    expect(config.plugins?.extraKnownMarketplaces).toEqual([
+      { name: 'custom-mp', source: 'kenan/my-marketplace' },
+    ]);
+    expect(config.plugins?.marketplaces).toBeUndefined();
+  });
+
+  it('v7 migration: purges legacy tui:N + other root chats', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 6,
+        chats: {
+          'tui:1': {
+            id: 1,
+            name: 'tui-1',
+            isMain: true,
+            requiresTrigger: true,
+          },
+          'tui:2': { id: 2, name: 'tui-2', requiresTrigger: true },
+          'tui:3': {
+            id: 4,
+            name: 'tui-3',
+            isMain: true,
+            requiresTrigger: true,
+          },
+          other: { id: 5, name: 'other' },
+          'tui:default': {
+            id: 6,
+            name: 'tui',
+            isMain: true,
+            requiresTrigger: true,
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.configVersion).toBe(8);
+    expect(Object.keys(config.chats)).toHaveLength(0);
+  });
+
+  it('v7 migration: leaves real-jid entries in root chats untouched', () => {
+    // Real channel jids (telegram:*, signal:*, discord:*) stay in root
+    // chats; existing reconciliation owns moving them. v7 only purges
+    // tui:* and 'other'.
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 6,
+        chats: {
+          'tui:default': { id: 1, name: 'tui', isMain: true },
+          'telegram:12345': { id: 10, name: 'Alice' },
+          'discord:67890': { id: 11, name: 'Bob' },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.configVersion).toBe(8);
     expect(config.chats['tui:default']).toBeUndefined();
+    expect(config.chats['telegram:12345']).toBeDefined();
+    expect(config.chats['discord:67890']).toBeDefined();
   });
 });

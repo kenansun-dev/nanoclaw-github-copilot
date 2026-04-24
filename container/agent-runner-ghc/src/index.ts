@@ -18,6 +18,7 @@ import path from 'path';
 import { CopilotClient, approveAll } from '@github/copilot-sdk';
 import { fileURLToPath } from 'url';
 import { isSessionNotFoundError } from './session-recovery.js';
+import { loadPluginAgents } from './load-plugin-agents.js';
 
 interface ContainerInput {
   prompt: string;
@@ -310,15 +311,36 @@ async function main(): Promise<void> {
 
   const githubToken = resolveGithubToken();
 
-  // Plugin directories (passed from host-runner or set manually)
+  // Plugin directories (passed from host-runner or set manually).
+  //
+  // We pass `--plugin-dir` via cliArgs even though the SDK's server-mode
+  // currently drops it (verified upstream gap, GHC SDK 0.2.2 — see
+  // load-plugin-agents.ts). Keeping the flag costs nothing and lets us shed
+  // the workaround the moment upstream fixes it.
+  //
+  // For the workaround itself we walk the same dirs ourselves and turn each
+  // plugin's agents/*.md into customAgents in the SessionConfig below.
+  const pluginDirs: string[] = [];
   const pluginCliArgs: string[] = [];
   if (process.env.NANOCLAW_PLUGIN_DIRS) {
     for (const dir of process.env.NANOCLAW_PLUGIN_DIRS.split(path.delimiter)) {
       if (dir && fs.existsSync(dir)) {
+        pluginDirs.push(dir);
         pluginCliArgs.push('--plugin-dir', dir);
         log(`Plugin directory: ${dir}`);
       }
     }
+  }
+
+  const pluginCustomAgents = loadPluginAgents(pluginDirs, {
+    onWarn: (msg) => log(msg),
+  });
+  if (pluginCustomAgents.length > 0) {
+    log(
+      `Loaded ${pluginCustomAgents.length} custom agent(s) from plugin dirs: ${pluginCustomAgents
+        .map((a) => `${a.name}@${path.basename(a.pluginDir)}`)
+        .join(', ')}`,
+    );
   }
 
   const clientOpts: any = {};
@@ -353,6 +375,19 @@ async function main(): Promise<void> {
         // instead of ~/.copilot/, breaking auth on Windows.
         // Enable config discovery so CLI reads ~/.mcp.json and other MCP configs
         enableConfigDiscovery: process.env.NANOCLAW_MCP_DISCOVERY === '1',
+        // Workaround for GHC SDK 0.2.2 server-mode --plugin-dir gap: pass
+        // plugin agents directly via SessionConfig.customAgents.
+        ...(pluginCustomAgents.length > 0
+          ? {
+              customAgents: pluginCustomAgents.map((a) => ({
+                name: a.name,
+                ...(a.displayName ? { displayName: a.displayName } : {}),
+                ...(a.description ? { description: a.description } : {}),
+                ...(a.tools ? { tools: a.tools } : {}),
+                prompt: a.prompt,
+              })),
+            }
+          : {}),
         systemMessage,
         workingDirectory: process.env.NANOCLAW_WORK_DIR || '/workspace/group',
         onPermissionRequest: approveAll,
@@ -480,68 +515,26 @@ async function main(): Promise<void> {
           }
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
-          // If reasoningEffort caused the resume failure, retry without it
-          if ((errMsg.includes('reasoning') || errMsg.includes('reasoningEffort')) && sessionConfig.reasoningEffort) {
-            log(`Resume failed due to reasoningEffort, retrying without it`);
-            try {
-              session = await client.resumeSession(sessionId, { ...sessionConfig, reasoningEffort: undefined });
-              try { await session.rpc.mcp.reload(); } catch {}
-              log(`Resumed session without reasoningEffort: ${sessionId}`);
-            } catch (retryErr) {
-              const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
-              log(`Failed to resume session ${sessionId}, creating new: ${retryMsg}`);
-              session = null;
-              sessionId = undefined;
-            }
-          } else {
-            log(`Failed to resume session ${sessionId}, creating new: ${errMsg}`);
-            // If model doesn't support reasoningEffort, retry without it
-            const createConfig = errMsg.includes('reasoning') || errMsg.includes('reasoningEffort')
-              ? { ...sessionConfig, reasoningEffort: undefined }
-              : sessionConfig;
-            try {
-              session = await client.createSession({
-                ...createConfig,
-                sessionId: randomUUID(),
-              });
-            } catch (createErr) {
-              // Retry without reasoningEffort as last resort
-              const createErrMsg = createErr instanceof Error ? createErr.message : String(createErr);
-              if (createErrMsg.includes('reasoning') && createConfig.reasoningEffort) {
-                log(`Model does not support reasoningEffort, retrying without it`);
-                session = await client.createSession({
-                  ...sessionConfig,
-                  reasoningEffort: undefined,
-                  sessionId: randomUUID(),
-                });
-              } else {
-                throw createErr;
-              }
-            }
-            sessionId = session.sessionId;
-            log(`New session created: ${sessionId}`);
-          }
-        }
-      } else {
-                // Create new session (first time)
-        try {
+          // NOTE: We do NOT silently strip reasoningEffort here.
+          // If the user's configured think level is rejected by the model,
+          // surface the real CAPI error so the user can pick a valid level
+          // or a model that supports it. (Removed in revert of PR #149.)
+          log(`Failed to resume session ${sessionId}, creating new: ${errMsg}`);
           session = await client.createSession({
             ...sessionConfig,
             sessionId: randomUUID(),
           });
-        } catch (createErr) {
-          const msg = createErr instanceof Error ? createErr.message : String(createErr);
-          if (msg.includes('reasoning') && (sessionConfig as any).reasoningEffort) {
-            log(`Model does not support reasoningEffort, creating session without it`);
-            session = await client.createSession({
-              ...sessionConfig,
-              reasoningEffort: undefined,
-              sessionId: randomUUID(),
-            });
-          } else {
-            throw createErr;
-          }
+          sessionId = session.sessionId;
+          log(`New session created: ${sessionId}`);
         }
+      } else {
+        // Create new session (first time).
+        // No reasoningEffort fallback: surface the SDK error verbatim if the
+        // configured think level is incompatible with the chosen model.
+        session = await client.createSession({
+          ...sessionConfig,
+          sessionId: randomUUID(),
+        });
         sessionId = session.sessionId;
         log(`Session created: ${sessionId}`);
       }

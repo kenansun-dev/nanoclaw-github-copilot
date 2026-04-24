@@ -19,7 +19,12 @@ import {
   TRIGGER_PATTERN,
   getConfig,
 } from './config.js';
-import { runAgentForChat, IS_GHC_PROVIDER } from './config-extensions.js';
+import {
+  runAgentForChat,
+  IS_GHC_PROVIDER,
+  resolveAgentForChat,
+  getAgentProvider,
+} from './config-extensions.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -83,7 +88,9 @@ import { logger } from './logger.js';
 export { escapeXml, formatMessages } from './router.js';
 
 let lastTimestamp = '';
-let sessions: Record<string, string> = {};
+// sessions: groupFolder → provider → sessionId. Each provider stores its
+// CLI sessions in a different on-disk path, so we key by both.
+let sessions: Record<string, Record<string, string>> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
@@ -382,6 +389,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Progressive send state: track message ID for editMessage on partial updates
   let progressiveMsgId: string | undefined;
   let progressiveText = '';
+  // Flash-mode reasoning lane: a SEPARATE message id from progressiveMsgId
+  // (which carries the answer). SDK emits reasoning_delta and text_delta
+  // CONCURRENTLY (no ordering guarantee), so sharing one message id caused
+  // the partial answer and reasoning preview to overwrite each other and
+  // visually flicker (kenan reported this twice).
+  //
+  // Two-lane design (mirrors openclaw's bot-message-dispatch.ts):
+  //   reasoning_delta -> render/edit `flashReasoningMsgId` (independent)
+  //   text_delta      -> render/edit `progressiveMsgId`    (independent)
+  // The reasoning preview is intentionally short (formatThinkingForFlash
+  // single-line, 600-char cap) so leaving it visible alongside the final
+  // answer is fine — no need to delete (channels lack deleteMessage anyway).
+  let flashReasoningMsgId: string | undefined;
   let lastFinalMsgId: string | undefined;
   // Native streaming state: when channel.usesNativeStreaming, we open a
   // StreamHandle on the first partial and feed it cumulative text. The
@@ -420,8 +440,65 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // bookkeeping, then exit naturally on the !result.result guard above.
       }
 
-      // Skip thinking-only deltas (will be merged into final result)
+      // Thinking-only deltas (no result yet). Default behavior is to
+      // skip and let final result merge. In `flash` mode we render the
+      // thinking content into the same in-flight message via editMessage,
+      // then overwrite with the final answer when it arrives — thinking
+      // disappears, leaving only the final.
       if (result.thinking && !result.result) {
+        const thinkingMode = normalizeShowThinking(
+          getConfig().agents?.defaults?.showThinking,
+        );
+        if (
+          thinkingMode === 'flash' &&
+          channel.editMessage &&
+          !channel.usesNativeStreaming
+        ) {
+          // TWO-LANE: reasoning preview lives in `flashReasoningMsgId`,
+          // independent from `progressiveMsgId` (the answer). SDK streams
+          // reasoning_delta and text_delta concurrently — sharing one
+          // message id caused them to overwrite each other (visible flicker,
+          // kenan reported). Now they write to separate messages.
+          //
+          // The reasoning preview is short (one line, 600-char cap) so
+          // it's fine to leave visible after final. No deletion required
+          // (channels don't expose deleteMessage anyway).
+          //
+          // Boundary handling: a new query (queryBoundaryPending=true)
+          // means a fresh turn — drop the previous turn's reasoning preview
+          // pointer so this turn opens a new one.
+          if (queryBoundaryPending) {
+            flashReasoningMsgId = undefined;
+          }
+          const tp = formatThinkingForFlash(result.thinking, chatJid);
+          if (tp) {
+            const sendOpts = tp.parseMode
+              ? { parseMode: tp.parseMode }
+              : undefined;
+            if (!flashReasoningMsgId) {
+              await traceSetTyping(
+                channel,
+                chatJid,
+                false,
+                'flash-thinking-first',
+              );
+              const msgId = await channel.sendMessage(
+                chatJid,
+                tp.text + ' ◌',
+                sendOpts,
+              );
+              flashReasoningMsgId =
+                typeof msgId === 'string' ? msgId : undefined;
+            } else {
+              await channel.editMessage(
+                chatJid,
+                flashReasoningMsgId,
+                tp.text + ' ◌',
+                sendOpts,
+              );
+            }
+          }
+        }
         return;
       }
 
@@ -434,6 +511,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           progressiveText = '';
           lastFinalMsgId = undefined;
           outputSentToUser = false;
+          flashReasoningMsgId = undefined;
           // Cancel any leftover native stream from the previous turn so
           // the next turn opens a fresh stream. cancel() is idempotent.
           if (streamHandle) {
@@ -452,19 +530,57 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             'IPC turn boundary: reset per-turn message-id state',
           );
         }
-        // Merge thinking into result as one message (only if showThinking is enabled)
+        // Merge thinking into result as one message (only when
+        // showThinking === 'on' / true). In `flash` mode we leave
+        // result.result alone — the editMessage path below replaces
+        // the thinking-preview with just the final answer.
         let thinkingParseMode: 'HTML' | 'Markdown' | undefined;
-        if (
-          result.thinking &&
-          !result.partial &&
-          getConfig().agents?.defaults?.showThinking
-        ) {
+        const thinkingMode = normalizeShowThinking(
+          getConfig().agents?.defaults?.showThinking,
+        );
+        if (result.thinking && !result.partial && thinkingMode === 'on') {
           const tp = formatThinkingForChannel(result.thinking, chatJid);
           if (tp) {
             thinkingParseMode = tp.parseMode;
             // Don't escape the answer — let Telegram fallback handle parse errors
             result.result = tp.text + '\n\n' + result.result;
           }
+        }
+        // FLASH: finalize the reasoning preview — strip the trailing ◌ cursor
+        // so it doesn't look stuck. We do this lazily on the first answer event
+        // so reasoning_delta updates can keep flowing while reasoning is still
+        // streaming. The preview itself stays visible alongside the final answer
+        // (channels lack deleteMessage and the one-line cap makes it harmless).
+        if (
+          flashReasoningMsgId &&
+          thinkingMode === 'flash' &&
+          channel.editMessage
+        ) {
+          try {
+            // Re-render the latest thinking content WITHOUT the cursor.
+            // result.thinking carries the full thinking text on the same
+            // event that delivers result.result.
+            const tp = result.thinking
+              ? formatThinkingForFlash(result.thinking, chatJid)
+              : null;
+            if (tp) {
+              const sendOpts = tp.parseMode
+                ? { parseMode: tp.parseMode }
+                : undefined;
+              await channel.editMessage(
+                chatJid,
+                flashReasoningMsgId,
+                tp.text,
+                sendOpts,
+              );
+            }
+          } catch (err) {
+            logger.warn(
+              { chatJid, err: (err as Error).message },
+              'flash reasoning preview finalize failed (non-fatal)',
+            );
+          }
+          flashReasoningMsgId = undefined;
         }
         const raw =
           typeof result.result === 'string'
@@ -502,7 +618,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           }
           await streamHandle.chunk(text);
         } else if (result.partial && channel.editMessage) {
-          // Delta/partial: accumulate and edit existing message
+          // Delta/partial: accumulate and edit existing message.
           progressiveText = text; // delta buffer already accumulated in agent-runner
           if (!progressiveMsgId) {
             // First partial — send new message
@@ -637,7 +753,12 @@ async function runAgent(
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
-  const sessionId = sessions[group.folder];
+  // Resolve which provider this chat's agent uses, then look up the
+  // sessionId for THAT provider only. A group can have separate
+  // CC and GHC sessions and they don't cross-contaminate.
+  const agent = resolveAgentForChat(chatJid);
+  const provider = getAgentProvider(agent);
+  const sessionId = sessions[group.folder]?.[provider];
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -669,8 +790,9 @@ async function runAgent(
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
-          sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
+          if (!sessions[group.folder]) sessions[group.folder] = {};
+          sessions[group.folder][provider] = output.newSessionId;
+          setSession(group.folder, output.newSessionId, provider);
         }
         await onOutput(output);
       }
@@ -694,8 +816,9 @@ async function runAgent(
     );
 
     if (output.newSessionId) {
-      sessions[group.folder] = output.newSessionId;
-      setSession(group.folder, output.newSessionId);
+      if (!sessions[group.folder]) sessions[group.folder] = {};
+      sessions[group.folder][provider] = output.newSessionId;
+      setSession(group.folder, output.newSessionId, provider);
     }
 
     // Mark idle-waiting so GroupQueue keeps process alive for IPC reuse
@@ -717,11 +840,16 @@ async function runAgent(
 
       if (isStaleSession) {
         logger.warn(
-          { group: group.name, staleSessionId: sessionId, error: output.error },
+          {
+            group: group.name,
+            provider,
+            staleSessionId: sessionId,
+            error: output.error,
+          },
           'Stale session detected — clearing for next retry',
         );
-        delete sessions[group.folder];
-        deleteSession(group.folder);
+        if (sessions[group.folder]) delete sessions[group.folder][provider];
+        deleteSession(group.folder, provider);
       }
 
       logger.error(
@@ -1052,10 +1180,24 @@ interface ThinkingFormat {
 }
 
 /**
+ * Normalize the showThinking config value into the string enum used by
+ * the dispatcher. Accepts legacy boolean shape (true=on, false=off) and
+ * the new string enum ('on' | 'off' | 'flash').
+ */
+export function normalizeShowThinking(
+  raw: boolean | 'on' | 'off' | 'flash' | undefined,
+): 'on' | 'off' | 'flash' {
+  if (raw === true) return 'on';
+  if (raw === 'on') return 'on';
+  if (raw === 'flash') return 'flash';
+  return 'off';
+}
+
+/**
  * Format thinking/reasoning content for channel display.
  * Returns structured data so callers can set parse mode correctly.
  */
-function formatThinkingForChannel(
+export function formatThinkingForChannel(
   thinking: string,
   chatJid: string,
 ): ThinkingFormat | null {
@@ -1087,6 +1229,46 @@ function formatThinkingForChannel(
           .split('\n')
           .map((l) => `> ${l}`)
           .join('\n'),
+    };
+  }
+}
+
+/**
+ * Format thinking/reasoning content for FLASH mode (transient inline preview).
+ * Lightweight: no blockquote, italicized prefix, single-line collapse, channel-aware
+ * parseMode. The flash UI is a placeholder that will be overwritten by the final
+ * answer, so it should be visually quiet and not look like a persistent quote.
+ */
+export function formatThinkingForFlash(
+  thinking: string,
+  chatJid: string,
+): ThinkingFormat | null {
+  const trimmed = thinking.trim();
+  if (!trimmed) return null;
+
+  // Tighter cap than persistent mode — this is meant to be transient.
+  const maxLen = 600;
+  // Collapse newlines into spaces so the preview stays compact (1–2 lines).
+  const oneLine = trimmed.replace(/\s+/g, ' ');
+  const content =
+    oneLine.length > maxLen ? oneLine.substring(0, maxLen) + '…' : oneLine;
+
+  if (chatJid.startsWith('tg:')) {
+    const escapeHtml = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return {
+      text: `🧠 <i>thinking…</i> <i>${escapeHtml(content)}</i>`,
+      parseMode: 'HTML',
+    };
+  } else if (chatJid.startsWith('discord:')) {
+    // Discord: markdown italic.
+    return {
+      text: `🧠 _thinking…_ _${content.replace(/_/g, '\\_')}_`,
+    };
+  } else {
+    // Teams / TUI / unknown: plain text. Markdown markers would just leak.
+    return {
+      text: `🧠 thinking… ${content}`,
     };
   }
 }
@@ -1163,6 +1345,28 @@ async function main(): Promise<void> {
     registeredGroups = getAllRegisteredGroups();
   } catch (err: any) {
     logger.debug({ err }, 'Chat sync from config skipped');
+  }
+
+  // Auto-install plugins listed in nanoclaw.json `plugins.enabled[]`.
+  // Mirrors CC's autoInstallEnabledPlugins. Best-effort: per-entry failures
+  // are logged but never abort startup.
+  try {
+    const { ensureEnabledPluginsInstalled } = await import('./cli/plugin.js');
+    const result = await ensureEnabledPluginsInstalled();
+    if (result.installed.length > 0) {
+      logger.info(
+        { installed: result.installed },
+        'plugins: auto-installed declared plugins',
+      );
+    }
+    for (const f of result.failed) {
+      logger.warn(
+        { plugin: f.name, error: f.error },
+        'plugins: auto-install failed',
+      );
+    }
+  } catch (err: any) {
+    logger.debug({ err }, 'plugins: auto-install skipped');
   }
 
   restoreRemoteControl();
