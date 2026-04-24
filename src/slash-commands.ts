@@ -13,7 +13,15 @@
 import fs from 'fs';
 import path from 'path';
 import { DATA_DIR, getConfig, reloadConfig } from './config.js';
-import { deleteSession } from './db.js';
+import { deleteSession, getSessionOverrides, setSessionOverride } from './db.js';
+import {
+  getEffectiveThinkLevel,
+  getEffectiveModel,
+  getEffectiveShowThinking,
+  providerForChat,
+  type ThinkLevel,
+  type ShowThinking,
+} from './session-overrides.js';
 import { Channel } from './types.js';
 
 // ─── Command definitions ─────────────────────────────────────────────────────
@@ -126,6 +134,13 @@ export interface SlashCommandContext {
   channel: Channel | undefined;
   /** Delete in-memory session entry (e.g., `delete sessions[folder]`) */
   clearSession: (folder: string) => void;
+  /**
+   * Forcibly terminate the active runner subprocess for this chat so the
+   * next message respawns with a fresh env (picks up any session-level
+   * slash override changes like /think, /model). Returns true if a runner
+   * was killed. Optional — callers without queue access can pass undefined.
+   */
+  killActiveRunner?: (chatJid: string) => boolean;
 }
 
 /**
@@ -163,21 +178,29 @@ export async function handleSlashCommand(
     return { handled: true };
   }
 
-  // /think [level] — set reasoning effort
+  // /think [level] [--default] — set reasoning effort.
+  // Default scope is per-session (writes to sessions table). Pass
+  // --default to write the global agent default in nanoclaw.json instead.
+  // OpenClaw-style semantics, see PR #26 (2026-04-24).
   const thinkMatch = input.match(
-    /^\/think(?:\s+(off|low|medium|high|xhigh))?$/,
+    /^\/think(?:\s+(off|low|medium|high|xhigh))?(\s+--default)?$/,
   );
   if (thinkMatch) {
     const level = thinkMatch[1] as string | undefined;
-    await handleThink(level, ctx);
+    const isDefault = !!thinkMatch[2];
+    await handleThink(level, ctx, { isDefault });
     return { handled: true };
   }
 
-  // /reasoning [on|off|flash] — show/hide/flash thinking output in messages
-  const reasoningMatch = input.match(/^\/reasoning(?:\s+(on|off|flash))?$/);
+  // /reasoning [on|off|flash] [--default] — show/hide/flash thinking
+  // output. Per-session by default; --default writes global config.
+  const reasoningMatch = input.match(
+    /^\/reasoning(?:\s+(on|off|flash))?(\s+--default)?$/,
+  );
   if (reasoningMatch) {
     const mode = reasoningMatch[1] as 'on' | 'off' | 'flash' | undefined;
-    await handleReasoning(mode, ctx);
+    const isDefault = !!reasoningMatch[2];
+    await handleReasoning(mode, ctx, { isDefault });
     return { handled: true };
   }
 
@@ -234,12 +257,14 @@ export async function handleSlashCommand(
     return { handled: true };
   }
 
-  // /model [id] — show or set the active model. Validates against provider
-  // catalog (cached 5min) and refuses invalid IDs with a suggestion.
-  const modelMatch = input.match(/^\/model(?:\s+(.+))?$/);
+  // /model [id] [--default] — show or set active model. Per-session by
+  // default; --default writes the global agent config. Validates against
+  // provider catalog (cached 5min) and refuses invalid IDs with a suggestion.
+  const modelMatch = input.match(/^\/model(?:\s+(.+?))?(?:\s+--default)?$/);
   if (modelMatch) {
     const arg = modelMatch[1]?.trim();
-    await handleModel(arg, ctx);
+    const isDefault = / --default(\s|$)/.test(input);
+    await handleModel(arg, ctx, { isDefault });
     return { handled: true };
   }
 
@@ -279,58 +304,78 @@ export async function handleSlashCommand(
 // ─── /reasoning implementation ───────────────────────────────────────────────
 
 async function handleReasoning(
-  mode: 'on' | 'off' | 'flash' | undefined,
+  mode: ShowThinking | undefined,
   ctx: SlashCommandContext,
+  opts: { isDefault: boolean } = { isDefault: false },
 ): Promise<void> {
-  const { loadConfig, saveConfig } = await import('./config-loader.js');
-  const config = loadConfig();
-
-  // Normalize current value: legacy boolean (true=on, false=off) +
-  // new string enum ('on' | 'off' | 'flash').
-  const raw = config.agents?.defaults?.showThinking;
-  const current: 'on' | 'off' | 'flash' =
-    raw === true ? 'on' : raw === 'flash' ? 'flash' : 'off';
+  const provider = providerForChat(ctx.chatJid);
 
   if (!mode) {
+    const effective = getEffectiveShowThinking(ctx.chatJid) ?? 'off';
+    const overrides = getSessionOverrides(ctx.groupFolder, provider);
+    const scopeLabel = overrides.showThinking
+      ? '(session override)'
+      : '(global default)';
     if (ctx.channel) {
+      const usage =
+        '\nUsage: /reasoning on|off|flash [--default]\n' +
+        '`--default` writes nanoclaw.json (all chats); omit it to set just this chat.';
       if (ctx.channel.sendCard) {
         const cmd = COMMANDS.find((c) => c.name === 'reasoning')!;
         const card = ctx.chatJid.startsWith('teams:')
-          ? buildTeamsAdaptiveCard(cmd, current)
+          ? buildTeamsAdaptiveCard(cmd, effective)
           : { command: 'reasoning', choices: cmd.choices };
         await ctx.channel.sendCard(
           ctx.chatJid,
           card,
-          `🧠 Reasoning display: **${current}**\nUsage: /reasoning on|off|flash`,
+          `🧠 Reasoning display: **${effective}** ${scopeLabel}${usage}`,
         );
       } else {
         await ctx.channel.sendMessage(
           ctx.chatJid,
-          `🧠 Reasoning display: **${current}**\nUsage: /reasoning on|off|flash`,
+          `🧠 Reasoning display: **${effective}** ${scopeLabel}${usage}`,
         );
       }
     }
     return;
   }
 
-  if (!config.agents) config.agents = {} as any;
-  if (!config.agents.defaults) config.agents.defaults = {} as any;
-  // Store as string enum (drop legacy boolean shape on write).
-  config.agents.defaults.showThinking = mode;
-  saveConfig(config, 'slash-command', {
-    command: '/reasoning',
-    mode,
-    chatJid: ctx.chatJid,
-  });
-  reloadConfig();
+  if (opts.isDefault) {
+    const { loadConfig, saveConfig } = await import('./config-loader.js');
+    const config = loadConfig();
+    if (!config.agents) config.agents = {} as any;
+    if (!config.agents.defaults) config.agents.defaults = {} as any;
+    config.agents.defaults.showThinking = mode;
+    saveConfig(config, 'slash-command', {
+      command: '/reasoning --default',
+      mode,
+      chatJid: ctx.chatJid,
+    });
+    reloadConfig();
+    if (ctx.channel) {
+      await ctx.channel.sendMessage(
+        ctx.chatJid,
+        `🧠 **Global default** reasoning display set to **${mode}**. Affects all chats.`,
+      );
+    }
+    return;
+  }
+
+  // Per-session: no runner respawn needed. Reasoning display is read at
+  // dispatcher time via getEffectiveShowThinking, so the change takes
+  // effect on the next message immediately.
+  setSessionOverride(ctx.groupFolder, 'show_thinking', mode, provider);
   if (ctx.channel) {
     const blurb =
       mode === 'on'
-        ? '🧠 Reasoning is now **visible** (kept after final answer). Use `/reasoning off` to hide or `/reasoning flash` for transient mode.'
+        ? '🧠 Reasoning is now **visible** for this chat.'
         : mode === 'flash'
-          ? '🧠 Reasoning set to **flash** — streamed live, replaced by the final answer. Use `/reasoning on` to keep it, or `/reasoning off` to hide.'
-          : '🧠 Reasoning is now **hidden**. Use `/reasoning on` to show, or `/reasoning flash` for transient.';
-    await ctx.channel.sendMessage(ctx.chatJid, blurb);
+          ? '🧠 Reasoning set to **flash** for this chat — streamed live, replaced by final answer.'
+          : '🧠 Reasoning is now **hidden** for this chat.';
+    await ctx.channel.sendMessage(
+      ctx.chatJid,
+      `${blurb} Use \`/reasoning ${mode} --default\` to apply globally.`,
+    );
   }
 }
 
@@ -463,13 +508,17 @@ export async function buildModelsListText(): Promise<string> {
 async function handleModel(
   arg: string | undefined,
   ctx: SlashCommandContext,
+  opts: { isDefault: boolean } = { isDefault: false },
 ): Promise<void> {
   const config = getConfig();
   const provider = config.agents?.defaults?.provider || 'github-copilot';
-  const currentModel = config.agents?.defaults?.model || '(unset)';
+  const sessionProvider = providerForChat(ctx.chatJid);
 
   if (!arg) {
     if (!ctx.channel) return;
+    const effective = getEffectiveModel(ctx.chatJid) || '(unset)';
+    const overrides = getSessionOverrides(ctx.groupFolder, sessionProvider);
+    const scopeLabel = overrides.model ? '(session override)' : '(global default)';
     let topModels: ModelEntry[] = [];
     try {
       const catalog = await getModelCatalog(provider);
@@ -479,6 +528,9 @@ async function handleModel(
     } catch {
       // fall through to plain text
     }
+    const usage =
+      '\nUsage: /model <id> [--default] — see /models for the full list.\n' +
+      '`--default` writes nanoclaw.json (all chats); omit it to set just this chat.';
     if (ctx.channel.sendCard && topModels.length > 0) {
       const choices = topModels.slice(0, 25).map((m) => ({
         title: `${m.name || m.id}${m.premium ? ' (premium)' : ''}`,
@@ -491,17 +543,17 @@ async function handleModel(
         choices,
       };
       const card = ctx.chatJid.startsWith('teams:')
-        ? buildTeamsAdaptiveCard(fakeCmd, currentModel)
+        ? buildTeamsAdaptiveCard(fakeCmd, effective)
         : { command: 'model', choices };
       await ctx.channel.sendCard(
         ctx.chatJid,
         card,
-        `🧠 Model: **${currentModel}** (${provider})\nUsage: /model <id> — see /models for the full list.`,
+        `🧠 Model: **${effective}** (${provider}) ${scopeLabel}${usage}`,
       );
     } else {
       await ctx.channel.sendMessage(
         ctx.chatJid,
-        `🧠 Model: **${currentModel}** (${provider})\nUsage: /model <id> — see /models for the full list.`,
+        `🧠 Model: **${effective}** (${provider}) ${scopeLabel}${usage}`,
       );
     }
     return;
@@ -545,28 +597,42 @@ async function handleModel(
     }
   }
 
-  const { loadConfig, saveConfig } = await import('./config-loader.js');
-  const fresh = loadConfig();
-  if (!fresh.agents) fresh.agents = {} as any;
-  if (!fresh.agents.defaults) fresh.agents.defaults = {} as any;
-  const previous = fresh.agents.defaults.model;
-  fresh.agents.defaults.model = requested;
-  const slashIdx = arg.indexOf('/');
-  if (slashIdx > 0) {
-    fresh.agents.defaults.provider = arg.substring(0, slashIdx);
-  }
-  saveConfig(fresh, 'slash-command', {
-    command: '/model',
-    previous,
-    next: requested,
-    chatJid: ctx.chatJid,
-  });
-  reloadConfig();
-  if (ctx.channel) {
-    await ctx.channel.sendMessage(
-      ctx.chatJid,
-      `🧠 Model set to **${requested}** (${provider}). Takes effect on the next message.`,
-    );
+  if (opts.isDefault) {
+    const { loadConfig, saveConfig } = await import('./config-loader.js');
+    const fresh = loadConfig();
+    if (!fresh.agents) fresh.agents = {} as any;
+    if (!fresh.agents.defaults) fresh.agents.defaults = {} as any;
+    const previous = fresh.agents.defaults.model;
+    fresh.agents.defaults.model = requested;
+    const slashIdx = arg.indexOf('/');
+    if (slashIdx > 0) {
+      fresh.agents.defaults.provider = arg.substring(0, slashIdx);
+    }
+    saveConfig(fresh, 'slash-command', {
+      command: '/model --default',
+      previous,
+      next: requested,
+      chatJid: ctx.chatJid,
+    });
+    reloadConfig();
+    if (ctx.channel) {
+      await ctx.channel.sendMessage(
+        ctx.chatJid,
+        `🧠 **Global default** model set to **${requested}** (${provider}). Affects all chats. Next message respawns runner.`,
+      );
+    }
+  } else {
+    setSessionOverride(ctx.groupFolder, 'model', requested, sessionProvider);
+    const respawned = ctx.killActiveRunner?.(ctx.chatJid) ?? false;
+    if (ctx.channel) {
+      const note = respawned
+        ? ' (current runner stopped — next message will use new model)'
+        : '';
+      await ctx.channel.sendMessage(
+        ctx.chatJid,
+        `🧠 Model set to **${requested}** for this chat${note}. Use \`/model ${requested} --default\` to apply globally.`,
+      );
+    }
   }
 }
 
@@ -580,52 +646,82 @@ export function _resetModelCatalogCache(): void {
 async function handleThink(
   level: string | undefined,
   ctx: SlashCommandContext,
+  opts: { isDefault: boolean } = { isDefault: false },
 ): Promise<void> {
+  const provider = providerForChat(ctx.chatJid);
   if (!level) {
-    // Show current think level with interactive selection
-    const currentLevel = getConfig().agents?.defaults?.thinkLevel || 'off';
+    // Show current effective level (session override > global default).
+    const effective = getEffectiveThinkLevel(ctx.chatJid) ?? 'off';
+    const overrides = getSessionOverrides(ctx.groupFolder, provider);
+    const scopeLabel = overrides.thinkLevel
+      ? '(session override)'
+      : '(global default)';
     if (ctx.channel) {
+      const usage =
+        '\nUsage: /think off|low|medium|high|xhigh [--default]\n' +
+        '`--default` writes nanoclaw.json (all chats); omit it to set just this chat.';
       if (ctx.channel.sendCard) {
         const thinkCmd = COMMANDS.find((c) => c.name === 'think')!;
-        // Teams: Adaptive Card; Telegram: inline keyboard via sendCard
         const card = ctx.chatJid.startsWith('teams:')
-          ? buildTeamsAdaptiveCard(thinkCmd, currentLevel)
+          ? buildTeamsAdaptiveCard(thinkCmd, effective)
           : { command: 'think', choices: thinkCmd.choices };
         await ctx.channel.sendCard(
           ctx.chatJid,
           card,
-          `🧠 Think level: **${currentLevel}**\nUsage: /think off|low|medium|high|xhigh`,
+          `🧠 Think level: **${effective}** ${scopeLabel}${usage}`,
         );
       } else {
         await ctx.channel.sendMessage(
           ctx.chatJid,
-          `🧠 Think level: **${currentLevel}**\nUsage: /think off|low|medium|high|xhigh`,
+          `🧠 Think level: **${effective}** ${scopeLabel}${usage}`,
         );
       }
     }
-  } else {
-    // Update config in memory and persist to file
+    return;
+  }
+
+  if (opts.isDefault) {
+    // Global write: same as old behavior, persists across all chats.
     const { loadConfig, saveConfig } = await import('./config-loader.js');
     const config = loadConfig();
     if (level === 'off') {
       delete config.agents.defaults.thinkLevel;
     } else {
-      config.agents.defaults.thinkLevel = level as
-        | 'low'
-        | 'medium'
-        | 'high'
-        | 'xhigh';
+      config.agents.defaults.thinkLevel = level as 'low' | 'medium' | 'high' | 'xhigh';
     }
     saveConfig(config, 'slash-command', {
-      command: '/think',
-      level: level,
+      command: '/think --default',
+      level,
       chatJid: ctx.chatJid,
     });
     reloadConfig();
     if (ctx.channel) {
       await ctx.channel.sendMessage(
         ctx.chatJid,
-        `🧠 Think level set to **${level}**. Takes effect on next message.`,
+        `🧠 **Global default** think level set to **${level}**. Affects all chats. Takes effect on next message (after runner respawn).`,
+      );
+    }
+  } else {
+    // Per-session write: only this chat. Kill the active runner so the
+    // next message respawns with the new env.
+    setSessionOverride(
+      ctx.groupFolder,
+      'think_level',
+      level === 'off' ? null : level,
+      provider,
+    );
+    const respawned = ctx.killActiveRunner?.(ctx.chatJid) ?? false;
+    if (ctx.channel) {
+      const note = respawned
+        ? ' (current runner stopped — next message will use new value)'
+        : '';
+      const detail =
+        level === 'off'
+          ? `cleared (will inherit global default)`
+          : `**${level}**`;
+      await ctx.channel.sendMessage(
+        ctx.chatJid,
+        `🧠 Think level set to ${detail} for this chat${note}. Use \`/think ${level} --default\` to apply globally.`,
       );
     }
   }

@@ -19,6 +19,7 @@ import {
   TRIGGER_PATTERN,
   getConfig,
 } from './config.js';
+import { getEffectiveShowThinking } from './session-overrides.js';
 import {
   runAgentForChat,
   IS_GHC_PROVIDER,
@@ -304,6 +305,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     groupFolder: group.folder,
     channel: findChannel(channels, chatJid),
     clearSession: (folder: string) => delete sessions[folder],
+    killActiveRunner: (jid: string) => queue.killActive(jid),
   };
   const regularMessages: typeof missedMessages = [];
   for (const msg of missedMessages) {
@@ -447,7 +449,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       // disappears, leaving only the final.
       if (result.thinking && !result.result) {
         const thinkingMode = normalizeShowThinking(
-          getConfig().agents?.defaults?.showThinking,
+          getEffectiveShowThinking(chatJid) ??
+            getConfig().agents?.defaults?.showThinking,
         );
         if (
           thinkingMode === 'flash' &&
@@ -536,7 +539,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // the thinking-preview with just the final answer.
         let thinkingParseMode: 'HTML' | 'Markdown' | undefined;
         const thinkingMode = normalizeShowThinking(
-          getConfig().agents?.defaults?.showThinking,
+          getEffectiveShowThinking(chatJid) ??
+            getConfig().agents?.defaults?.showThinking,
         );
         if (result.thinking && !result.partial && thinkingMode === 'on') {
           const tp = formatThinkingForChannel(result.thinking, chatJid);
@@ -1034,6 +1038,7 @@ async function startMessageLoop(): Promise<void> {
               groupFolder: group.folder,
               channel: findChannel(channels, chatJid),
               clearSession: (folder: string) => delete sessions[folder],
+              killActiveRunner: (jid: string) => queue.killActive(jid),
             };
             const nonSlash: typeof messagesToSend = [];
             for (const msg of messagesToSend) {
