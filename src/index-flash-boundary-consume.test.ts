@@ -29,12 +29,21 @@ describe('flash boundary sentinel consumption (bug 3)', () => {
     let queryBoundaryPendingResult = false;
     let thinkingMsgId: string | undefined;
     let progressiveMsgId: string | undefined;
+    let lastUserTurnSeqSeen = 0;
+    let userTurnSeq = 0;
+    let turnFinalized = false;
     const lock = createOpeningLock();
     const sendMessage = vi.fn(async () => {
       // Simulate TG send latency.
       await new Promise((r) => setTimeout(r, 1));
       return 'msg-' + Math.random().toString(36).slice(2, 8);
     });
+
+    function pipeUserMessage(): void {
+      // Mirrors GroupQueue: every user message (initial or piped follow-up)
+      // increments userTurnSeq.
+      userTurnSeq += 1;
+    }
 
     async function onResult(result: {
       result?: string | null;
@@ -50,6 +59,18 @@ describe('flash boundary sentinel consumption (bug 3)', () => {
 
       // Reasoning_delta path (mirrors thinking branch ~L501).
       if (result.thinking && !result.result) {
+        // Bug 6 gate: drop trailing reasoning_delta after turn finalize
+        // (kenan TG repro 2026-04-26 00:03).
+        if (turnFinalized && userTurnSeq === lastUserTurnSeqSeen) {
+          return;
+        }
+        // Bug 5 turn-seq boundary (kenan TG repro 2026-04-25 22:54).
+        if (userTurnSeq !== lastUserTurnSeqSeen) {
+          lastUserTurnSeqSeen = userTurnSeq;
+          queryBoundaryPendingThinking = true;
+          queryBoundaryPendingResult = true;
+          turnFinalized = false;
+        }
         if (queryBoundaryPendingThinking) {
           queryBoundaryPendingThinking = false;
           thinkingMsgId = undefined;
@@ -64,10 +85,15 @@ describe('flash boundary sentinel consumption (bug 3)', () => {
         return;
       }
 
-      // Result path (mirrors result.result branch ~L583): the per-turn
-      // progressiveMsgId reset MUST happen on every new turn even if the
-      // thinking branch already ran for this turn.
+      // Result path (mirrors result.result branch ~L583).
       if (typeof result.result === 'string') {
+        // Bug 5 turn-seq boundary on the result side too.
+        if (userTurnSeq !== lastUserTurnSeqSeen) {
+          lastUserTurnSeqSeen = userTurnSeq;
+          queryBoundaryPendingThinking = true;
+          queryBoundaryPendingResult = true;
+          turnFinalized = false;
+        }
         if (queryBoundaryPendingResult) {
           queryBoundaryPendingResult = false;
           progressiveMsgId = undefined;
@@ -76,11 +102,16 @@ describe('flash boundary sentinel consumption (bug 3)', () => {
           progressiveMsgId =
             'progressive-' + Math.random().toString(36).slice(2, 6);
         }
+        // Bug 6: mark turn finalized when non-partial result arrives.
+        if (result.partial === false || result.partial === undefined) {
+          turnFinalized = true;
+        }
       }
     }
 
     return {
       onResult,
+      pipeUserMessage,
       sendMessage,
       get thinkingMsgId() {
         return thinkingMsgId;
@@ -93,6 +124,9 @@ describe('flash boundary sentinel consumption (bug 3)', () => {
       },
       get pendingResult() {
         return queryBoundaryPendingResult;
+      },
+      get turnFinalized() {
+        return turnFinalized;
       },
     };
   }
@@ -150,6 +184,7 @@ describe('flash boundary sentinel consumption (bug 3)', () => {
 
   it('thinking-then-result on new turn still resets progressiveMsgId (kenan 22:41 repro)', async () => {
     const s = makeState();
+    s.pipeUserMessage();
     // Turn 1: result only, no thinking.
     await s.onResult({ result: null, newSessionId: 'sess-1', partial: false });
     await s.onResult({ result: 'turn1 answer' });
@@ -159,11 +194,52 @@ describe('flash boundary sentinel consumption (bug 3)', () => {
     // Turn 2: sentinel, then thinking, then result. The thinking branch
     // must NOT consume the result-side sentinel, otherwise the new turn
     // would edit turn1's reply instead of opening a new one.
+    s.pipeUserMessage();
     await s.onResult({ result: null, newSessionId: 'sess-2', partial: false });
     await s.onResult({ thinking: 'turn2 reasoning' });
     await s.onResult({ result: 'turn2 answer' });
 
     expect(s.progressiveMsgId).not.toBe(firstProgressive);
     expect(s.pendingResult).toBe(false);
+  });
+
+  it('piped follow-up WITHOUT sentinel still treats as new turn (kenan 22:54 repro, bug 5)', async () => {
+    const s = makeState();
+    // Turn 1: spawn (pipe) + sentinel + result.
+    s.pipeUserMessage();
+    await s.onResult({ result: null, newSessionId: 'sess-x', partial: false });
+    await s.onResult({ result: 'turn1 answer' });
+    const turn1Progressive = s.progressiveMsgId;
+
+    // Turn 2: piped follow-up. SDK reuses sessionId so no sentinel fires.
+    // Without userTurnSeq advance detection, queryBoundaryPendingResult
+    // would stay false and turn 2's answer would edit turn 1's bubble.
+    s.pipeUserMessage();
+    await s.onResult({ result: 'turn2 answer' }); // NO sentinel before this!
+
+    expect(s.progressiveMsgId).not.toBe(turn1Progressive);
+  });
+
+  it('trailing reasoning_delta after final answer is dropped (kenan 00:03 repro, bug 6)', async () => {
+    const s = makeState();
+    s.pipeUserMessage();
+    await s.onResult({ result: null, newSessionId: 'sess-y', partial: false });
+    await s.onResult({ thinking: 'reasoning' });
+    expect(s.sendMessage).toHaveBeenCalledTimes(1);
+    // Final answer (non-partial) finalizes the turn.
+    await s.onResult({ result: 'final answer', partial: false });
+    expect(s.turnFinalized).toBe(true);
+
+    // SDK fires trailing reasoning_delta AFTER finalize. Must be dropped:
+    // no new sendMessage, no orphan thinking bubble.
+    await s.onResult({ thinking: 'trailing tail 1' });
+    await s.onResult({ thinking: 'trailing tail 2' });
+    expect(s.sendMessage).toHaveBeenCalledTimes(1); // <- the bug
+
+    // Next user turn (pipe) should clear the gate and allow new thinking.
+    s.pipeUserMessage();
+    await s.onResult({ thinking: 'turn 3 reasoning' });
+    expect(s.sendMessage).toHaveBeenCalledTimes(2);
+    expect(s.turnFinalized).toBe(false);
   });
 });
