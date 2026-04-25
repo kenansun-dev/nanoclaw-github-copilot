@@ -669,12 +669,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           progressiveText = '';
           lastFinalMsgId = undefined;
           outputSentToUser = false;
-          thinkingMsgId = undefined;
-          flashThinkingDismissed = false;
-          lastThinkingRendered = undefined;
-          thinkingPrependedThisQuery = false;
-          flashOpeningLock.reset();
-          flashEditCoalescer.clear();
+          // NOTE: thinking-side state (thinkingMsgId, flashThinkingDismissed,
+          // lastThinkingRendered, flashOpeningLock, flashEditCoalescer,
+          // thinkingPrependedThisQuery) is intentionally NOT reset here.
+          // The thinking-branch boundary owns those fields and resets them
+          // on its own turn-advance. If we cleared thinkingMsgId here, the
+          // current-turn flash thinking bubble (opened by thinking-branch
+          // earlier in this same turn) would be orphaned: the dismiss code
+          // below relies on thinkingMsgId being defined to delete the
+          // bubble at finalize. (kenan TG repro 2026-04-26 00:20: thinking
+          // bubble at 16:20:45 was never deleted because the result-branch
+          // reset at 16:20:59 nulled thinkingMsgId before final-output ran.)
           // Cancel any leftover native stream from the previous turn so
           // the next turn opens a fresh stream. cancel() is idempotent.
           if (streamHandle) {
