@@ -411,6 +411,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   //             "thinking 和主消息都是 streaming回来, 都保留".
   //   `off`   -> never opened.
   let thinkingMsgId: string | undefined;
+  // On-mode dedup: a single agent query may emit multiple `partial=false`
+  // result events when it contains tool calls (pre-tool final + post-tool
+  // final). Each event carries the SDK's accumulated `result.thinking`,
+  // and the legacy code prepended thinking on every one — so users saw the
+  // (growing) thinking block rendered twice in `on` mode (kenan TG repro
+  // 2026-04-25 18:06). This flag clamps the prepend to the FIRST final of
+  // a query; reset on the query boundary along with thinkingMsgId.
+  let thinkingPrependedThisQuery = false;
   // True once flash mode has cleared its thinking preview on the first
   // answer chunk; suppresses re-opening a thinking message for the
   // remainder of the turn (SDK still emits trailing reasoning_delta).
@@ -499,6 +507,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             thinkingMsgId = undefined;
             flashThinkingDismissed = false;
             lastThinkingRendered = undefined;
+            thinkingPrependedThisQuery = false;
             flashEditCoalescer.clear();
           }
           const tp = formatThinkingForFlash(result.thinking, chatJid);
@@ -545,6 +554,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           thinkingMsgId = undefined;
           flashThinkingDismissed = false;
           lastThinkingRendered = undefined;
+          thinkingPrependedThisQuery = false;
           flashEditCoalescer.clear();
           // Cancel any leftover native stream from the previous turn so
           // the next turn opens a fresh stream. cancel() is idempotent.
@@ -579,16 +589,26 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           getEffectiveShowThinking(chatJid) ??
             getConfig().agents?.defaults?.showThinking,
         );
-        if (result.thinking && !result.partial && thinkingMode === 'on') {
+        if (
+          result.thinking &&
+          !result.partial &&
+          thinkingMode === 'on' &&
+          !thinkingPrependedThisQuery
+        ) {
           const tp = formatThinkingForChannel(result.thinking, chatJid);
-          if (tp) {
-            thinkingParseMode = tp.parseMode;
-            const merged = `${tp.text}\n\n${
+          const merged = applyOnModeThinkingPrepend({
+            thinking: result.thinking,
+            resultText:
               typeof result.result === 'string'
                 ? result.result
-                : JSON.stringify(result.result)
-            }`;
-            result.result = merged;
+                : JSON.stringify(result.result),
+            alreadyPrepended: thinkingPrependedThisQuery,
+            formatted: tp,
+          });
+          if (merged.prepended) {
+            thinkingParseMode = merged.parseMode;
+            result.result = merged.resultText;
+            thinkingPrependedThisQuery = true;
           }
         }
         if (
@@ -1334,6 +1354,41 @@ export function formatThinkingForFlash(
       text: `🧠 thinking… ${content}`,
     };
   }
+}
+
+/**
+ * On-mode prepend dedup helper.
+ *
+ * A single agent query may emit multiple `partial=false` result events when
+ * it contains tool calls (pre-tool final + post-tool final). Each event
+ * carries the SDK's accumulated `result.thinking`. Without a flag, every
+ * final gets thinking prepended again, so users see the (growing) thinking
+ * block rendered twice in `on` mode (kenan TG repro 2026-04-25 18:06).
+ *
+ * Returns the new state and merged text. Pure function so it's unit-testable
+ * outside the dispatcher closure. Use the returned `prepended` to update the
+ * caller's per-query flag.
+ *
+ * Caller contract: only invoke when thinkingMode === 'on' && !partial.
+ */
+export function applyOnModeThinkingPrepend(args: {
+  thinking: string | undefined;
+  resultText: string;
+  alreadyPrepended: boolean;
+  formatted: { text: string; parseMode?: 'HTML' | 'Markdown' } | null;
+}): {
+  resultText: string;
+  parseMode?: 'HTML' | 'Markdown';
+  prepended: boolean;
+} {
+  if (args.alreadyPrepended || !args.thinking || !args.formatted) {
+    return { resultText: args.resultText, prepended: args.alreadyPrepended };
+  }
+  return {
+    resultText: `${args.formatted.text}\n\n${args.resultText}`,
+    parseMode: args.formatted.parseMode,
+    prepended: true,
+  };
 }
 
 async function main(): Promise<void> {
