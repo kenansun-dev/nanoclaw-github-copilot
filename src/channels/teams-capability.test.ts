@@ -281,13 +281,17 @@ describe('IPC turn boundary closure reset', () => {
     expect(s.lastFinalMsgId).toBe(turn1Id);
   });
 
-  it('source contract: processGroupMessages declares queryBoundaryPending', async () => {
+  it('source contract: processGroupMessages declares queryBoundaryPending flags', async () => {
     const src = await import('node:fs').then((fs) =>
       fs.promises.readFile(new URL('../index.ts', import.meta.url), 'utf-8'),
     );
-    expect(src).toMatch(/let queryBoundaryPending = false/);
-    expect(src).toMatch(/queryBoundaryPending = true/);
-    expect(src).toMatch(/queryBoundaryPending = false/);
+    // Split into thinking/result flags on 2026-04-25 (kenan TG repro 22:41).
+    expect(src).toMatch(/let queryBoundaryPendingThinking = false/);
+    expect(src).toMatch(/let queryBoundaryPendingResult = false/);
+    expect(src).toMatch(/queryBoundaryPendingThinking = true/);
+    expect(src).toMatch(/queryBoundaryPendingResult = true/);
+    expect(src).toMatch(/queryBoundaryPendingThinking = false/);
+    expect(src).toMatch(/queryBoundaryPendingResult = false/);
     expect(src).toMatch(/IPC turn boundary: reset per-turn message-id state/);
   });
 });

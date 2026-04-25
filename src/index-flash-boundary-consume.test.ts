@@ -73,7 +73,8 @@ describe('flash boundary sentinel consumption (bug 3)', () => {
           progressiveMsgId = undefined;
         }
         if (!progressiveMsgId) {
-          progressiveMsgId = 'progressive-' + Math.random().toString(36).slice(2, 6);
+          progressiveMsgId =
+            'progressive-' + Math.random().toString(36).slice(2, 6);
         }
       }
     }
