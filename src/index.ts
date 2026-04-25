@@ -429,6 +429,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // text actually grew. Skipping no-op edits keeps us off TG's per-chat
   // 30/sec rate limit. Reset on turn boundary along with thinkingMsgId.
   let lastThinkingRendered: string | undefined;
+  // Flash opening lock: SDK fires reasoning_delta events at high rate.
+  // The first delta enters the `if (!thinkingMsgId)` branch and awaits
+  // channel.sendMessage; while that promise is in flight, a second delta
+  // arrives, ALSO sees thinkingMsgId === undefined, ALSO calls sendMessage
+  // → two orphan opening bubbles on screen (kenan repro 2026-04-25 18:05
+  // on TG flash mode). The coalescer protects edits-after-msgId-known but
+  // had no protection for the open-msgId race. See createOpeningLock().
+  const flashOpeningLock = createOpeningLock();
   // Flash thinking edit coalescer: see src/flash-edit-coalescer.ts.
   // Cleared on every turn boundary along with thinkingMsgId.
   const flashEditCoalescer = createFlashEditCoalescer({
@@ -508,6 +516,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             flashThinkingDismissed = false;
             lastThinkingRendered = undefined;
             thinkingPrependedThisQuery = false;
+            flashOpeningLock.reset();
             flashEditCoalescer.clear();
           }
           const tp = formatThinkingForFlash(result.thinking, chatJid);
@@ -516,13 +525,30 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               ? { parseMode: tp.parseMode }
               : undefined;
             if (!thinkingMsgId) {
-              await traceSetTyping(channel, chatJid, false, 'thinking-first');
-              const msgId = await channel.sendMessage(
-                chatJid,
-                tp.text + ' ◌',
-                sendOpts,
-              );
-              thinkingMsgId = typeof msgId === 'string' ? msgId : undefined;
+              // Opening lock: openOnce() either runs sendMessage (if we're
+              // first) or awaits the in-flight opener (if a sibling delta
+              // beat us). After it resolves, thinkingMsgId is set and the
+              // late delta falls through to the coalescer enqueue branch.
+              await flashOpeningLock.openOnce(async () => {
+                await traceSetTyping(channel, chatJid, false, 'thinking-first');
+                const msgId = await channel.sendMessage(
+                  chatJid,
+                  tp.text + ' ◌',
+                  sendOpts,
+                );
+                thinkingMsgId = typeof msgId === 'string' ? msgId : undefined;
+              });
+              if (thinkingMsgId) {
+                // If we were the late waiter (didn't run send ourselves),
+                // enqueue our text into the coalescer so it shows up.
+                // The owner-of-send case also enqueues here as a no-op
+                // since latest text == what we just sent.
+                flashEditCoalescer.enqueue(
+                  thinkingMsgId,
+                  tp.text + ' ◌',
+                  sendOpts,
+                );
+              }
             } else {
               // Coalescer path: enqueue the latest text instead of
               // awaiting editMessage directly. This caps in-flight edits at
@@ -555,6 +581,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           flashThinkingDismissed = false;
           lastThinkingRendered = undefined;
           thinkingPrependedThisQuery = false;
+          flashOpeningLock.reset();
           flashEditCoalescer.clear();
           // Cancel any leftover native stream from the previous turn so
           // the next turn opens a fresh stream. cancel() is idempotent.
@@ -1371,6 +1398,49 @@ export function formatThinkingForFlash(
  *
  * Caller contract: only invoke when thinkingMode === 'on' && !partial.
  */
+/**
+ * Flash-mode opening lock for the FIRST `reasoning_delta` send.
+ *
+ * Bug 1 (kenan TG repro 2026-04-25 18:05):
+ *   The first delta enters `if (!thinkingMsgId)` and awaits
+ *   channel.sendMessage. While that promise is in flight, a second
+ *   high-frequency delta arrives, ALSO sees thinkingMsgId === undefined,
+ *   ALSO calls sendMessage → two orphan opening bubbles. The flash
+ *   coalescer protects edits-once-msgId-known but had no protection
+ *   for the open-msgId race.
+ *
+ * createOpeningLock() exposes:
+ *   - openOnce(send): if no open is in flight, run send(); otherwise
+ *     await the in-flight one. Either way, returns when the opener has
+ *     resolved. The caller then re-checks msgId to decide whether to
+ *     enqueue a follow-up edit.
+ *   - reset(): drop the slot on turn boundary.
+ *   - inFlight(): true while a sendMessage is pending (test introspection).
+ */
+export function createOpeningLock(): {
+  openOnce: (send: () => Promise<void>) => Promise<void>;
+  reset: () => void;
+  inFlight: () => boolean;
+} {
+  let pending: Promise<void> | undefined;
+  return {
+    openOnce(send: () => Promise<void>): Promise<void> {
+      if (pending) return pending;
+      const p = send().finally(() => {
+        if (pending === p) pending = undefined;
+      });
+      pending = p;
+      return p;
+    },
+    reset(): void {
+      pending = undefined;
+    },
+    inFlight(): boolean {
+      return !!pending;
+    },
+  };
+}
+
 export function applyOnModeThinkingPrepend(args: {
   thinking: string | undefined;
   resultText: string;
