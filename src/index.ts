@@ -502,10 +502,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         (result as any).newSessionId &&
         !result.partial
       ) {
-        logger.warn(
-          { chatJid, newSessionId: (result as any).newSessionId },
-          'TRACE: sentinel fired',
-        );
         queryBoundaryPendingThinking = true;
         queryBoundaryPendingResult = true;
         // Don't return — let the rest of the handler run for thinking/status
@@ -524,10 +520,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (turnFinalized) {
           const seqNow = queue.getUserTurnSeq(chatJid);
           if (seqNow === lastUserTurnSeqSeen) {
-            logger.warn(
-              { chatJid },
-              'TRACE: dropping trailing reasoning_delta post-finalize',
-            );
             return;
           }
           // New turn started — fall through; the seq-check below will
@@ -564,10 +556,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           // means a fresh turn — drop the previous turn's thinking
           // pointer so this turn opens a new one.
           if (queryBoundaryPendingThinking) {
-            logger.warn(
-              { chatJid, src: 'thinking-branch-boundary' },
-              'TRACE: boundary reset',
-            );
             // Consume the thinking-side sentinel exactly once per turn so
             // subsequent reasoning_delta frames don't re-wipe thinkingMsgId
             // (kenan TG repro 2026-04-25 21:55 — 7 frames produced 7 sends).
@@ -645,25 +633,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           queryBoundaryPendingThinking = true;
           turnFinalized = false;
         }
-        logger.warn(
-          {
-            chatJid,
-            partial: !!result.partial,
-            pendingResult: queryBoundaryPendingResult,
-            progressiveMsgId,
-            lastFinalMsgId,
-            resultLen:
-              typeof result.result === 'string' ? result.result.length : -1,
-          },
-          'TRACE: result.result entry',
-        );
         // New-turn boundary: clear per-turn message tracking before handling
         // this output so it sends fresh instead of editing the previous turn.
         if (queryBoundaryPendingResult) {
-          logger.warn(
-            { chatJid, src: 'result-branch-boundary' },
-            'TRACE: boundary reset',
-          );
           queryBoundaryPendingResult = false;
           progressiveMsgId = undefined;
           progressiveText = '';
