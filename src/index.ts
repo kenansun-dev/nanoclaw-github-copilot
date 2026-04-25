@@ -512,6 +512,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           // means a fresh turn — drop the previous turn's thinking
           // pointer so this turn opens a new one.
           if (queryBoundaryPending) {
+            // Consume the sentinel here. The boundary block runs once per
+            // user query in the thinking path; if we don't clear the flag,
+            // every subsequent reasoning_delta also sees pending=true and
+            // re-enters this block, wiping thinkingMsgId on every frame and
+            // opening a fresh bubble each time (kenan TG repro 2026-04-25
+            // 21:55 — 7 reasoning_delta frames produced 7 thinking-first
+            // sendMessage calls). Each new user turn fires its own sentinel,
+            // so single-consumption is safe across turns.
+            queryBoundaryPending = false;
             thinkingMsgId = undefined;
             flashThinkingDismissed = false;
             lastThinkingRendered = undefined;
