@@ -470,6 +470,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // turn edit the previous reply (kenan TG repro 2026-04-25 22:41).
   let queryBoundaryPendingThinking = false;
   let queryBoundaryPendingResult = false;
+  // Independent turn-boundary signal sourced from GroupQueue. The SDK's
+  // newSessionId sentinel only fires for the FIRST turn of a session;
+  // follow-up user messages piped to a running container reuse the same
+  // sessionId, so the dispatcher would never see a sentinel for turns 2+.
+  // GroupQueue increments userTurnSeq on every pipe (initial + follow-up),
+  // so comparing against the last-seen value gives a reliable per-turn
+  // boundary regardless of SDK sentinel behaviour. (kenan TG repro
+  // 2026-04-25 22:54: 4 user msgs, 1 sentinel, 3 missed turn boundaries.)
+  let lastUserTurnSeqSeen = queue.getUserTurnSeq(chatJid);
   // Thinking message state (separate from answer progressive message)
 
   try {
@@ -486,6 +495,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         (result as any).newSessionId &&
         !result.partial
       ) {
+        logger.warn(
+          { chatJid, newSessionId: (result as any).newSessionId },
+          'TRACE: sentinel fired',
+        );
         queryBoundaryPendingThinking = true;
         queryBoundaryPendingResult = true;
         // Don't return — let the rest of the handler run for thinking/status
@@ -499,6 +512,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       //             kept visible above the answer (separate message).
       //   `off`   -> drop the delta; final result will not include thinking.
       if (result.thinking && !result.result) {
+        // Reliable per-turn boundary check (see comment in result.result
+        // branch below): if userTurnSeq advanced, this delta belongs to a
+        // new turn — set the thinking pending flag so the boundary block
+        // below resets thinkingMsgId / opening lock.
+        const currentSeq = queue.getUserTurnSeq(chatJid);
+        if (currentSeq !== lastUserTurnSeqSeen) {
+          lastUserTurnSeqSeen = currentSeq;
+          queryBoundaryPendingThinking = true;
+          queryBoundaryPendingResult = true;
+        }
         const thinkingMode = normalizeShowThinking(
           getEffectiveShowThinking(chatJid) ??
             getConfig().agents?.defaults?.showThinking,
@@ -519,6 +542,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           // means a fresh turn — drop the previous turn's thinking
           // pointer so this turn opens a new one.
           if (queryBoundaryPendingThinking) {
+            logger.warn(
+              { chatJid, src: 'thinking-branch-boundary' },
+              'TRACE: boundary reset',
+            );
             // Consume the thinking-side sentinel exactly once per turn so
             // subsequent reasoning_delta frames don't re-wipe thinkingMsgId
             // (kenan TG repro 2026-04-25 21:55 — 7 frames produced 7 sends).
@@ -586,9 +613,33 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
 
       if (result.result) {
+        // Reliable per-turn boundary: if the queue advanced its turn seq
+        // since we last looked (a new user message was piped), treat this
+        // as a new turn even if no SDK sentinel fired.
+        const currentSeq = queue.getUserTurnSeq(chatJid);
+        if (currentSeq !== lastUserTurnSeqSeen) {
+          lastUserTurnSeqSeen = currentSeq;
+          queryBoundaryPendingResult = true;
+          queryBoundaryPendingThinking = true;
+        }
+        logger.warn(
+          {
+            chatJid,
+            partial: !!result.partial,
+            pendingResult: queryBoundaryPendingResult,
+            progressiveMsgId,
+            lastFinalMsgId,
+            resultLen: typeof result.result === 'string' ? result.result.length : -1,
+          },
+          'TRACE: result.result entry',
+        );
         // New-turn boundary: clear per-turn message tracking before handling
         // this output so it sends fresh instead of editing the previous turn.
         if (queryBoundaryPendingResult) {
+          logger.warn(
+            { chatJid, src: 'result-branch-boundary' },
+            'TRACE: boundary reset',
+          );
           queryBoundaryPendingResult = false;
           progressiveMsgId = undefined;
           progressiveText = '';
