@@ -25,8 +25,10 @@ import { createOpeningLock } from './index.js';
 describe('flash boundary sentinel consumption (bug 3)', () => {
   // Mirror of the dispatcher's per-chat state for the slice we care about.
   function makeState() {
-    let queryBoundaryPending = false;
+    let queryBoundaryPendingThinking = false;
+    let queryBoundaryPendingResult = false;
     let thinkingMsgId: string | undefined;
+    let progressiveMsgId: string | undefined;
     const lock = createOpeningLock();
     const sendMessage = vi.fn(async () => {
       // Simulate TG send latency.
@@ -42,15 +44,14 @@ describe('flash boundary sentinel consumption (bug 3)', () => {
     }): Promise<void> {
       // Sentinel handling (mirrors src/index.ts ~L483).
       if (result.result === null && result.newSessionId && !result.partial) {
-        queryBoundaryPending = true;
+        queryBoundaryPendingThinking = true;
+        queryBoundaryPendingResult = true;
       }
 
       // Reasoning_delta path (mirrors thinking branch ~L501).
       if (result.thinking && !result.result) {
-        // FIXED boundary block: consume the sentinel so subsequent frames
-        // do not re-enter and wipe state.
-        if (queryBoundaryPending) {
-          queryBoundaryPending = false;
+        if (queryBoundaryPendingThinking) {
+          queryBoundaryPendingThinking = false;
           thinkingMsgId = undefined;
           lock.reset();
         }
@@ -62,6 +63,19 @@ describe('flash boundary sentinel consumption (bug 3)', () => {
         }
         return;
       }
+
+      // Result path (mirrors result.result branch ~L583): the per-turn
+      // progressiveMsgId reset MUST happen on every new turn even if the
+      // thinking branch already ran for this turn.
+      if (typeof result.result === 'string') {
+        if (queryBoundaryPendingResult) {
+          queryBoundaryPendingResult = false;
+          progressiveMsgId = undefined;
+        }
+        if (!progressiveMsgId) {
+          progressiveMsgId = 'progressive-' + Math.random().toString(36).slice(2, 6);
+        }
+      }
     }
 
     return {
@@ -70,8 +84,14 @@ describe('flash boundary sentinel consumption (bug 3)', () => {
       get thinkingMsgId() {
         return thinkingMsgId;
       },
-      get pending() {
-        return queryBoundaryPending;
+      get progressiveMsgId() {
+        return progressiveMsgId;
+      },
+      get pendingThinking() {
+        return queryBoundaryPendingThinking;
+      },
+      get pendingResult() {
+        return queryBoundaryPendingResult;
       },
     };
   }
@@ -79,14 +99,14 @@ describe('flash boundary sentinel consumption (bug 3)', () => {
   it('sentinel + 7 sequential reasoning_delta -> exactly 1 sendMessage', async () => {
     const s = makeState();
     await s.onResult({ result: null, newSessionId: 'sess-a', partial: false });
-    expect(s.pending).toBe(true);
+    expect(s.pendingThinking).toBe(true);
 
     for (let i = 0; i < 7; i++) {
       await s.onResult({ thinking: 'step ' + i });
     }
 
     expect(s.sendMessage).toHaveBeenCalledTimes(1); // <- the bug
-    expect(s.pending).toBe(false); // sentinel consumed exactly once
+    expect(s.pendingThinking).toBe(false); // sentinel consumed exactly once
     expect(s.thinkingMsgId).toBeDefined();
   });
 
@@ -125,5 +145,24 @@ describe('flash boundary sentinel consumption (bug 3)', () => {
     await s.onResult({ thinking: 'more' });
     await s.onResult({ thinking: 'even more' });
     expect(s.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('thinking-then-result on new turn still resets progressiveMsgId (kenan 22:41 repro)', async () => {
+    const s = makeState();
+    // Turn 1: result only, no thinking.
+    await s.onResult({ result: null, newSessionId: 'sess-1', partial: false });
+    await s.onResult({ result: 'turn1 answer' });
+    const firstProgressive = s.progressiveMsgId;
+    expect(firstProgressive).toBeDefined();
+
+    // Turn 2: sentinel, then thinking, then result. The thinking branch
+    // must NOT consume the result-side sentinel, otherwise the new turn
+    // would edit turn1's reply instead of opening a new one.
+    await s.onResult({ result: null, newSessionId: 'sess-2', partial: false });
+    await s.onResult({ thinking: 'turn2 reasoning' });
+    await s.onResult({ result: 'turn2 answer' });
+
+    expect(s.progressiveMsgId).not.toBe(firstProgressive);
+    expect(s.pendingResult).toBe(false);
   });
 });

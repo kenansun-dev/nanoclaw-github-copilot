@@ -463,7 +463,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Symptom this prevents (kenansun, 2026-04-21): user asks new
   // question, nanoclaw edits the previous reply instead of sending a
   // new message. Root cause: lastFinalMsgId from turn N-1 still in scope.
-  let queryBoundaryPending = false;
+  // Two flags so the thinking branch and result branch each reset their
+  // own per-turn state once. We tried sharing a single flag (commit 877383e)
+  // but consuming it in the thinking branch caused the result branch to
+  // skip its reset of progressiveMsgId/lastFinalMsgId, which made a new
+  // turn edit the previous reply (kenan TG repro 2026-04-25 22:41).
+  let queryBoundaryPendingThinking = false;
+  let queryBoundaryPendingResult = false;
   // Thinking message state (separate from answer progressive message)
 
   try {
@@ -480,7 +486,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         (result as any).newSessionId &&
         !result.partial
       ) {
-        queryBoundaryPending = true;
+        queryBoundaryPendingThinking = true;
+        queryBoundaryPendingResult = true;
         // Don't return — let the rest of the handler run for thinking/status
         // bookkeeping, then exit naturally on the !result.result guard above.
       }
@@ -511,16 +518,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           // Boundary handling: a new query (queryBoundaryPending=true)
           // means a fresh turn — drop the previous turn's thinking
           // pointer so this turn opens a new one.
-          if (queryBoundaryPending) {
-            // Consume the sentinel here. The boundary block runs once per
-            // user query in the thinking path; if we don't clear the flag,
-            // every subsequent reasoning_delta also sees pending=true and
-            // re-enters this block, wiping thinkingMsgId on every frame and
-            // opening a fresh bubble each time (kenan TG repro 2026-04-25
-            // 21:55 — 7 reasoning_delta frames produced 7 thinking-first
-            // sendMessage calls). Each new user turn fires its own sentinel,
-            // so single-consumption is safe across turns.
-            queryBoundaryPending = false;
+          if (queryBoundaryPendingThinking) {
+            // Consume the thinking-side sentinel exactly once per turn so
+            // subsequent reasoning_delta frames don't re-wipe thinkingMsgId
+            // (kenan TG repro 2026-04-25 21:55 — 7 frames produced 7 sends).
+            // The result-side sentinel is a separate flag and is consumed
+            // in the result.result branch below; that branch still needs
+            // to reset progressiveMsgId/lastFinalMsgId for the new turn.
+            queryBoundaryPendingThinking = false;
             thinkingMsgId = undefined;
             flashThinkingDismissed = false;
             lastThinkingRendered = undefined;
@@ -583,8 +588,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       if (result.result) {
         // New-turn boundary: clear per-turn message tracking before handling
         // this output so it sends fresh instead of editing the previous turn.
-        if (queryBoundaryPending) {
-          queryBoundaryPending = false;
+        if (queryBoundaryPendingResult) {
+          queryBoundaryPendingResult = false;
           progressiveMsgId = undefined;
           progressiveText = '';
           lastFinalMsgId = undefined;
