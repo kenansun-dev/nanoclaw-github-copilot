@@ -531,23 +531,26 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               // late delta falls through to the coalescer enqueue branch.
               await flashOpeningLock.openOnce(async () => {
                 await traceSetTyping(channel, chatJid, false, 'thinking-first');
+                const desired = tp.text + ' ◌';
                 const msgId = await channel.sendMessage(
                   chatJid,
-                  tp.text + ' ◌',
+                  desired,
                   sendOpts,
                 );
                 thinkingMsgId = typeof msgId === 'string' ? msgId : undefined;
+                lastThinkingRendered = desired;
               });
               if (thinkingMsgId) {
-                // If we were the late waiter (didn't run send ourselves),
-                // enqueue our text into the coalescer so it shows up.
-                // The owner-of-send case also enqueues here as a no-op
-                // since latest text == what we just sent.
-                flashEditCoalescer.enqueue(
-                  thinkingMsgId,
-                  tp.text + ' ◌',
-                  sendOpts,
-                );
+                // Late-waiter path: our text may differ from what the
+                // first sender just sent. Skip the enqueue if it's the
+                // exact same text (rpi5 review 2026-04-25: avoid the
+                // first-frame no-op edit). lastThinkingRendered tracks
+                // the most recent text we rendered for this msgId.
+                const desired = tp.text + ' ◌';
+                if (lastThinkingRendered !== desired) {
+                  flashEditCoalescer.enqueue(thinkingMsgId, desired, sendOpts);
+                  lastThinkingRendered = desired;
+                }
               }
             } else {
               // Coalescer path: enqueue the latest text instead of
@@ -557,11 +560,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               // orphan instead of letting it stay on screen as a duplicate.
               // (kenan TG repro 2026-04-25 00:35: long thinking text in
               // flash mode produced N orphan thinking bubbles.)
-              flashEditCoalescer.enqueue(
-                thinkingMsgId,
-                tp.text + ' ◌',
-                sendOpts,
-              );
+              const desired = tp.text + ' ◌';
+              if (lastThinkingRendered !== desired) {
+                flashEditCoalescer.enqueue(thinkingMsgId, desired, sendOpts);
+                lastThinkingRendered = desired;
+              }
             }
           }
         }
