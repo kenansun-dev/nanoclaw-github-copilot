@@ -479,6 +479,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // boundary regardless of SDK sentinel behaviour. (kenan TG repro
   // 2026-04-25 22:54: 4 user msgs, 1 sentinel, 3 missed turn boundaries.)
   let lastUserTurnSeqSeen = queue.getUserTurnSeq(chatJid);
+  // True after a result.result with !partial fires for the current turn.
+  // Any further thinking / reasoning_delta events that arrive before a new
+  // turn boundary (userTurnSeq advance OR sentinel) are SDK trailing-delta
+  // artifacts that must be ignored — otherwise they open orphan thinking
+  // bubbles AFTER the answer was already finalized (kenan TG repro
+  // 2026-04-26 00:03: thinking bubble appeared post-answer).
+  let turnFinalized = false;
   // Thinking message state (separate from answer progressive message)
 
   try {
@@ -512,6 +519,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       //             kept visible above the answer (separate message).
       //   `off`   -> drop the delta; final result will not include thinking.
       if (result.thinking && !result.result) {
+        // Drop trailing reasoning_delta events that arrive AFTER the turn's
+        // final answer was already sent (and before any new-turn boundary).
+        if (turnFinalized) {
+          const seqNow = queue.getUserTurnSeq(chatJid);
+          if (seqNow === lastUserTurnSeqSeen) {
+            logger.warn(
+              { chatJid },
+              'TRACE: dropping trailing reasoning_delta post-finalize',
+            );
+            return;
+          }
+          // New turn started — fall through; the seq-check below will
+          // reset state.
+        }
         // Reliable per-turn boundary check (see comment in result.result
         // branch below): if userTurnSeq advanced, this delta belongs to a
         // new turn — set the thinking pending flag so the boundary block
@@ -521,6 +542,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           lastUserTurnSeqSeen = currentSeq;
           queryBoundaryPendingThinking = true;
           queryBoundaryPendingResult = true;
+          turnFinalized = false;
         }
         const thinkingMode = normalizeShowThinking(
           getEffectiveShowThinking(chatJid) ??
@@ -621,6 +643,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           lastUserTurnSeqSeen = currentSeq;
           queryBoundaryPendingResult = true;
           queryBoundaryPendingThinking = true;
+          turnFinalized = false;
         }
         logger.warn(
           {
@@ -629,7 +652,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             pendingResult: queryBoundaryPendingResult,
             progressiveMsgId,
             lastFinalMsgId,
-            resultLen: typeof result.result === 'string' ? result.result.length : -1,
+            resultLen:
+              typeof result.result === 'string' ? result.result.length : -1,
           },
           'TRACE: result.result entry',
         );
@@ -857,6 +881,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           progressiveMsgId = undefined;
           progressiveText = '';
           outputSentToUser = true;
+          // Mark this turn finalized; any further reasoning_delta events
+          // arriving before a new userTurnSeq are SDK trailing artifacts
+          // and must be ignored to avoid orphan thinking bubbles.
+          turnFinalized = true;
         }
         logger.info(
           { group: group.name, partial: !!result.partial },
