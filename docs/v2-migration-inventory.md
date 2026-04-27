@@ -177,6 +177,71 @@ Registered in `src/db/migrations/index.ts` after migration013. Tests:
 22 fail / 1050 pass / 8 skip — **same as pre-B.1 baseline**, no
 regression introduced. tsc clean on new files.
 
+## Phase B.5 — schedule schema decision (rpi5 + VM, locked 00:30)
+
+**Hybrid v2 messages_in (firing driver) + fork scheduled_tasks (lifecycle state).**
+
+Fork's existing `scheduled_tasks` (migration 103) and `task_run_logs`
+(migration 104) get **rewritten in B.5** — the column set bakes in
+lessons from cross-review with VM:
+
+```sql
+-- migration 103 (B.5 rewrite)
+CREATE TABLE scheduled_tasks (
+  series_id TEXT PRIMARY KEY,           -- soft ref → messages_in.series_id
+                                        -- (not a real FK: messages_in.series_id is
+                                        --  not UNIQUE there; multiple fired rows share
+                                        --  one series_id. Sync via scheduling/actions.ts.)
+  group_folder TEXT NOT NULL,
+  context_mode TEXT NOT NULL DEFAULT 'isolated',
+  script TEXT,                           -- pre-agent gate script (fork-only)
+  state TEXT NOT NULL DEFAULT 'active',  -- active | paused | disabled
+  last_run TEXT,
+  last_result TEXT,
+  consecutive_group_missing INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_scheduled_tasks_state ON scheduled_tasks(state);
+
+-- migration 104 (B.5 rewrite)
+CREATE TABLE task_run_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  series_id TEXT NOT NULL REFERENCES scheduled_tasks(series_id) ON DELETE CASCADE,
+  ran_at TEXT NOT NULL DEFAULT (datetime('now')),
+  result TEXT,
+  duration_ms INTEGER
+);
+CREATE INDEX idx_task_run_logs_series ON task_run_logs(series_id);
+```
+
+Rationale (kenan q3 audit + VM cross-review):
+- v2 `messages_in.recurrence` + `process_after` IS the firing driver.
+  Fork loses its own cron tick loop; `scheduling/actions.ts` insertTask /
+  cancel / pause / update become the entry points.
+- v2 has no analog for fork-only lifecycle state
+  (`last_run` / `last_result` / `consecutive_group_missing` auto-pause /
+  `script` pre-agent gate / `context_mode='isolated'`). These stay in
+  `scheduled_tasks` — the table is now a *task lifecycle table*, not a
+  schedule table.
+- `task_run_logs` keeps per-run audit history; v2 has no equivalent.
+- OpenClaw uses `config/cron/jobs.json` (no SQL at all), proving the
+  schema design is open. We pick SQL hybrid over JSON for parity with
+  fork's existing `nanoclaw task` CLI surface.
+- Cron-string ↔ ISO recurrence converter goes in a dedicated
+  `src/scheduling-fork-bridge.ts` (B.5 work) so `task-scheduler.ts`
+  rewrite stays minimal.
+
+Fork's task-scheduler.ts at B.5: `schedule_*` writes go via
+`actions.insertTask(series_id, recurrence, processAfter, ...)`;
+lifecycle updates go straight into `scheduled_tasks`. `nanoclaw task list`
+reads `scheduled_tasks` (state column), joined to `messages_in` for
+next-fire timestamp via `series_id`.
+
+Migrations 103/104 are rewritten **in place** at B.5 (v2-merge has no
+production consumer, fresh-DB-only migration path).
+
+## Phase B.1 deferred items
+
 **Not touched** (deferred to later phases to avoid VM conflict):
 - `src/db.ts` `createSchema()` still creates the same 5 tables inline
   (`CREATE TABLE IF NOT EXISTS`). v2 migrations also create them — no
