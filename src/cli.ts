@@ -144,6 +144,12 @@ try {
       await runPair(commandArgs);
       break;
     }
+    case 'task':
+    case 'tasks': {
+      const { runTaskCommand } = await import('./cli/task.js');
+      await runTaskCommand(commandArgs);
+      break;
+    }
     case 'mcp':
       await runMcp(commandArgs);
       break;
@@ -1055,6 +1061,13 @@ Chats
 
 Interactive
   tui                               Interactive terminal chat
+
+Tasks
+  task list                         List scheduled tasks (defaults to all chats)
+       --chat <jid>                 Filter by chat_jid
+       --status <s>                 Filter by status (active|paused|completed)
+       --json                       Emit JSON
+  task info <id>                    Show task details + recent run logs
 
 Sandbox
 
