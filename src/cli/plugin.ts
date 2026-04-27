@@ -42,7 +42,7 @@ import {
   getExtraKnownMarketplaces,
   setExtraKnownMarketplaces,
 } from '../config-loader.js';
-import { logger } from '../logger.js';
+import { logger } from '../log.js';
 
 /**
  * Shape of a single MCP server entry inside a plugin manifest. Mirrors the

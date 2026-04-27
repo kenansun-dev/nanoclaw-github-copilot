@@ -15,7 +15,7 @@ vi.mock('../config.js', () => ({
 }));
 
 // Mock logger
-vi.mock('../logger.js', () => ({
+vi.mock('../log.js', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),

@@ -1,7 +1,7 @@
 import { execFile } from 'child_process';
 import path from 'path';
 
-import { logger } from './logger.js';
+import { logger } from './log.js';
 
 const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
 const SCRIPT_PATH = path.resolve(process.cwd(), 'scripts/cleanup-sessions.sh');

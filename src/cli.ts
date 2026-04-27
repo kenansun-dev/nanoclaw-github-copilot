@@ -49,7 +49,7 @@ if (workspaceOverride) {
 // Daemon mode (start, start-foreground) and TUI keep console output enabled.
 const daemonCommands = new Set(['start', 'start-foreground', 'tui']);
 if (!daemonCommands.has(command || '')) {
-  const { setConsoleOutput } = await import('./logger.js');
+  const { setConsoleOutput } = await import('./log.js');
   setConsoleOutput(false);
 }
 

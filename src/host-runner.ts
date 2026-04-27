@@ -31,7 +31,7 @@ import {
 } from './session-overrides.js';
 import type { AgentConfig } from './config-loader.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
-import { logger } from './logger.js';
+import { logger } from './log.js';
 import { ContainerInput, ContainerOutput } from './container-runner.js';
 import { ensureDailySummaryTask } from './memory/cron.js';
 

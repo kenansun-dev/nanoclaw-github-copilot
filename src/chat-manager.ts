@@ -16,7 +16,7 @@ import {
   removeRegisteredGroup,
 } from './db.js';
 import { reconcileChatRegistry } from './chat-reconcile.js';
-import { logger } from './logger.js';
+import { logger } from './log.js';
 import { uniqueIsMainFolder } from './session-routing.js';
 
 export interface ChatInfo {

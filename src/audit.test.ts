@@ -16,7 +16,7 @@ import * as path from 'path';
 
 // Capture logger.warn calls so we can assert on emitted audit lines.
 const warnSpy = vi.fn();
-vi.mock('./logger.js', () => ({
+vi.mock('./log.js', () => ({
   logger: {
     warn: (...args: unknown[]) => warnSpy(...args),
     info: vi.fn(),

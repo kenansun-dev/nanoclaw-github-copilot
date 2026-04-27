@@ -11,7 +11,7 @@
 
 import { execSync, spawn } from 'child_process';
 import { loadConfig, saveConfig } from '../config-loader.js';
-import { logger } from '../logger.js';
+import { logger } from '../log.js';
 
 export interface Addon {
   type: string;

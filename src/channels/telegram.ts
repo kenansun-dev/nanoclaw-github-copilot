@@ -3,7 +3,7 @@ import { Api, Bot } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
-import { logger } from '../logger.js';
+import { logger } from '../log.js';
 import { sendWithRetry } from './send-with-retry.js';
 import { loadConfig } from '../config-loader.js';
 import { registerChannel, ChannelOpts } from './registry.js';

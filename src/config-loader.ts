@@ -4,7 +4,7 @@
  */
 
 import fs from 'fs';
-import { logger } from './logger.js';
+import { logger } from './log.js';
 import { paths, workspacePath } from './workspace.js';
 import { auditConfigDiff, type AuditSource } from './audit.js';
 

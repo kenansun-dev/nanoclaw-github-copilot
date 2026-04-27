@@ -306,3 +306,6 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   logger.error({ err: reason }, 'Unhandled rejection');
 });
+
+// v2-merge alias: upstream code uses `log`; fork uses `logger`. Both names export the same impl.
+export const log = logger;

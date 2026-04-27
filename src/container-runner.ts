@@ -33,7 +33,7 @@ import {
   PROVIDER_SESSION_DIR,
 } from './config-extensions.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
-import { logger } from './logger.js';
+import { logger } from './log.js';
 import {
   CONTAINER_RUNTIME_BIN,
   hostGatewayArgs,

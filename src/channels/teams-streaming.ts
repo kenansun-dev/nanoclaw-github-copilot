@@ -63,7 +63,7 @@
  */
 
 import type { TurnContext, ConversationReference } from 'botbuilder';
-import { logger } from '../logger.js';
+import { logger } from '../log.js';
 import type { StreamHandle } from '../types.js';
 
 // --- Types: minimal, deliberately narrow to ease unit testing ----------

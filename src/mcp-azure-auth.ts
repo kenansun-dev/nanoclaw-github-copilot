@@ -23,7 +23,7 @@ import os from 'os';
 import https from 'https';
 import http from 'http';
 
-import { logger } from './logger.js';
+import { logger } from './log.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

@@ -16,7 +16,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-import { logger } from './logger.js';
+import { logger } from './log.js';
 
 /**
  * Resolve a GitHub token from available sources.

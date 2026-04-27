@@ -84,7 +84,7 @@ import {
 import { startSessionCleanup } from './session-cleanup.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
-import { logger } from './logger.js';
+import { logger } from './log.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -1656,7 +1656,7 @@ async function main(): Promise<void> {
   // applyConfigLogLevel (it's locked in logger.ts at module init).
   try {
     const { loadConfig: lc } = await import('./config-loader.js');
-    const { applyConfigLogLevel, getLogLevel } = await import('./logger.js');
+    const { applyConfigLogLevel, getLogLevel } = await import('./log.js');
     const cfg = lc();
     applyConfigLogLevel(cfg.logLevel);
     logger.info(
@@ -1764,7 +1764,7 @@ async function main(): Promise<void> {
     try {
       const { reloadConfig, getConfig } = await import('./config.js');
       const { applyConfigLogLevel, setLogLevel, getLogLevel } =
-        await import('./logger.js');
+        await import('./log.js');
       reloadConfig();
       const cfg = getConfig();
       const newLevel = cfg.logLevel;

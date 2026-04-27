@@ -14,7 +14,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 // Strip env LOG_LEVEL before importing so the module's lock-in starts fresh.
 delete process.env.LOG_LEVEL;
 const { getLogLevel, setLogLevel, applyConfigLogLevel, getValidLevels } =
-  await import('./logger.js');
+  await import('./log.js');
 
 describe('logger runtime control', () => {
   beforeAll(() => {

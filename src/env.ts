@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { logger } from './logger.js';
+import { logger } from './log.js';
 import { resolveWorkspace } from './workspace.js';
 
 /**
