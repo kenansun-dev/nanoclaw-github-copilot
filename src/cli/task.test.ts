@@ -169,11 +169,7 @@ describe('nanoclaw task info', () => {
 
   it('--json emits structured payload', async () => {
     (db as any).__seed(sampleTasks);
-    await runTaskCommand([
-      'info',
-      'memory-daily-summary:teams:abc',
-      '--json',
-    ]);
+    await runTaskCommand(['info', 'memory-daily-summary:teams:abc', '--json']);
     const parsed = JSON.parse(stdout.join('\n'));
     expect(parsed.task.id).toBe('memory-daily-summary:teams:abc');
     expect(Array.isArray(parsed.recentRuns)).toBe(true);

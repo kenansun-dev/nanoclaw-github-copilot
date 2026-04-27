@@ -122,7 +122,9 @@ async function listTasks(opts: {
   const summary = Object.entries(counts)
     .map(([k, v]) => `${k}=${v}`)
     .join(' ');
-  console.log(`${rows.length} task${rows.length === 1 ? '' : 's'} (${summary})`);
+  console.log(
+    `${rows.length} task${rows.length === 1 ? '' : 's'} (${summary})`,
+  );
   console.log('');
 
   for (const t of rows) {
@@ -171,8 +173,12 @@ async function infoTask(id: string, opts: { json?: boolean }): Promise<void> {
   console.log(`Task ${task.id}`);
   console.log(`  status:        ${task.status}`);
   console.log(`  schedule:      ${fmtSchedule(task)}`);
-  console.log(`  next_run:      ${task.next_run ?? '—'} (${fmtRel(task.next_run)})`);
-  console.log(`  last_run:      ${task.last_run ?? '—'}${task.last_run ? ' (' + fmtRel(task.last_run) + ')' : ''}`);
+  console.log(
+    `  next_run:      ${task.next_run ?? '—'} (${fmtRel(task.next_run)})`,
+  );
+  console.log(
+    `  last_run:      ${task.last_run ?? '—'}${task.last_run ? ' (' + fmtRel(task.last_run) + ')' : ''}`,
+  );
   console.log(`  chat_jid:      ${task.chat_jid}`);
   console.log(`  group_folder:  ${task.group_folder}`);
   console.log(`  context_mode:  ${task.context_mode}`);
@@ -212,14 +218,22 @@ function printUsage(): void {
   console.log('Commands:');
   console.log('  list                       List all scheduled tasks');
   console.log('       --chat <jid>            Filter by chat_jid');
-  console.log('       --status <s>            Filter by status (active|paused|completed)');
-  console.log('       --json                  Emit JSON instead of human format');
+  console.log(
+    '       --status <s>            Filter by status (active|paused|completed)',
+  );
+  console.log(
+    '       --json                  Emit JSON instead of human format',
+  );
   console.log('  info <id>                  Show full task + recent run logs');
-  console.log('       --json                  Emit JSON instead of human format');
+  console.log(
+    '       --json                  Emit JSON instead of human format',
+  );
   console.log('');
   console.log('Notes:');
   console.log('  - `list` defaults to *all* tasks across every chat.');
-  console.log('    The in-chat `/tasks` slash still filters to the calling chat.');
+  console.log(
+    '    The in-chat `/tasks` slash still filters to the calling chat.',
+  );
 }
 
 function parseFlags(args: string[]): {
