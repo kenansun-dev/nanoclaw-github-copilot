@@ -148,10 +148,7 @@ export function parseInstallSpec(spec: string): InstallSpec {
     // the owner/repo branch and produced `https://github.com/workiq@microsoft/work-iq.git`).
     // Detect the slash-in-marketplace case explicitly and surface the
     // suggested fix.
-    if (
-      /^[a-z0-9][a-z0-9_-]*$/i.test(plugin) &&
-      marketplace.includes('/')
-    ) {
+    if (/^[a-z0-9][a-z0-9_-]*$/i.test(plugin) && marketplace.includes('/')) {
       throw new Error(
         `Invalid install spec: ${spec}\n` +
           `Marketplace name '${marketplace}' looks like an owner/repo path. ` +

@@ -3,7 +3,12 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { setWorkspace, ensureWorkspace } from './workspace.js';
-import { loadConfig, saveConfig, readWorkspaceEnv, getEnabledPlugins } from './config-loader.js';
+import {
+  loadConfig,
+  saveConfig,
+  readWorkspaceEnv,
+  getEnabledPlugins,
+} from './config-loader.js';
 
 describe('config-loader', () => {
   const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-cfg-${Date.now()}`);
@@ -927,7 +932,6 @@ describe('config migration v5→v6: plugins block seed', () => {
   });
 });
 
-
 describe('getEnabledPlugins — bare-string entry normalization (kenan repro 2026-04-27)', () => {
   // Bug: user wrote `"enabledPlugins": ["workiq@microsoft/work-iq"]` (string
   // form) instead of `[{ name, source }]`. The old getter returned the
@@ -959,9 +963,7 @@ describe('getEnabledPlugins — bare-string entry normalization (kenan repro 202
           enabledPlugins: ['microsoft/work-iq:plugins/workiq' as any],
         },
       }),
-    ).toEqual([
-      { name: 'workiq', source: 'microsoft/work-iq:plugins/workiq' },
-    ]);
+    ).toEqual([{ name: 'workiq', source: 'microsoft/work-iq:plugins/workiq' }]);
   });
 
   it('strips trailing .git from URL-form string entries', () => {

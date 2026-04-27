@@ -1491,7 +1491,11 @@ export function getEnabledPlugins(
   // and the name is inferred from the last useful path segment.
   return raw
     .map((entry: any): PluginEnabledEntry | null => {
-      if (entry && typeof entry === 'object' && typeof entry.name === 'string') {
+      if (
+        entry &&
+        typeof entry === 'object' &&
+        typeof entry.name === 'string'
+      ) {
         return entry as PluginEnabledEntry;
       }
       if (typeof entry === 'string') {
@@ -1521,9 +1525,10 @@ function inferPluginNameFromSource(spec: string): string | null {
   // owner/repo[:subdir] → last path segment of the repo or subdir.
   const colonIdx = trimmed.indexOf(':');
   const headBeforeColon = colonIdx > 0 ? trimmed.slice(0, colonIdx) : trimmed;
-  const tail = (
-    colonIdx > 0 ? trimmed.slice(colonIdx + 1) : headBeforeColon
-  ).split('/').filter(Boolean).pop();
+  const tail = (colonIdx > 0 ? trimmed.slice(colonIdx + 1) : headBeforeColon)
+    .split('/')
+    .filter(Boolean)
+    .pop();
   if (tail && /^[a-z0-9][a-z0-9._-]*$/i.test(tail)) {
     // Strip a trailing .git on git URLs.
     return tail.replace(/\.git$/i, '');
