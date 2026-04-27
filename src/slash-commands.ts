@@ -252,7 +252,7 @@ export async function handleSlashCommand(
   if (input === '/models') {
     if (ctx.channel) {
       try {
-        const text = await buildModelsListText();
+        const text = await buildModelsListText(ctx.chatJid);
         await ctx.channel.sendMessage(
           ctx.chatJid,
           '```\n' + text.trim() + '\n```',
@@ -611,10 +611,19 @@ function suggestClosestModel(
   return undefined;
 }
 
-export async function buildModelsListText(): Promise<string> {
+export async function buildModelsListText(chatJid?: string): Promise<string> {
   const config = getConfig();
   const provider = config.agents?.defaults?.provider || 'github-copilot';
-  const currentModel = config.agents?.defaults?.model || '(unset)';
+  // Show the *effective* model for this chat (respects /model session
+  // overrides) so /models, /model (no-arg), and /status all agree. Falls
+  // back to the global default when no chatJid (e.g. CLI/testing).
+  // Without this, a chat with `/model gpt-5.5` override sees /models'
+  // ▸ marker pointing at the global default while /status reports gpt-5.5.
+  // Reported by kenan 2026-04-27 (Teams chat with override).
+  const currentModel =
+    (chatJid ? getEffectiveModel(chatJid) : undefined) ||
+    config.agents?.defaults?.model ||
+    '(unset)';
   let models: ModelEntry[];
   try {
     models = await getModelCatalog(provider);

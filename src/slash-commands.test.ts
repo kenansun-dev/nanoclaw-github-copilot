@@ -430,6 +430,37 @@ describe('/model + /models', () => {
     expect(msg).toContain('gpt-5.4-mini');
   });
 
+  it('/models marker (▸) follows session override, not just global default', async () => {
+    // Repro: kenan 2026-04-27 — chat had /model gpt-5.5 override, but
+    // /models still pointed ▸ at the global default (claude-sonnet-4.6),
+    // disagreeing with /status. Marker should follow the *effective* model.
+    const db = await import('./db.js');
+    (db.getRegisteredGroup as any).mockReturnValueOnce({
+      folder: 'test-group',
+      jid: 'tg:123',
+    });
+    (db.getSessionOverrides as any).mockReturnValueOnce({
+      model: 'claude-opus-4.6',
+    });
+    const ctx = makeCtx();
+    const res = await handleSlashCommand('/models', ctx);
+    expect(res.handled).toBe(true);
+    const msg = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    // The override id should carry the ▸ marker. We check by finding the
+    // line for that id and asserting it starts with "▸" (other lines have
+    // a 2-space indent).
+    const lines = msg.split('\n');
+    // Skip the "Current model: ..." header line; check the table row.
+    const overrideLine = lines.find(
+      (l: string) =>
+        l.includes('claude-opus-4.6') && !l.startsWith('Current model'),
+    );
+    expect(overrideLine).toBeDefined();
+    expect(overrideLine!.trim().startsWith('▸')).toBe(true);
+    // Header should also reflect the override, not the global default.
+    expect(msg).toContain('Current model: claude-opus-4.6');
+  });
+
   it('/model with no args shows current model', async () => {
     const ctx = makeCtx();
     const res = await handleSlashCommand('/model', ctx);
