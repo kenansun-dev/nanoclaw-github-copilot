@@ -464,7 +464,27 @@ import './modules/mount-security/index.js';
 import './remote-control.js';              // self-registers admin commands
 import './slash-commands.js';              // self-registers slash router
 import './task-scheduler-fork-bridge.js';  // exports startSchedulerLoop
+
+// 5. Worker loops (must run AFTER channel adapters init + module barrels)
+import { startActiveDeliveryPoll, startSweepDeliveryPoll } from './delivery.js';
+// ... after initChannelAdapters(setupFn) returns:
+startActiveDeliveryPoll();   // 1s poll over getRunningSessions()
+startSweepDeliveryPoll();    // 60s sweep over getActiveSessions()
 ```
+
+> **Outbound delivery wire-up note** (VM, 2026-04-28): the two
+> `start*DeliveryPoll` functions exist in `src/delivery.ts` but have
+> zero production callers on v2-merge today. `src/delivery.ts` is a
+> complete deliverer (poll → `deliverSessionMessages` → reads
+> `messages_out` from `outbound.db` → dispatches via the registered
+> delivery adapter → marks `delivered`); only the startup invocation
+> is missing. B.5 must call both in the dispatcher startup block,
+> after `initChannelAdapters(...)` (delivery adapter must be
+> registered before polls start) and after the module barrels (so
+> outbound producers — scheduling, agent-to-agent, approvals,
+> self-mod — are loaded before the first tick). Full rationale +
+> grep proof: `docs/v2-merge-outbound-delivery-gap.md` §"What's
+> missing on v2-merge".
 
 Net result: `src/index.ts` body shrinks from 2130L of inline branching
 to a thin loop that calls `runAccessGates → checkAbort → lookupAdminCommand →
