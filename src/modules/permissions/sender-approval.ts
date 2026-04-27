@@ -26,13 +26,19 @@
  * sender_identity). A retry / rapid second message from the same unknown
  * sender is silently dropped (no duplicate card sent).
  */
-import { normalizeOptions, type RawOption } from '../../channels/ask-question.js';
+import {
+  normalizeOptions,
+  type RawOption,
+} from '../../channels/ask-question.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
 import { getDeliveryAdapter } from '../../delivery.js';
 import { log } from '../../log.js';
 import type { InboundEvent } from '../../channels/adapter.js';
 import { pickApprovalDelivery, pickApprover } from '../approvals/primitive.js';
-import { createPendingSenderApproval, hasInFlightSenderApproval } from './db/pending-sender-approvals.js';
+import {
+  createPendingSenderApproval,
+  hasInFlightSenderApproval,
+} from './db/pending-sender-approvals.js';
 
 const APPROVAL_OPTIONS: RawOption[] = [
   { label: 'Allow', selectedLabel: '✅ Allowed', value: 'approve' },
@@ -51,8 +57,11 @@ export interface RequestSenderApprovalInput {
   event: InboundEvent;
 }
 
-export async function requestSenderApproval(input: RequestSenderApprovalInput): Promise<void> {
-  const { messagingGroupId, agentGroupId, senderIdentity, senderName, event } = input;
+export async function requestSenderApproval(
+  input: RequestSenderApprovalInput,
+): Promise<void> {
+  const { messagingGroupId, agentGroupId, senderIdentity, senderName, event } =
+    input;
 
   // In-flight dedup: don't spam the admin if the same unknown sender
   // retries while a card is already pending.
@@ -78,16 +87,20 @@ export async function requestSenderApproval(input: RequestSenderApprovalInput): 
   const originChannelType = originMg?.channel_type ?? '';
   const target = await pickApprovalDelivery(approvers, originChannelType);
   if (!target) {
-    log.warn('Unknown-sender approval skipped — no DM channel for any approver', {
-      messagingGroupId,
-      agentGroupId,
-      senderIdentity,
-    });
+    log.warn(
+      'Unknown-sender approval skipped — no DM channel for any approver',
+      {
+        messagingGroupId,
+        agentGroupId,
+        senderIdentity,
+      },
+    );
     return;
   }
 
   const approvalId = generateId();
-  const senderDisplay = senderName && senderName.length > 0 ? senderName : senderIdentity;
+  const senderDisplay =
+    senderName && senderName.length > 0 ? senderName : senderIdentity;
   const originName = originMg?.name ?? `a ${originChannelType} channel`;
 
   const title = '👤 New sender';
@@ -112,9 +125,12 @@ export async function requestSenderApproval(input: RequestSenderApprovalInput): 
     // Without a delivery adapter, the card can't be sent. Log + leave the
     // row in place so the admin can see it via DB or manual tooling; the
     // dedup gate will suppress further cards until it's cleared.
-    log.error('Unknown-sender approval row created but no delivery adapter is wired', {
-      approvalId,
-    });
+    log.error(
+      'Unknown-sender approval row created but no delivery adapter is wired',
+      {
+        approvalId,
+      },
+    );
     return;
   }
 

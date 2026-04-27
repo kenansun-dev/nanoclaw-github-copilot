@@ -59,7 +59,9 @@ export const moduleAgentToAgentDestinations: Migration = {
     const now = new Date().toISOString();
 
     for (const row of rows) {
-      const base = normalizeName(row.name || `${row.channel_type}-${row.messaging_group_id.slice(0, 8)}`);
+      const base = normalizeName(
+        row.name || `${row.channel_type}-${row.messaging_group_id.slice(0, 8)}`,
+      );
       const taken = takenByAgent.get(row.agent_group_id) ?? new Set<string>();
       let localName = base;
       let suffix = 2;

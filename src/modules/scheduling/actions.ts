@@ -14,7 +14,14 @@ import { getSession } from '../../db/sessions.js';
 import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
 import type { Session } from '../../types.js';
-import { cancelTask, insertTask, pauseTask, resumeTask, updateTask, type TaskUpdate } from './db.js';
+import {
+  cancelTask,
+  insertTask,
+  pauseTask,
+  resumeTask,
+  updateTask,
+  type TaskUpdate,
+} from './db.js';
 
 export async function handleScheduleTask(
   content: Record<string, unknown>,
@@ -77,7 +84,8 @@ export async function handleUpdateTask(
   const taskId = content.taskId as string;
   const update: TaskUpdate = {};
   if (typeof content.prompt === 'string') update.prompt = content.prompt;
-  if (typeof content.processAfter === 'string') update.processAfter = content.processAfter;
+  if (typeof content.processAfter === 'string')
+    update.processAfter = content.processAfter;
   if (content.recurrence === null || typeof content.recurrence === 'string') {
     update.recurrence = content.recurrence as string | null;
   }
@@ -106,7 +114,9 @@ export async function handleUpdateTask(
     const fresh = getSession(session.id);
     if (fresh) {
       wakeContainer(fresh).catch((err) =>
-        log.error('Failed to wake container after update_task notification', { err }),
+        log.error('Failed to wake container after update_task notification', {
+          err,
+        }),
       );
     }
   }

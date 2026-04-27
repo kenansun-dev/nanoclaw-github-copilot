@@ -56,9 +56,14 @@ export function getDestinations(agentGroupId: string): AgentDestination[] {
     .all(agentGroupId) as AgentDestination[];
 }
 
-export function getDestinationByName(agentGroupId: string, localName: string): AgentDestination | undefined {
+export function getDestinationByName(
+  agentGroupId: string,
+  localName: string,
+): AgentDestination | undefined {
   return getDb()
-    .prepare('SELECT * FROM agent_destinations WHERE agent_group_id = ? AND local_name = ?')
+    .prepare(
+      'SELECT * FROM agent_destinations WHERE agent_group_id = ? AND local_name = ?',
+    )
     .get(agentGroupId, localName) as AgentDestination | undefined;
 }
 
@@ -69,14 +74,22 @@ export function getDestinationByTarget(
   targetId: string,
 ): AgentDestination | undefined {
   return getDb()
-    .prepare('SELECT * FROM agent_destinations WHERE agent_group_id = ? AND target_type = ? AND target_id = ?')
+    .prepare(
+      'SELECT * FROM agent_destinations WHERE agent_group_id = ? AND target_type = ? AND target_id = ?',
+    )
     .get(agentGroupId, targetType, targetId) as AgentDestination | undefined;
 }
 
 /** Permission check: can this agent send to this target? */
-export function hasDestination(agentGroupId: string, targetType: 'channel' | 'agent', targetId: string): boolean {
+export function hasDestination(
+  agentGroupId: string,
+  targetType: 'channel' | 'agent',
+  targetId: string,
+): boolean {
   const row = getDb()
-    .prepare('SELECT 1 FROM agent_destinations WHERE agent_group_id = ? AND target_type = ? AND target_id = ? LIMIT 1')
+    .prepare(
+      'SELECT 1 FROM agent_destinations WHERE agent_group_id = ? AND target_type = ? AND target_id = ? LIMIT 1',
+    )
     .get(agentGroupId, targetType, targetId);
   return !!row;
 }
@@ -86,9 +99,14 @@ export function hasDestination(agentGroupId: string, targetType: 'channel' | 'ag
  * `writeDestinations(agentGroupId, <sessionId>)` for each active session
  * so the deletion propagates to the running container's inbound.db.
  */
-export function deleteDestination(agentGroupId: string, localName: string): void {
+export function deleteDestination(
+  agentGroupId: string,
+  localName: string,
+): void {
   getDb()
-    .prepare('DELETE FROM agent_destinations WHERE agent_group_id = ? AND local_name = ?')
+    .prepare(
+      'DELETE FROM agent_destinations WHERE agent_group_id = ? AND local_name = ?',
+    )
     .run(agentGroupId, localName);
 }
 
@@ -104,7 +122,9 @@ export function deleteDestination(agentGroupId: string, localName: string): void
  */
 export function deleteAllDestinationsTouching(agentGroupId: string): void {
   getDb()
-    .prepare('DELETE FROM agent_destinations WHERE agent_group_id = ? OR (target_type = ? AND target_id = ?)')
+    .prepare(
+      'DELETE FROM agent_destinations WHERE agent_group_id = ? OR (target_type = ? AND target_id = ?)',
+    )
     .run(agentGroupId, 'agent', agentGroupId);
 }
 
@@ -115,12 +135,16 @@ export function deleteAllDestinationsTouching(agentGroupId: string): void {
  * projections to refresh after the delete — the rows are gone once the
  * delete runs.
  */
-export function getDestinationReferencers(targetAgentGroupId: string): string[] {
+export function getDestinationReferencers(
+  targetAgentGroupId: string,
+): string[] {
   const rows = getDb()
     .prepare(
       "SELECT DISTINCT agent_group_id FROM agent_destinations WHERE target_type = 'agent' AND target_id = ? AND agent_group_id != ?",
     )
-    .all(targetAgentGroupId, targetAgentGroupId) as Array<{ agent_group_id: string }>;
+    .all(targetAgentGroupId, targetAgentGroupId) as Array<{
+    agent_group_id: string;
+  }>;
   return rows.map((r) => r.agent_group_id);
 }
 

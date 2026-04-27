@@ -54,12 +54,16 @@ describe('handleRecurrence', () => {
       threadId: null,
       content: JSON.stringify({ prompt: 'daily digest' }),
     });
-    db.prepare(`UPDATE messages_in SET status='completed' WHERE id='task-1'`).run();
+    db.prepare(
+      `UPDATE messages_in SET status='completed' WHERE id='task-1'`,
+    ).run();
 
     await handleRecurrence(db, fakeSession());
 
     const rows = db
-      .prepare(`SELECT id, status, process_after, recurrence, series_id FROM messages_in ORDER BY seq`)
+      .prepare(
+        `SELECT id, status, process_after, recurrence, series_id FROM messages_in ORDER BY seq`,
+      )
       .all() as Array<{
       id: string;
       status: string;
@@ -74,7 +78,9 @@ describe('handleRecurrence', () => {
     expect(follow.status).toBe('pending');
     expect(follow.recurrence).toBe('0 9 * * *');
     expect(follow.series_id).toBe('task-1');
-    expect(new Date(follow.process_after).getTime()).toBeGreaterThan(Date.now());
+    expect(new Date(follow.process_after).getTime()).toBeGreaterThan(
+      Date.now(),
+    );
   });
 
   it('does not clone rows whose recurrence is already cleared', async () => {
@@ -88,11 +94,15 @@ describe('handleRecurrence', () => {
       threadId: null,
       content: JSON.stringify({ prompt: 'one-off' }),
     });
-    db.prepare(`UPDATE messages_in SET status='completed' WHERE id='task-1'`).run();
+    db.prepare(
+      `UPDATE messages_in SET status='completed' WHERE id='task-1'`,
+    ).run();
 
     await handleRecurrence(db, fakeSession());
 
-    const count = (db.prepare(`SELECT COUNT(*) AS c FROM messages_in`).get() as { c: number }).c;
+    const count = (
+      db.prepare(`SELECT COUNT(*) AS c FROM messages_in`).get() as { c: number }
+    ).c;
     expect(count).toBe(1);
   });
 });

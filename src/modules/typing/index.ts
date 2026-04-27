@@ -45,7 +45,11 @@ const HEARTBEAT_FRESH_MS = 6000;
 const POST_DELIVERY_PAUSE_MS = 10000;
 
 interface TypingAdapter {
-  setTyping?(channelType: string, platformId: string, threadId: string | null): Promise<void>;
+  setTyping?(
+    channelType: string,
+    platformId: string,
+    threadId: string | null,
+  ): Promise<void>;
 }
 
 interface TypingTarget {
@@ -72,7 +76,11 @@ export function setTypingAdapter(a: TypingAdapter): void {
   adapter = a;
 }
 
-async function triggerTyping(channelType: string, platformId: string, threadId: string | null): Promise<void> {
+async function triggerTyping(
+  channelType: string,
+  platformId: string,
+  threadId: string | null,
+): Promise<void> {
   try {
     await adapter?.setTyping?.(channelType, platformId, threadId);
   } catch {
@@ -124,7 +132,9 @@ export function startTypingRefresh(
 
     const withinGrace = Date.now() - entry.startedAt < TYPING_GRACE_MS;
     if (withinGrace || isHeartbeatFresh(entry.agentGroupId, sessionId)) {
-      triggerTyping(entry.channelType, entry.platformId, entry.threadId).catch(() => {});
+      triggerTyping(entry.channelType, entry.platformId, entry.threadId).catch(
+        () => {},
+      );
       return;
     }
 

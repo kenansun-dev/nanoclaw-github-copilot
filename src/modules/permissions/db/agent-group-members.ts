@@ -12,12 +12,18 @@ export function addMember(row: AgentGroupMember): void {
 }
 
 export function removeMember(userId: string, agentGroupId: string): void {
-  getDb().prepare('DELETE FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?').run(userId, agentGroupId);
+  getDb()
+    .prepare(
+      'DELETE FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?',
+    )
+    .run(userId, agentGroupId);
 }
 
 export function getMembers(agentGroupId: string): AgentGroupMember[] {
   return getDb()
-    .prepare('SELECT * FROM agent_group_members WHERE agent_group_id = ? ORDER BY added_at')
+    .prepare(
+      'SELECT * FROM agent_group_members WHERE agent_group_id = ? ORDER BY added_at',
+    )
     .all(agentGroupId) as AgentGroupMember[];
 }
 
@@ -26,19 +32,30 @@ export function getMembers(agentGroupId: string): AgentGroupMember[] {
  * Owner, global admin, and scoped admin are implicitly members.
  */
 export function isMember(userId: string, agentGroupId: string): boolean {
-  if (isOwner(userId) || isGlobalAdmin(userId) || isAdminOfAgentGroup(userId, agentGroupId)) {
+  if (
+    isOwner(userId) ||
+    isGlobalAdmin(userId) ||
+    isAdminOfAgentGroup(userId, agentGroupId)
+  ) {
     return true;
   }
   const row = getDb()
-    .prepare('SELECT 1 FROM agent_group_members WHERE user_id = ? AND agent_group_id = ? LIMIT 1')
+    .prepare(
+      'SELECT 1 FROM agent_group_members WHERE user_id = ? AND agent_group_id = ? LIMIT 1',
+    )
     .get(userId, agentGroupId);
   return !!row;
 }
 
 /** Direct row lookup — does not honor the admin/owner implicit-membership rule. */
-export function hasMembershipRow(userId: string, agentGroupId: string): boolean {
+export function hasMembershipRow(
+  userId: string,
+  agentGroupId: string,
+): boolean {
   const row = getDb()
-    .prepare('SELECT 1 FROM agent_group_members WHERE user_id = ? AND agent_group_id = ? LIMIT 1')
+    .prepare(
+      'SELECT 1 FROM agent_group_members WHERE user_id = ? AND agent_group_id = ? LIMIT 1',
+    )
     .get(userId, agentGroupId);
   return !!row;
 }

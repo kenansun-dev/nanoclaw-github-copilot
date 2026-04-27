@@ -5,7 +5,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import fs from 'fs';
 
-import type { ChannelAdapter, ChannelSetup, InboundMessage, OutboundMessage } from './adapter.js';
+import type {
+  ChannelAdapter,
+  ChannelSetup,
+  InboundMessage,
+  OutboundMessage,
+} from './adapter.js';
 
 // Mock container runner
 vi.mock('../container-runner.js', () => ({
@@ -30,7 +35,10 @@ function now() {
 /** Create a mock ChannelAdapter for testing. */
 function createMockAdapter(
   channelType: string,
-): ChannelAdapter & { delivered: OutboundMessage[]; inbound: InboundMessage[] } {
+): ChannelAdapter & {
+  delivered: OutboundMessage[];
+  inbound: InboundMessage[];
+} {
   const delivered: OutboundMessage[] = [];
   const inbound: InboundMessage[] = [];
   let setupConfig: ChannelSetup | null = null;
@@ -79,8 +87,11 @@ describe('channel registry', () => {
   });
 
   it('should register and retrieve channel adapters', async () => {
-    const { registerChannelAdapter, getRegisteredChannelNames, getChannelContainerConfig } =
-      await import('./channel-registry.js');
+    const {
+      registerChannelAdapter,
+      getRegisteredChannelNames,
+      getChannelContainerConfig,
+    } = await import('./channel-registry.js');
 
     registerChannelAdapter('test-channel', {
       factory: () => createMockAdapter('test'),
@@ -96,7 +107,8 @@ describe('channel registry', () => {
   });
 
   it('should skip adapters that return null (missing credentials)', async () => {
-    const { registerChannelAdapter, initChannelAdapters, getActiveAdapters } = await import('./channel-registry.js');
+    const { registerChannelAdapter, initChannelAdapters, getActiveAdapters } =
+      await import('./channel-registry.js');
 
     registerChannelAdapter('no-creds', {
       factory: () => null,
@@ -122,8 +134,13 @@ describe('channel + router integration', () => {
     if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
     fs.mkdirSync(TEST_DIR, { recursive: true });
 
-    const { initTestDb, runMigrations, createAgentGroup, createMessagingGroup, createMessagingGroupAgent } =
-      await import('../db/index.js');
+    const {
+      initTestDb,
+      runMigrations,
+      createAgentGroup,
+      createMessagingGroup,
+      createMessagingGroupAgent,
+    } = await import('../db/index.js');
     const db = initTestDb();
     runMigrations(db);
 
@@ -169,7 +186,12 @@ describe('channel + router integration', () => {
     const { inboundDbPath } = await import('../session-manager.js');
 
     // Simulate what the adapter bridge does: stringify content, call routeInbound
-    const inboundContent = { sender: 'TestUser', senderId: 'u1', text: 'Hello from adapter', isFromMe: false };
+    const inboundContent = {
+      sender: 'TestUser',
+      senderId: 'u1',
+      text: 'Hello from adapter',
+      isFromMe: false,
+    };
 
     await routeInbound({
       channelType: 'mock',
@@ -189,7 +211,10 @@ describe('channel + router integration', () => {
 
     const dbPath = inboundDbPath('ag-1', session!.id);
     const db = new Database(dbPath);
-    const rows = db.prepare('SELECT * FROM messages_in').all() as Array<{ id: string; content: string }>;
+    const rows = db.prepare('SELECT * FROM messages_in').all() as Array<{
+      id: string;
+      content: string;
+    }>;
     db.close();
 
     expect(rows).toHaveLength(1);
@@ -198,7 +223,8 @@ describe('channel + router integration', () => {
 
   it('should deliver outbound message through delivery adapter bridge', async () => {
     const { setDeliveryAdapter } = await import('../delivery.js');
-    const { getChannelAdapter, registerChannelAdapter, initChannelAdapters } = await import('./channel-registry.js');
+    const { getChannelAdapter, registerChannelAdapter, initChannelAdapters } =
+      await import('./channel-registry.js');
 
     // Register and init a mock adapter
     const mockAdapter = createMockAdapter('mock');
@@ -219,17 +245,25 @@ describe('channel + router integration', () => {
       async deliver(channelType, platformId, threadId, kind, content) {
         const adapter = getChannelAdapter(channelType);
         if (!adapter) return undefined;
-        return adapter.deliver(platformId, threadId, { kind, content: JSON.parse(content) });
+        return adapter.deliver(platformId, threadId, {
+          kind,
+          content: JSON.parse(content),
+        });
       },
     });
 
     // Simulate delivery
     const adapter = getChannelAdapter('mock');
     if (adapter) {
-      await adapter.deliver('chan-100', null, { kind: 'chat', content: { text: 'Agent response' } });
+      await adapter.deliver('chan-100', null, {
+        kind: 'chat',
+        content: { text: 'Agent response' },
+      });
     }
 
     expect(mockAdapter.delivered).toHaveLength(1);
-    expect((mockAdapter.delivered[0].content as { text: string }).text).toBe('Agent response');
+    expect((mockAdapter.delivered[0].content as { text: string }).text).toBe(
+      'Agent response',
+    );
   });
 });

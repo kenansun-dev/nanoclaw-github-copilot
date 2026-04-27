@@ -18,7 +18,10 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { initTestDb, closeDb, runMigrations } from '../../db/index.js';
 import { createAgentGroup } from '../../db/agent-groups.js';
-import { createMessagingGroup, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
+import {
+  createMessagingGroup,
+  getMessagingGroupByPlatform,
+} from '../../db/messaging-groups.js';
 import { upsertUser } from './db/users.js';
 import { grantRole } from './db/user-roles.js';
 
@@ -72,9 +75,20 @@ beforeEach(async () => {
   await import('./index.js'); // register hooks
 
   // Base fixtures: one agent group + owner with a DM on 'telegram'.
-  createAgentGroup({ id: 'ag-1', name: 'Andy', folder: 'andy', agent_provider: null, created_at: now() });
+  createAgentGroup({
+    id: 'ag-1',
+    name: 'Andy',
+    folder: 'andy',
+    agent_provider: null,
+    created_at: now(),
+  });
 
-  upsertUser({ id: 'telegram:owner', kind: 'telegram', display_name: 'Owner', created_at: now() });
+  upsertUser({
+    id: 'telegram:owner',
+    kind: 'telegram',
+    display_name: 'Owner',
+    created_at: now(),
+  });
   grantRole({
     user_id: 'telegram:owner',
     role: 'owner',
@@ -117,7 +131,11 @@ function groupMention(platformId: string, text = '@bot hello') {
     message: {
       id: `msg-${Math.random().toString(36).slice(2, 8)}`,
       kind: 'chat' as const,
-      content: JSON.stringify({ senderId: 'caller', senderName: 'Caller', text }),
+      content: JSON.stringify({
+        senderId: 'caller',
+        senderName: 'Caller',
+        text,
+      }),
       timestamp: now(),
       isMention: true,
     },
@@ -132,7 +150,11 @@ function dmEvent(platformId: string, text = 'hello') {
     message: {
       id: `msg-${Math.random().toString(36).slice(2, 8)}`,
       kind: 'chat' as const,
-      content: JSON.stringify({ senderId: 'stranger', senderName: 'Stranger', text }),
+      content: JSON.stringify({
+        senderId: 'stranger',
+        senderName: 'Stranger',
+        text,
+      }),
       timestamp: now(),
       isMention: true, // DM bridge sets isMention=true
     },
@@ -146,7 +168,8 @@ describe('unknown-channel registration flow', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     expect(deliverMock).toHaveBeenCalledTimes(1);
-    const [channel, platformId, thread, kind, content] = deliverMock.mock.calls[0];
+    const [channel, platformId, thread, kind, content] =
+      deliverMock.mock.calls[0];
     expect(channel).toBe('telegram');
     expect(platformId).toBe('dm-owner'); // delivered to owner's DM
     expect(thread).toBeNull();
@@ -157,7 +180,9 @@ describe('unknown-channel registration flow', () => {
     expect(payload.question).toContain('Andy');
 
     const { getDb } = await import('../../db/connection.js');
-    const rows = getDb().prepare('SELECT * FROM pending_channel_approvals').all() as Array<{
+    const rows = getDb()
+      .prepare('SELECT * FROM pending_channel_approvals')
+      .all() as Array<{
       messaging_group_id: string;
     }>;
     expect(rows).toHaveLength(1);
@@ -170,7 +195,11 @@ describe('unknown-channel registration flow', () => {
 
     expect(deliverMock).toHaveBeenCalledTimes(1);
     const { getDb } = await import('../../db/connection.js');
-    const count = (getDb().prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals').get() as { c: number }).c;
+    const count = (
+      getDb()
+        .prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals')
+        .get() as { c: number }
+    ).c;
     expect(count).toBe(1);
   });
 
@@ -183,7 +212,11 @@ describe('unknown-channel registration flow', () => {
 
     expect(deliverMock).toHaveBeenCalledTimes(1);
     const { getDb } = await import('../../db/connection.js');
-    const count = (getDb().prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals').get() as { c: number }).c;
+    const count = (
+      getDb()
+        .prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals')
+        .get() as { c: number }
+    ).c;
     expect(count).toBe(1);
   });
 
@@ -197,7 +230,9 @@ describe('unknown-channel registration flow', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     const { getDb } = await import('../../db/connection.js');
-    const pending = getDb().prepare('SELECT messaging_group_id FROM pending_channel_approvals').get() as {
+    const pending = getDb()
+      .prepare('SELECT messaging_group_id FROM pending_channel_approvals')
+      .get() as {
       messaging_group_id: string;
     };
     expect(pending).toBeDefined();
@@ -217,7 +252,9 @@ describe('unknown-channel registration flow', () => {
 
     // Wiring created with MVP defaults.
     const mga = getDb()
-      .prepare('SELECT * FROM messaging_group_agents WHERE messaging_group_id = ?')
+      .prepare(
+        'SELECT * FROM messaging_group_agents WHERE messaging_group_id = ?',
+      )
       .get(pending.messaging_group_id) as {
       engage_mode: string;
       engage_pattern: string | null;
@@ -235,13 +272,18 @@ describe('unknown-channel registration flow', () => {
     // Triggering sender auto-admitted so sender_scope='known' doesn't
     // bounce the replay into sender-approval.
     const member = getDb()
-      .prepare('SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?')
+      .prepare(
+        'SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?',
+      )
       .get('telegram:caller', 'ag-1');
     expect(member).toBeDefined();
 
     // Pending row cleared and container woken via replay.
-    const stillPending = (getDb().prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals').get() as { c: number })
-      .c;
+    const stillPending = (
+      getDb()
+        .prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals')
+        .get() as { c: number }
+    ).c;
     expect(stillPending).toBe(0);
     expect(wakeContainer).toHaveBeenCalled();
   });
@@ -254,7 +296,9 @@ describe('unknown-channel registration flow', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     const { getDb } = await import('../../db/connection.js');
-    const pending = getDb().prepare('SELECT messaging_group_id FROM pending_channel_approvals').get() as {
+    const pending = getDb()
+      .prepare('SELECT messaging_group_id FROM pending_channel_approvals')
+      .get() as {
       messaging_group_id: string;
     };
 
@@ -271,8 +315,13 @@ describe('unknown-channel registration flow', () => {
     }
 
     const mga = getDb()
-      .prepare('SELECT engage_mode, engage_pattern FROM messaging_group_agents WHERE messaging_group_id = ?')
-      .get(pending.messaging_group_id) as { engage_mode: string; engage_pattern: string };
+      .prepare(
+        'SELECT engage_mode, engage_pattern FROM messaging_group_agents WHERE messaging_group_id = ?',
+      )
+      .get(pending.messaging_group_id) as {
+      engage_mode: string;
+      engage_pattern: string;
+    };
     expect(mga.engage_mode).toBe('pattern');
     expect(mga.engage_pattern).toBe('.');
   });
@@ -284,7 +333,9 @@ describe('unknown-channel registration flow', () => {
     await routeInbound(groupMention('chat-deny'));
     await new Promise((r) => setTimeout(r, 10));
     const { getDb } = await import('../../db/connection.js');
-    const pending = getDb().prepare('SELECT messaging_group_id FROM pending_channel_approvals').get() as {
+    const pending = getDb()
+      .prepare('SELECT messaging_group_id FROM pending_channel_approvals')
+      .get() as {
       messaging_group_id: string;
     };
 
@@ -306,7 +357,9 @@ describe('unknown-channel registration flow', () => {
     expect(mg?.denied_at).toBeTruthy();
     const mgaCount = (
       getDb()
-        .prepare('SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ?')
+        .prepare(
+          'SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ?',
+        )
         .get(pending.messaging_group_id) as { c: number }
     ).c;
     expect(mgaCount).toBe(0);
@@ -316,8 +369,11 @@ describe('unknown-channel registration flow', () => {
     await routeInbound(groupMention('chat-deny', '@bot please'));
     await new Promise((r) => setTimeout(r, 10));
     expect(deliverMock).not.toHaveBeenCalled();
-    const stillPending = (getDb().prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals').get() as { c: number })
-      .c;
+    const stillPending = (
+      getDb()
+        .prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals')
+        .get() as { c: number }
+    ).c;
     expect(stillPending).toBe(0);
   });
 
@@ -328,7 +384,9 @@ describe('unknown-channel registration flow', () => {
     await routeInbound(groupMention('chat-unauth'));
     await new Promise((r) => setTimeout(r, 10));
     const { getDb } = await import('../../db/connection.js');
-    const pending = getDb().prepare('SELECT messaging_group_id FROM pending_channel_approvals').get() as {
+    const pending = getDb()
+      .prepare('SELECT messaging_group_id FROM pending_channel_approvals')
+      .get() as {
       messaging_group_id: string;
     };
 
@@ -347,12 +405,17 @@ describe('unknown-channel registration flow', () => {
     // No wiring created, pending row preserved so a real approver can act on it.
     const mgaCount = (
       getDb()
-        .prepare('SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ?')
+        .prepare(
+          'SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ?',
+        )
         .get(pending.messaging_group_id) as { c: number }
     ).c;
     expect(mgaCount).toBe(0);
-    const stillPending = (getDb().prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals').get() as { c: number })
-      .c;
+    const stillPending = (
+      getDb()
+        .prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals')
+        .get() as { c: number }
+    ).c;
     expect(stillPending).toBe(1);
   });
 });
@@ -368,7 +431,11 @@ describe('no-owner / no-agent failure modes', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     expect(deliverMock).not.toHaveBeenCalled();
-    const count = (getDb().prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals').get() as { c: number }).c;
+    const count = (
+      getDb()
+        .prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals')
+        .get() as { c: number }
+    ).c;
     expect(count).toBe(0);
   });
 
@@ -383,7 +450,11 @@ describe('no-owner / no-agent failure modes', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     expect(deliverMock).not.toHaveBeenCalled();
-    const count = (getDb().prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals').get() as { c: number }).c;
+    const count = (
+      getDb()
+        .prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals')
+        .get() as { c: number }
+    ).c;
     expect(count).toBe(0);
   });
 });

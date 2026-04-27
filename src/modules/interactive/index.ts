@@ -11,13 +11,22 @@
  * modularizing it adds more registry surface than it saves.
  */
 import { getDb, hasTable } from '../../db/connection.js';
-import { deletePendingQuestion, getPendingQuestion, getSession } from '../../db/sessions.js';
+import {
+  deletePendingQuestion,
+  getPendingQuestion,
+  getSession,
+} from '../../db/sessions.js';
 import { wakeContainer } from '../../container-runner.js';
-import { registerResponseHandler, type ResponsePayload } from '../../response-registry.js';
+import {
+  registerResponseHandler,
+  type ResponsePayload,
+} from '../../response-registry.js';
 import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
 
-async function handleInteractiveResponse(payload: ResponsePayload): Promise<boolean> {
+async function handleInteractiveResponse(
+  payload: ResponsePayload,
+): Promise<boolean> {
   if (!hasTable(getDb(), 'pending_questions')) return false;
 
   const pq = getPendingQuestion(payload.questionId);
@@ -25,7 +34,10 @@ async function handleInteractiveResponse(payload: ResponsePayload): Promise<bool
 
   const session = getSession(pq.session_id);
   if (!session) {
-    log.warn('Session not found for pending question', { questionId: payload.questionId, sessionId: pq.session_id });
+    log.warn('Session not found for pending question', {
+      questionId: payload.questionId,
+      sessionId: pq.session_id,
+    });
     deletePendingQuestion(payload.questionId);
     return true; // claimed — we owned this questionId even though the session is gone
   }

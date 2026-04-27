@@ -26,7 +26,9 @@ export const migration012: Migration = {
   up: (db: Database.Database) => {
     // 1. Add denied_at to messaging_groups. Idempotent guard in case the
     //    column was added by some other path before this migration ran.
-    const cols = db.prepare("PRAGMA table_info('messaging_groups')").all() as Array<{ name: string }>;
+    const cols = db
+      .prepare("PRAGMA table_info('messaging_groups')")
+      .all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === 'denied_at')) {
       db.exec(`ALTER TABLE messaging_groups ADD COLUMN denied_at TEXT`);
     }
