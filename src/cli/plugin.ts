@@ -143,6 +143,22 @@ export function parseInstallSpec(spec: string): InstallSpec {
     ) {
       return { kind: 'marketplace', plugin, marketplace };
     }
+    // Helpful error: user typed `plugin@owner/repo` (kenan repro 2026-04-27
+    // — wrote `workiq@microsoft/work-iq` which silently fell through into
+    // the owner/repo branch and produced `https://github.com/workiq@microsoft/work-iq.git`).
+    // Detect the slash-in-marketplace case explicitly and surface the
+    // suggested fix.
+    if (/^[a-z0-9][a-z0-9_-]*$/i.test(plugin) && marketplace.includes('/')) {
+      throw new Error(
+        `Invalid install spec: ${spec}\n` +
+          `Marketplace name '${marketplace}' looks like an owner/repo path. ` +
+          `Marketplaces are referenced by their registered name, not their source.\n` +
+          `Did you mean one of:\n` +
+          `  1. nanoclaw plugin marketplace add <name> ${marketplace}\n` +
+          `     nanoclaw plugin install ${plugin}@<name>\n` +
+          `  2. nanoclaw plugin install ${marketplace}   # install repo directly`,
+      );
+    }
   }
 
   // owner/repo or owner/repo:subdir — GitHub shorthand.
