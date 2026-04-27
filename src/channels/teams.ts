@@ -445,20 +445,12 @@ export class TeamsChannel implements Channel {
         const targetMsgId = activity.replyToId || '';
         logger.info(
           { chatJid, sender, emoji, targetMsgId },
-          'Teams reaction received',
+          'Teams reaction received (not dispatched to agent)',
         );
-        // Store as a non-text message so agent sees it in context
-        const timestamp = activity.timestamp || new Date().toISOString();
-        this.opts.onMessage(chatJid, {
-          id: `reaction-${Date.now()}`,
-          chat_jid: chatJid,
-          content: `[${sender} reacted with ${emoji}]`,
-          sender: activity.from?.aadObjectId || activity.from?.id || '',
-          sender_name: sender,
-          timestamp,
-          is_from_me: false,
-        });
       }
+      // Do NOT forward to agent. Reactions/likes are passive ack signals;
+      // dispatching them as messages caused the agent to reply on every
+      // 👍 / heart, which is noisy and unwanted (kenan 2026-04-27).
       return;
     }
 
@@ -875,19 +867,12 @@ export class TeamsChannel implements Channel {
       const sender = activity.from?.name || activity.from?.id || 'unknown';
       for (const reaction of reactionsAdded) {
         const emoji = reaction.type || '';
-        logger.info({ chatJid, sender, emoji }, 'Teams reaction received');
-        const timestamp =
-          activity.timestamp?.toISOString?.() || new Date().toISOString();
-        this.opts.onMessage(chatJid, {
-          id: `reaction-${Date.now()}`,
-          chat_jid: chatJid,
-          content: `[${sender} reacted with ${emoji}]`,
-          sender: activity.from?.aadObjectId || activity.from?.id || '',
-          sender_name: sender,
-          timestamp,
-          is_from_me: false,
-        });
+        logger.info(
+          { chatJid, sender, emoji },
+          'Teams reaction received (not dispatched to agent)',
+        );
       }
+      // Do NOT forward to agent (see handleIncomingRaw above for rationale).
       return;
     }
 
