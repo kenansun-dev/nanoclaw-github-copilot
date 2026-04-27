@@ -23,10 +23,13 @@
  *            recreate session and retry once.
  */
 
+import fs from 'fs';
+import path from 'path';
 import { randomUUID } from 'crypto';
 
 import { CopilotClient, approveAll } from '@github/copilot-sdk';
 
+import { loadPluginAgents } from './load-plugin-agents.js';
 import { registerProvider } from './provider-registry.js';
 import type {
   AgentProvider,
@@ -60,6 +63,67 @@ function resolveModel(env: Record<string, string | undefined>): string {
   return model;
 }
 
+/** Resolve plugin dirs from `NANOCLAW_PLUGIN_DIRS` (PATH-style separator). */
+function resolvePluginDirs(env: Record<string, string | undefined>): string[] {
+  const raw = env.NANOCLAW_PLUGIN_DIRS;
+  if (!raw) return [];
+  return raw
+    .split(path.delimiter)
+    .filter((d) => d && fs.existsSync(d));
+}
+
+/**
+ * Load extra MCP servers from on-disk JSON config (legacy fork pattern).
+ * Path: `$NANOCLAW_MCP_CONFIG` or `/workspace/mcp.json`. Each entry must
+ * declare `tools` (defaults to `['*']`); `auth` is stripped because the SDK
+ * does not recognize the fork-internal field.
+ */
+function loadDiskMcpServers(
+  env: Record<string, string | undefined>,
+): Record<string, any> {
+  const cfgPath = env.NANOCLAW_MCP_CONFIG || '/workspace/mcp.json';
+  if (!fs.existsSync(cfgPath)) return {};
+  try {
+    const parsed = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+    const servers = parsed.mcpServers || parsed;
+    for (const [, cfg] of Object.entries(servers) as Array<[string, any]>) {
+      if (!cfg.tools) cfg.tools = ['*'];
+      delete cfg.auth;
+    }
+    log(`Loaded ${Object.keys(servers).length} MCP server(s) from ${cfgPath}`);
+    return servers;
+  } catch (err) {
+    log(`Failed to parse ${cfgPath}: ${err instanceof Error ? err.message : String(err)}`);
+    return {};
+  }
+}
+
+/**
+ * GitHub MCP HTTP server config — only when `NANOCLAW_GITHUB_MCP=1` and a
+ * github token is available. Mirrors the GHC fork mapping so existing skills
+ * keep working.
+ */
+function githubMcpServerConfig(
+  env: Record<string, string | undefined>,
+  githubToken: string | undefined,
+): Record<string, any> {
+  if (env.NANOCLAW_GITHUB_MCP !== '1' || !githubToken) return {};
+  return {
+    'github-mcp-server': {
+      type: 'http' as const,
+      url: 'https://api.githubcopilot.com/mcp',
+      headers: {
+        Authorization: `Bearer ${githubToken}`,
+        'X-MCP-Toolsets':
+          'repos,issues,users,pull_requests,code_security,secret_protection,actions,web_search',
+        'X-MCP-Host': 'copilot-cli',
+        'X-Initiator': 'agent',
+      },
+      tools: ['*'],
+    },
+  };
+}
+
 class CopilotAgentProvider implements AgentProvider {
   /**
    * GHC SDK does not expose slash-command parsing; v2 poll-loop should
@@ -73,13 +137,31 @@ class CopilotAgentProvider implements AgentProvider {
   constructor(private readonly options: ProviderOptions) {
     this.env = options.env ?? process.env;
     const githubToken = resolveGithubToken(this.env);
+    const pluginDirs = resolvePluginDirs(this.env);
+    const pluginCliArgs: string[] = [];
+    for (const d of pluginDirs) pluginCliArgs.push('--plugin-dir', d);
+
     const clientOpts: any = {};
     if (githubToken) clientOpts.githubToken = githubToken;
+    if (pluginCliArgs.length > 0) clientOpts.cliArgs = pluginCliArgs;
     this.client = new CopilotClient(clientOpts);
   }
 
   query(input: QueryInput): AgentQuery {
-    return runCopilotQuery(this.client, this.env, this.options, input);
+    // Workaround for GHC SDK 0.2.2 server-mode --plugin-dir gap: load
+    // plugin agents ourselves and pass via SessionConfig.customAgents.
+    const pluginDirs = resolvePluginDirs(this.env);
+    const customAgents = loadPluginAgents(pluginDirs, {
+      onWarn: (msg) => log(msg),
+    });
+    if (customAgents.length > 0) {
+      log(
+        `Loaded ${customAgents.length} custom agent(s): ${customAgents
+          .map((a) => a.name)
+          .join(', ')}`,
+      );
+    }
+    return runCopilotQuery(this.client, this.env, this.options, input, customAgents);
   }
 
   isSessionInvalid(err: unknown): boolean {
@@ -106,6 +188,13 @@ function runCopilotQuery(
   env: Record<string, string | undefined>,
   options: ProviderOptions,
   input: QueryInput,
+  customAgents: ReadonlyArray<{
+    name: string;
+    displayName?: string;
+    description?: string;
+    tools?: string[];
+    prompt: string;
+  }> = [],
 ): AgentQuery {
   const model = resolveModel(env);
   const thinkLevel = env.COPILOT_THINK_LEVEL || undefined;
@@ -160,10 +249,28 @@ function runCopilotQuery(
       }
     }
 
+    // Layer in github-mcp HTTP + disk mcp.json (additive, env-gated).
+    Object.assign(
+      mcpServers,
+      githubMcpServerConfig(env, resolveGithubToken(env)),
+      loadDiskMcpServers(env),
+    );
+
     return {
       model,
       ...(thinkLevel ? { reasoningEffort: thinkLevel as any } : {}),
       enableConfigDiscovery: env.NANOCLAW_MCP_DISCOVERY === '1',
+      ...(customAgents.length > 0
+        ? {
+            customAgents: customAgents.map((a) => ({
+              name: a.name,
+              ...(a.displayName ? { displayName: a.displayName } : {}),
+              ...(a.description ? { description: a.description } : {}),
+              ...(a.tools ? { tools: a.tools } : {}),
+              prompt: a.prompt,
+            })),
+          }
+        : {}),
       systemMessage: instructions,
       workingDirectory,
       onPermissionRequest: approveAll,
