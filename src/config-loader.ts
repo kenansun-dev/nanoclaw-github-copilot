@@ -1476,9 +1476,59 @@ export function getEnabledPlugins(
       })
     | undefined;
   if (!p) return [];
-  if (Array.isArray(p.enabledPlugins)) return p.enabledPlugins;
-  if (Array.isArray(p.enabled)) return p.enabled;
-  return [];
+  const raw =
+    (Array.isArray(p.enabledPlugins) && p.enabledPlugins) ||
+    (Array.isArray(p.enabled) && p.enabled) ||
+    [];
+  // Normalize: tolerate bare-string entries like `"workiq@work-iq"` that
+  // users naturally write when copying a CC config or following docs that
+  // pre-date the v8 schema split. Without this, the entry's `.name` and
+  // `.source` are both undefined and ensureEnabledPluginsInstalled() does
+  // a no-op while logging nothing user-visible (kenan repro 2026-04-27
+  // workiq case). String form parsed identically to InstallSpec's
+  // marketplace branch: `<plugin>@<marketplace>` → { name: plugin, source: full }.
+  // Other shapes (owner/repo, urls, paths) are passed through as the source
+  // and the name is inferred from the last useful path segment.
+  return raw
+    .map((entry: any): PluginEnabledEntry | null => {
+      if (entry && typeof entry === 'object' && typeof entry.name === 'string') {
+        return entry as PluginEnabledEntry;
+      }
+      if (typeof entry === 'string') {
+        const name = inferPluginNameFromSource(entry);
+        if (!name) return null;
+        return { name, source: entry };
+      }
+      return null;
+    })
+    .filter((e): e is PluginEnabledEntry => e !== null);
+}
+
+/**
+ * Best-effort plugin-name inference for bare-string `enabledPlugins` entries.
+ * Returns null when the string isn't recognizable as any of the documented
+ * install spec shapes (caller drops the entry rather than guessing).
+ */
+function inferPluginNameFromSource(spec: string): string | null {
+  const trimmed = spec.trim();
+  if (!trimmed) return null;
+  // marketplace form: name@marketplace → left side is the plugin name.
+  const atIdx = trimmed.indexOf('@');
+  if (atIdx > 0 && atIdx < trimmed.length - 1) {
+    const left = trimmed.slice(0, atIdx);
+    if (/^[a-z0-9][a-z0-9_-]*$/i.test(left)) return left;
+  }
+  // owner/repo[:subdir] → last path segment of the repo or subdir.
+  const colonIdx = trimmed.indexOf(':');
+  const headBeforeColon = colonIdx > 0 ? trimmed.slice(0, colonIdx) : trimmed;
+  const tail = (
+    colonIdx > 0 ? trimmed.slice(colonIdx + 1) : headBeforeColon
+  ).split('/').filter(Boolean).pop();
+  if (tail && /^[a-z0-9][a-z0-9._-]*$/i.test(tail)) {
+    // Strip a trailing .git on git URLs.
+    return tail.replace(/\.git$/i, '');
+  }
+  return null;
 }
 
 export function getExtraKnownMarketplaces(

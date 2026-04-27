@@ -564,3 +564,36 @@ describe('resolvePluginMcpServers — .mcp.json fallback (CC convention)', () =>
     expect(resolvePluginMcpServers(tmpDir, manifest)).toBeNull();
   });
 });
+
+describe('parseInstallSpec — marketplace-vs-repo confusion (kenan repro 2026-04-27)', () => {
+  // Bug: user wrote `workiq@microsoft/work-iq` expecting marketplace lookup,
+  // but the @-marketplace branch's regex required kebab-case on both sides,
+  // so it silently fell through to owner/repo and produced a broken URL
+  // (`https://github.com/workiq@microsoft/work-iq.git`). Now we surface a
+  // helpful error that names both fix paths.
+  it('throws a helpful error for plugin@owner/repo (slash in marketplace name)', () => {
+    expect(() => parseInstallSpec('workiq@microsoft/work-iq')).toThrow(
+      /looks like an owner\/repo path/,
+    );
+  });
+
+  it('error mentions both fix options (register marketplace OR install repo)', () => {
+    let err: Error | null = null;
+    try {
+      parseInstallSpec('workiq@microsoft/work-iq');
+    } catch (e: any) {
+      err = e;
+    }
+    expect(err).not.toBeNull();
+    expect(err!.message).toMatch(/marketplace add/);
+    expect(err!.message).toMatch(/install microsoft\/work-iq/);
+  });
+
+  it('still parses well-formed marketplace specs', () => {
+    expect(parseInstallSpec('workiq@work-iq')).toEqual({
+      kind: 'marketplace',
+      plugin: 'workiq',
+      marketplace: 'work-iq',
+    });
+  });
+});

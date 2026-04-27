@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { setWorkspace, ensureWorkspace } from './workspace.js';
-import { loadConfig, saveConfig, readWorkspaceEnv } from './config-loader.js';
+import { loadConfig, saveConfig, readWorkspaceEnv, getEnabledPlugins } from './config-loader.js';
 
 describe('config-loader', () => {
   const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-cfg-${Date.now()}`);
@@ -924,5 +924,85 @@ describe('config migration v5→v6: plugins block seed', () => {
     expect(config.chats['tui:default']).toBeUndefined();
     expect(config.chats['telegram:12345']).toBeDefined();
     expect(config.chats['discord:67890']).toBeDefined();
+  });
+});
+
+
+describe('getEnabledPlugins — bare-string entry normalization (kenan repro 2026-04-27)', () => {
+  // Bug: user wrote `"enabledPlugins": ["workiq@microsoft/work-iq"]` (string
+  // form) instead of `[{ name, source }]`. The old getter returned the
+  // strings as-is, so ensureEnabledPluginsInstalled() saw entries with
+  // undefined `name` and `source` and silently no-op'd. Plugin never
+  // installed; user got "/plugin → No plugins installed".
+  // Now string entries are normalized to objects when the source is
+  // recognizable as one of the documented install spec shapes.
+  it('normalizes plugin@marketplace string entries', () => {
+    expect(
+      getEnabledPlugins({
+        plugins: { enabledPlugins: ['workiq@work-iq' as any] },
+      }),
+    ).toEqual([{ name: 'workiq', source: 'workiq@work-iq' }]);
+  });
+
+  it('normalizes owner/repo string entries (name = repo name)', () => {
+    expect(
+      getEnabledPlugins({
+        plugins: { enabledPlugins: ['microsoft/work-iq' as any] },
+      }),
+    ).toEqual([{ name: 'work-iq', source: 'microsoft/work-iq' }]);
+  });
+
+  it('normalizes owner/repo:subdir string entries (name = subdir leaf)', () => {
+    expect(
+      getEnabledPlugins({
+        plugins: {
+          enabledPlugins: ['microsoft/work-iq:plugins/workiq' as any],
+        },
+      }),
+    ).toEqual([
+      { name: 'workiq', source: 'microsoft/work-iq:plugins/workiq' },
+    ]);
+  });
+
+  it('strips trailing .git from URL-form string entries', () => {
+    expect(
+      getEnabledPlugins({
+        plugins: {
+          enabledPlugins: ['https://github.com/microsoft/work-iq.git' as any],
+        },
+      }),
+    ).toEqual([
+      { name: 'work-iq', source: 'https://github.com/microsoft/work-iq.git' },
+    ]);
+  });
+
+  it('preserves well-formed object entries unchanged', () => {
+    expect(
+      getEnabledPlugins({
+        plugins: {
+          enabledPlugins: [
+            { name: 'workiq', source: 'workiq@work-iq', autoInstall: true },
+          ],
+        },
+      }),
+    ).toEqual([
+      { name: 'workiq', source: 'workiq@work-iq', autoInstall: true },
+    ]);
+  });
+
+  it('drops unrecognizable string entries instead of poisoning the list', () => {
+    expect(
+      getEnabledPlugins({
+        plugins: { enabledPlugins: ['' as any, '   ' as any] },
+      }),
+    ).toEqual([]);
+  });
+
+  it('falls back to legacy `enabled` field when `enabledPlugins` missing (back-compat)', () => {
+    expect(
+      getEnabledPlugins({
+        plugins: { enabled: [{ name: 'old', source: 'a/b' }] as any },
+      }),
+    ).toEqual([{ name: 'old', source: 'a/b' }]);
   });
 });
