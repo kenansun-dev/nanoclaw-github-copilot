@@ -862,6 +862,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           // arriving before a new userTurnSeq are SDK trailing artifacts
           // and must be ignored to avoid orphan thinking bubbles.
           turnFinalized = true;
+          // Re-arm typing keepalive after sending an interim final-output
+          // message. The agent may keep working (more tool calls / a
+          // follow-up final) and channels (Teams 3s, Telegram 4s) need
+          // the keepalive interval running so the typing indicator
+          // doesn't disappear during the next thinking gap.
+          // turn-end / finally-guard will idempotently clear it when the
+          // turn actually finishes. (kenan TG/Teams repro 2026-04-27)
+          await traceSetTyping(
+            channel,
+            chatJid,
+            true,
+            'after-interim-final',
+          );
         }
         logger.info(
           { group: group.name, partial: !!result.partial },
