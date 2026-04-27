@@ -251,3 +251,79 @@ production consumer, fresh-DB-only migration path).
   ports so the module's runtime entry-point lands in one commit.
 - scheduling-fork module skeleton — defer to B.4 (paired with
   `nanoclaw task` CLI, both touch `scheduled_tasks`).
+
+## Phase B.5-prep: dispatcher cut-list
+
+> Inventory of every place v1 dispatcher in `src/index.ts` calls into
+> a fork module today, with the v2 hook that should replace each call
+> when router merge happens. Generated 2026-04-28 from `bf69390`.
+> Numbers are line numbers in `src/index.ts` (2130 lines total).
+
+### Imports from fork modules (top of file)
+
+| line | import                                                                 | fork module                | v2 replacement                                           | B.5 action                                                                                  |
+| ---- | ---------------------------------------------------------------------- | -------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| 46   | `getAllRegisteredGroups`                                               | `./db.js`                  | `modules/registered-groups-fork`                         | flip import path → re-export shim                                                           |
+| 54   | `getRegisteredGroup`                                                   | `./db.js`                  | `modules/registered-groups-fork`                         | flip import path                                                                            |
+| 57   | `setRegisteredGroup`                                                   | `./db.js`                  | `modules/registered-groups-fork`                         | flip import path                                                                            |
+| 64   | `isAbortRequestText`                                                   | `./abort-triggers.js`      | `modules/abort-fork`                                     | flip import path                                                                            |
+| 66   | `startIpcWatcher`                                                      | `./ipc.js`                 | `modules/ipc-fork`                                       | flip import path                                                                            |
+| 73-77 | `restoreRemoteControl, startRemoteControl, stopRemoteControl`         | `./remote-control.js`      | **stays in fork** (5 dispatcher callers; no v2 equiv)    | router exposes `registerAdminCommand('/remote-control', ...)`; index.ts moves into hook     |
+| 79-83 | `isSenderAllowed, isTriggerAllowed, loadSenderAllowlist, shouldDropMessage` | `./sender-allowlist.js` | `modules/sender-allowlist-fork`                          | flip import path; later wire into `registerAccessGate(...)` on router                       |
+| 85   | `startSchedulerLoop`                                                   | `./task-scheduler.js`      | hybrid (B.5 prep doc — schedule schema lock above)       | rewrite scheduler to use v2 `messages_in` driver + fork `scheduled_tasks` lifecycle table   |
+
+### Dispatcher call sites that gate inbound (B.5 router replaces)
+
+| line       | what it does                                                                                                                  | v2 hook                                                                            | notes                                                                                  |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| 135        | `registeredGroups = getAllRegisteredGroups()` — startup load                                                                  | `router.startup({ groupResolver })`                                                | `groupResolver` provided by `registered-groups-fork`                                   |
+| 282        | `setRegisteredGroup(jid, group)` — channel metadata callback writes group on first observed chat                              | `router.onChatMetadata(...)` calls `registerGroupResolver`                         | currently happens inside `onChatMetadata` lambda                                       |
+| 369-381    | `import('./slash-commands.js'); handleSlashCommand(slashInput, slashCtx)` — slash command resolution path 1                   | `router.processSlashCommand(...)`                                                  | router needs a slash registry; current fork has unified `slash-commands.ts` (hot path) |
+| 399        | `loadSenderAllowlist()` (startup metadata gate)                                                                               | `registerAccessGate({ sender-allowlist-fork.isSenderAllowed })`                    | one of two call sites; both go through the same v2 gate                                |
+| 1271       | `loadSenderAllowlist()` (per-message gate)                                                                                    | `registerAccessGate(...)`                                                          | same as above                                                                          |
+| 1294-1295  | second `import('./slash-commands.js'); handleSlashCommand(...)` — slash command resolution path 2 (live message handler)      | `router.processSlashCommand(...)`                                                  | merge with line 369 path                                                               |
+| 1688       | `registeredGroups = getAllRegisteredGroups()` — refresh on dispatcher loop tick                                               | `router.refreshGroups()` calling fork resolver                                     | router decides cadence                                                                 |
+| 1788-1832  | `/remote-control` and `/remote-control-end` admin command handler (`handleRemoteControl(...)`)                                | `registerAdminCommand('/remote-control', handler)` on router                       | handler stays in `remote-control.ts`; router just forwards                             |
+| 1841-1857  | fast-abort: `isAbortRequestText(msg.content)` short-circuit before dispatch                                                   | `registerAbortHandler({ matcher, onAbort })` on router                             | `matcher` from `abort-fork`; router enforces ordering before LLM call                  |
+| 1860       | `getAllRegisteredGroups()` after fast-abort to refresh map                                                                    | `router.refreshGroups()`                                                           | same as 1688                                                                           |
+| 1888-1891  | `loadSenderAllowlist()` then `isSenderAllowed(chatJid, msg.sender, cfg)` — per-message access gate                            | `registerAccessGate(...)`                                                          | router rejects/drops based on gate result                                              |
+| 1974-1995  | `startSchedulerLoop({ registeredGroups, getSessions, queue, onProcess, sendMessage, editMessage })`                           | swap to v2 `scheduling/actions.ts` driver + bridge in `task-scheduler-fork-bridge` | per B.5 schedule schema lock above                                                     |
+| 1996+      | `startIpcWatcher({ sendMessage, reactToMessage, sendFile, ... })`                                                             | router runs IPC watcher beside v2 message loop; both feed `messages_in`            | `ipc-fork` exposes `startIpcWatcher`; router supplies channel ops                      |
+
+### v1 vs v2 path coexistence (during B.5 transition)
+
+- v1 path: `src/channels/index.ts` self-registers fork channels via
+  `./registry.ts` → `src/index.ts` dispatcher binds them.
+- v2 path: `src/channels/adapters-barrel.ts` self-registers v2
+  adapters via `./channel-registry.ts` → router binds them.
+- **Single-line swap when B.5 is ready**: change the channel barrel
+  import in `src/index.ts` (currently inside `connectChannels()`)
+  from `import './channels/index.js'` to
+  `import './channels/adapters-barrel.js'` and stop calling
+  `registry.connect()` for the v1 list.
+
+### What B.5 does NOT touch
+
+- container internals (`container/` subtree) — covered by C-step3/4.
+- `src/mcp-auth.ts` / `src/mcporter-integration.ts` — outbound MCP
+  auth, called by agent-runner main, never hits dispatcher.
+- `src/mount-security.ts` — called by container-runner, not
+  dispatcher. (Re-exported by `modules/mount-security` for v2
+  consumers; B.5 does not change call sites.)
+- `src/command-gate.ts` — in-DB admin gate, called from
+  v2 `messages_in` consumer (already on v2 path), not from
+  `src/index.ts`.
+
+### Open questions to flush before B.5 touches code
+
+1. Slash commands: keep fork's hot-path `slash-commands.ts` (covers
+   `/think`, `/model`, `/agent`, etc.) or fold into v2
+   `router.processSlashCommand`? Fork file is large and changes
+   often. Recommendation: keep fork file, expose via a single
+   `registerSlashCommandHandler(...)` hook on router.
+2. Scheduler: confirmed at B.5-prep — hybrid v2 driver + fork
+   lifecycle table. Bridge file `task-scheduler-fork-bridge.ts` to
+   be written at B.5 start.
+3. `remote-control` lifecycle: when router restarts, do
+   `restoreRemoteControl(...)` calls happen pre- or post-router-up?
+   Pre, per fork order today (line 73 import, called at startup).
