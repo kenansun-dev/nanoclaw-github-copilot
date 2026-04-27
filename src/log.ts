@@ -62,3 +62,35 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   log.error('Unhandled rejection', { err: reason });
 });
+
+// v2-merge B.0.1: fork compatibility shim.
+// Fork code uses `import { logger } from '..'; logger.info({ data }, 'msg')`
+// (data-first like pino). v2 uses `log.info('msg', { data })` (msg-first).
+// This shim lets all existing fork callers keep working unchanged.
+//
+// TODO B.5: restore fork's file rotation + gzip + structured field colours
+// from the pre-v2-merge `logger.ts`. For now we accept the simpler v2 stdout-only
+// logger to unblock test suite. See git history for `src/logger.ts` original impl.
+function wrapLogger(level: Level) {
+  return (dataOrMsg: Record<string, unknown> | string, msg?: string) => {
+    if (typeof dataOrMsg === 'string') {
+      log[level](dataOrMsg, msg ? { msg } : undefined);
+    } else {
+      log[level](msg ?? '', dataOrMsg);
+    }
+  };
+}
+export const logger = {
+  debug: wrapLogger('debug'),
+  info: wrapLogger('info'),
+  warn: wrapLogger('warn'),
+  error: wrapLogger('error'),
+  fatal: wrapLogger('fatal'),
+};
+
+// Compatibility re-exports for other fork APIs that referenced `logger.ts`.
+// applyConfigLogLevel / getLogLevel / setConsoleOutput were in fork's logger.ts.
+// TODO B.5: re-implement these on top of v2 log or restore from history.
+export function applyConfigLogLevel(_level?: string): void { /* noop pending B.5 */ }
+export function getLogLevel(): string { return process.env.LOG_LEVEL ?? 'info'; }
+export function setConsoleOutput(_enabled: boolean): void { /* noop pending B.5 */ }
