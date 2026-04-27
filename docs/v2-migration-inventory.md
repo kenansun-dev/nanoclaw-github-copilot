@@ -327,3 +327,173 @@ production consumer, fresh-DB-only migration path).
 3. `remote-control` lifecycle: when router restarts, do
    `restoreRemoteControl(...)` calls happen pre- or post-router-up?
    Pre, per fork order today (line 73 import, called at startup).
+
+## Phase B.5-prep #2: dispatcher hook registries (design)
+
+> **Re-frame**: v2 has no `router` class to merge into. `src/router.ts`
+> is 83 lines of text formatters (escapeXml / formatMessages / findChannel).
+> Real "routing" lives in `src/index.ts` (2130L dispatcher) plus three
+> singleton registries that modules self-register against:
+>
+> - `src/response-registry.ts` — `registerResponseHandler(fn)` + `onShutdown(cb)`
+> - `src/delivery.ts` — `onDeliveryAdapterReady(cb)` + `registerDeliveryAction(name, handler)`
+> - `src/channels/channel-registry.ts` — `registerChannelAdapter(...)`
+>
+> B.5 doesn't merge a router — it adds **four more singleton registries**
+> for the dispatcher gating points (access / abort / admin command / slash)
+> and rewrites `src/index.ts` to consult them instead of inline-importing
+> fork modules. Same pattern as approvals/scheduling/permissions modules
+> already use.
+
+### Proposed registries (new files in `src/`)
+
+#### 1. `src/access-gate-registry.ts`
+
+```ts
+export type AccessGate = (
+  chatJid: string,
+  sender: string,
+  content: string,
+) => 'allow' | 'drop' | 'deny';
+
+export function registerAccessGate(gate: AccessGate): void;
+export function runAccessGates(...): 'allow' | 'drop' | 'deny';
+```
+
+- `sender-allowlist-fork` registers a gate at import time:
+  `registerAccessGate((jid, sender) => isSenderAllowed(jid, sender, loadSenderAllowlist()) ? 'allow' : 'drop')`
+- Dispatcher (replaces `src/index.ts` 1888-1891) calls
+  `runAccessGates(...)` — first non-`allow` wins.
+
+#### 2. `src/abort-handler-registry.ts`
+
+```ts
+export type AbortHandler = {
+  matcher: (text: string) => boolean;
+  onAbort: (chatJid: string, msg: NewMessage) => Promise<void>;
+};
+
+export function registerAbortHandler(h: AbortHandler): void;
+export function checkAbort(content: string): AbortHandler | null;
+```
+
+- `abort-fork` registers `{ matcher: isAbortRequestText, onAbort: <inline ack send> }`.
+- Dispatcher (replaces `src/index.ts` 1841-1857) calls
+  `const h = checkAbort(content); if (h) { await h.onAbort(...); return; }`.
+
+#### 3. `src/admin-command-registry.ts`
+
+```ts
+export type AdminCommand = {
+  name: string;            // e.g. '/remote-control'
+  aliases?: string[];      // e.g. ['/remote-control-end']
+  handler: (chatJid: string, args: string, msg: NewMessage) => Promise<void>;
+};
+
+export function registerAdminCommand(cmd: AdminCommand): void;
+export function lookupAdminCommand(text: string): AdminCommand | null;
+```
+
+- `remote-control.ts` registers two commands at import time. Handler is
+  the existing `handleRemoteControl(...)` body, lifted out of `src/index.ts`.
+- Dispatcher (replaces `src/index.ts` 1788-1832) becomes:
+  `const cmd = lookupAdminCommand(trimmed); if (cmd) { await cmd.handler(...); return; }`.
+
+#### 4. `src/slash-command-registry.ts`
+
+```ts
+export type SlashRouter = (
+  input: string,
+  ctx: SlashContext,
+) => Promise<SlashResult>;
+
+export function registerSlashRouter(router: SlashRouter): void;
+export function getSlashRouter(): SlashRouter | null;
+```
+
+- Single-router slot (not a list). `slash-commands.ts` registers its
+  `handleSlashCommand` at import time:
+  `registerSlashRouter(handleSlashCommand)`.
+- Dispatcher (replaces `src/index.ts` 369-381 + 1294-1295 inline imports)
+  calls `getSlashRouter()?.(...)`.
+- Why single-slot: fork's `slash-commands.ts` is the canonical registry
+  (`COMMANDS` map); it doesn't compose with other slash routers. Adding
+  list-of-routers later is straightforward if needed.
+
+### Group resolver — already in `registered-groups-fork`, no new registry needed
+
+`src/index.ts` 135 / 1688 / 1860 just call `getAllRegisteredGroups()`
+imported from `./db.js`. After flip to `modules/registered-groups-fork`,
+no registry indirection — module exports the function, dispatcher imports
+it. Group resolver doesn't need a hook because there's only ever one
+resolver (one DB).
+
+### Scheduler — bridge file, not registry
+
+Per B.5 schedule schema lock above: B.5 writes
+`src/task-scheduler-fork-bridge.ts` that wraps fork's `task-scheduler.ts`
+loop body to source firings from v2 `messages_in` (via
+`modules/scheduling/actions.ts`) instead of inline `setTimeout` over
+fork's `scheduled_tasks`. `src/index.ts` 1974-1995 then imports
+`startSchedulerLoop` from the bridge, not the original.
+
+### Side-effect import order (B.5 rewrites `src/index.ts` top)
+
+```ts
+// 1. Singleton registries (no side effects, just module init)
+import './response-registry.js';
+import './delivery.js';
+import './access-gate-registry.js';        // NEW
+import './abort-handler-registry.js';      // NEW
+import './admin-command-registry.js';      // NEW
+import './slash-command-registry.js';      // NEW
+
+// 2. Channel adapters (self-register on v2 channel-registry)
+import './channels/adapters-barrel.js';    // (was './channels/index.js' on v1)
+
+// 3. Modules barrel (self-register on registries above)
+import './modules/index.js';
+
+// 4. Fork modules that need explicit import (no module-style self-register yet)
+import './modules/sender-allowlist-fork/index.js';
+import './modules/registered-groups-fork/index.js';
+import './modules/abort-fork/index.js';
+import './modules/ipc-fork/index.js';
+import './modules/mcp-auth-fork/index.js';
+import './modules/mount-security/index.js';
+import './remote-control.js';              // self-registers admin commands
+import './slash-commands.js';              // self-registers slash router
+import './task-scheduler-fork-bridge.js';  // exports startSchedulerLoop
+```
+
+Net result: `src/index.ts` body shrinks from 2130L of inline branching
+to a thin loop that calls `runAccessGates → checkAbort → lookupAdminCommand →
+getSlashRouter → forward to LLM`. All gating logic lives in modules.
+
+### Open design questions for B.5
+
+1. **Access gate ordering**: registration order vs explicit priority?
+   Recommendation: registration order, document it.
+2. **Multi-slash-router**: keep single-slot or list-of-routers? Single
+   today, list later is non-breaking.
+3. **Should `command-gate.ts` (host-side classify-and-deny gate) move
+   into `admin-command-registry`?** No — `command-gate` runs against
+   already-routed-to-container messages from `messages_in`, different
+   layer. Keep it in `src/command-gate.ts`, called by v2 message
+   consumer.
+4. **`abort-handler` ordering vs `access-gate` ordering**: dispatcher
+   runs access gates FIRST (drop bad senders before they can abort),
+   then abort, then admin command, then slash, then LLM. Documented
+   in dispatcher comment when B.5 lands.
+
+### Estimated B.5 work (AI time)
+
+- 4 new registry files + tests: ~30 min
+- Module self-registration edits (5 files): ~15 min
+- `src/index.ts` rewrite to consult registries: ~45 min
+- `task-scheduler-fork-bridge.ts` write + tests: ~30 min
+- Migration 103/104 rewrite per schema lock: ~20 min
+- Full suite + integration smoke: ~30 min
+- **Total: ~3 hours AI time** assuming no surprise architecture pivot.
+
+_Generated_ 2026-04-28 02:42 GMT+8.
