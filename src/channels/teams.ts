@@ -272,7 +272,7 @@ export class TeamsChannel implements Channel {
   }
 
   async connect(): Promise<void> {
-    return new Promise<void>((resolve) => {
+    return new Promise<void>((resolve, reject) => {
       this.server = http.createServer(async (req, res) => {
         // Health check endpoint
         if (req.method === 'GET' && req.url === '/health') {
@@ -368,16 +368,60 @@ export class TeamsChannel implements Channel {
         res.end();
       });
 
-      this.server.listen(this.port, '0.0.0.0', () => {
-        logger.info({ port: this.port }, 'Teams webhook server listening');
-        console.log(
-          `\n  Teams webhook: http://0.0.0.0:${this.port}/api/messages`,
-        );
-        console.log(
-          `  Set your Azure Bot messaging endpoint to: <your-public-url>/api/messages\n`,
-        );
-        resolve();
-      });
+      // Listen with retry on EADDRINUSE.
+      //
+      // Why: `nanoclaw restart` runs `systemctl --user restart`, which kills
+      // and respawns back-to-back. The OS may still hold the TCP port in
+      // TIME_WAIT (or the old socket may not have fully released yet) when
+      // the new process calls listen() — listen() emits an EADDRINUSE
+      // 'error' event. Without a handler the Promise from connect() never
+      // resolves nor rejects, leaving the Teams channel silently dead
+      // until the next manual stop+start (which has enough gap to clear
+      // the port). Symptom: bot looks alive on Discord/Telegram but Teams
+      // never replies. Reported by kenan 2026-04-27.
+      //
+      // We retry up to 6 times with 500ms backoff (~3s total). After that,
+      // reject so the caller can surface the failure.
+      const maxAttempts = 6;
+      let attempt = 0;
+      const tryListen = () => {
+        attempt += 1;
+        const onError = (err: NodeJS.ErrnoException) => {
+          this.server!.removeListener('listening', onListening);
+          if (err.code === 'EADDRINUSE' && attempt < maxAttempts) {
+            logger.warn(
+              { port: this.port, attempt, maxAttempts },
+              'Teams webhook port busy (EADDRINUSE), retrying',
+            );
+            setTimeout(tryListen, 500);
+            return;
+          }
+          logger.error(
+            { err, port: this.port, attempt },
+            'Teams webhook server failed to start',
+          );
+          console.error(
+            `\n  Teams webhook FAILED on port ${this.port}: ${err.message}\n` +
+              `  (Tried ${attempt} time${attempt === 1 ? '' : 's'}.)\n`,
+          );
+          reject(err);
+        };
+        const onListening = () => {
+          this.server!.removeListener('error', onError);
+          logger.info({ port: this.port }, 'Teams webhook server listening');
+          console.log(
+            `\n  Teams webhook: http://0.0.0.0:${this.port}/api/messages`,
+          );
+          console.log(
+            `  Set your Azure Bot messaging endpoint to: <your-public-url>/api/messages\n`,
+          );
+          resolve();
+        };
+        this.server!.once('error', onError);
+        this.server!.once('listening', onListening);
+        this.server!.listen(this.port, '0.0.0.0');
+      };
+      tryListen();
     });
   }
 
