@@ -181,6 +181,9 @@ function traceSetTyping(
   reason: string,
 ): Promise<void> {
   if (!channel.setTyping) return Promise.resolve();
+  // Any explicit state change cancels a pending bounded auto-clear so it
+  // doesn't fire after a follow-on event has already managed the state.
+  cancelBoundedTypingClear(chatJid);
   logger.info(
     { chatJid, channel: channel.name, isTyping, reason },
     'Channel typing state change',
@@ -197,6 +200,70 @@ function traceSetTyping(
       'channel.setTyping failed',
     );
   });
+}
+
+/**
+ * Per-chat auto-clear timers for bounded typing re-arms. Used by
+ * `armTypingBounded` so an interim re-arm cannot get stuck if the agent
+ * silently exits without firing turn-end (or if turn-end is delayed by a
+ * runner idle window). Any subsequent traceSetTyping cancels the pending
+ * clear so we don't double-toggle in the normal multi-step flow.
+ *
+ * Why this exists (kenan repro 2026-04-27): the original re-arm armed an
+ * unbounded 3s keepalive interval after every interim final-output,
+ * including the last one. Between the last final and turn-end (which can
+ * be 30s+ for slow runner shutdowns), Teams kept showing 'typing forever'.
+ */
+const boundedTypingTimers = new Map<string, NodeJS.Timeout>();
+
+/**
+ * TTL for the bounded typing pulse after an interim final-output. Long
+ * enough to bridge a normal think-then-act gap (a few seconds) without
+ * leaving the indicator stuck if no follow-up output arrives. Channels
+ * tick their own keepalive at 3-4s, so 8s comfortably covers ~2 ticks.
+ */
+const INTERIM_TYPING_TTL_MS = 8000;
+
+function cancelBoundedTypingClear(chatJid: string): void {
+  const t = boundedTypingTimers.get(chatJid);
+  if (t) {
+    clearTimeout(t);
+    boundedTypingTimers.delete(chatJid);
+  }
+}
+
+/**
+ * Re-arm typing as a bounded pulse: arms the channel keepalive, then
+ * schedules an auto-clear after `ttlMs` if nothing else has touched
+ * typing in the meantime. The next traceSetTyping (any direction)
+ * cancels the pending clear via cancelBoundedTypingClear.
+ */
+async function armTypingBounded(
+  channel: {
+    name: string;
+    setTyping?: (jid: string, isTyping: boolean) => Promise<void>;
+  },
+  chatJid: string,
+  reason: string,
+  ttlMs: number,
+): Promise<void> {
+  await traceSetTyping(channel, chatJid, true, reason);
+  // traceSetTyping cleared any prior bounded timer; install a fresh one.
+  const t = setTimeout(() => {
+    boundedTypingTimers.delete(chatJid);
+    // Use the underlying channel.setTyping directly so we don't recurse
+    // through cancelBoundedTypingClear (no-op anyway since we just
+    // deleted the entry, but explicit is clearer).
+    if (channel.setTyping) {
+      channel.setTyping(chatJid, false).catch((err: any) => {
+        logger.warn(
+          { chatJid, channel: channel.name, err: err?.message ?? err },
+          'bounded typing auto-clear failed',
+        );
+      });
+    }
+  }, ttlMs);
+  boundedTypingTimers.set(chatJid, t);
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -863,17 +930,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           // and must be ignored to avoid orphan thinking bubbles.
           turnFinalized = true;
           // Re-arm typing keepalive after sending an interim final-output
-          // message. The agent may keep working (more tool calls / a
-          // follow-up final) and channels (Teams 3s, Telegram 4s) need
-          // the keepalive interval running so the typing indicator
-          // doesn't disappear during the next thinking gap.
-          // turn-end / finally-guard will idempotently clear it when the
-          // turn actually finishes. (kenan TG/Teams repro 2026-04-27)
-          await traceSetTyping(
+          // message, but as a *bounded* pulse: if no further output
+          // arrives within TTL ms, auto-clear so we don't show 'typing
+          // forever' on the last final (turn-end may not run for many
+          // seconds while the runner drains its idle window).
+          // Any subsequent traceSetTyping (next thinking, next final,
+          // turn-end, finally-guard) cancels the pending auto-clear.
+          // (kenan Teams repro 2026-04-27 — 'always typing' regression
+          //  after the unbounded re-arm in 18daa61.)
+          await armTypingBounded(
             channel,
             chatJid,
-            true,
             'after-interim-final',
+            INTERIM_TYPING_TTL_MS,
           );
         }
         logger.info(
