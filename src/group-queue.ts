@@ -43,6 +43,19 @@ interface GroupState {
    * without rollback the message is silently lost on agent crash/timeout).
    */
   inFlightCursorRollback: string | null;
+  /**
+   * Monotonic counter incremented on EVERY user message that becomes a new
+   * turn for the agent: both the initial turn (when the queue spawns a
+   * container or runs the first prompt) and every follow-up message piped
+   * to an already-running container's stdin via IPC. The dispatcher in
+   * src/index.ts uses this to detect a turn boundary even when the SDK
+   * does not fire its newSessionId sentinel — that sentinel only fires
+   * for the FIRST turn of a session, and follow-up piped messages reuse
+   * the same sessionId, leaving the dispatcher's pendingResult flag
+   * unset and causing it to edit the previous turn's reply (kenan TG
+   * repro 2026-04-25 22:34 / 22:54).
+   */
+  userTurnSeq: number;
 }
 
 export class GroupQueue {
@@ -85,6 +98,7 @@ export class GroupQueue {
         pipedSinceOutput: 0,
         agentHasOutput: false,
         inFlightCursorRollback: null,
+        userTurnSeq: 0,
       };
       this.groups.set(groupJid, state);
     }
@@ -379,6 +393,7 @@ export class GroupQueue {
       fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
       fs.renameSync(tempPath, filepath);
       state.pipedSinceOutput += 1;
+      state.userTurnSeq += 1;
       // Track the *earliest* unacked piped-message cursor for rollback on
       // process death. Don't overwrite if already set — we want the oldest
       // in-flight cursor so subsequent pipes don't lose history.
@@ -399,6 +414,15 @@ export class GroupQueue {
       logger.info({ groupJid, err }, 'sendMessage: IPC write failed');
       return false;
     }
+  }
+
+  /**
+   * Returns the current user-turn sequence number for a group. Dispatcher
+   * uses this to detect a new turn even when the SDK does not fire a
+   * newSessionId sentinel (follow-up messages piped to a running container).
+   */
+  getUserTurnSeq(groupJid: string): number {
+    return this.getGroup(groupJid).userTurnSeq;
   }
 
   /**
@@ -553,6 +577,7 @@ export class GroupQueue {
     state.pipedSinceOutput = 0;
     state.agentHasOutput = false;
     state.inFlightCursorRollback = null;
+    state.userTurnSeq += 1;
     this.activeCount++;
 
     logger.debug(

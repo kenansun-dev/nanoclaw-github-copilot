@@ -411,6 +411,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   //             "thinking 和主消息都是 streaming回来, 都保留".
   //   `off`   -> never opened.
   let thinkingMsgId: string | undefined;
+  // On-mode dedup: a single agent query may emit multiple `partial=false`
+  // result events when it contains tool calls (pre-tool final + post-tool
+  // final). Each event carries the SDK's accumulated `result.thinking`,
+  // and the legacy code prepended thinking on every one — so users saw the
+  // (growing) thinking block rendered twice in `on` mode (kenan TG repro
+  // 2026-04-25 18:06). This flag clamps the prepend to the FIRST final of
+  // a query; reset on the query boundary along with thinkingMsgId.
+  let thinkingPrependedThisQuery = false;
   // True once flash mode has cleared its thinking preview on the first
   // answer chunk; suppresses re-opening a thinking message for the
   // remainder of the turn (SDK still emits trailing reasoning_delta).
@@ -421,6 +429,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // text actually grew. Skipping no-op edits keeps us off TG's per-chat
   // 30/sec rate limit. Reset on turn boundary along with thinkingMsgId.
   let lastThinkingRendered: string | undefined;
+  // Flash opening lock: SDK fires reasoning_delta events at high rate.
+  // The first delta enters the `if (!thinkingMsgId)` branch and awaits
+  // channel.sendMessage; while that promise is in flight, a second delta
+  // arrives, ALSO sees thinkingMsgId === undefined, ALSO calls sendMessage
+  // → two orphan opening bubbles on screen (kenan repro 2026-04-25 18:05
+  // on TG flash mode). The coalescer protects edits-after-msgId-known but
+  // had no protection for the open-msgId race. See createOpeningLock().
+  const flashOpeningLock = createOpeningLock();
   // Flash thinking edit coalescer: see src/flash-edit-coalescer.ts.
   // Cleared on every turn boundary along with thinkingMsgId.
   const flashEditCoalescer = createFlashEditCoalescer({
@@ -447,7 +463,29 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Symptom this prevents (kenansun, 2026-04-21): user asks new
   // question, nanoclaw edits the previous reply instead of sending a
   // new message. Root cause: lastFinalMsgId from turn N-1 still in scope.
-  let queryBoundaryPending = false;
+  // Two flags so the thinking branch and result branch each reset their
+  // own per-turn state once. We tried sharing a single flag (commit 877383e)
+  // but consuming it in the thinking branch caused the result branch to
+  // skip its reset of progressiveMsgId/lastFinalMsgId, which made a new
+  // turn edit the previous reply (kenan TG repro 2026-04-25 22:41).
+  let queryBoundaryPendingThinking = false;
+  let queryBoundaryPendingResult = false;
+  // Independent turn-boundary signal sourced from GroupQueue. The SDK's
+  // newSessionId sentinel only fires for the FIRST turn of a session;
+  // follow-up user messages piped to a running container reuse the same
+  // sessionId, so the dispatcher would never see a sentinel for turns 2+.
+  // GroupQueue increments userTurnSeq on every pipe (initial + follow-up),
+  // so comparing against the last-seen value gives a reliable per-turn
+  // boundary regardless of SDK sentinel behaviour. (kenan TG repro
+  // 2026-04-25 22:54: 4 user msgs, 1 sentinel, 3 missed turn boundaries.)
+  let lastUserTurnSeqSeen = queue.getUserTurnSeq(chatJid);
+  // True after a result.result with !partial fires for the current turn.
+  // Any further thinking / reasoning_delta events that arrive before a new
+  // turn boundary (userTurnSeq advance OR sentinel) are SDK trailing-delta
+  // artifacts that must be ignored — otherwise they open orphan thinking
+  // bubbles AFTER the answer was already finalized (kenan TG repro
+  // 2026-04-26 00:03: thinking bubble appeared post-answer).
+  let turnFinalized = false;
   // Thinking message state (separate from answer progressive message)
 
   try {
@@ -464,7 +502,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         (result as any).newSessionId &&
         !result.partial
       ) {
-        queryBoundaryPending = true;
+        queryBoundaryPendingThinking = true;
+        queryBoundaryPendingResult = true;
         // Don't return — let the rest of the handler run for thinking/status
         // bookkeeping, then exit naturally on the !result.result guard above.
       }
@@ -476,6 +515,27 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       //             kept visible above the answer (separate message).
       //   `off`   -> drop the delta; final result will not include thinking.
       if (result.thinking && !result.result) {
+        // Drop trailing reasoning_delta events that arrive AFTER the turn's
+        // final answer was already sent (and before any new-turn boundary).
+        if (turnFinalized) {
+          const seqNow = queue.getUserTurnSeq(chatJid);
+          if (seqNow === lastUserTurnSeqSeen) {
+            return;
+          }
+          // New turn started — fall through; the seq-check below will
+          // reset state.
+        }
+        // Reliable per-turn boundary check (see comment in result.result
+        // branch below): if userTurnSeq advanced, this delta belongs to a
+        // new turn — set the thinking pending flag so the boundary block
+        // below resets thinkingMsgId / opening lock.
+        const currentSeq = queue.getUserTurnSeq(chatJid);
+        if (currentSeq !== lastUserTurnSeqSeen) {
+          lastUserTurnSeqSeen = currentSeq;
+          queryBoundaryPendingThinking = true;
+          queryBoundaryPendingResult = true;
+          turnFinalized = false;
+        }
         const thinkingMode = normalizeShowThinking(
           getEffectiveShowThinking(chatJid) ??
             getConfig().agents?.defaults?.showThinking,
@@ -495,10 +555,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           // Boundary handling: a new query (queryBoundaryPending=true)
           // means a fresh turn — drop the previous turn's thinking
           // pointer so this turn opens a new one.
-          if (queryBoundaryPending) {
+          if (queryBoundaryPendingThinking) {
+            // Consume the thinking-side sentinel exactly once per turn so
+            // subsequent reasoning_delta frames don't re-wipe thinkingMsgId
+            // (kenan TG repro 2026-04-25 21:55 — 7 frames produced 7 sends).
+            // The result-side sentinel is a separate flag and is consumed
+            // in the result.result branch below; that branch still needs
+            // to reset progressiveMsgId/lastFinalMsgId for the new turn.
+            queryBoundaryPendingThinking = false;
             thinkingMsgId = undefined;
             flashThinkingDismissed = false;
             lastThinkingRendered = undefined;
+            thinkingPrependedThisQuery = false;
+            flashOpeningLock.reset();
             flashEditCoalescer.clear();
           }
           const tp = formatThinkingForFlash(result.thinking, chatJid);
@@ -507,13 +576,33 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               ? { parseMode: tp.parseMode }
               : undefined;
             if (!thinkingMsgId) {
-              await traceSetTyping(channel, chatJid, false, 'thinking-first');
-              const msgId = await channel.sendMessage(
-                chatJid,
-                tp.text + ' ◌',
-                sendOpts,
-              );
-              thinkingMsgId = typeof msgId === 'string' ? msgId : undefined;
+              // Opening lock: openOnce() either runs sendMessage (if we're
+              // first) or awaits the in-flight opener (if a sibling delta
+              // beat us). After it resolves, thinkingMsgId is set and the
+              // late delta falls through to the coalescer enqueue branch.
+              await flashOpeningLock.openOnce(async () => {
+                await traceSetTyping(channel, chatJid, false, 'thinking-first');
+                const desired = tp.text + ' ◌';
+                const msgId = await channel.sendMessage(
+                  chatJid,
+                  desired,
+                  sendOpts,
+                );
+                thinkingMsgId = typeof msgId === 'string' ? msgId : undefined;
+                lastThinkingRendered = desired;
+              });
+              if (thinkingMsgId) {
+                // Late-waiter path: our text may differ from what the
+                // first sender just sent. Skip the enqueue if it's the
+                // exact same text (rpi5 review 2026-04-25: avoid the
+                // first-frame no-op edit). lastThinkingRendered tracks
+                // the most recent text we rendered for this msgId.
+                const desired = tp.text + ' ◌';
+                if (lastThinkingRendered !== desired) {
+                  flashEditCoalescer.enqueue(thinkingMsgId, desired, sendOpts);
+                  lastThinkingRendered = desired;
+                }
+              }
             } else {
               // Coalescer path: enqueue the latest text instead of
               // awaiting editMessage directly. This caps in-flight edits at
@@ -522,11 +611,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               // orphan instead of letting it stay on screen as a duplicate.
               // (kenan TG repro 2026-04-25 00:35: long thinking text in
               // flash mode produced N orphan thinking bubbles.)
-              flashEditCoalescer.enqueue(
-                thinkingMsgId,
-                tp.text + ' ◌',
-                sendOpts,
-              );
+              const desired = tp.text + ' ◌';
+              if (lastThinkingRendered !== desired) {
+                flashEditCoalescer.enqueue(thinkingMsgId, desired, sendOpts);
+                lastThinkingRendered = desired;
+              }
             }
           }
         }
@@ -534,18 +623,35 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
 
       if (result.result) {
+        // Reliable per-turn boundary: if the queue advanced its turn seq
+        // since we last looked (a new user message was piped), treat this
+        // as a new turn even if no SDK sentinel fired.
+        const currentSeq = queue.getUserTurnSeq(chatJid);
+        if (currentSeq !== lastUserTurnSeqSeen) {
+          lastUserTurnSeqSeen = currentSeq;
+          queryBoundaryPendingResult = true;
+          queryBoundaryPendingThinking = true;
+          turnFinalized = false;
+        }
         // New-turn boundary: clear per-turn message tracking before handling
         // this output so it sends fresh instead of editing the previous turn.
-        if (queryBoundaryPending) {
-          queryBoundaryPending = false;
+        if (queryBoundaryPendingResult) {
+          queryBoundaryPendingResult = false;
           progressiveMsgId = undefined;
           progressiveText = '';
           lastFinalMsgId = undefined;
           outputSentToUser = false;
-          thinkingMsgId = undefined;
-          flashThinkingDismissed = false;
-          lastThinkingRendered = undefined;
-          flashEditCoalescer.clear();
+          // NOTE: thinking-side state (thinkingMsgId, flashThinkingDismissed,
+          // lastThinkingRendered, flashOpeningLock, flashEditCoalescer,
+          // thinkingPrependedThisQuery) is intentionally NOT reset here.
+          // The thinking-branch boundary owns those fields and resets them
+          // on its own turn-advance. If we cleared thinkingMsgId here, the
+          // current-turn flash thinking bubble (opened by thinking-branch
+          // earlier in this same turn) would be orphaned: the dismiss code
+          // below relies on thinkingMsgId being defined to delete the
+          // bubble at finalize. (kenan TG repro 2026-04-26 00:20: thinking
+          // bubble at 16:20:45 was never deleted because the result-branch
+          // reset at 16:20:59 nulled thinkingMsgId before final-output ran.)
           // Cancel any leftover native stream from the previous turn so
           // the next turn opens a fresh stream. cancel() is idempotent.
           if (streamHandle) {
@@ -579,16 +685,26 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           getEffectiveShowThinking(chatJid) ??
             getConfig().agents?.defaults?.showThinking,
         );
-        if (result.thinking && !result.partial && thinkingMode === 'on') {
+        if (
+          result.thinking &&
+          !result.partial &&
+          thinkingMode === 'on' &&
+          !thinkingPrependedThisQuery
+        ) {
           const tp = formatThinkingForChannel(result.thinking, chatJid);
-          if (tp) {
-            thinkingParseMode = tp.parseMode;
-            const merged = `${tp.text}\n\n${
+          const merged = applyOnModeThinkingPrepend({
+            thinking: result.thinking,
+            resultText:
               typeof result.result === 'string'
                 ? result.result
-                : JSON.stringify(result.result)
-            }`;
-            result.result = merged;
+                : JSON.stringify(result.result),
+            alreadyPrepended: thinkingPrependedThisQuery,
+            formatted: tp,
+          });
+          if (merged.prepended) {
+            thinkingParseMode = merged.parseMode;
+            result.result = merged.resultText;
+            thinkingPrependedThisQuery = true;
           }
         }
         if (
@@ -742,6 +858,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           progressiveMsgId = undefined;
           progressiveText = '';
           outputSentToUser = true;
+          // Mark this turn finalized; any further reasoning_delta events
+          // arriving before a new userTurnSeq are SDK trailing artifacts
+          // and must be ignored to avoid orphan thinking bubbles.
+          turnFinalized = true;
         }
         logger.info(
           { group: group.name, partial: !!result.partial },
@@ -1334,6 +1454,84 @@ export function formatThinkingForFlash(
       text: `🧠 thinking… ${content}`,
     };
   }
+}
+
+/**
+ * On-mode prepend dedup helper.
+ *
+ * A single agent query may emit multiple `partial=false` result events when
+ * it contains tool calls (pre-tool final + post-tool final). Each event
+ * carries the SDK's accumulated `result.thinking`. Without a flag, every
+ * final gets thinking prepended again, so users see the (growing) thinking
+ * block rendered twice in `on` mode (kenan TG repro 2026-04-25 18:06).
+ *
+ * Returns the new state and merged text. Pure function so it's unit-testable
+ * outside the dispatcher closure. Use the returned `prepended` to update the
+ * caller's per-query flag.
+ *
+ * Caller contract: only invoke when thinkingMode === 'on' && !partial.
+ */
+/**
+ * Flash-mode opening lock for the FIRST `reasoning_delta` send.
+ *
+ * Bug 1 (kenan TG repro 2026-04-25 18:05):
+ *   The first delta enters `if (!thinkingMsgId)` and awaits
+ *   channel.sendMessage. While that promise is in flight, a second
+ *   high-frequency delta arrives, ALSO sees thinkingMsgId === undefined,
+ *   ALSO calls sendMessage → two orphan opening bubbles. The flash
+ *   coalescer protects edits-once-msgId-known but had no protection
+ *   for the open-msgId race.
+ *
+ * createOpeningLock() exposes:
+ *   - openOnce(send): if no open is in flight, run send(); otherwise
+ *     await the in-flight one. Either way, returns when the opener has
+ *     resolved. The caller then re-checks msgId to decide whether to
+ *     enqueue a follow-up edit.
+ *   - reset(): drop the slot on turn boundary.
+ *   - inFlight(): true while a sendMessage is pending (test introspection).
+ */
+export function createOpeningLock(): {
+  openOnce: (send: () => Promise<void>) => Promise<void>;
+  reset: () => void;
+  inFlight: () => boolean;
+} {
+  let pending: Promise<void> | undefined;
+  return {
+    openOnce(send: () => Promise<void>): Promise<void> {
+      if (pending) return pending;
+      const p = send().finally(() => {
+        if (pending === p) pending = undefined;
+      });
+      pending = p;
+      return p;
+    },
+    reset(): void {
+      pending = undefined;
+    },
+    inFlight(): boolean {
+      return !!pending;
+    },
+  };
+}
+
+export function applyOnModeThinkingPrepend(args: {
+  thinking: string | undefined;
+  resultText: string;
+  alreadyPrepended: boolean;
+  formatted: { text: string; parseMode?: 'HTML' | 'Markdown' } | null;
+}): {
+  resultText: string;
+  parseMode?: 'HTML' | 'Markdown';
+  prepended: boolean;
+} {
+  if (args.alreadyPrepended || !args.thinking || !args.formatted) {
+    return { resultText: args.resultText, prepended: args.alreadyPrepended };
+  }
+  return {
+    resultText: `${args.formatted.text}\n\n${args.resultText}`,
+    parseMode: args.formatted.parseMode,
+    prepended: true,
+  };
 }
 
 async function main(): Promise<void> {
