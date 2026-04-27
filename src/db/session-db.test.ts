@@ -49,7 +49,9 @@ describe('migrateMessagesInTable', () => {
     migrateMessagesInTable(db);
     migrateMessagesInTable(db); // idempotent
 
-    const row = db.prepare('SELECT series_id FROM messages_in WHERE id = ?').get('legacy-1') as {
+    const row = db
+      .prepare('SELECT series_id FROM messages_in WHERE id = ?')
+      .get('legacy-1') as {
       series_id: string;
     };
     expect(row.series_id).toBe('legacy-1');

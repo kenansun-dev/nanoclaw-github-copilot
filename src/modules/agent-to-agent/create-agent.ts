@@ -8,14 +8,22 @@
 import path from 'path';
 
 import { GROUPS_DIR } from '../../config.js';
-import { createAgentGroup, getAgentGroup, getAgentGroupByFolder } from '../../db/agent-groups.js';
+import {
+  createAgentGroup,
+  getAgentGroup,
+  getAgentGroupByFolder,
+} from '../../db/agent-groups.js';
 import { getSession } from '../../db/sessions.js';
 import { wakeContainer } from '../../container-runner.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
 import type { AgentGroup, Session } from '../../types.js';
-import { createDestination, getDestinationByName, normalizeName } from './db/agent-destinations.js';
+import {
+  createDestination,
+  getDestinationByName,
+  normalizeName,
+} from './db/agent-destinations.js';
 import { writeDestinations } from './write-destinations.js';
 
 function notifyAgent(session: Session, text: string): void {
@@ -30,11 +38,16 @@ function notifyAgent(session: Session, text: string): void {
   });
   const fresh = getSession(session.id);
   if (fresh) {
-    wakeContainer(fresh).catch((err) => log.error('Failed to wake container after notification', { err }));
+    wakeContainer(fresh).catch((err) =>
+      log.error('Failed to wake container after notification', { err }),
+    );
   }
 }
 
-export async function handleCreateAgent(content: Record<string, unknown>, session: Session): Promise<void> {
+export async function handleCreateAgent(
+  content: Record<string, unknown>,
+  session: Session,
+): Promise<void> {
   const requestId = content.requestId as string;
   const name = content.name as string;
   const instructions = content.instructions as string | null;
@@ -42,7 +55,10 @@ export async function handleCreateAgent(content: Record<string, unknown>, sessio
   const sourceGroup = getAgentGroup(session.agent_group_id);
   if (!sourceGroup) {
     notifyAgent(session, `create_agent failed: source agent group not found.`);
-    log.warn('create_agent failed: missing source group', { sessionAgentGroup: session.agent_group_id, name });
+    log.warn('create_agent failed: missing source group', {
+      sessionAgentGroup: session.agent_group_id,
+      name,
+    });
     return;
   }
 
@@ -50,7 +66,10 @@ export async function handleCreateAgent(content: Record<string, unknown>, sessio
 
   // Collision in the creator's destination namespace
   if (getDestinationByName(sourceGroup.id, localName)) {
-    notifyAgent(session, `Cannot create agent "${name}": you already have a destination named "${localName}".`);
+    notifyAgent(
+      session,
+      `Cannot create agent "${name}": you already have a destination named "${localName}".`,
+    );
     return;
   }
 
@@ -120,7 +139,13 @@ export async function handleCreateAgent(content: Record<string, unknown>, sessio
     session,
     `Agent "${localName}" created. You can now message it with <message to="${localName}">...</message>.`,
   );
-  log.info('Agent group created', { agentGroupId, name, localName, folder, parent: sourceGroup.id });
+  log.info('Agent group created', {
+    agentGroupId,
+    name,
+    localName,
+    folder,
+    parent: sourceGroup.id,
+  });
   // Note: requestId is unused — this is fire-and-forget, not request/response.
   void requestId;
 }

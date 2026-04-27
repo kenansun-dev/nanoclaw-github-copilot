@@ -80,11 +80,11 @@ write as v2 migrations under `src/db/migrations/100..104-fork-*.ts`:
 | `modules/typing` | ✅ adopt + merge fork bounded pulse | helpful default, fork extends |
 | `modules/mount-security` | ✅ adopt | fork has near-identical impl |
 | `modules/interactive` (ask_user_question) | ✅ adopt | useful capability for agent harness |
-| `modules/scheduling` | ❌ replace with fork `modules/scheduling-fork/` | fork has CLI / auto-pause / context_mode='isolated' / per-row state, v2's messages_in kind=task model loses these |
-| `modules/permissions` (4-tier) | ❌ replace with fork `modules/sender-allowlist/` | fork single-tier matches design philosophy; user can opt-in 4-tier later |
-| `modules/approvals` | ❌ NOT introduced | kenan: "I don't need default admin approval" |
-| `modules/self-mod` | ❌ NOT introduced | kenan: "I don't need MCP self-install"; conflicts with "no skill dynamic code change" |
-| `modules/agent-to-agent` | ❌ NOT introduced | not requested; agent harness can add later |
+| `modules/scheduling` | ✅ ADOPT (alongside fork `scheduling-fork/`) | kenan 23:20 reversal: take all v2. Fork CLI/auto-pause/context_mode stay in `scheduling-fork/`; v2 module exposed for users wanting series_id/cron-style |
+| `modules/permissions` (4-tier) | ✅ ADOPT (alongside fork `sender-allowlist/`) | kenan 23:20 reversal. v2 4-tier (user/role/agent_group/dm) coexists; fork allowlist is simpler entry-point opt-in |
+| `modules/approvals` | ✅ ADOPT | kenan 23:20: "all v2 features". If breaks fork design, adapt later |
+| `modules/self-mod` | ✅ ADOPT | kenan 23:20 reversal. May conflict with "no skill dynamic code change" — surface during B/C wire-up |
+| `modules/agent-to-agent` | ✅ ADOPT | kenan 23:20 reversal. Brings destinations + agent_destinations table |
 
 ## v2 architecture features — adoption decisions
 
@@ -136,3 +136,53 @@ write as v2 migrations under `src/db/migrations/100..104-fork-*.ts`:
 - PR review: cross-review only (rpi5 reviews VM's, VM reviews rpi5's), no self-merge
 - Commit format: `phase B.X: <one-liner>` for traceability
 - `v2-merge` itself does NOT open PR to `main` until Phase D done + kenan approval
+
+---
+
+## 2026-04-27 23:20 — kenan policy reversal
+
+> "这次尝试里面，所有的 upstream v2 feature 我都要，如果 break 了我们的设计，我们看怎么再去改去适配。所以不需要问我了"
+
+**Effect**: every ❌ in the v2-modules table above flips to ✅ ADOPT. Fork
+features (sender-allowlist, scheduling-fork) become **add-ons stacked on
+top of the v2 modules** rather than replacements.
+
+The 3 open questions (three-level isolation default, Bun vs Node, OneCLI
+Vault) are no longer questions — adopt all, adapt as needed during B/C.
+
+**Implication for B.5 router merge**: v2 router hooks
+(`setSenderResolver`, `setAccessGate`, `setSenderScopeGate`,
+`setChannelRequestGate`, `routeInbound`) must be wired into fork
+`router.ts` (currently v1 formatter). 22 baseline test failures are
+pinned to this work.
+
+---
+
+## Phase B.1 — fork migrations 100..104 (rpi5)
+
+**Commit on `v2-merge-b1-fork-migrations`** (sub-branch off `ff5cf4a`).
+
+Added 5 fork-only migrations under `src/db/migrations/` (numbered 100+
+to leave 014..099 reserved for upstream):
+
+| # | name | tables | notes |
+|---|---|---|---|
+| 100 | `100-fork-chats` | `chats`, `messages` | message archive for audit/chat-manager |
+| 101 | `101-fork-sender-allowlist` | `sender_allowlist` | stub schema; B.4 module port populates |
+| 102 | `102-fork-registered-groups` | `registered_groups` | fork's pre-v2 group binding model |
+| 103 | `103-fork-scheduled-tasks` | `scheduled_tasks` | folds in all 3 ALTER columns from `src/db.ts` (context_mode, script, consecutive_group_missing) |
+| 104 | `104-fork-task-run-logs` | `task_run_logs` | per-run history powering `nanoclaw task info` |
+
+Registered in `src/db/migrations/index.ts` after migration013. Tests:
+22 fail / 1050 pass / 8 skip — **same as pre-B.1 baseline**, no
+regression introduced. tsc clean on new files.
+
+**Not touched** (deferred to later phases to avoid VM conflict):
+- `src/db.ts` `createSchema()` still creates the same 5 tables inline
+  (`CREATE TABLE IF NOT EXISTS`). v2 migrations also create them — no
+  conflict because both use IF NOT EXISTS + identical column lists.
+  B.5 will remove inline `createSchema` and rely on migrations only.
+- sender-allowlist module skeleton — defer to B.4 alongside channel
+  ports so the module's runtime entry-point lands in one commit.
+- scheduling-fork module skeleton — defer to B.4 (paired with
+  `nanoclaw task` CLI, both touch `scheduled_tasks`).

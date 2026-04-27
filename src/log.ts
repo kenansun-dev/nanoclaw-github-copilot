@@ -13,7 +13,8 @@ const MSG_COLOR = '\x1b[36m';
 const RESET = '\x1b[39m';
 const FULL_RESET = '\x1b[0m';
 
-const threshold = LEVELS[(process.env.LOG_LEVEL as Level) || 'info'] ?? LEVELS.info;
+const threshold =
+  LEVELS[(process.env.LOG_LEVEL as Level) || 'info'] ?? LEVELS.info;
 
 function formatErr(err: unknown): string {
   if (err instanceof Error) {
@@ -25,7 +26,9 @@ function formatErr(err: unknown): string {
 function formatData(data: Record<string, unknown>): string {
   const parts: string[] = [];
   for (const [k, v] of Object.entries(data)) {
-    parts.push(`${KEY_COLOR}${k}${RESET}=${k === 'err' ? formatErr(v) : JSON.stringify(v)}`);
+    parts.push(
+      `${KEY_COLOR}${k}${RESET}=${k === 'err' ? formatErr(v) : JSON.stringify(v)}`,
+    );
   }
   return parts.length ? ' ' + parts.join(' ') : '';
 }
@@ -43,15 +46,22 @@ function emit(level: Level, msg: string, data?: Record<string, unknown>): void {
   if (LEVELS[level] < threshold) return;
   const tag = `${COLORS[level]}${level.toUpperCase()}${level === 'fatal' ? FULL_RESET : RESET}`;
   const stream = LEVELS[level] >= LEVELS.warn ? process.stderr : process.stdout;
-  stream.write(`[${ts()}] ${tag} ${MSG_COLOR}${msg}${RESET}${data ? formatData(data) : ''}\n`);
+  stream.write(
+    `[${ts()}] ${tag} ${MSG_COLOR}${msg}${RESET}${data ? formatData(data) : ''}\n`,
+  );
 }
 
 export const log = {
-  debug: (msg: string, data?: Record<string, unknown>) => emit('debug', msg, data),
-  info: (msg: string, data?: Record<string, unknown>) => emit('info', msg, data),
-  warn: (msg: string, data?: Record<string, unknown>) => emit('warn', msg, data),
-  error: (msg: string, data?: Record<string, unknown>) => emit('error', msg, data),
-  fatal: (msg: string, data?: Record<string, unknown>) => emit('fatal', msg, data),
+  debug: (msg: string, data?: Record<string, unknown>) =>
+    emit('debug', msg, data),
+  info: (msg: string, data?: Record<string, unknown>) =>
+    emit('info', msg, data),
+  warn: (msg: string, data?: Record<string, unknown>) =>
+    emit('warn', msg, data),
+  error: (msg: string, data?: Record<string, unknown>) =>
+    emit('error', msg, data),
+  fatal: (msg: string, data?: Record<string, unknown>) =>
+    emit('fatal', msg, data),
 };
 
 process.on('uncaughtException', (err) => {
@@ -91,6 +101,12 @@ export const logger = {
 // Compatibility re-exports for other fork APIs that referenced `logger.ts`.
 // applyConfigLogLevel / getLogLevel / setConsoleOutput were in fork's logger.ts.
 // TODO B.5: re-implement these on top of v2 log or restore from history.
-export function applyConfigLogLevel(_level?: string): void { /* noop pending B.5 */ }
-export function getLogLevel(): string { return process.env.LOG_LEVEL ?? 'info'; }
-export function setConsoleOutput(_enabled: boolean): void { /* noop pending B.5 */ }
+export function applyConfigLogLevel(_level?: string): void {
+  /* noop pending B.5 */
+}
+export function getLogLevel(): string {
+  return process.env.LOG_LEVEL ?? 'info';
+}
+export function setConsoleOutput(_enabled: boolean): void {
+  /* noop pending B.5 */
+}

@@ -30,9 +30,15 @@ const SHARED_MCP_TOOLS_CONTAINER_BASE = '/app/src/mcp-tools';
 
 // Host-side source paths used to discover fragment sources at compose time.
 // Resolved at call time (process.cwd() = project root) so tests can swap cwd.
-const MCP_TOOLS_HOST_SUBPATH = path.join('container', 'agent-runner', 'src', 'mcp-tools');
+const MCP_TOOLS_HOST_SUBPATH = path.join(
+  'container',
+  'agent-runner',
+  'src',
+  'mcp-tools',
+);
 
-const COMPOSED_HEADER = '<!-- Composed at spawn — do not edit. Edit CLAUDE.local.md for per-group content. -->';
+const COMPOSED_HEADER =
+  '<!-- Composed at spawn — do not edit. Edit CLAUDE.local.md for per-group content. -->';
 
 /**
  * Regenerate `groups/<folder>/CLAUDE.md` from the shared base, enabled skill
@@ -55,14 +61,21 @@ export function composeGroupClaudeMd(group: AgentGroup): void {
 
   // Desired fragment set.
   const config = readContainerConfig(group.folder);
-  const desired = new Map<string, { type: 'symlink' | 'inline'; content: string }>();
+  const desired = new Map<
+    string,
+    { type: 'symlink' | 'inline'; content: string }
+  >();
 
   // Skill fragments — every skill that ships an `instructions.md`.
   // TODO (shared-source refactor): respect `container.json` skill selection.
   const skillsHostDir = path.join(process.cwd(), 'container', 'skills');
   if (fs.existsSync(skillsHostDir)) {
     for (const skillName of fs.readdirSync(skillsHostDir)) {
-      const hostFragment = path.join(skillsHostDir, skillName, 'instructions.md');
+      const hostFragment = path.join(
+        skillsHostDir,
+        skillName,
+        'instructions.md',
+      );
       if (fs.existsSync(hostFragment)) {
         desired.set(`skill-${skillName}.md`, {
           type: 'symlink',

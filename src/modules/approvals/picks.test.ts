@@ -5,13 +5,21 @@
  */
 import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 
-import type { ChannelAdapter, OutboundMessage } from '../../channels/adapter.js';
+import type {
+  ChannelAdapter,
+  OutboundMessage,
+} from '../../channels/adapter.js';
 import {
   initChannelAdapters,
   registerChannelAdapter,
   teardownChannelAdapters,
 } from '../../channels/channel-registry.js';
-import { closeDb, createAgentGroup, initTestDb, runMigrations } from '../../db/index.js';
+import {
+  closeDb,
+  createAgentGroup,
+  initTestDb,
+  runMigrations,
+} from '../../db/index.js';
 import { createUser } from '../permissions/db/users.js';
 import { grantRole } from '../permissions/db/user-roles.js';
 import { pickApprovalDelivery, pickApprover } from './primitive.js';
@@ -92,9 +100,27 @@ describe('pickApprover', () => {
     seedUser('u-owner', 'telegram');
     seedUser('u-ga', 'telegram');
     seedUser('u-sa', 'telegram');
-    grantRole({ user_id: 'u-owner', role: 'owner', agent_group_id: null, granted_by: null, granted_at: now() });
-    grantRole({ user_id: 'u-ga', role: 'admin', agent_group_id: null, granted_by: null, granted_at: now() });
-    grantRole({ user_id: 'u-sa', role: 'admin', agent_group_id: 'ag-1', granted_by: null, granted_at: now() });
+    grantRole({
+      user_id: 'u-owner',
+      role: 'owner',
+      agent_group_id: null,
+      granted_by: null,
+      granted_at: now(),
+    });
+    grantRole({
+      user_id: 'u-ga',
+      role: 'admin',
+      agent_group_id: null,
+      granted_by: null,
+      granted_at: now(),
+    });
+    grantRole({
+      user_id: 'u-sa',
+      role: 'admin',
+      agent_group_id: 'ag-1',
+      granted_by: null,
+      granted_at: now(),
+    });
 
     expect(pickApprover('ag-1')).toEqual(['u-sa', 'u-ga', 'u-owner']);
     expect(pickApprover('ag-2')).toEqual(['u-ga', 'u-owner']);
@@ -116,7 +142,10 @@ describe('pickApprovalDelivery', () => {
     seedUser('telegram:111', 'telegram');
     seedUser('telegram:222', 'telegram');
 
-    const result = await pickApprovalDelivery(['telegram:111', 'telegram:222'], 'telegram');
+    const result = await pickApprovalDelivery(
+      ['telegram:111', 'telegram:222'],
+      'telegram',
+    );
     expect(result?.userId).toBe('telegram:111');
     expect(result?.messagingGroup.platform_id).toBe('111');
   });
@@ -127,7 +156,10 @@ describe('pickApprovalDelivery', () => {
     seedUser('telegram:111', 'telegram');
     seedUser('discord:222', 'discord');
 
-    const result = await pickApprovalDelivery(['telegram:111', 'discord:222'], 'discord');
+    const result = await pickApprovalDelivery(
+      ['telegram:111', 'discord:222'],
+      'discord',
+    );
     expect(result?.userId).toBe('discord:222');
   });
 
