@@ -62,6 +62,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { isAbortRequestText } from './abort-triggers.js';
+import { shadowRoute } from './shadow-inbound.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import {
@@ -1843,6 +1844,15 @@ async function main(): Promise<void> {
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
+      // Shadow-mode v2 inbound: NANOCLAW_V2_DISPATCHER=2 fires routeInbound
+      // in fire-and-forget parallel to v1 dispatch. shadowRoute is
+      // sync-returning, swallows all errors, ignores own-bot echoes,
+      // and skips delivery polls — so v1 stays authoritative and the
+      // user-visible path is unchanged. Used to validate the v2 path
+      // on real traffic before the full swap.
+      if (process.env.NANOCLAW_V2_DISPATCHER === '2') {
+        shadowRoute(chatJid, msg);
+      }
       // Remote control commands — intercept before storage
       const trimmed = msg.content.trim();
       if (trimmed === '/remote-control' || trimmed === '/remote-control-end') {
@@ -2023,7 +2033,18 @@ async function main(): Promise<void> {
   // v2 path is type-green + test-green but lacks an end-to-end smoke
   // run on a live channel. Flag keeps the wiring in code (so future
   // smokes can flip it on) without changing default startup behaviour.
-  if (process.env.NANOCLAW_V2_DISPATCHER === '1') {
+  //
+  // Modes:
+  //   unset / 0  → fork v1 only (default).
+  //   '1'        → wiring only (gates + resolvers installed; no inbound
+  //                 dispatch change). For unit-style integration smoke.
+  //   '2'        → wiring + shadow inbound. v1 dispatch stays
+  //                 authoritative, but every onMessage also triggers
+  //                 routeInbound() fire-and-forget so the v2 router
+  //                 sees real traffic. Delivery polls stay off so the
+  //                 router doesn't double-send. See `src/shadow-inbound.ts`.
+  const v2Mode = process.env.NANOCLAW_V2_DISPATCHER;
+  if (v2Mode === '1' || v2Mode === '2') {
     try {
       const { setAccessGate } = await import('./router.js');
       const { makeSenderAllowlistGate } = await import(
@@ -2056,8 +2077,10 @@ async function main(): Promise<void> {
           gates: ['sender-allowlist'],
           abortHandler: 'fork',
           groupResolver: 'registered-groups-fork',
+          mode: v2Mode,
+          shadow: v2Mode === '2',
         },
-        'v2 dispatcher hooks installed (NANOCLAW_V2_DISPATCHER=1)',
+        'v2 dispatcher hooks installed (NANOCLAW_V2_DISPATCHER=' + v2Mode + ')',
       );
     } catch (err) {
       logger.error(
