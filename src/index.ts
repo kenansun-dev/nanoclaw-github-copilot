@@ -2009,6 +2009,65 @@ async function main(): Promise<void> {
       if (text) return await channel.editMessage(jid, messageId, text);
     },
   });
+
+  // ─── B.5.3 v2 dispatcher wiring (env-gated, default off) ──────────
+  // When NANOCLAW_V2_DISPATCHER=1, install the v2 router-side hooks so
+  // sender-allowlist-fork + abort-fork take effect via the v2
+  // access-gate / abort-handler registries. The fork v1 dispatcher
+  // loop (startMessageLoop below) STILL runs — this is wiring-only,
+  // not a swap. Full swap (replace v1 message loop with
+  // router.routeInbound + channel adapters-barrel + delivery polls)
+  // lands when the channel barrel swap (L5) goes in alongside it.
+  //
+  // Why behind a flag: production deploy today is fork v1 only. The
+  // v2 path is type-green + test-green but lacks an end-to-end smoke
+  // run on a live channel. Flag keeps the wiring in code (so future
+  // smokes can flip it on) without changing default startup behaviour.
+  if (process.env.NANOCLAW_V2_DISPATCHER === '1') {
+    try {
+      const { setAccessGate } = await import('./router.js');
+      const { makeSenderAllowlistGate } = await import(
+        './modules/sender-allowlist-fork/index.js'
+      );
+      const { installAbortFork } = await import(
+        './modules/abort-fork/index.js'
+      );
+      const { installRegisteredGroupsFork } = await import(
+        './modules/registered-groups-fork/index.js'
+      );
+      // v2 module barrels self-register on import (approvals,
+      // interactive, scheduling, permissions, agent-to-agent,
+      // self-mod). Importing here, after channel adapters init,
+      // matches the boot order specified in
+      // docs/v2-migration-inventory.md §"Side-effect import order".
+      await import('./modules/index.js');
+
+      setAccessGate(makeSenderAllowlistGate());
+      installAbortFork({
+        killActive: (jid: string) => queue.killActive(jid),
+        sendAck: async (jid: string, text: string) => {
+          const channel = findChannel(channels, jid);
+          if (channel) await channel.sendMessage(jid, text);
+        },
+      });
+      installRegisteredGroupsFork();
+      logger.info(
+        {
+          gates: ['sender-allowlist'],
+          abortHandler: 'fork',
+          groupResolver: 'registered-groups-fork',
+        },
+        'v2 dispatcher hooks installed (NANOCLAW_V2_DISPATCHER=1)',
+      );
+    } catch (err) {
+      logger.error(
+        { err },
+        'v2 dispatcher wiring failed; continuing with fork v1 path only',
+      );
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────
+
   startIpcWatcher({
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);
