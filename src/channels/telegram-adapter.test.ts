@@ -17,9 +17,8 @@ const mockSendMessage = vi.fn().mockResolvedValue('123');
 const mockIsConnected = vi.fn().mockReturnValue(true);
 const mockSetTyping = vi.fn().mockResolvedValue(undefined);
 
-let capturedOnMessage:
-  | ((chatJid: string, message: NewMessage) => void)
-  | null = null;
+let capturedOnMessage: ((chatJid: string, message: NewMessage) => void) | null =
+  null;
 let capturedOnChatMetadata:
   | ((
       jid: string,
@@ -48,10 +47,7 @@ vi.mock('./telegram.js', () => {
 });
 
 // Import AFTER the mock so the registration fires against the mocked module.
-import {
-  TelegramV2Adapter,
-  chatJidToPlatformId,
-} from './telegram-adapter.js';
+import { TelegramV2Adapter, chatJidToPlatformId } from './telegram-adapter.js';
 
 function makeSetup(): {
   cfg: ChannelSetup;

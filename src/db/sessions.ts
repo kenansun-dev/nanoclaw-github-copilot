@@ -246,9 +246,7 @@ export function getPendingApprovalsByAction(action: string): PendingApproval[] {
  * card, regardless of whether it was persisted as a pending_question (generic
  * ask_user_question) or a pending_approval (self-mod / OneCLI credential).
  */
-export function getAskQuestionRender(
-  id: string,
-):
+export function getAskQuestionRender(id: string):
   | {
       title: string;
       options: import('../channels/ask-question.js').NormalizedOption[];

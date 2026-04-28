@@ -56,9 +56,7 @@ describe('v2 channel-adapter barrel', () => {
   it('registers discord/telegram/teams on the v2 channel-registry', async () => {
     // Import the barrel for its side effects.
     await import('./adapters-barrel.js');
-    const { getRegisteredChannelNames } = await import(
-      './channel-registry.js'
-    );
+    const { getRegisteredChannelNames } = await import('./channel-registry.js');
     const types = getRegisteredChannelNames();
     expect(types).toContain('discord');
     expect(types).toContain('telegram');

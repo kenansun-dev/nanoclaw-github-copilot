@@ -33,9 +33,7 @@ function now() {
 }
 
 /** Create a mock ChannelAdapter for testing. */
-function createMockAdapter(
-  channelType: string,
-): ChannelAdapter & {
+function createMockAdapter(channelType: string): ChannelAdapter & {
   delivered: OutboundMessage[];
   inbound: InboundMessage[];
 } {

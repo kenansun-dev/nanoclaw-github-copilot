@@ -9,9 +9,7 @@ import { registeredGroupsFork } from './index.js';
 
 describe('registered-groups-fork module skeleton', () => {
   it('re-exports the fork registered-group helpers', () => {
-    expect(typeof registeredGroupsFork.getAllRegisteredGroups).toBe(
-      'function',
-    );
+    expect(typeof registeredGroupsFork.getAllRegisteredGroups).toBe('function');
     expect(typeof registeredGroupsFork.getRegisteredGroup).toBe('function');
     expect(typeof registeredGroupsFork.setRegisteredGroup).toBe('function');
     expect(typeof registeredGroupsFork.removeRegisteredGroup).toBe('function');

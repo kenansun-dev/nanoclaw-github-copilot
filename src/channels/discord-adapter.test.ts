@@ -17,9 +17,8 @@ const mockSendMessage = vi.fn().mockResolvedValue(undefined);
 const mockIsConnected = vi.fn().mockReturnValue(true);
 const mockSetTyping = vi.fn().mockResolvedValue(undefined);
 
-let capturedOnMessage:
-  | ((chatJid: string, message: NewMessage) => void)
-  | null = null;
+let capturedOnMessage: ((chatJid: string, message: NewMessage) => void) | null =
+  null;
 let capturedOnChatMetadata:
   | ((
       jid: string,

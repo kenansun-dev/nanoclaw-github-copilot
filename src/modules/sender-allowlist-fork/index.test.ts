@@ -19,16 +19,16 @@ describe('sender-allowlist-fork module skeleton', () => {
       chats: {},
       logDenied: false,
     };
-    expect(
-      senderAllowlistFork.isSenderAllowed('any-chat', 'anyone', cfg),
-    ).toBe(true);
+    expect(senderAllowlistFork.isSenderAllowed('any-chat', 'anyone', cfg)).toBe(
+      true,
+    );
   });
 
   it('isSenderAllowed honours per-chat allow lists', () => {
     const cfg = {
       default: { allow: [] as string[], mode: 'drop' as const },
       chats: {
-        'g1': { allow: ['alice'] as string[], mode: 'trigger' as const },
+        g1: { allow: ['alice'] as string[], mode: 'trigger' as const },
       },
       logDenied: false,
     };

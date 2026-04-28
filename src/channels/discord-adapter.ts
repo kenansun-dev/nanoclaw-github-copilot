@@ -97,7 +97,9 @@ class DiscordV2Adapter implements ChannelAdapter {
     });
 
     await this.inner.connect();
-    log.info('Discord v2 adapter setup complete', { channelType: CHANNEL_TYPE });
+    log.info('Discord v2 adapter setup complete', {
+      channelType: CHANNEL_TYPE,
+    });
   }
 
   async teardown(): Promise<void> {
@@ -160,7 +162,8 @@ export function makeDiscordV2AdapterRegistration(): ChannelRegistration {
   return {
     factory: () => {
       const env = readEnvFile(['DISCORD_BOT_TOKEN']);
-      const token = process.env.DISCORD_BOT_TOKEN || env.DISCORD_BOT_TOKEN || '';
+      const token =
+        process.env.DISCORD_BOT_TOKEN || env.DISCORD_BOT_TOKEN || '';
       if (!token) {
         log.warn('Discord v2 adapter: DISCORD_BOT_TOKEN not set, skipping');
         return null;

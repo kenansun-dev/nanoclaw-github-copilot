@@ -1621,9 +1621,8 @@ async function main(): Promise<void> {
   // NOT pointing at the legacy v1 path. Both run before any file I/O so a
   // misconfigured deploy aborts before it can corrupt v1 prod data.
   try {
-    const { assertWorkspaceIsolation, seedV2FromV1IfNeeded } = await import(
-      './workspace.js'
-    );
+    const { assertWorkspaceIsolation, seedV2FromV1IfNeeded } =
+      await import('./workspace.js');
     seedV2FromV1IfNeeded();
     const ws = assertWorkspaceIsolation();
     process.stderr.write(`[workspace] ${ws}\n`);
