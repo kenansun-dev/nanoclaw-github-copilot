@@ -16,7 +16,7 @@ import {
   storeMessage,
   updateTask,
 } from './db.js';
-import { formatMessages } from './router.js';
+import { formatMessages } from './text-format.js';
 
 beforeEach(() => {
   _initTestDatabase();

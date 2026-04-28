@@ -10,7 +10,7 @@ import {
   formatMessages,
   formatOutbound,
   stripInternalTags,
-} from './router.js';
+} from './text-format.js';
 import { NewMessage } from './types.js';
 
 function makeMsg(overrides: Partial<NewMessage> = {}): NewMessage {

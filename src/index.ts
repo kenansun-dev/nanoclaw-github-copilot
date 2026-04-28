@@ -69,7 +69,7 @@ import {
   formatMessages,
   formatOutbound,
   formatConversationContext,
-} from './router.js';
+} from './text-format.js';
 import {
   restoreRemoteControl,
   startRemoteControl,
@@ -87,7 +87,7 @@ import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './log.js';
 
 // Re-export for backwards compatibility during refactor
-export { escapeXml, formatMessages } from './router.js';
+export { escapeXml, formatMessages } from './text-format.js';
 
 let lastTimestamp = '';
 // sessions: groupFolder → provider → sessionId. Each provider stores its

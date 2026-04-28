@@ -12,7 +12,7 @@ import {
   stripInternalTags,
   formatOutbound,
   findChannel,
-} from './router.js';
+} from './text-format.js';
 import { Channel, NewMessage } from './types.js';
 
 // ─── escapeXml ───────────────────────────────────────────────────────────────
