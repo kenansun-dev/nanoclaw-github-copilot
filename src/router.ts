@@ -40,6 +40,7 @@ import type {
   AgentGroup,
   MessagingGroup,
   MessagingGroupAgent,
+  RegisteredGroup,
 } from './types.js';
 import type { InboundEvent } from './channels/adapter.js';
 
@@ -65,6 +66,62 @@ export function setSenderResolver(fn: SenderResolverFn): void {
   }
   senderResolver = fn;
 }
+
+/**
+ * Group-resolver hook. Runs alongside agent resolution.
+ *
+ * Lets a fork add-on (registered-groups-fork) attach the per-chat
+ * `RegisteredGroup` row (folder / trigger / containerConfig / isMain)
+ * keyed by `MessagingGroup.platform_id`. v2 routing itself does not
+ * need this row, but downstream dispatcher/container code (skill
+ * directory, trigger-pattern enforcement, main-group privilege check)
+ * does. Resolver receives the resolved `MessagingGroup` and the raw
+ * `InboundEvent` so it can pick whichever id the fork DB keys on.
+ *
+ * Single-slot, matching `setSenderResolver`. The dispatcher caller
+ * (L3) reads the resolved group from `getResolvedGroup(mg, event)`
+ * and threads it through to the container-runner / scheduler.
+ *
+ * Without the hook, `getResolvedGroup` returns null and the
+ * dispatcher falls back to default group config (fork v1 path).
+ */
+export type GroupResolverFn = (
+  mg: MessagingGroup,
+  event: InboundEvent,
+) => RegisteredGroup | null;
+
+let groupResolver: GroupResolverFn | null = null;
+
+export function setGroupResolver(fn: GroupResolverFn): void {
+  if (groupResolver) {
+    log.warn('Group resolver overwritten');
+  }
+  groupResolver = fn;
+}
+
+/**
+ * Resolve the registered-group row for a routed inbound, or null if
+ * no resolver is registered or the chat isn't registered. Caller is
+ * expected to coalesce null to its default container/trigger config.
+ */
+export function getResolvedGroup(
+  mg: MessagingGroup,
+  event: InboundEvent,
+): RegisteredGroup | null {
+  if (!groupResolver) return null;
+  try {
+    return groupResolver(mg, event);
+  } catch (err) {
+    log.warn('group resolver threw, returning null', { err });
+    return null;
+  }
+}
+
+/** Test-only: clear the registered group resolver. */
+export function __resetGroupResolverForTests(): void {
+  groupResolver = null;
+}
+
 
 /**
  * Access-gate hook. Runs after agent resolution.

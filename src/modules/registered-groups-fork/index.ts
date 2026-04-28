@@ -1,32 +1,17 @@
 /**
- * Registered groups (fork add-on) — module skeleton.
+ * Registered groups (fork add-on) — module wire-up.
  *
- * Thin v2-shaped re-export of the fork's `getRegisteredGroup` /
- * `setRegisteredGroup` / `getAllRegisteredGroups` / `removeRegisteredGroup`
- * helpers (currently exported from `src/db.ts`). Exists so that B.5
- * (router merge) has a stable module path for group resolution
- * registration. Today this is a no-op other than the export — fork
- * v1 dispatcher in `src/index.ts` still imports from `db.ts`
- * directly.
+ * Re-exports the fork's `getRegisteredGroup` family from `src/db.ts`
+ * AND wires a v2 router `GroupResolverFn` so dispatcher code can
+ * resolve a per-chat `RegisteredGroup` row (folder / trigger /
+ * containerConfig / isMain) without importing `db.ts` directly.
  *
- * Why a separate "fork add-on" module: the v2 router uses
- * `routeMessage` with a chat-id-only contract; our fork adds the
- * `RegisteredGroup` concept (per-chat folder + cli-agent + skills
- * binding loaded from SQLite). B.5 will wire this module so the
- * router can ask "which group does this chat belong to?" via the
- * registered group table without `src/router.ts` having to import
- * `db.ts` directly.
+ * The resolver looks up by `MessagingGroup.platform_id` (fork's
+ * `RegisteredGroup` table keys on platform-native chat jid).
  *
- * Wiring plan (B.5):
- *   - Router exposes `registerGroupResolver(fn)` (v2 surface).
- *   - This module imports `getRegisteredGroup` from `../../db.js`
- *     and registers a resolver that looks up the chat jid.
- *   - The router caches the result per-message and passes it to
- *     downstream hooks via the routing context.
- *
- * Until B.5: do not register anything. Importing this module is a
- * no-op other than re-exporting the existing helpers under their v2
- * module path.
+ * Per kenan 23:20 policy "全收 v2 features": this stays as a fork
+ * add-on rather than replacing the v2 routing context — v2 routing
+ * doesn't need the row, but dispatcher/container code does.
  */
 import {
   getAllRegisteredGroups,
@@ -34,6 +19,12 @@ import {
   setRegisteredGroup,
   removeRegisteredGroup,
 } from '../../db.js';
+import {
+  setGroupResolver,
+  type GroupResolverFn,
+} from '../../router.js';
+import { log } from '../../log.js';
+import type { MessagingGroup, RegisteredGroup } from '../../types.js';
 
 export const registeredGroupsFork = {
   getAllRegisteredGroups,
@@ -42,6 +33,41 @@ export const registeredGroupsFork = {
   removeRegisteredGroup,
 };
 
-// B.5 will replace this with:
-//   import { registerGroupResolver } from '../../router.js';
-//   registerGroupResolver((chatJid) => getRegisteredGroup(chatJid));
+/**
+ * Build a router GroupResolverFn that consults the fork's
+ * `registered_groups` table, keyed by `mg.platform_id`.
+ */
+export function makeRegisteredGroupsResolver(): GroupResolverFn {
+  return (mg: MessagingGroup, _event): RegisteredGroup | null => {
+    try {
+      const row = getRegisteredGroup(mg.platform_id);
+      if (!row) return null;
+      // Drop the synthetic { jid } extra that getRegisteredGroup tacks on.
+      // Caller wants the canonical RegisteredGroup shape from types.ts.
+      const { jid: _jid, ...rest } = row;
+      return rest;
+    } catch (err) {
+      log.warn('registered-groups resolver: lookup failed', {
+        err,
+        platformId: mg.platform_id,
+      });
+      return null;
+    }
+  };
+}
+
+let installed = false;
+
+/**
+ * Install the registered-groups resolver on the v2 router. Idempotent.
+ */
+export function installRegisteredGroupsFork(): void {
+  if (installed) return;
+  installed = true;
+  setGroupResolver(makeRegisteredGroupsResolver());
+}
+
+/** Test-only: re-allow installRegisteredGroupsFork to run again. */
+export function __resetRegisteredGroupsForkInstalledForTests(): void {
+  installed = false;
+}
