@@ -110,3 +110,22 @@ export function getLogLevel(): string {
 export function setConsoleOutput(_enabled: boolean): void {
   /* noop pending B.5 */
 }
+
+/** Valid log level names (compat with fork's logger.ts surface). */
+export function getValidLevels(): readonly string[] {
+  return ['debug', 'info', 'warn', 'error', 'fatal'];
+}
+
+/** Set log level at runtime (compat shim — fork's logger.ts had a mutable threshold). */
+export function setLogLevel(
+  level: string,
+  _opts?: { force?: boolean },
+): void {
+  const valid = getValidLevels();
+  if (!valid.includes(level)) {
+    throw new Error(
+      `Invalid log level: ${level}. Valid levels: ${valid.join(', ')}`,
+    );
+  }
+  process.env.LOG_LEVEL = level;
+}

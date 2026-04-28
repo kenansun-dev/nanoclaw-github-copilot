@@ -25,7 +25,7 @@
   "dependencies": {
     "@github/copilot-sdk": "^0.2.0",
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "@onecli-sh/sdk": "^0.2.0",
+    "@onecli-sh/sdk": "^0.3.1",
     "better-sqlite3": "^11.8.1",
     "botbuilder": "^4.23.3",
     "chat": "^4.26.0",

@@ -858,3 +858,52 @@ export function writeGroupsSnapshot(
     ),
   );
 }
+
+// ============================================================================
+// v2 stubs — placeholders for upstream-shaped exports so v2-merged code (router,
+// modules/permissions, modules/agent-to-agent, modules/scheduling, modules/
+// approvals, modules/interactive, modules/self-mod, host-sweep, host-core.test,
+// channel-approval/sender-approval tests) can type-check and build.
+//
+// These are NOT yet wired to fork's host-mode container lifecycle. B.5 dispatch-
+// er-cut phase will replace these stubs with bridges into the existing fork
+// runContainerAgent / spawn machinery (lines ~384+ above) or with the upstream
+// implementation lifted from upstream/feat/migrate-from-v1:src/container-runner.
+// Calling them today no-ops with a debug log and a thrown error for the build
+// path — the v2 startup that calls them isn't activated yet.
+// ============================================================================
+
+import type { Session, AgentGroup as _AgentGroup } from './types.js';
+import { logger as _v2StubLogger } from './log.js';
+
+/** v2 stub: returns whether a v2 container is currently running for a session. */
+export function isContainerRunning(_sessionId: string): boolean {
+  return false; // v2 spawn machinery not yet wired
+}
+
+/** v2 stub: wake (or spawn) a v2 container for a session. */
+export function wakeContainer(session: Session): Promise<void> {
+  _v2StubLogger.debug(
+    `[v2-stub] wakeContainer called for session ${session.id} (no-op until B.5 dispatcher cut)`,
+  );
+  return Promise.resolve();
+}
+
+/** v2 stub: kill a running v2 container for a session. */
+export function killContainer(sessionId: string, reason: string): void {
+  _v2StubLogger.debug(
+    `[v2-stub] killContainer called for session ${sessionId} reason=${reason} (no-op until B.5 dispatcher cut)`,
+  );
+}
+
+/** v2 stub: build the container image for an agent group. */
+export async function buildAgentGroupImage(agentGroupId: string): Promise<void> {
+  _v2StubLogger.debug(
+    `[v2-stub] buildAgentGroupImage called for agentGroupId=${agentGroupId} (no-op until B.5 dispatcher cut)`,
+  );
+}
+
+/** v2 stub: count of currently running v2 containers (for host-sweep diagnostics). */
+export function getActiveV2ContainerCount(): number {
+  return 0;
+}
