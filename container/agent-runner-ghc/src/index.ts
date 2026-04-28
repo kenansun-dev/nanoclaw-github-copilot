@@ -185,10 +185,13 @@ async function main(): Promise<void> {
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   // Resolve IPC MCP server path.
-  // Compiled mode: __dirname = dist/, ipc-mcp-stdio.js exists locally.
+  // Compiled mode: __dirname = dist/, mcp-tools/index.js exists locally.
   // Dev mode (tsx): __dirname = src/, .js missing → use ../dist/.
-  const localJs = path.join(__dirname, 'ipc-mcp-stdio.js');
-  const distJs = path.join(__dirname, '..', 'dist', 'ipc-mcp-stdio.js');
+  // The 5-module barrel (mcp-tools/index.js) replaces the legacy single
+  // ipc-mcp-stdio.js entrypoint. The legacy file is retained one commit
+  // for rollback; cut here so smoke can validate the new path.
+  const localJs = path.join(__dirname, 'mcp-tools', 'index.js');
+  const distJs = path.join(__dirname, '..', 'dist', 'mcp-tools', 'index.js');
   const mcpServerPath = fs.existsSync(localJs) ? localJs : distJs;
 
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
