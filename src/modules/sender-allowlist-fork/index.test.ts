@@ -1,40 +1,91 @@
-/**
- * Sender allowlist (fork add-on) module skeleton — verifies the fork
- * allowlist helpers are reachable through the v2 module path. Real
- * gate wiring is deferred to B.5 (router merge).
- */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { makeSenderAllowlistGate } from './index.js';
+import type { MessagingGroup } from '../../types.js';
+import type { InboundEvent } from '../../channels/adapter.js';
 
-import { senderAllowlistFork } from './index.js';
+vi.mock('../../sender-allowlist.js', () => {
+  const actual: Record<string, ReturnType<typeof vi.fn>> = {
+    isSenderAllowed: vi.fn(),
+    loadSenderAllowlist: vi.fn(),
+  };
+  return actual;
+});
 
-describe('sender-allowlist-fork module skeleton', () => {
-  it('re-exports the fork allowlist helpers', () => {
-    expect(typeof senderAllowlistFork.isSenderAllowed).toBe('function');
-    expect(typeof senderAllowlistFork.loadSenderAllowlist).toBe('function');
-  });
+import { isSenderAllowed, loadSenderAllowlist } from '../../sender-allowlist.js';
 
-  it('isSenderAllowed defaults to allow-all when chat config is absent', () => {
-    const cfg = {
-      default: { allow: '*' as const, mode: 'trigger' as const },
+const mg: MessagingGroup = {
+  id: 'mg-1',
+  channel_type: 'whatsapp',
+  platform_id: 'group-jid@g.us',
+  name: 'Test',
+  is_group: 1,
+  unknown_sender_policy: 'strict',
+  created_at: new Date().toISOString(),
+};
+
+const event: InboundEvent = {
+  channelType: 'whatsapp',
+  platformId: '11111@s.whatsapp.net',
+  threadId: null,
+  message: {
+    id: 'm-1',
+    kind: 'chat',
+    content: '{}',
+    timestamp: new Date().toISOString(),
+  },
+};
+
+describe('sender-allowlist-fork access gate', () => {
+  beforeEach(() => {
+    vi.mocked(isSenderAllowed).mockReset();
+    vi.mocked(loadSenderAllowlist).mockReset();
+    vi.mocked(loadSenderAllowlist).mockReturnValue({
+      default: { allow: '*', mode: 'trigger' },
       chats: {},
       logDenied: false,
-    };
-    expect(senderAllowlistFork.isSenderAllowed('any-chat', 'anyone', cfg)).toBe(
-      true,
+    });
+  });
+
+  it('allows when allowlist permits the sender (using userId)', () => {
+    vi.mocked(isSenderAllowed).mockReturnValue(true);
+    const gate = makeSenderAllowlistGate();
+    const result = gate(event, 'user-42', mg, 'ag-1');
+    expect(result).toEqual({ allowed: true });
+    expect(isSenderAllowed).toHaveBeenCalledWith(
+      'group-jid@g.us',
+      'user-42',
+      expect.any(Object),
     );
   });
 
-  it('isSenderAllowed honours per-chat allow lists', () => {
-    const cfg = {
-      default: { allow: [] as string[], mode: 'drop' as const },
-      chats: {
-        g1: { allow: ['alice'] as string[], mode: 'trigger' as const },
-      },
-      logDenied: false,
-    };
-    expect(senderAllowlistFork.isSenderAllowed('g1', 'alice', cfg)).toBe(true);
-    expect(senderAllowlistFork.isSenderAllowed('g1', 'mallory', cfg)).toBe(
-      false,
+  it('falls back to event.platformId when userId is null', () => {
+    vi.mocked(isSenderAllowed).mockReturnValue(true);
+    const gate = makeSenderAllowlistGate();
+    const result = gate(event, null, mg, 'ag-1');
+    expect(result).toEqual({ allowed: true });
+    expect(isSenderAllowed).toHaveBeenCalledWith(
+      'group-jid@g.us',
+      '11111@s.whatsapp.net',
+      expect.any(Object),
     );
+  });
+
+  it('denies when the allowlist rejects the sender', () => {
+    vi.mocked(isSenderAllowed).mockReturnValue(false);
+    const gate = makeSenderAllowlistGate();
+    const result = gate(event, 'user-99', mg, 'ag-1');
+    expect(result).toEqual({
+      allowed: false,
+      reason: 'sender-allowlist denied',
+    });
+  });
+
+  it('allows fail-open when loadSenderAllowlist throws', () => {
+    vi.mocked(loadSenderAllowlist).mockImplementation(() => {
+      throw new Error('disk gone');
+    });
+    const gate = makeSenderAllowlistGate();
+    const result = gate(event, 'user-42', mg, 'ag-1');
+    expect(result).toEqual({ allowed: true });
   });
 });

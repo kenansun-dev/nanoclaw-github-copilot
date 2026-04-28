@@ -1,47 +1,73 @@
 /**
- * Sender allowlist (fork add-on) — module skeleton.
+ * Sender allowlist (fork add-on) — module wire-up.
  *
- * Thin v2-shaped re-export of the fork's existing
- * `src/sender-allowlist.ts` so that B.5 (router merge with
- * `setSenderResolver` / `setAccessGate` hooks) has a stable module
- * path to register against. Today it is a no-op except for the
- * export — the fork v1 dispatcher in `src/index.ts` still calls
- * `isSenderAllowed` directly.
+ * v2-shaped layer over the fork's `src/sender-allowlist.ts` (per-chat
+ * allow/deny + trigger/drop mode loaded from `data/sender_allowlist.json`
+ * or `nanoclaw.json security.allowedSenders`). Importing this module
+ * registers a router access-gate that runs alongside v2 permissions.
  *
- * Why a separate "fork add-on" module instead of replacing v2
- * permissions: kenan 23:20 policy = "全收 v2 features"; v2 already has
- * `src/modules/permissions/` with its own access-gate semantics. The
- * fork allowlist (per-chat allow/deny + trigger/drop mode loaded from
- * `data/sender_allowlist.json`) is an *additional* layer on top, not
- * a replacement. Keeping it in its own module makes the layering
- * explicit and lets B.5 wire two access gates in series rather than
- * mutating permissions/.
+ * Layering: v2 `src/modules/permissions/` is the primary gate; this
+ * module is a secondary fork-only gate. Either denying short-circuits
+ * the inbound to a block.
  *
- * Wiring plan (B.5):
- *   - Router exposes `registerAccessGate(fn)` (v2 surface).
- *   - This module imports `isSenderAllowed` from
- *     `../../sender-allowlist.js` and registers a gate that returns
- *     `false` when the sender is denied.
- *   - The router then runs gates in registration order; v2
- *     permissions remains the primary, this becomes a secondary.
- *
- * Until B.5: do not register anything. Importing this module is a
- * no-op other than re-exporting the existing helpers under their v2
- * module path so other code can depend on the symbol path.
+ * Per kenan 23:20 policy "全收 v2 features" we keep the fork allowlist
+ * as a strict additional layer rather than replacing v2 permissions.
  */
 import {
   isSenderAllowed,
   loadSenderAllowlist,
 } from '../../sender-allowlist.js';
+import type { AccessGateResult } from '../../router.js';
+import { log } from '../../log.js';
+import type { MessagingGroup } from '../../types.js';
+import type { InboundEvent } from '../../channels/adapter.js';
 
 export const senderAllowlistFork = {
   isSenderAllowed,
   loadSenderAllowlist,
 };
 
-// B.5 will replace this with:
-//   import { registerAccessGate } from '../../router.js';
-//   registerAccessGate((ctx) => {
-//     const cfg = loadSenderAllowlist();
-//     return isSenderAllowed(ctx.chatJid, ctx.senderId, cfg);
-//   });
+/**
+ * Build a router AccessGateFn that consults the fork allowlist. Returned
+ * as a plain function so the caller (index.ts dispatcher wire — L3) can
+ * compose it with v2 permissions' gate (router has a single accessGate
+ * slot; the composer ANDs them so either denial blocks).
+ */
+export function makeSenderAllowlistGate() {
+  return (
+    event: InboundEvent,
+    userId: string | null,
+    mg: MessagingGroup,
+    _agentGroupId: string,
+  ): AccessGateResult => {
+    // chatJid identifier the fork allowlist keys on. Fork's
+    // sender-allowlist.json uses channel-native ids (whatsapp jid /
+    // telegram chat id / discord channel id); MessagingGroup.platform_id
+    // is the v2 normalized form of the same value.
+    const chatJid = mg.platform_id;
+    // Sender id = user id when v2 resolved one, otherwise event.platformId
+    // (the raw sender platform id from the inbound).
+    const sender = userId ?? event.platformId;
+    let cfg;
+    try {
+      cfg = loadSenderAllowlist();
+    } catch (err) {
+      log.warn('sender-allowlist gate: load failed, allowing', {
+        err,
+        chatJid,
+      });
+      return { allowed: true };
+    }
+    if (isSenderAllowed(chatJid, sender, cfg)) {
+      return { allowed: true };
+    }
+    if (cfg.logDenied) {
+      log.info('sender-allowlist gate: denied', {
+        chatJid,
+        sender,
+        channelType: mg.channel_type,
+      });
+    }
+    return { allowed: false, reason: 'sender-allowlist denied' };
+  };
+}
