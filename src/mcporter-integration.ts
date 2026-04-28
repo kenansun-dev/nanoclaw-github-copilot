@@ -24,10 +24,12 @@ import path from 'path';
 import os from 'os';
 
 import { logger } from './log.js';
+import { resolveWorkspace } from './workspace.js';
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
 
-const NANOCLAW_DIR = path.join(os.homedir(), '.nanoclaw');
+// v2 isolation: resolve workspace at module load via resolveWorkspace().
+const NANOCLAW_DIR = resolveWorkspace();
 const MCPORTER_CONFIG_DIR = path.join(NANOCLAW_DIR, 'mcporter');
 const MCPORTER_CONFIG_PATH = path.join(MCPORTER_CONFIG_DIR, 'mcporter.json');
 

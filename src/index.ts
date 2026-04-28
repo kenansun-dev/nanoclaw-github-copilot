@@ -1617,6 +1617,23 @@ export function applyOnModeThinkingPrepend(args: {
 }
 
 async function main(): Promise<void> {
+  // v2 workspace isolation: seed v2 from v1 on first run, then assert we are
+  // NOT pointing at the legacy v1 path. Both run before any file I/O so a
+  // misconfigured deploy aborts before it can corrupt v1 prod data.
+  try {
+    const { assertWorkspaceIsolation, seedV2FromV1IfNeeded } = await import(
+      './workspace.js'
+    );
+    seedV2FromV1IfNeeded();
+    const ws = assertWorkspaceIsolation();
+    process.stderr.write(`[workspace] ${ws}\n`);
+  } catch (err) {
+    process.stderr.write(
+      `[workspace] startup guard failed: ${(err as Error).message}\n`,
+    );
+    process.exit(1);
+  }
+
   // Write PID file so `nanoclaw status` can detect us regardless of how we
   // were launched (manual `nanoclaw start` already does this for the wrapper
   // process, but systemd launches `node dist/index.js` directly and bypasses

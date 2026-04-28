@@ -567,3 +567,26 @@ getSlashRouter → forward to LLM`. All gating logic lives in modules.
 - **Total: ~3 hours AI time** assuming no surprise architecture pivot.
 
 _Generated_ 2026-04-28 02:42 GMT+8.
+
+## v2 default workspace isolation (added 2026-04-28 17:30 GMT+8)
+
+**Decision (kenan, 2026-04-28 17:19 CST)**: v2 builds must use a physically separate workspace dir (`~/.nanoclaw-v2`) so v2 staging cannot corrupt v1 prod data in `~/.nanoclaw`. NOT exposed via env var — the dir name lives in `src/workspace-config.ts` as a code constant.
+
+**Implementation**:
+- `src/workspace-config.ts` — single source of truth: `WORKSPACE_DIR_NAME = '.nanoclaw-v2'` + `LEGACY_WORKSPACE_DIR_NAME = '.nanoclaw'`.
+- `src/workspace.ts` — `DEFAULT_WORKSPACE` now derives from `WORKSPACE_DIR_NAME`. Adds two new exported functions: `assertWorkspaceIsolation()` (startup guard) and `seedV2FromV1IfNeeded()` (first-run bootstrap).
+- `src/index.ts:main()` — calls `seedV2FromV1IfNeeded()` then `assertWorkspaceIsolation()` BEFORE any side effects. Aborts with red error if resolved path equals legacy v1 path.
+- 4 callsites that previously hardcoded `path.join(os.homedir(), '.nanoclaw')` — fixed to use `resolveWorkspace()`:
+  - `src/mcporter-integration.ts:32`
+  - `src/mcp-auth.ts:91`
+  - `src/mcp-azure-auth.ts:62`
+  - `src/container-runner.ts:314` (was already correct via `path.dirname(DATA_DIR)`, comment updated)
+- Tests: `src/workspace-config.test.ts` covers default path, guard rejection of v1 path (both via `setWorkspace()` and via `NANOCLAW_WORKSPACE` env var), and pass-through for non-v1 paths. 7/7 pass.
+- `setWorkspace('')` semantics changed: now clears the override so env/default resolution kicks in. Test code uses this to reset between cases.
+
+**Merge-to-main checklist** (when v2 ships as default):
+- Revert `WORKSPACE_DIR_NAME` to `'.nanoclaw'` in `src/workspace-config.ts`.
+- Remove or relax `assertWorkspaceIsolation()` (or leave it harmless once dir name matches legacy).
+- Decide whether to drop `seedV2FromV1IfNeeded()` or repurpose for a different transition.
+
+**Caveat (NOT solved by this isolation)**: telegram/discord bot tokens still collide between v1 and v2 process (`getUpdates` 409 conflict). Operator must stop v1 before starting v2, or provision separate test bot tokens. Workspace isolation is necessary but not sufficient for parallel run.

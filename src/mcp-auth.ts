@@ -22,6 +22,7 @@ import https from 'https';
 import http from 'http';
 
 import { logger } from './log.js';
+import { resolveWorkspace } from './workspace.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -86,7 +87,8 @@ interface TokenResponse {
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
 
-const NANOCLAW_DIR = path.join(os.homedir(), '.nanoclaw');
+// v2 isolation: resolve workspace at module load via resolveWorkspace().
+const NANOCLAW_DIR = resolveWorkspace();
 const CREDENTIALS_DIR = path.join(NANOCLAW_DIR, 'credentials');
 const TOKEN_CACHE_PATH = path.join(CREDENTIALS_DIR, 'mcp-tokens.json');
 const MCP_CONFIG_PATH = path.join(NANOCLAW_DIR, 'mcp.json');

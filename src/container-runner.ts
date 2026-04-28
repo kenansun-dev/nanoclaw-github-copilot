@@ -311,7 +311,7 @@ function buildContainerArgs(
   args.push('-e', `NANOCLAW_ENGINE=${engine}`);
 
   // Pass plugin directories as colon-separated env var for agent-runners
-  const ws = path.dirname(DATA_DIR); // ~/.nanoclaw
+  const ws = path.dirname(DATA_DIR); // resolved workspace root (v1: ~/.nanoclaw, v2: ~/.nanoclaw-v2)
   const pluginNames: string[] = [];
   const pluginSources = [
     path.join(ws, 'plugins'),

@@ -24,6 +24,7 @@ import https from 'https';
 import http from 'http';
 
 import { logger } from './log.js';
+import { resolveWorkspace } from './workspace.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -57,7 +58,8 @@ interface TokenCache {
 // Azure CLI's well-known public client ID (multi-tenant, supports device code)
 const AZURE_CLI_CLIENT_ID = '04b07795-8ddb-461a-bbee-02f9e1bf7b46';
 
-const CREDENTIALS_DIR = path.join(os.homedir(), '.nanoclaw', 'credentials');
+// v2 isolation: derive credentials dir from resolved workspace.
+const CREDENTIALS_DIR = path.join(resolveWorkspace(), 'credentials');
 const TOKEN_CACHE_FILE = path.join(CREDENTIALS_DIR, 'mcp-tokens.json');
 
 // ─── Public API ──────────────────────────────────────────────────────────────
