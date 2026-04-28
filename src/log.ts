@@ -100,12 +100,18 @@ export const logger = {
 
 // Compatibility re-exports for other fork APIs that referenced `logger.ts`.
 // applyConfigLogLevel / getLogLevel / setConsoleOutput were in fork's logger.ts.
-// TODO B.5: re-implement these on top of v2 log or restore from history.
-export function applyConfigLogLevel(_level?: string): void {
-  /* noop pending B.5 */
+let currentLevel: string = (process.env.LOG_LEVEL ?? 'info').toLowerCase();
+let envLocked: boolean = process.env.LOG_LEVEL != null;
+
+export function applyConfigLogLevel(level?: string): void {
+  if (envLocked) return;
+  if (!level) return;
+  const normalized = level.trim().toLowerCase();
+  if (!getValidLevels().includes(normalized)) return;
+  currentLevel = normalized;
 }
 export function getLogLevel(): string {
-  return process.env.LOG_LEVEL ?? 'info';
+  return currentLevel;
 }
 export function setConsoleOutput(_enabled: boolean): void {
   /* noop pending B.5 */
@@ -117,15 +123,17 @@ export function getValidLevels(): readonly string[] {
 }
 
 /** Set log level at runtime (compat shim — fork's logger.ts had a mutable threshold). */
-export function setLogLevel(
-  level: string,
-  _opts?: { force?: boolean },
-): void {
+export function setLogLevel(level: string, opts?: { force?: boolean }): void {
+  const normalized = (level ?? '').trim().toLowerCase();
   const valid = getValidLevels();
-  if (!valid.includes(level)) {
+  if (!valid.includes(normalized)) {
     throw new Error(
       `Invalid log level: ${level}. Valid levels: ${valid.join(', ')}`,
     );
   }
-  process.env.LOG_LEVEL = level;
+  if (opts?.force) {
+    envLocked = false;
+  }
+  if (envLocked) return;
+  currentLevel = normalized;
 }

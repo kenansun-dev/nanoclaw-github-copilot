@@ -897,7 +897,9 @@ export function killContainer(sessionId: string, reason: string): void {
 }
 
 /** v2 stub: build the container image for an agent group. */
-export async function buildAgentGroupImage(agentGroupId: string): Promise<void> {
+export async function buildAgentGroupImage(
+  agentGroupId: string,
+): Promise<void> {
   _v2StubLogger.debug(
     `[v2-stub] buildAgentGroupImage called for agentGroupId=${agentGroupId} (no-op until B.5 dispatcher cut)`,
   );

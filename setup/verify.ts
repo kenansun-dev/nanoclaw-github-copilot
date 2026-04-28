@@ -190,3 +190,28 @@ export async function run(_args: string[]): Promise<void> {
 
   if (status === 'failed') process.exit(1);
 }
+
+import type { PingResult } from './lib/agent-ping.js';
+
+/**
+ * v2-merge B.5.0d: lifted from upstream/feat/migrate-from-v1:setup/verify.ts.
+ * Pure decision function used by setup/verify.test.ts.
+ */
+export function determineVerifyStatus(input: {
+  service: 'not_found' | 'stopped' | 'running' | 'running_other_checkout';
+  credentials: string;
+  anyChannelConfigured: boolean;
+  registeredGroups: number;
+  agentPing: PingResult | 'skipped';
+}): 'success' | 'failed' {
+  const cliAgentResponds = input.agentPing === 'ok';
+  const hasUsableChannel = input.anyChannelConfigured || cliAgentResponds;
+
+  return input.service === 'running' &&
+    input.credentials !== 'missing' &&
+    hasUsableChannel &&
+    input.registeredGroups > 0 &&
+    (cliAgentResponds || input.agentPing === 'skipped')
+    ? 'success'
+    : 'failed';
+}
