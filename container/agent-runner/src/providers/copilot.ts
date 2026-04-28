@@ -271,7 +271,9 @@ function runCopilotQuery(
             })),
           }
         : {}),
-      systemMessage: instructions,
+      systemMessage: instructions
+        ? { mode: 'replace' as const, content: instructions }
+        : undefined,
       workingDirectory,
       onPermissionRequest: approveAll,
       streaming: true,

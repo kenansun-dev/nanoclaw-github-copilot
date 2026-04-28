@@ -53,3 +53,11 @@ container/agent-runner/src/*.js
 container/agent-runner/src/*.js.map
 container/agent-runner/src/*.d.ts
 container/agent-runner/src/*.d.ts.map
+container/agent-runner/src/**/*.js
+container/agent-runner/src/**/*.js.map
+container/agent-runner/src/**/*.d.ts
+container/agent-runner/src/**/*.d.ts.map
+container/agent-runner-ghc/src/**/*.js
+container/agent-runner-ghc/src/**/*.js.map
+container/agent-runner-ghc/src/**/*.d.ts
+container/agent-runner-ghc/src/**/*.d.ts.map
