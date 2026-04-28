@@ -1,33 +1,73 @@
 /**
- * Abort triggers (fork add-on) — module skeleton.
+ * Abort triggers (fork add-on) — module wire-up.
  *
- * Thin v2-shaped re-export of the fork's existing
- * `src/abort-triggers.ts` so that B.5 (router merge / agent-runner
- * main wire-up) has a stable module path to register against.
+ * Registers the fork's pre-LLM fast-abort keyword check ('stop' /
+ * 'cancel' / '停' etc.) with the abort-handler registry. v2 has no
+ * inbound fast-abort concept — its agent kill path goes through the
+ * agent's own cancelTask/approvals flow (which costs an LLM
+ * round-trip). This module's matcher fires BEFORE any router gate
+ * runs, so the running container can be killed cheaply.
  *
- * Why a separate "fork add-on" module: v2 has no inbound fast-abort
- * concept — its agent kill path goes through the agent's own
- * `cancelTask` / approvals flow (i.e. an abort still costs an LLM
- * round-trip to interpret). The fork's `isAbortRequestText` is a
- * pre-routing keyword check that lets the host kill the running
- * container BEFORE the message reaches the LLM (so 'stop' / '停' are
- * cheap interrupts). Keeping it as a separate module makes the
- * "host-side fast path before module gates" layering explicit.
- *
- * Wiring plan (B.5 / C.2 wire-up phase):
- *   - The host inbound handler imports `isAbortRequestText` from
- *     this module's `abortFork.isAbortRequestText` and short-circuits
- *     before any router gate or agent invocation.
- *   - Triggers list stays in `src/abort-triggers.ts` for now (one
- *     source of truth); a follow-up can move it here once no other
- *     code path imports the original.
- *
- * Until wire-up: do not register anything. Importing this module is
- * a no-op other than re-exporting the helper under its v2 module
- * path.
+ * The actual `onAbort` action (queue.killActive + send ack) is
+ * provided by the dispatcher caller via `installAbortFork(deps)` —
+ * the registry stays dependency-free and tests inject mocks.
  */
 import { isAbortRequestText } from '../../abort-triggers.js';
+import {
+  registerAbortHandler,
+  type AbortMessage,
+} from '../../abort-handler-registry.js';
+import { log } from '../../log.js';
 
 export const abortFork = {
   isAbortRequestText,
 };
+
+export interface AbortForkDeps {
+  /** Kill the active agent for this chat. Return true iff something was killed. */
+  killActive: (chatJid: string) => boolean | Promise<boolean>;
+  /** Optional ack send after a successful kill (default no-op). */
+  sendAck?: (chatJid: string, text: string) => void | Promise<void>;
+  /** Override the matcher (tests). */
+  matcher?: (text: string) => boolean;
+}
+
+let installed = false;
+
+/**
+ * Install the fork abort handler into the registry. Idempotent —
+ * subsequent calls are no-ops so accidental double-import doesn't
+ * stack handlers.
+ */
+export function installAbortFork(deps: AbortForkDeps): void {
+  if (installed) return;
+  installed = true;
+
+  const matcher = deps.matcher ?? isAbortRequestText;
+
+  registerAbortHandler({
+    matcher: (text: string) => matcher(text),
+    onAbort: async (chatJid: string, msg: AbortMessage) => {
+      try {
+        const wasActive = await deps.killActive(chatJid);
+        if (wasActive) {
+          log.info('fast-abort triggered', { chatJid, text: msg.content });
+          if (deps.sendAck) {
+            try {
+              await deps.sendAck(chatJid, '⚙️ Agent aborted.');
+            } catch (err) {
+              log.warn('abort: failed to send ack', { err, chatJid });
+            }
+          }
+        }
+      } catch (err) {
+        log.warn('abort: killActive failed', { err, chatJid });
+      }
+    },
+  });
+}
+
+/** Test-only: re-allow installAbortFork to register again. */
+export function __resetAbortForkInstalledForTests(): void {
+  installed = false;
+}

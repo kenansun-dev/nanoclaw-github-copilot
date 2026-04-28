@@ -11,7 +11,10 @@ vi.mock('../../sender-allowlist.js', () => {
   return actual;
 });
 
-import { isSenderAllowed, loadSenderAllowlist } from '../../sender-allowlist.js';
+import {
+  isSenderAllowed,
+  loadSenderAllowlist,
+} from '../../sender-allowlist.js';
 
 const mg: MessagingGroup = {
   id: 'mg-1',
