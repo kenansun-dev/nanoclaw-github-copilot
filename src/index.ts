@@ -82,7 +82,7 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSessionCleanup } from './session-cleanup.js';
-import { startSchedulerLoop } from './task-scheduler.js';
+import { startSchedulerLoop } from './task-scheduler-fork-bridge.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './log.js';
 
