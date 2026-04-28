@@ -328,6 +328,56 @@ production consumer, fresh-DB-only migration path).
    `restoreRemoteControl(...)` calls happen pre- or post-router-up?
    Pre, per fork order today (line 73 import, called at startup).
 
+#### Q3 audit answer (rpi5, 2026-04-28, kenan to confirm)
+
+Grep all callers of the three lifecycle functions in `src/` + `container/` (`*.ts`):
+
+| caller                        | line             | role        |
+| ----------------------------- | ---------------- | ----------- |
+| `src/index.ts` import          | 74-76            | barrel pull |
+| `src/index.ts` startup         | **1715, 1723**   | restore × 2 |
+| `src/index.ts` `/remote-control` admin | 1808     | start       |
+| `src/index.ts` `/remote-control-end`   | 1818     | stop        |
+| `src/remote-control.test.ts`   | various          | tests only  |
+
+Findings:
+
+1. **Pre-router-up confirmed.** Both `restoreRemoteControl()` calls
+   (lines 1715, 1723) sit in `main()` after `loadState()` /
+   plugins-auto-install but **before** the channel connect loop
+   (`channels.push(channel); await channel.connect()` at line 1939+).
+   B.5 should keep `restoreRemoteControl()` in the same pre-channels
+   slot — it rebuilds in-memory remote-control state from fork
+   `task_state` rows; it does not need router or channel adapters
+   to be up.
+
+2. **Pre-existing duplicate-call bug.** `restoreRemoteControl()` is
+   invoked twice in `main()`, once at line 1715 and again at line
+   1723 with only the `ensureOneCLIAgent` loop between them.
+   `git blame` shows both lines added by the same commit
+   `e2b0d2d0` ("feat: add /remote-control command", gavrielc,
+   2026-03-14); `git show e2b0d2d0 -- src/index.ts` confirms the
+   commit only intended to add **one** `restoreRemoteControl()`
+   call (the diff at startup just after `loadState()`). The second
+   occurrence is a merge/rebase artifact.
+
+   Impact today is benign: the second call re-reads the same fork
+   table and rebuilds the same in-memory map (idempotent per
+   `src/remote-control.ts:52`), so no functional break — just a
+   cosmetic redundancy and an extra DB read at startup.
+
+   **Recommendation (rpi5 audit, kenan to confirm)**: B.5 collapses
+   to a single `restoreRemoteControl()` call in the pre-channels
+   slot of the rewritten `main()`. No separate fix needed before
+   B.5 — the dispatcher rewrite naturally consolidates this.
+
+3. **No router or channel dependency.** `restoreRemoteControl()`
+   only touches fork DB + in-memory map. `startRemoteControl()` /
+   `stopRemoteControl()` are called from the slash-command handler
+   path, which already runs inside the router's per-message
+   pipeline. B.5 does not need to thread a callback or restart
+   hook — the existing pre-channels invocation is sufficient.
+
 ## Phase B.5-prep #2: dispatcher hook registries (design)
 
 > **Re-frame**: v2 has no `router` class to merge into. `src/router.ts`
