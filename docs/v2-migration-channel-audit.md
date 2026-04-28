@@ -136,6 +136,78 @@ which the v2 ChannelAdapter shims wrap.
 - New scheduling module assumes new task-state schema; our fork `scheduled_tasks` table structure is custom — bridge layer must reconcile
 - `session-manager.ts` upstream replaces `session-cleanup.ts` (−25L); behaviour change must be smoke-tested
 
+## Update 2026-04-28 (rpi5) — prettier-normalize re-audit
+
+**Method correction**: original stat (`+18,417 / -10,614 across 177 files`)
+was raw diff and conflated cosmetic with semantic. Re-ran with both
+sides normalized through `prettier --print-width 120 --single-quote`
+(matching upstream's `90acff2` printWidth bump) before diffing.
+
+### Key finding
+
+Upstream commit `90acff2` raised `printWidth: 80 → 120`. That single
+setting accounts for **the vast majority** of the apparent delta in
+`src/db/`, `src/modules/permissions/`, `src/modules/typing/`,
+`src/channels/chat-sdk-bridge.test.ts`, etc. After normalizing both
+sides to `printWidth=120`, the lines below have **0 semantic delta**
+and need **no port work**:
+
+- `src/db/connection.ts`, `src/db/sessions.ts`, `src/db/session-db.ts`,
+  `src/db/messaging-groups.ts`, `src/db/agent-groups.ts`,
+  `src/db/dropped-messages.ts`, `src/db/db-v2.test.ts`,
+  `src/db/session-db.test.ts`
+- `src/db/migrations/010-engage-modes.ts`,
+  `src/db/migrations/012-channel-registration.ts`,
+  `src/db/migrations/013-approval-render-metadata.ts`,
+  `src/db/migrations/module-approvals-title-options.ts`,
+  `src/db/migrations/module-agent-to-agent-destinations.ts`
+- `src/modules/typing/index.ts`
+- `src/modules/permissions/{channel-approval,sender-approval}.ts`
+- `src/modules/permissions/db/{users,user-roles,user-dms,pending-sender-approvals,pending-channel-approvals,agent-group-members}.ts`
+- `src/channels/{chat-sdk-bridge.test,cli}.ts`
+
+### Files with real (small) semantic delta
+
+- `src/modules/permissions/index.ts` — 15 lines after norm
+- `src/modules/permissions/access.ts` — 7 lines after norm
+- `src/modules/permissions/user-dm.ts` — 8 lines after norm
+- `src/modules/permissions/permissions.test.ts` — 59 lines after norm
+- `src/modules/permissions/{channel-approval,sender-approval}.test.ts` — 42 / 28 lines
+- `src/modules/interactive/index.ts` — 7 lines after norm
+- `src/channels/chat-sdk-bridge.ts` — 34 lines after norm
+- `src/channels/channel-registry.ts` — 7 lines after norm
+- `src/channels/channel-registry.test.ts` — 39 lines
+- `src/channels/adapter.ts` — 8 lines
+
+### Real remaining work concentrates in 3 files
+
+| file | norm-diff | note |
+|------|-----------|------|
+| `src/router.ts` | 513 lines | ours = 83L text helper only; upstream = 467L real inbound dispatcher with `setSenderResolver`/`setAccessGate` hooks |
+| `src/index.ts` | 1983 lines | upstream rewrote startup; ours still ships v1-style `onMessage` callback inline (lines ~1845) |
+| `src/container-runner.ts` | 1243 lines | host-mode encoder rewrite |
+
+These **are** B.5 dispatcher cut. Quartet skeletons (access-gate /
+abort-handler / admin / slash registries) plus the modules barrel
+(`src/modules/index.ts`) plus `task-scheduler-fork-bridge.ts` are
+all the pieces B.5 will wire up. There is **no separate "port lane"**
+separable from B.5 itself.
+
+### Files we already have that audit listed as "to port"
+
+Verified all present on `HEAD`: `session-manager.ts`, `state-sqlite.ts`,
+`webhook-server.ts`, `command-gate.ts`, `response-registry.ts`,
+`platform-id.ts`, `claude-md-compose.ts`, `container-config.ts`,
+`channels/chat-sdk-bridge.ts`, `channels/ask-question.ts`. All from
+Phase A.1 lift (commit `1cdbfed`).
+
+### Followups (cosmetic, post-staging)
+
+- Bump fork repo to `printWidth: 120`, run `prettier --write .`,
+  commit as a single style-only PR. Will erase the rest of the noise
+  diff against future upstream cherry-picks. Do **not** include in
+  v2-merge to keep diff reviewable.
+
 ## Open questions for kenan
 
 1. Bring our `remote-control.ts` (fork-only) along, or punt to post-staging?
