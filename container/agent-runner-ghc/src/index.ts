@@ -211,11 +211,13 @@ async function main(): Promise<void> {
   // Build dynamic identity + runtime info
   const agentName = containerInput.assistantName || 'Andy';
   const isHostMode = process.env.NANOCLAW_HOST_MODE === '1';
-  const modelStr = containerInput.model || process.env.COPILOT_MODEL || 'default';
-  const provider = modelStr.includes('/') ? modelStr.split('/')[0] : 'unknown';
-  const providerLabel = provider === 'github-copilot' ? 'GitHub Copilot'
-    : provider === 'anthropic' ? 'Claude (Anthropic)'
-    : provider;
+  // This runner is GHC-only (imports @github/copilot-sdk above), so the
+  // provider is always GitHub Copilot. Earlier code parsed `model` for a
+  // `provider/model` prefix and fell back to the literal string
+  // 'unknown', which leaked into the system prompt as
+  // "powered by unknown" whenever the agent's `model` config used a
+  // short name (e.g. 'claude-sonnet-4', 'gpt-5').
+  const providerLabel = 'GitHub Copilot';
   const os = await import('os');
   const runtimeLines = [
     `Your name is ${agentName}. You are a personal AI assistant powered by ${providerLabel}. When introducing yourself, use your name and mention you are powered by ${providerLabel}.`,
