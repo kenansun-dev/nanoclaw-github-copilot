@@ -80,6 +80,25 @@ interface VolumeMount {
   readonly: boolean;
 }
 
+/**
+ * Parse the host's `~/.copilot/config.json` file.
+ *
+ * The copilot CLI ships this file with a leading
+ * `// User settings belong in settings.json.` comment line, which breaks
+ * strict `JSON.parse`. Strip `^//` line comments first so we recover the
+ * `copilotTokens` field instead of silently writing an empty session
+ * config (which leaves the container CLI unauthenticated).
+ *
+ * Exported for unit testing.
+ */
+export function parseHostCopilotConfig(raw: string): Record<string, unknown> {
+  const stripped = raw.replace(/^[ \t]*\/\/.*$/gm, '');
+  const parsed = JSON.parse(stripped);
+  return typeof parsed === 'object' && parsed !== null
+    ? (parsed as Record<string, unknown>)
+    : {};
+}
+
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
@@ -182,7 +201,8 @@ function buildVolumeMounts(
       let baseConfig: Record<string, unknown> = {};
       if (fs.existsSync(hostCopilotConfig)) {
         try {
-          baseConfig = JSON.parse(fs.readFileSync(hostCopilotConfig, 'utf-8'));
+          const raw = fs.readFileSync(hostCopilotConfig, 'utf-8');
+          baseConfig = parseHostCopilotConfig(raw);
         } catch {
           // Ignore parse errors
         }
