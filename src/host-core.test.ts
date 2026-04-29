@@ -91,9 +91,7 @@ describe('session manager', () => {
     const inPath = inboundDbPath('ag-1', 'sess-test');
     expect(fs.existsSync(inPath)).toBe(true);
     const inDb = new Database(inPath);
-    const inTables = inDb
-      .prepare("SELECT name FROM sqlite_master WHERE type='table'")
-      .all() as Array<{ name: string }>;
+    const inTables = inDb.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>;
     expect(inTables.map((t) => t.name)).toContain('messages_in');
     expect(inTables.map((t) => t.name)).toContain('delivered');
     inDb.close();
@@ -102,9 +100,7 @@ describe('session manager', () => {
     const outPath = outboundDbPath('ag-1', 'sess-test');
     expect(fs.existsSync(outPath)).toBe(true);
     const outDb = new Database(outPath);
-    const outTables = outDb
-      .prepare("SELECT name FROM sqlite_master WHERE type='table'")
-      .all() as Array<{
+    const outTables = outDb.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{
       name: string;
     }>;
     expect(outTables.map((t) => t.name)).toContain('messages_out');
@@ -113,53 +109,23 @@ describe('session manager', () => {
   });
 
   it('should resolve to existing session (shared mode)', () => {
-    const { session: s1, created: c1 } = resolveSession(
-      'ag-1',
-      'mg-1',
-      null,
-      'shared',
-    );
+    const { session: s1, created: c1 } = resolveSession('ag-1', 'mg-1', null, 'shared');
     expect(c1).toBe(true);
 
-    const { session: s2, created: c2 } = resolveSession(
-      'ag-1',
-      'mg-1',
-      null,
-      'shared',
-    );
+    const { session: s2, created: c2 } = resolveSession('ag-1', 'mg-1', null, 'shared');
     expect(c2).toBe(false);
     expect(s2.id).toBe(s1.id);
   });
 
   it('should create separate sessions per thread (per-thread mode)', () => {
-    const { session: s1 } = resolveSession(
-      'ag-1',
-      'mg-1',
-      'thread-1',
-      'per-thread',
-    );
-    const { session: s2 } = resolveSession(
-      'ag-1',
-      'mg-1',
-      'thread-2',
-      'per-thread',
-    );
+    const { session: s1 } = resolveSession('ag-1', 'mg-1', 'thread-1', 'per-thread');
+    const { session: s2 } = resolveSession('ag-1', 'mg-1', 'thread-2', 'per-thread');
     expect(s1.id).not.toBe(s2.id);
   });
 
   it('should reuse session for same thread', () => {
-    const { session: s1 } = resolveSession(
-      'ag-1',
-      'mg-1',
-      'thread-1',
-      'per-thread',
-    );
-    const { session: s2, created } = resolveSession(
-      'ag-1',
-      'mg-1',
-      'thread-1',
-      'per-thread',
-    );
+    const { session: s1 } = resolveSession('ag-1', 'mg-1', 'thread-1', 'per-thread');
+    const { session: s2, created } = resolveSession('ag-1', 'mg-1', 'thread-1', 'per-thread');
     expect(created).toBe(false);
     expect(s2.id).toBe(s1.id);
   });
@@ -268,10 +234,7 @@ describe('router', () => {
     // Verify message was written to inbound DB
     const dbPath = inboundDbPath('ag-1', session!.id);
     const db = new Database(dbPath);
-    const rows = db.prepare('SELECT * FROM messages_in').all() as Array<{
-      id: string;
-      content: string;
-    }>;
+    const rows = db.prepare('SELECT * FROM messages_in').all() as Array<{ id: string; content: string }>;
     db.close();
 
     expect(rows).toHaveLength(1);
@@ -287,8 +250,7 @@ describe('router', () => {
     // many unwired channels doesn't bloat messaging_groups. Only explicit
     // mentions and DMs trigger auto-create.
     const { routeInbound } = await import('./router.js');
-    const { getMessagingGroupByPlatform } =
-      await import('./db/messaging-groups.js');
+    const { getMessagingGroupByPlatform } = await import('./db/messaging-groups.js');
 
     // Plain message on unknown channel — should NOT auto-create.
     await routeInbound({
@@ -327,12 +289,7 @@ describe('router', () => {
       channelType: 'discord',
       platformId: 'chan-123',
       threadId: null,
-      message: {
-        id: 'msg-a',
-        kind: 'chat',
-        content: JSON.stringify({ sender: 'A', text: 'First' }),
-        timestamp: now(),
-      },
+      message: { id: 'msg-a', kind: 'chat', content: JSON.stringify({ sender: 'A', text: 'First' }), timestamp: now() },
     });
 
     await routeInbound({
@@ -351,9 +308,7 @@ describe('router', () => {
     const session = findSession('mg-1', null);
     const dbPath = inboundDbPath('ag-1', session!.id);
     const db = new Database(dbPath);
-    const rows = db
-      .prepare('SELECT * FROM messages_in ORDER BY timestamp')
-      .all();
+    const rows = db.prepare('SELECT * FROM messages_in ORDER BY timestamp').all();
     db.close();
 
     expect(rows).toHaveLength(2);
@@ -389,12 +344,7 @@ describe('router', () => {
       channelType: 'discord',
       platformId: 'chan-123',
       threadId: null,
-      message: {
-        id: 'msg-fan',
-        kind: 'chat',
-        content: JSON.stringify({ text: 'hello all' }),
-        timestamp: now(),
-      },
+      message: { id: 'msg-fan', kind: 'chat', content: JSON.stringify({ text: 'hello all' }), timestamp: now() },
     });
 
     // Both agents should now have their own session and be woken.
@@ -412,8 +362,7 @@ describe('router', () => {
 
     // Replace the seed row with a mention-only wiring whose accumulate
     // policy should store context even when the message doesn't mention us.
-    const { updateMessagingGroupAgent } =
-      await import('./db/messaging-groups.js');
+    const { updateMessagingGroupAgent } = await import('./db/messaging-groups.js');
     updateMessagingGroupAgent('mga-1', {
       engage_mode: 'mention',
       ignored_message_policy: 'accumulate',
@@ -436,9 +385,7 @@ describe('router', () => {
     const session = findSession('mg-1', null);
     expect(session).toBeDefined();
     const db = new Database(inboundDbPath('ag-1', session!.id));
-    const rows = db
-      .prepare('SELECT id, trigger FROM messages_in')
-      .all() as Array<{
+    const rows = db.prepare('SELECT id, trigger FROM messages_in').all() as Array<{
       id: string;
       trigger: number;
     }>;
@@ -452,20 +399,14 @@ describe('router', () => {
     const { wakeContainer } = await import('./container-runner.js');
     (wakeContainer as unknown as ReturnType<typeof vi.fn>).mockClear();
 
-    const { updateMessagingGroupAgent } =
-      await import('./db/messaging-groups.js');
+    const { updateMessagingGroupAgent } = await import('./db/messaging-groups.js');
     updateMessagingGroupAgent('mga-1', { engage_mode: 'mention' }); // drop is the default
 
     await routeInbound({
       channelType: 'discord',
       platformId: 'chan-123',
       threadId: null,
-      message: {
-        id: 'msg-drop',
-        kind: 'chat',
-        content: JSON.stringify({ text: 'ignored' }),
-        timestamp: now(),
-      },
+      message: { id: 'msg-drop', kind: 'chat', content: JSON.stringify({ text: 'ignored' }), timestamp: now() },
     });
 
     expect(wakeContainer).not.toHaveBeenCalled();
@@ -503,9 +444,7 @@ describe('delivery', () => {
        VALUES ('out-1', datetime('now'), 'chat', 'chan-123', 'discord', ?)`,
     ).run(JSON.stringify({ text: 'Agent response' }));
 
-    const undelivered = db
-      .prepare('SELECT * FROM messages_out')
-      .all() as Array<{
+    const undelivered = db.prepare('SELECT * FROM messages_out').all() as Array<{
       id: string;
       content: string;
     }>;

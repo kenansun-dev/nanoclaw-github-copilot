@@ -14,8 +14,7 @@ describe('splitForLimit', () => {
   });
 
   it('splits on paragraph boundaries when available', () => {
-    const text =
-      'para one line one\npara one line two\n\npara two line one\npara two line two';
+    const text = 'para one line one\npara one line two\n\npara two line one\npara two line two';
     const chunks = splitForLimit(text, 40);
     expect(chunks.length).toBeGreaterThan(1);
     for (const c of chunks) expect(c.length).toBeLessThanOrEqual(40);
@@ -60,8 +59,7 @@ describe('createChatSdkBridge', () => {
           openDMCalls.push(userId);
           return `thread::${userId}`;
         },
-        channelIdFromThreadId: (threadId: string) =>
-          `stub:${threadId.replace(/^thread::/, '')}`,
+        channelIdFromThreadId: (threadId: string) => `stub:${threadId.replace(/^thread::/, '')}`,
       }),
       supportsThreads: false,
     });

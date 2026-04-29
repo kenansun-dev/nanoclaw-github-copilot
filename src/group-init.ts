@@ -34,10 +34,7 @@ const DEFAULT_SETTINGS_JSON =
  * spawn by `composeGroupClaudeMd()` (see `claude-md-compose.ts`). Initial
  * per-group instructions (if provided) seed `CLAUDE.local.md`.
  */
-export function initGroupFilesystem(
-  group: AgentGroup,
-  opts?: { instructions?: string },
-): void {
+export function initGroupFilesystem(group: AgentGroup, opts?: { instructions?: string }): void {
   const initialized: string[] = [];
 
   // 1. groups/<folder>/ — group memory + working dir
@@ -64,12 +61,7 @@ export function initGroupFilesystem(
   }
 
   // 2. data/v2-sessions/<id>/.claude-shared/ — Claude state + per-group skills
-  const claudeDir = path.join(
-    DATA_DIR,
-    'v2-sessions',
-    group.id,
-    '.claude-shared',
-  );
+  const claudeDir = path.join(DATA_DIR, 'v2-sessions', group.id, '.claude-shared');
   if (!fs.existsSync(claudeDir)) {
     fs.mkdirSync(claudeDir, { recursive: true });
     initialized.push('.claude-shared');

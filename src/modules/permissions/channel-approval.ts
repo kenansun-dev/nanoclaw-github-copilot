@@ -36,20 +36,14 @@
  *   - Approver has no reachable DM.
  *   - Delivery adapter missing.
  */
-import {
-  normalizeOptions,
-  type RawOption,
-} from '../../channels/ask-question.js';
+import { normalizeOptions, type RawOption } from '../../channels/ask-question.js';
 import { getAllAgentGroups } from '../../db/agent-groups.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
 import { getDeliveryAdapter } from '../../delivery.js';
 import { log } from '../../log.js';
 import type { InboundEvent } from '../../channels/adapter.js';
 import { pickApprovalDelivery, pickApprover } from '../approvals/primitive.js';
-import {
-  createPendingChannelApproval,
-  hasInFlightChannelApproval,
-} from './db/pending-channel-approvals.js';
+import { createPendingChannelApproval, hasInFlightChannelApproval } from './db/pending-channel-approvals.js';
 
 const APPROVAL_OPTIONS: RawOption[] = [
   { label: 'Approve', selectedLabel: '✅ Wired', value: 'approve' },
@@ -61,9 +55,7 @@ export interface RequestChannelApprovalInput {
   event: InboundEvent;
 }
 
-export async function requestChannelApproval(
-  input: RequestChannelApprovalInput,
-): Promise<void> {
+export async function requestChannelApproval(input: RequestChannelApprovalInput): Promise<void> {
   const { messagingGroupId, event } = input;
 
   // In-flight dedup: don't spam the owner if the same unwired channel
@@ -79,12 +71,9 @@ export async function requestChannelApproval(
   // a richer card later (user picks the target from a list).
   const agentGroups = getAllAgentGroups();
   if (agentGroups.length === 0) {
-    log.warn(
-      'Channel registration skipped — no agent groups configured. Run /init-first-agent.',
-      {
-        messagingGroupId,
-      },
-    );
+    log.warn('Channel registration skipped — no agent groups configured. Run /init-first-agent.', {
+      messagingGroupId,
+    });
     return;
   }
   const target = agentGroups[0];
@@ -123,9 +112,7 @@ export async function requestChannelApproval(
     // non-critical — fall through to generic wording
   }
 
-  const title = isGroup
-    ? '📣 Bot mentioned in new chat'
-    : '💬 New direct message';
+  const title = isGroup ? '📣 Bot mentioned in new chat' : '💬 New direct message';
   const question = isGroup
     ? senderName
       ? `${senderName} mentioned your agent in a ${originChannelType} channel. Wire it to ${target.name} and let it engage?`
@@ -147,12 +134,9 @@ export async function requestChannelApproval(
 
   const adapter = getDeliveryAdapter();
   if (!adapter) {
-    log.error(
-      'Channel registration row created but no delivery adapter is wired',
-      {
-        messagingGroupId,
-      },
-    );
+    log.error('Channel registration row created but no delivery adapter is wired', {
+      messagingGroupId,
+    });
     return;
   }
 

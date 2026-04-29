@@ -33,11 +33,7 @@
  * safe — worst case we round-trip redundantly.
  */
 import { getChannelAdapter } from '../../channels/channel-registry.js';
-import {
-  getMessagingGroup,
-  getMessagingGroupByPlatform,
-  createMessagingGroup,
-} from '../../db/messaging-groups.js';
+import { getMessagingGroup, getMessagingGroupByPlatform, createMessagingGroup } from '../../db/messaging-groups.js';
 import { log } from '../../log.js';
 import type { MessagingGroup, User } from '../../types.js';
 import { getUser } from './db/users.js';
@@ -53,9 +49,7 @@ import { getUserDm, upsertUserDm } from './db/user-dms.js';
  *
  * Callers should treat null as "this user is unreachable on this channel".
  */
-export async function ensureUserDm(
-  userId: string,
-): Promise<MessagingGroup | null> {
+export async function ensureUserDm(userId: string): Promise<MessagingGroup | null> {
   const user = getUser(userId);
   if (!user) {
     log.warn('ensureUserDm: user not found', { userId });
@@ -74,13 +68,10 @@ export async function ensureUserDm(
     const mg = getMessagingGroup(cached.messaging_group_id);
     if (mg) return mg;
     // Row points to a deleted messaging_group — fall through and re-resolve.
-    log.warn(
-      'ensureUserDm: cached row references missing messaging_group, re-resolving',
-      {
-        userId,
-        messagingGroupId: cached.messaging_group_id,
-      },
-    );
+    log.warn('ensureUserDm: cached row references missing messaging_group, re-resolving', {
+      userId,
+      messagingGroupId: cached.messaging_group_id,
+    });
   }
 
   // Cache miss: resolve the DM platform_id either via openDM or directly.
@@ -124,10 +115,7 @@ export async function ensureUserDm(
  * Call the adapter's openDM if it has one; otherwise fall through to using
  * the handle directly. Returns null if the adapter is missing entirely.
  */
-async function resolveDmPlatformId(
-  channelType: string,
-  handle: string,
-): Promise<string | null> {
+async function resolveDmPlatformId(channelType: string, handle: string): Promise<string | null> {
   const adapter = getChannelAdapter(channelType);
   if (!adapter) {
     log.warn('ensureUserDm: no adapter for channel', { channelType });
@@ -140,20 +128,12 @@ async function resolveDmPlatformId(
   try {
     return await adapter.openDM(handle);
   } catch (err) {
-    log.error('ensureUserDm: adapter.openDM failed', {
-      channelType,
-      handle,
-      err,
-    });
+    log.error('ensureUserDm: adapter.openDM failed', { channelType, handle, err });
     return null;
   }
 }
 
-function parseUserId(
-  user: User,
-):
-  | { channelType: string; handle: string }
-  | { channelType: null; handle: null } {
+function parseUserId(user: User): { channelType: string; handle: string } | { channelType: null; handle: null } {
   const idx = user.id.indexOf(':');
   if (idx < 0) return { channelType: null, handle: null };
   const prefix = user.id.slice(0, idx);

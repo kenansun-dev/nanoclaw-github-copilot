@@ -18,12 +18,7 @@ import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
 import type { ApprovalHandler } from '../approvals/index.js';
 
-export const applyInstallPackages: ApprovalHandler = async ({
-  session,
-  payload,
-  userId,
-  notify,
-}) => {
+export const applyInstallPackages: ApprovalHandler = async ({ session, payload, userId, notify }) => {
   const agentGroup = getAgentGroup(session.agent_group_id);
   if (!agentGroup) {
     notify('install_packages approved but agent group missing.');
@@ -38,10 +33,7 @@ export const applyInstallPackages: ApprovalHandler = async ({
     ...((payload.apt as string[] | undefined) || []),
     ...((payload.npm as string[] | undefined) || []),
   ].join(', ');
-  log.info('Package install approved', {
-    agentGroupId: session.agent_group_id,
-    userId,
-  });
+  log.info('Package install approved', { agentGroupId: session.agent_group_id, userId });
   try {
     await buildAgentGroupImage(session.agent_group_id);
     killContainer(session.id, 'rebuild applied');
@@ -64,26 +56,16 @@ export const applyInstallPackages: ApprovalHandler = async ({
         .replace('T', ' ')
         .replace(/\.\d+Z$/, ''),
     });
-    log.info('Container rebuild completed (bundled with install)', {
-      agentGroupId: session.agent_group_id,
-    });
+    log.info('Container rebuild completed (bundled with install)', { agentGroupId: session.agent_group_id });
   } catch (e) {
     notify(
       `Packages added to config (${pkgs}) but rebuild failed: ${e instanceof Error ? e.message : String(e)}. Tell the user — an admin will need to retry the install_packages request or inspect the build logs.`,
     );
-    log.error('Bundled rebuild failed after install approval', {
-      agentGroupId: session.agent_group_id,
-      err: e,
-    });
+    log.error('Bundled rebuild failed after install approval', { agentGroupId: session.agent_group_id, err: e });
   }
 };
 
-export const applyAddMcpServer: ApprovalHandler = async ({
-  session,
-  payload,
-  userId,
-  notify,
-}) => {
+export const applyAddMcpServer: ApprovalHandler = async ({ session, payload, userId, notify }) => {
   const agentGroup = getAgentGroup(session.agent_group_id);
   if (!agentGroup) {
     notify('add_mcp_server approved but agent group missing.');
@@ -98,11 +80,6 @@ export const applyAddMcpServer: ApprovalHandler = async ({
   });
 
   killContainer(session.id, 'mcp server added');
-  notify(
-    `MCP server "${payload.name}" added. Your container will restart with it on the next message.`,
-  );
-  log.info('MCP server add approved', {
-    agentGroupId: session.agent_group_id,
-    userId,
-  });
+  notify(`MCP server "${payload.name}" added. Your container will restart with it on the next message.`);
+  log.info('MCP server add approved', { agentGroupId: session.agent_group_id, userId });
 };

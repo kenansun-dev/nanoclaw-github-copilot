@@ -38,25 +38,18 @@ export interface ProviderContainerContribution {
   env?: Record<string, string>;
 }
 
-export type ProviderContainerConfigFn = (
-  ctx: ProviderContainerContext,
-) => ProviderContainerContribution;
+export type ProviderContainerConfigFn = (ctx: ProviderContainerContext) => ProviderContainerContribution;
 
 const registry = new Map<string, ProviderContainerConfigFn>();
 
-export function registerProviderContainerConfig(
-  name: string,
-  fn: ProviderContainerConfigFn,
-): void {
+export function registerProviderContainerConfig(name: string, fn: ProviderContainerConfigFn): void {
   if (registry.has(name)) {
     throw new Error(`Provider container config already registered: ${name}`);
   }
   registry.set(name, fn);
 }
 
-export function getProviderContainerConfig(
-  name: string,
-): ProviderContainerConfigFn | undefined {
+export function getProviderContainerConfig(name: string): ProviderContainerConfigFn | undefined {
   return registry.get(name);
 }
 

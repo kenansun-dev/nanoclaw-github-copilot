@@ -21,10 +21,7 @@
  * exposing just user-roles/user-dms) is more churn than it's worth. Revisit
  * if either module becomes genuinely optional (see REFACTOR_PLAN open q #3).
  */
-import {
-  normalizeOptions,
-  type RawOption,
-} from '../../channels/ask-question.js';
+import { normalizeOptions, type RawOption } from '../../channels/ask-question.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
 import { createPendingApproval, getSession } from '../../db/sessions.js';
 import { getDeliveryAdapter } from '../../delivery.js';
@@ -32,11 +29,7 @@ import { wakeContainer } from '../../container-runner.js';
 import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
 import type { MessagingGroup, Session } from '../../types.js';
-import {
-  getAdminsOfAgentGroup,
-  getGlobalAdmins,
-  getOwners,
-} from '../permissions/db/user-roles.js';
+import { getAdminsOfAgentGroup, getGlobalAdmins, getOwners } from '../permissions/db/user-roles.js';
 import { ensureUserDm } from '../permissions/user-dm.js';
 
 /** Two-button approval UI — the only options the primitive supports today. */
@@ -63,19 +56,14 @@ export type ApprovalHandler = (ctx: ApprovalHandlerContext) => Promise<void>;
 
 const approvalHandlers = new Map<string, ApprovalHandler>();
 
-export function registerApprovalHandler(
-  action: string,
-  handler: ApprovalHandler,
-): void {
+export function registerApprovalHandler(action: string, handler: ApprovalHandler): void {
   if (approvalHandlers.has(action)) {
     log.warn('Approval handler re-registered (overwriting)', { action });
   }
   approvalHandlers.set(action, handler);
 }
 
-export function getApprovalHandler(
-  action: string,
-): ApprovalHandler | undefined {
+export function getApprovalHandler(action: string): ApprovalHandler | undefined {
   return approvalHandlers.get(action);
 }
 
@@ -150,9 +138,7 @@ export function notifyAgent(session: Session, text: string): void {
   });
   const fresh = getSession(session.id);
   if (fresh) {
-    wakeContainer(fresh).catch((err) =>
-      log.error('Failed to wake container after notification', { err }),
-    );
+    wakeContainer(fresh).catch((err) => log.error('Failed to wake container after notification', { err }));
   }
 }
 
@@ -175,17 +161,12 @@ export interface RequestApprovalOptions {
  * caller's perspective — the admin's response kicks off the registered
  * approval handler for this action via the response dispatcher.
  */
-export async function requestApproval(
-  opts: RequestApprovalOptions,
-): Promise<void> {
+export async function requestApproval(opts: RequestApprovalOptions): Promise<void> {
   const { session, action, payload, title, question, agentName } = opts;
 
   const approvers = pickApprover(session.agent_group_id);
   if (approvers.length === 0) {
-    notifyAgent(
-      session,
-      `${action} failed: no owner or admin configured to approve.`,
-    );
+    notifyAgent(session, `${action} failed: no owner or admin configured to approve.`);
     return;
   }
 
@@ -195,10 +176,7 @@ export async function requestApproval(
 
   const target = await pickApprovalDelivery(approvers, originChannelType);
   if (!target) {
-    notifyAgent(
-      session,
-      `${action} failed: no DM channel found for any eligible approver.`,
-    );
+    notifyAgent(session, `${action} failed: no DM channel found for any eligible approver.`);
     return;
   }
 
@@ -233,18 +211,10 @@ export async function requestApproval(
       );
     } catch (err) {
       log.error('Failed to deliver approval card', { action, approvalId, err });
-      notifyAgent(
-        session,
-        `${action} failed: could not deliver approval request to ${target.userId}.`,
-      );
+      notifyAgent(session, `${action} failed: could not deliver approval request to ${target.userId}.`);
       return;
     }
   }
 
-  log.info('Approval requested', {
-    action,
-    approvalId,
-    agentName,
-    approver: target.userId,
-  });
+  log.info('Approval requested', { action, approvalId, agentName, approver: target.userId });
 }

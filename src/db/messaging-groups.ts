@@ -28,19 +28,12 @@ export function createMessagingGroup(group: MessagingGroup): void {
 }
 
 export function getMessagingGroup(id: string): MessagingGroup | undefined {
-  return getDb()
-    .prepare('SELECT * FROM messaging_groups WHERE id = ?')
-    .get(id) as MessagingGroup | undefined;
+  return getDb().prepare('SELECT * FROM messaging_groups WHERE id = ?').get(id) as MessagingGroup | undefined;
 }
 
-export function getMessagingGroupByPlatform(
-  channelType: string,
-  platformId: string,
-): MessagingGroup | undefined {
+export function getMessagingGroupByPlatform(channelType: string, platformId: string): MessagingGroup | undefined {
   return getDb()
-    .prepare(
-      'SELECT * FROM messaging_groups WHERE channel_type = ? AND platform_id = ?',
-    )
+    .prepare('SELECT * FROM messaging_groups WHERE channel_type = ? AND platform_id = ?')
     .get(channelType, platformId) as MessagingGroup | undefined;
 }
 
@@ -69,33 +62,23 @@ export function getMessagingGroupWithAgentCount(
         WHERE mg.channel_type = ? AND mg.platform_id = ?
      GROUP BY mg.id`,
     )
-    .get(channelType, platformId) as
-    | (MessagingGroup & { agent_count: number })
-    | undefined;
+    .get(channelType, platformId) as (MessagingGroup & { agent_count: number }) | undefined;
   if (!row) return null;
   const { agent_count, ...mg } = row;
   return { mg: mg as MessagingGroup, agentCount: agent_count };
 }
 
 export function getAllMessagingGroups(): MessagingGroup[] {
-  return getDb()
-    .prepare('SELECT * FROM messaging_groups ORDER BY name')
-    .all() as MessagingGroup[];
+  return getDb().prepare('SELECT * FROM messaging_groups ORDER BY name').all() as MessagingGroup[];
 }
 
-export function getMessagingGroupsByChannel(
-  channelType: string,
-): MessagingGroup[] {
-  return getDb()
-    .prepare('SELECT * FROM messaging_groups WHERE channel_type = ?')
-    .all(channelType) as MessagingGroup[];
+export function getMessagingGroupsByChannel(channelType: string): MessagingGroup[] {
+  return getDb().prepare('SELECT * FROM messaging_groups WHERE channel_type = ?').all(channelType) as MessagingGroup[];
 }
 
 export function updateMessagingGroup(
   id: string,
-  updates: Partial<
-    Pick<MessagingGroup, 'name' | 'is_group' | 'unknown_sender_policy'>
-  >,
+  updates: Partial<Pick<MessagingGroup, 'name' | 'is_group' | 'unknown_sender_policy'>>,
 ): void {
   const fields: string[] = [];
   const values: Record<string, unknown> = { id };
@@ -127,13 +110,8 @@ export function deleteMessagingGroup(id: string): void {
  * Passing null unsets the flag (used by tests or a future "unblock channel"
  * admin command).
  */
-export function setMessagingGroupDeniedAt(
-  id: string,
-  deniedAt: string | null,
-): void {
-  getDb()
-    .prepare('UPDATE messaging_groups SET denied_at = ? WHERE id = ?')
-    .run(deniedAt, id);
+export function setMessagingGroupDeniedAt(id: string, deniedAt: string | null): void {
+  getDb().prepare('UPDATE messaging_groups SET denied_at = ? WHERE id = ?').run(deniedAt, id);
 }
 
 // ── Messaging Group Agents ──
@@ -189,19 +167,13 @@ export function createMessagingGroupAgent(mga: MessagingGroupAgent): void {
   // <sessionId>)` afterwards.
   if (!hasTable(getDb(), 'agent_destinations')) return;
 
-  const existing = getDestinationByTarget(
-    mga.agent_group_id,
-    'channel',
-    mga.messaging_group_id,
-  );
+  const existing = getDestinationByTarget(mga.agent_group_id, 'channel', mga.messaging_group_id);
   if (existing) return;
 
   const mg = getMessagingGroup(mga.messaging_group_id);
   if (!mg) return;
 
-  const base = normalizeName(
-    mg.name || `${mg.channel_type}-${mga.messaging_group_id.slice(0, 8)}`,
-  );
+  const base = normalizeName(mg.name || `${mg.channel_type}-${mga.messaging_group_id.slice(0, 8)}`);
   let localName = base;
   let suffix = 2;
   while (getDestinationByName(mga.agent_group_id, localName)) {
@@ -218,13 +190,9 @@ export function createMessagingGroupAgent(mga: MessagingGroupAgent): void {
   });
 }
 
-export function getMessagingGroupAgents(
-  messagingGroupId: string,
-): MessagingGroupAgent[] {
+export function getMessagingGroupAgents(messagingGroupId: string): MessagingGroupAgent[] {
   return getDb()
-    .prepare(
-      'SELECT * FROM messaging_group_agents WHERE messaging_group_id = ? ORDER BY priority DESC',
-    )
+    .prepare('SELECT * FROM messaging_group_agents WHERE messaging_group_id = ? ORDER BY priority DESC')
     .all(messagingGroupId) as MessagingGroupAgent[];
 }
 
@@ -233,18 +201,14 @@ export function getMessagingGroupAgentByPair(
   agentGroupId: string,
 ): MessagingGroupAgent | undefined {
   return getDb()
-    .prepare(
-      'SELECT * FROM messaging_group_agents WHERE messaging_group_id = ? AND agent_group_id = ?',
-    )
+    .prepare('SELECT * FROM messaging_group_agents WHERE messaging_group_id = ? AND agent_group_id = ?')
     .get(messagingGroupId, agentGroupId) as MessagingGroupAgent | undefined;
 }
 
-export function getMessagingGroupAgent(
-  id: string,
-): MessagingGroupAgent | undefined {
-  return getDb()
-    .prepare('SELECT * FROM messaging_group_agents WHERE id = ?')
-    .get(id) as MessagingGroupAgent | undefined;
+export function getMessagingGroupAgent(id: string): MessagingGroupAgent | undefined {
+  return getDb().prepare('SELECT * FROM messaging_group_agents WHERE id = ?').get(id) as
+    | MessagingGroupAgent
+    | undefined;
 }
 
 export function updateMessagingGroupAgent(
@@ -252,12 +216,7 @@ export function updateMessagingGroupAgent(
   updates: Partial<
     Pick<
       MessagingGroupAgent,
-      | 'engage_mode'
-      | 'engage_pattern'
-      | 'sender_scope'
-      | 'ignored_message_policy'
-      | 'session_mode'
-      | 'priority'
+      'engage_mode' | 'engage_pattern' | 'sender_scope' | 'ignored_message_policy' | 'session_mode' | 'priority'
     >
   >,
 ): void {
@@ -273,9 +232,7 @@ export function updateMessagingGroupAgent(
   if (fields.length === 0) return;
 
   getDb()
-    .prepare(
-      `UPDATE messaging_group_agents SET ${fields.join(', ')} WHERE id = @id`,
-    )
+    .prepare(`UPDATE messaging_group_agents SET ${fields.join(', ')} WHERE id = @id`)
     .run(values);
 }
 
@@ -284,9 +241,7 @@ export function deleteMessagingGroupAgent(id: string): void {
 }
 
 /** Get all messaging groups wired to an agent group (reverse lookup). */
-export function getMessagingGroupsByAgentGroup(
-  agentGroupId: string,
-): MessagingGroup[] {
+export function getMessagingGroupsByAgentGroup(agentGroupId: string): MessagingGroup[] {
   return getDb()
     .prepare(
       `SELECT mg.* FROM messaging_groups mg

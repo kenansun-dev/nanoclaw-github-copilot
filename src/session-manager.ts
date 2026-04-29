@@ -52,10 +52,7 @@ export function inboundDbPath(agentGroupId: string, sessionId: string): string {
 }
 
 /** Path to the container-owned outbound DB (messages_out + processing_ack). */
-export function outboundDbPath(
-  agentGroupId: string,
-  sessionId: string,
-): string {
+export function outboundDbPath(agentGroupId: string, sessionId: string): string {
   return path.join(sessionDir(agentGroupId, sessionId), 'outbound.db');
 }
 
@@ -101,11 +98,7 @@ export function resolveSession(
     const lookupThreadId = sessionMode === 'shared' ? null : threadId;
     // Scope lookup by agent_group_id so fan-out to multiple agents in the
     // same chat doesn't accidentally deliver to the wrong agent's session.
-    const existing = findSessionForAgent(
-      agentGroupId,
-      messagingGroupId,
-      lookupThreadId,
-    );
+    const existing = findSessionForAgent(agentGroupId, messagingGroupId, lookupThreadId);
     if (existing) {
       return { session: existing, created: false };
     }
@@ -127,22 +120,13 @@ export function resolveSession(
 
   createSession(session);
   initSessionFolder(agentGroupId, id);
-  log.info('Session created', {
-    id,
-    agentGroupId,
-    messagingGroupId,
-    threadId: lookupThreadId,
-    sessionMode,
-  });
+  log.info('Session created', { id, agentGroupId, messagingGroupId, threadId: lookupThreadId, sessionMode });
 
   return { session, created: true };
 }
 
 /** Create the session folder and initialize both DBs. */
-export function initSessionFolder(
-  agentGroupId: string,
-  sessionId: string,
-): void {
+export function initSessionFolder(agentGroupId: string, sessionId: string): void {
   const dir = sessionDir(agentGroupId, sessionId);
   fs.mkdirSync(dir, { recursive: true });
   fs.mkdirSync(path.join(dir, 'outbox'), { recursive: true });
@@ -162,10 +146,7 @@ export function initSessionFolder(
  * writeDestinations() (when installed) so the latest routing is always in
  * place, including after admin rewiring.
  */
-export function writeSessionRouting(
-  agentGroupId: string,
-  sessionId: string,
-): void {
+export function writeSessionRouting(agentGroupId: string, sessionId: string): void {
   const dbPath = inboundDbPath(agentGroupId, sessionId);
   if (!fs.existsSync(dbPath)) return;
 
@@ -192,12 +173,7 @@ export function writeSessionRouting(
   } finally {
     db.close();
   }
-  log.debug('Session routing written', {
-    sessionId,
-    channelType,
-    platformId,
-    threadId: session.thread_id,
-  });
+  log.debug('Session routing written', { sessionId, channelType, platformId, threadId: session.thread_id });
 }
 
 /**
@@ -230,12 +206,7 @@ export function writeSessionMessage(
   },
 ): void {
   // Extract base64 attachment data, save to inbox, replace with file paths
-  const content = extractAttachmentFiles(
-    agentGroupId,
-    sessionId,
-    message.id,
-    message.content,
-  );
+  const content = extractAttachmentFiles(agentGroupId, sessionId, message.id, message.content);
 
   const db = openInboundDb(agentGroupId, sessionId);
   try {
@@ -275,19 +246,13 @@ function extractAttachmentFiles(
     return contentStr;
   }
 
-  const attachments = parsed.attachments as
-    | Array<Record<string, unknown>>
-    | undefined;
+  const attachments = parsed.attachments as Array<Record<string, unknown>> | undefined;
   if (!Array.isArray(attachments)) return contentStr;
 
   let changed = false;
   for (const att of attachments) {
     if (typeof att.data === 'string') {
-      const inboxDir = path.join(
-        sessionDir(agentGroupId, sessionId),
-        'inbox',
-        messageId,
-      );
+      const inboxDir = path.join(sessionDir(agentGroupId, sessionId), 'inbox', messageId);
       fs.mkdirSync(inboxDir, { recursive: true });
       const filename = (att.name as string) || `attachment-${Date.now()}`;
       const filePath = path.join(inboxDir, filename);
@@ -295,11 +260,7 @@ function extractAttachmentFiles(
       att.localPath = `inbox/${messageId}/${filename}`;
       delete att.data;
       changed = true;
-      log.debug('Saved attachment to inbox', {
-        messageId,
-        filename,
-        size: att.size,
-      });
+      log.debug('Saved attachment to inbox', { messageId, filename, size: att.size });
     }
   }
 
@@ -307,20 +268,14 @@ function extractAttachmentFiles(
 }
 
 /** Open the inbound DB for a session (host reads/writes). */
-export function openInboundDb(
-  agentGroupId: string,
-  sessionId: string,
-): Database.Database {
+export function openInboundDb(agentGroupId: string, sessionId: string): Database.Database {
   const db = openInboundDbRaw(inboundDbPath(agentGroupId, sessionId));
   migrateMessagesInTable(db);
   return db;
 }
 
 /** Open the outbound DB for a session (host reads only). */
-export function openOutboundDb(
-  agentGroupId: string,
-  sessionId: string,
-): Database.Database {
+export function openOutboundDb(agentGroupId: string, sessionId: string): Database.Database {
   return openOutboundDbRaw(outboundDbPath(agentGroupId, sessionId));
 }
 
@@ -346,14 +301,7 @@ export function writeOutboundDirect(
     db.prepare(
       `INSERT OR IGNORE INTO messages_out (id, seq, timestamp, kind, platform_id, channel_type, thread_id, content)
        VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 2 FROM messages_out), datetime('now'), ?, ?, ?, ?, ?)`,
-    ).run(
-      message.id,
-      message.kind,
-      message.platformId,
-      message.channelType,
-      message.threadId,
-      message.content,
-    );
+    ).run(message.id, message.kind, message.platformId, message.channelType, message.threadId, message.content);
   } finally {
     db.close();
   }
@@ -362,10 +310,7 @@ export function writeOutboundDirect(
 /**
  * @deprecated Use openInboundDb / openOutboundDb instead.
  */
-export function openSessionDb(
-  agentGroupId: string,
-  sessionId: string,
-): Database.Database {
+export function openSessionDb(agentGroupId: string, sessionId: string): Database.Database {
   return openInboundDb(agentGroupId, sessionId);
 }
 
@@ -407,11 +352,7 @@ export function readOutboxFiles(
   messageId: string,
   filenames: string[],
 ): OutboundFile[] | undefined {
-  const outboxDir = path.join(
-    sessionDir(agentGroupId, sessionId),
-    'outbox',
-    messageId,
-  );
+  const outboxDir = path.join(sessionDir(agentGroupId, sessionId), 'outbox', messageId);
   if (!fs.existsSync(outboxDir)) return undefined;
   const files: OutboundFile[] = [];
   for (const filename of filenames) {
@@ -431,33 +372,19 @@ export function readOutboxFiles(
  * delivery caller — the message is already on the user's screen, and a
  * thrown error would trigger the delivery retry path and deliver twice.
  */
-export function clearOutbox(
-  agentGroupId: string,
-  sessionId: string,
-  messageId: string,
-): void {
-  const outboxDir = path.join(
-    sessionDir(agentGroupId, sessionId),
-    'outbox',
-    messageId,
-  );
+export function clearOutbox(agentGroupId: string, sessionId: string, messageId: string): void {
+  const outboxDir = path.join(sessionDir(agentGroupId, sessionId), 'outbox', messageId);
   if (!fs.existsSync(outboxDir)) return;
   try {
     fs.rmSync(outboxDir, { recursive: true, force: true });
   } catch (err) {
-    log.warn('Outbox cleanup failed (message already delivered)', {
-      messageId,
-      err,
-    });
+    log.warn('Outbox cleanup failed (message already delivered)', { messageId, err });
   }
 }
 
 /** Mark a container as running for a session. */
 export function markContainerRunning(sessionId: string): void {
-  updateSession(sessionId, {
-    container_status: 'running',
-    last_active: new Date().toISOString(),
-  });
+  updateSession(sessionId, { container_status: 'running', last_active: new Date().toISOString() });
 }
 
 /** Mark a container as idle for a session. */

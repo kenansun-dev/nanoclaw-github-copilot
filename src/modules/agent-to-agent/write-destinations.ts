@@ -11,18 +11,12 @@ import fs from 'fs';
 
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
-import {
-  replaceDestinations,
-  type DestinationRow,
-} from '../../db/session-db.js';
+import { replaceDestinations, type DestinationRow } from '../../db/session-db.js';
 import { log } from '../../log.js';
 import { inboundDbPath, openInboundDb } from '../../session-manager.js';
 import { getDestinations } from './db/agent-destinations.js';
 
-export function writeDestinations(
-  agentGroupId: string,
-  sessionId: string,
-): void {
+export function writeDestinations(agentGroupId: string, sessionId: string): void {
   const dbPath = inboundDbPath(agentGroupId, sessionId);
   if (!fs.existsSync(dbPath)) return;
 
