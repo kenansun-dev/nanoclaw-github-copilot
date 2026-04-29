@@ -36,6 +36,10 @@ schema-incompatible (different columns, different PK).
 
 ### v2 (taken-upstream, currently dormant)
 
+**Verified dormant 2026-04-30** by RPI5 smoke against `~/.nanoclaw-v2/data/nanoclaw.db`:
+`Database initialized` log on boot comes from fork `db.ts:initDatabase()`
+(v1 schema), and `initDb()` has zero non-`src/db/`-internal callers.
+
 - Defined in two places for the upstream module-split:
   - `src/db/migrations/001-initial.ts:85` — runs via `runMigrations()` invoked
     from `src/db/connection.ts:initDb()`
@@ -66,7 +70,7 @@ schema-incompatible (different columns, different PK).
 | v1 column        | v2 column            | Notes |
 |------------------|----------------------|-------|
 | `group_folder`   | `agent_group_id` (FK)| v1 stores folder name as identity; v2 derefs through `agent_groups.id` (UUID) |
-| `provider`       | `agent_provider`     | rename, semantics identical (`'anthropic'`, `'github-copilot'`, …) |
+| `provider`       | `agent_provider`     | name change, but **also redundantly stored on `agent_groups.agent_provider`** (`src/db/migrations/001-initial.ts:14`). v2 has the field in two places — likely an override pattern (group default + per-session override), but canonical resolution rule is undocumented. See Q3. |
 | `session_id`     | `id` (PK)            | v1 PK is `(folder, provider)`; v2 PK is `id` UUID |
 | `think_level`    | (gone)               | v2 stores think config in `agent_groups` row, not per-session |
 | `model`          | (gone)               | same |
@@ -173,18 +177,30 @@ the safety upside is paid forward across every channel migration.
 
 When B.7 starts (separate PR, not this one):
 
-1. **Schema patch** (single commit, expected ≤ 30 lines diff):
+1. **Schema patch** (single commit, expected **≈ 40 lines diff**, revised
+   upward from initial ≤30 estimate after RPI5 cross-review caught two
+   missed FK reference sites):
    - `src/db/migrations/001-initial.ts`: rename `sessions` → `sessions_v2`,
      `idx_sessions_agent_group` → `idx_sessions_v2_agent_group`,
      `idx_sessions_lookup` → `idx_sessions_v2_lookup`.
-   - `src/db/schema.ts`: same rename.
+   - **`src/db/migrations/001-initial.ts:101`** — update
+     `pending_questions.session_id REFERENCES sessions(id)` →
+     `REFERENCES sessions_v2(id)`.
+   - **`src/db/migrations/module-approvals-pending-approvals.ts:25`** —
+     update `session_id TEXT REFERENCES sessions(id)` →
+     `REFERENCES sessions_v2(id)`.
+   - `src/db/schema.ts`: same `sessions` rename **plus**
+     line 122 `pending_questions.session_id REFERENCES sessions(id)` →
+     `REFERENCES sessions_v2(id)`.
    - `src/db/sessions.ts`: update all 6 `INSERT/SELECT/UPDATE/DELETE` to
      reference `sessions_v2`.
    - `src/db/migrations/index.ts`: bump migration index if needed (this is
      a no-op for fresh DBs since `001-initial.ts` is already the first run;
      existing v2 deployments would need a `014-rename-sessions-v2` migration
-     instead — but at this writing **no v2 deployment exists**, only the
-     committed schema, so a direct rename in `001-initial.ts` is safe).
+     instead — but at this writing **no v2 deployment exists** (verified
+     2026-04-30 by RPI5 grep + smoke against `~/.nanoclaw-v2/data/nanoclaw.db`
+     showing v1 schema only; `initDb()` has zero callers in `src/index.ts`),
+     so a direct rename in `001-initial.ts` is safe).
 2. **Test patch**:
    - `src/db/sessions.test.ts` (if present) updates table refs.
    - Add a new `src/db/migrations/sessions-coexistence.test.ts` that
@@ -192,7 +208,12 @@ When B.7 starts (separate PR, not this one):
      CRUD paths work without interfering.
 3. **No data migration** in B.7 itself. v1 sessions stay live in the
    `sessions` table; v2 sessions appear in `sessions_v2`. Cutover migration
-   (later) can copy or discard.
+   (later) can copy or discard. **Footnote on `pending_questions`**: any v1
+   `pending_questions` rows alive at cutover dangle — they FK the v1
+   `sessions` PK shape `(group_folder, provider)` which `sessions_v2` does
+   not have. Strategy: **abandon in place**, drain naturally as v1
+   dispatcher retires. The v1 `pending_questions` table is dropped by the
+   same B.8+ cleanup migration that drops v1 `sessions`.
 4. **Cleanup migration** (B.8 or later, after v1 dispatcher is removed):
    - `015-drop-sessions-v1.ts` (or whatever the next index is): drops the
      v1 `sessions` table.
@@ -220,10 +241,14 @@ When B.7 starts (separate PR, not this one):
 - **Q2**: Does `agent_groups.id` need to be backfillable from `group_folder`
   for cutover-time data sync?
   - **A2**: Out of scope for B.7; see the cutover migration design (B.8+).
-- **Q3**: Should the cleanup migration also drop `sessions_v2`'s `agent_provider`
-  column (since v2 wants per-agent-group provider not per-session)?
-  - **A3**: Defer to B.8+ design. v2 schema as taken from upstream keeps the
-    column; we'll let upstream's design choice stand for now.
+- **Q3**: `agent_provider` lives on **both** `agent_groups` (`001-initial.ts:14`)
+  and `sessions_v2` (this table). Which is canonical? Override semantics?
+  - **A3**: Defer to B.8+ design. Upstream ships both columns, so the override
+    pattern is the most likely intent (agent_group default; per-session override
+    when the user switches model mid-conversation). B.7 implementation must not
+    silently pick one — keep both columns in sync until B.8 picks the canonical
+    field. Earlier v0 of this doc claimed `agent_groups` had no provider column;
+    that was wrong — discovered during RPI5 cross-review of `16fff30`.
 
 ## Related work
 
