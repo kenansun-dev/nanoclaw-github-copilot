@@ -5,8 +5,7 @@
 import { execSync } from 'child_process';
 import os from 'os';
 
-import { CONTAINER_INSTALL_LABEL } from './config.js';
-import { log } from './log.js';
+import { logger } from './log.js';
 
 /** The container runtime binary name. */
 export const CONTAINER_RUNTIME_BIN = 'docker';
@@ -21,7 +20,10 @@ export function hostGatewayArgs(): string[] {
 }
 
 /** Returns CLI args for a readonly bind mount. */
-export function readonlyMountArgs(hostPath: string, containerPath: string): string[] {
+export function readonlyMountArgs(
+  hostPath: string,
+  containerPath: string,
+): string[] {
   return ['-v', `${hostPath}:${containerPath}:ro`];
 }
 
@@ -40,38 +42,43 @@ export function ensureContainerRuntimeRunning(): void {
       stdio: 'pipe',
       timeout: 10000,
     });
-    log.debug('Container runtime already running');
+    logger.debug('Container runtime already running');
   } catch (err) {
-    log.error('Failed to reach container runtime', { err });
-    console.error('\n╔════════════════════════════════════════════════════════════════╗');
-    console.error('║  FATAL: Container runtime failed to start                      ║');
-    console.error('║                                                                ║');
-    console.error('║  Agents cannot run without a container runtime. To fix:        ║');
-    console.error('║  1. Ensure Docker is installed and running                     ║');
-    console.error('║  2. Run: docker info                                           ║');
-    console.error('║  3. Restart NanoClaw                                           ║');
-    console.error('╚════════════════════════════════════════════════════════════════╝\n');
-    throw new Error('Container runtime is required but failed to start', {
-      cause: err,
-    });
+    logger.error({ err }, 'Failed to reach container runtime');
+    console.error(
+      '\n╔════════════════════════════════════════════════════════════════╗',
+    );
+    console.error(
+      '║  FATAL: Container runtime failed to start                      ║',
+    );
+    console.error(
+      '║                                                                ║',
+    );
+    console.error(
+      '║  Agents cannot run without a container runtime. To fix:        ║',
+    );
+    console.error(
+      '║  1. Ensure Docker is installed and running                     ║',
+    );
+    console.error(
+      '║  2. Run: docker info                                           ║',
+    );
+    console.error(
+      '║  3. Restart NanoClaw                                           ║',
+    );
+    console.error(
+      '╚════════════════════════════════════════════════════════════════╝\n',
+    );
+    throw new Error('Container runtime is required but failed to start');
   }
 }
 
-/**
- * Kill orphaned NanoClaw containers from THIS install's previous runs.
- *
- * Scoped by label `nanoclaw-install=<slug>` so a crash-looping peer install
- * cannot reap our containers, and we cannot reap theirs. The label is
- * stamped onto every container at spawn time — see container-runner.ts.
- */
+/** Kill orphaned NanoClaw containers from previous runs. */
 export function cleanupOrphans(): void {
   try {
     const output = execSync(
-      `${CONTAINER_RUNTIME_BIN} ps --filter label=${CONTAINER_INSTALL_LABEL} --format '{{.Names}}'`,
-      {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        encoding: 'utf-8',
-      },
+      `${CONTAINER_RUNTIME_BIN} ps --filter name=nanoclaw- --format '{{.Names}}'`,
+      { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
     );
     const orphans = output.trim().split('\n').filter(Boolean);
     for (const name of orphans) {
@@ -82,9 +89,12 @@ export function cleanupOrphans(): void {
       }
     }
     if (orphans.length > 0) {
-      log.info('Stopped orphaned containers', { count: orphans.length, names: orphans });
+      logger.info(
+        { count: orphans.length, names: orphans },
+        'Stopped orphaned containers',
+      );
     }
   } catch (err) {
-    log.warn('Failed to clean up orphaned containers', { err });
+    logger.warn({ err }, 'Failed to clean up orphaned containers');
   }
 }

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { log } from './log.js';
+import { logger } from './log.js';
+import { resolveWorkspace } from './workspace.js';
 
 /**
  * Parse the .env file and return values for the requested keys.
@@ -9,12 +10,12 @@ import { log } from './log.js';
  * so they don't leak to child processes.
  */
 export function readEnvFile(keys: string[]): Record<string, string> {
-  const envFile = path.join(process.cwd(), '.env');
+  const envFile = path.join(resolveWorkspace(), '.env');
   let content: string;
   try {
     content = fs.readFileSync(envFile, 'utf-8');
   } catch (err) {
-    log.debug('.env file not found, using defaults', { err });
+    logger.debug({ err }, '.env file not found, using defaults');
     return {};
   }
 
@@ -31,7 +32,8 @@ export function readEnvFile(keys: string[]): Record<string, string> {
     let value = trimmed.slice(eqIdx + 1).trim();
     if (
       value.length >= 2 &&
-      ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))
+      ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'")))
     ) {
       value = value.slice(1, -1);
     }
