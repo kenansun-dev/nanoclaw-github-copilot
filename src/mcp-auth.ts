@@ -21,7 +21,7 @@ import os from 'os';
 import https from 'https';
 import http from 'http';
 
-import { logger } from './log.js';
+import { logger } from './log-extensions.js';
 import { resolveWorkspace } from './workspace.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────

@@ -20,7 +20,7 @@ import net from 'net';
 import path from 'path';
 
 import { ASSISTANT_NAME } from '../config.js';
-import { logger } from '../log.js';
+import { logger } from '../log-extensions.js';
 import { loadConfig } from '../config-loader.js';
 import { resolveWorkspace } from '../workspace.js';
 import { deriveGroupFolder } from '../chat-manager.js';

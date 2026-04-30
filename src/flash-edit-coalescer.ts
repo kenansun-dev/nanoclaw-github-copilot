@@ -30,7 +30,7 @@
  */
 
 import type { Channel } from './types.js';
-import { logger } from './log.js';
+import { logger } from './log-extensions.js';
 
 export type FlashEditOpts = { parseMode?: 'HTML' | 'Markdown' };
 

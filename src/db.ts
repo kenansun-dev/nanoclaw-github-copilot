@@ -4,7 +4,7 @@ import path from 'path';
 
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
-import { logger } from './log.js';
+import { logger } from './log-extensions.js';
 import { collapseMainDmFolder } from './session-routing.js';
 import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
 

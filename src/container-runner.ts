@@ -33,7 +33,7 @@ import {
   PROVIDER_SESSION_DIR,
 } from './config-extensions.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
-import { logger } from './log.js';
+import { logger } from './log-extensions.js';
 import {
   CONTAINER_RUNTIME_BIN,
   hostGatewayArgs,
@@ -894,7 +894,7 @@ export function writeGroupsSnapshot(
 // ============================================================================
 
 import type { Session, AgentGroup as _AgentGroup } from './types.js';
-import { logger as _v2StubLogger } from './log.js';
+import { logger as _v2StubLogger } from './log-extensions.js';
 
 /** v2 stub: returns whether a v2 container is currently running for a session. */
 export function isContainerRunning(_sessionId: string): boolean {

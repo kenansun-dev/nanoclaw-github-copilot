@@ -15,7 +15,7 @@
 
 import fs from 'fs';
 import { paths } from '../workspace.js';
-import { getValidLevels } from '../log.js';
+import { getValidLevels } from '../log-extensions.js';
 import { readPid, signalReload } from '../daemon-signal.js';
 
 const VALID = getValidLevels();

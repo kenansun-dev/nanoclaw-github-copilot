@@ -23,7 +23,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-import { logger } from './log.js';
+import { logger } from './log-extensions.js';
 import { resolveWorkspace } from './workspace.js';
 
 // ─── Paths ───────────────────────────────────────────────────────────────────

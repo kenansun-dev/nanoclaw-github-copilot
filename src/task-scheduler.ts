@@ -25,7 +25,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
-import { logger } from './log.js';
+import { logger } from './log-extensions.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 /**

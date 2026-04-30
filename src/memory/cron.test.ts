@@ -66,7 +66,7 @@ vi.mock('./../config.js', () => ({ TIMEZONE: 'Asia/Shanghai' }));
 vi.mock('./../config-loader.js', () => ({
   loadConfig: () => ({ memory: { dailySummary: h.config.value } }),
 }));
-vi.mock('./../log.js', () => ({
+vi.mock('./../log-extensions.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 

@@ -4,7 +4,7 @@
 
 import fs from 'fs';
 import { paths } from '../workspace.js';
-import { logger } from '../log.js';
+import { logger } from '../log-extensions.js';
 
 /**
  * Set a nested config value by dot-separated key path.
