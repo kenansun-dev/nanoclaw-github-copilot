@@ -34,7 +34,7 @@ import type {
 } from './adapter.js';
 import { registerChannelAdapter } from './channel-registry.js';
 import { TelegramChannel } from './telegram.js';
-import type { NewMessage, RegisteredGroup } from '../types.js';
+import type { NewMessage, RegisteredGroup } from '../types-extensions.js';
 
 const CHANNEL_TYPE = 'telegram';
 

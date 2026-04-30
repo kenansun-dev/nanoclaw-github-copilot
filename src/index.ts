@@ -84,7 +84,7 @@ import {
 } from './sender-allowlist.js';
 import { startSessionCleanup } from './session-cleanup.js';
 import { startSchedulerLoop } from './task-scheduler-bridge.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { Channel, NewMessage, RegisteredGroup } from './types-extensions.js';
 import { logger } from './log-extensions.js';
 
 // Re-export for backwards compatibility during refactor
@@ -521,7 +521,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // legacy progressiveMsgId path is bypassed entirely. See
   // src/types.ts:Channel.usesNativeStreaming docstring for why this is
   // a separate code path from editMessage-based partial accumulation.
-  let streamHandle: import('./types.js').StreamHandle | undefined;
+  let streamHandle: import('./types-extensions.js').StreamHandle | undefined;
   // IPC mode: the runAgent() promise resolves on the first query-complete
   // signal, but the spawned agent process keeps living and the stdout
   // listener (with this onOutput closure) keeps firing for follow-up

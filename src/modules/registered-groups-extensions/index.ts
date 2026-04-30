@@ -24,7 +24,7 @@ import {
   type GroupResolverFn,
 } from './router-hook.js';
 import { log } from '../../log.js';
-import type { MessagingGroup, RegisteredGroup } from '../../types.js';
+import type { MessagingGroup, RegisteredGroup } from '../../types-extensions.js';
 
 export const registeredGroupsFork = {
   getAllRegisteredGroups,

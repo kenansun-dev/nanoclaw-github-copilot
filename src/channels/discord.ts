@@ -16,7 +16,7 @@ import {
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
-} from '../types.js';
+} from '../types-extensions.js';
 
 export interface DiscordChannelOpts {
   onMessage: OnInboundMessage;

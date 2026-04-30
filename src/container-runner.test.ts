@@ -149,7 +149,7 @@ vi.mock('child_process', async () => {
 });
 
 import { runContainerAgent, ContainerOutput } from './container-runner.js';
-import type { RegisteredGroup } from './types.js';
+import type { RegisteredGroup } from './types-extensions.js';
 
 const testGroup: RegisteredGroup = {
   name: 'Test Group',

@@ -8,7 +8,7 @@ import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './log-extensions.js';
-import { RegisteredGroup } from './types.js';
+import { RegisteredGroup } from './types-extensions.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<string | void>;

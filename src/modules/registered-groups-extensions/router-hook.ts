@@ -15,7 +15,7 @@
  */
 
 import { log } from '../../log.js';
-import type { MessagingGroup, RegisteredGroup } from '../../types.js';
+import type { MessagingGroup, RegisteredGroup } from '../../types-extensions.js';
 import type { InboundEvent } from '../../channels/adapter.js';
 
 /**

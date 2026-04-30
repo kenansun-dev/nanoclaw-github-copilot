@@ -29,7 +29,7 @@
  * caller's enqueue is responsible for kicking off the worker.
  */
 
-import type { Channel } from './types.js';
+import type { Channel } from './types-extensions.js';
 import { logger } from './log-extensions.js';
 
 export type FlashEditOpts = { parseMode?: 'HTML' | 'Markdown' };

@@ -19,7 +19,7 @@ import {
   OnInboundMessage,
   RegisteredGroup,
   StreamHandle,
-} from '../types.js';
+} from '../types-extensions.js';
 import { TeamsStreamingSession, makeAdapterSender } from './teams-streaming.js';
 
 // ---------------------------------------------------------------------------

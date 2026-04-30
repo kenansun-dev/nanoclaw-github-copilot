@@ -11,7 +11,7 @@ import {
   computeNextRun,
   MAX_CONSECUTIVE_GROUP_MISSING,
 } from './task-scheduler-bridge.js';
-import type { ScheduledTask } from './types.js';
+import type { ScheduledTask } from './types-extensions.js';
 
 describe('task-scheduler-bridge', () => {
   afterEach(() => {

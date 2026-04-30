@@ -26,7 +26,7 @@ import {
   type ThinkLevel,
   type ShowThinking,
 } from './session-overrides.js';
-import { Channel } from './types.js';
+import { Channel } from './types-extensions.js';
 
 // ─── Command definitions ─────────────────────────────────────────────────────
 

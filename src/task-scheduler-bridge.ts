@@ -46,7 +46,7 @@ import {
   MAX_CONSECUTIVE_GROUP_MISSING,
   _resetSchedulerLoopForTests,
 } from './task-scheduler.js';
-import type { ScheduledTask } from './types.js';
+import type { ScheduledTask } from './types-extensions.js';
 
 /**
  * v2-mode dispatch hook. When set (by B.5.3 dispatcher cut after v2

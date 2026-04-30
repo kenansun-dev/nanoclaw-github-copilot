@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import type { ChannelSetup, InboundMessage } from './adapter.js';
-import type { NewMessage } from '../types.js';
+import type { NewMessage } from '../types-extensions.js';
 
 const mockConnect = vi.fn().mockResolvedValue(undefined);
 const mockDisconnect = vi.fn().mockResolvedValue(undefined);

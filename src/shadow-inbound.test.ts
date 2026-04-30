@@ -5,7 +5,7 @@ import {
   shadowRoute,
   __setShadowRouterForTests,
 } from './shadow-inbound.js';
-import type { NewMessage } from './types.js';
+import type { NewMessage } from './types-extensions.js';
 
 const baseMsg: NewMessage = {
   id: 'm-1',

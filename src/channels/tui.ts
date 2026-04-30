@@ -26,7 +26,7 @@ import { resolveWorkspace } from '../workspace.js';
 import { deriveGroupFolder } from '../chat-manager.js';
 // registerGroup callback is provided via ChannelOpts
 import { registerChannel, ChannelOpts } from './registry.js';
-import { Channel, NewMessage } from '../types.js';
+import { Channel, NewMessage } from '../types-extensions.js';
 
 const TUI_JID_PREFIX = 'tui:';
 // Single stable jid shared by every TUI connection. Each `nanoclaw tui`
