@@ -3,9 +3,9 @@ import {
   getResolvedGroup,
   setGroupResolver,
   __resetGroupResolverForTests,
-} from './router.js';
-import type { MessagingGroup } from './types.js';
-import type { InboundEvent } from './channels/adapter.js';
+} from './router-hook.js';
+import type { MessagingGroup } from '../../types.js';
+import type { InboundEvent } from '../../channels/adapter.js';
 
 const mg: MessagingGroup = {
   id: 'mg-1',

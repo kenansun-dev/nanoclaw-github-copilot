@@ -7,7 +7,7 @@ import {
 import {
   getResolvedGroup,
   __resetGroupResolverForTests,
-} from '../../router.js';
+} from './router-hook.js';
 import type { MessagingGroup } from '../../types.js';
 import type { InboundEvent } from '../../channels/adapter.js';
 

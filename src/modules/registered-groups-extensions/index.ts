@@ -22,7 +22,7 @@ import {
 import {
   setGroupResolver,
   type GroupResolverFn,
-} from '../../router.js';
+} from './router-hook.js';
 import { log } from '../../log.js';
 import type { MessagingGroup, RegisteredGroup } from '../../types.js';
 
