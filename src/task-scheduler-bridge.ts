@@ -24,7 +24,7 @@
  *
  * B.5 dispatcher-cut work (in B.5.3):
  *   - `src/index.ts` changes `import { startSchedulerLoop } from './task-scheduler.js'`
- *     to `from './task-scheduler-fork-bridge.js'` (this file re-exports it).
+ *     to `from './task-scheduler-bridge.js'` (this file re-exports it).
  *   - When v2 startup mode is active, `src/index.ts` will call
  *     `setSchedulerV2DispatchHook(v2Fn)` before `startSchedulerLoop(...)`.
  *   - When the hook is set, fork's task-scheduler `runTask` short-
@@ -35,7 +35,7 @@
  *   - Keeps `src/task-scheduler.ts` as a near-verbatim fork v1 file,
  *     easier to re-sync if v2-merge needs to abort.
  *   - Centralises the v2-mode toggle, with the rest of v2 toggles in
- *     module-level startup glue (sender-allowlist-fork, abort-fork,
+ *     module-level startup glue (sender-allowlist-extensions, abort-extensions,
  *     etc.).
  */
 
@@ -82,7 +82,7 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
   forkStartSchedulerLoop(deps);
 }
 
-// Re-export companion symbols so `./task-scheduler-fork-bridge.js`
+// Re-export companion symbols so `./task-scheduler-bridge.js`
 // is a drop-in for `./task-scheduler.js` everywhere. Index.ts only
 // needs `startSchedulerLoop` today; tests + future callers may want
 // the others.

@@ -70,7 +70,7 @@ export function setSenderResolver(fn: SenderResolverFn): void {
 /**
  * Group-resolver hook. Runs alongside agent resolution.
  *
- * Lets a fork add-on (registered-groups-fork) attach the per-chat
+ * Lets a fork add-on (registered-groups-extensions) attach the per-chat
  * `RegisteredGroup` row (folder / trigger / containerConfig / isMain)
  * keyed by `MessagingGroup.platform_id`. v2 routing itself does not
  * need this row, but downstream dispatcher/container code (skill

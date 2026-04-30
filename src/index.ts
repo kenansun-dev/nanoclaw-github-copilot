@@ -83,7 +83,7 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSessionCleanup } from './session-cleanup.js';
-import { startSchedulerLoop } from './task-scheduler-fork-bridge.js';
+import { startSchedulerLoop } from './task-scheduler-bridge.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './log.js';
 
@@ -2022,7 +2022,7 @@ async function main(): Promise<void> {
 
   // ─── B.5.3 v2 dispatcher wiring (env-gated, default off) ──────────
   // When NANOCLAW_V2_DISPATCHER=1, install the v2 router-side hooks so
-  // sender-allowlist-fork + abort-fork take effect via the v2
+  // sender-allowlist-extensions + abort-extensions take effect via the v2
   // access-gate / abort-handler registries. The fork v1 dispatcher
   // loop (startMessageLoop below) STILL runs — this is wiring-only,
   // not a swap. Full swap (replace v1 message loop with
@@ -2048,13 +2048,13 @@ async function main(): Promise<void> {
     try {
       const { setAccessGate } = await import('./router.js');
       const { makeSenderAllowlistGate } = await import(
-        './modules/sender-allowlist-fork/index.js'
+        './modules/sender-allowlist-extensions/index.js'
       );
       const { installAbortFork } = await import(
-        './modules/abort-fork/index.js'
+        './modules/abort-extensions/index.js'
       );
       const { installRegisteredGroupsFork } = await import(
-        './modules/registered-groups-fork/index.js'
+        './modules/registered-groups-extensions/index.js'
       );
       // v2 module barrels self-register on import (approvals,
       // interactive, scheduling, permissions, agent-to-agent,
@@ -2076,7 +2076,7 @@ async function main(): Promise<void> {
         {
           gates: ['sender-allowlist'],
           abortHandler: 'fork',
-          groupResolver: 'registered-groups-fork',
+          groupResolver: 'registered-groups-extensions',
           mode: v2Mode,
           shadow: v2Mode === '2',
         },

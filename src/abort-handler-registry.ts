@@ -6,7 +6,7 @@
  * inbound message the dispatcher walks registered handlers, runs the
  * first one whose `matcher` returns `true`, and stops.
  *
- * Modules (e.g. `abort-fork`) self-register at import time. Registry
+ * Modules (e.g. `abort-extensions`) self-register at import time. Registry
  * lives at `src/` root, dependency-free, mirroring the conventions of
  * `response-registry.ts` / `delivery.ts` / `channel-registry.ts` /
  * `access-gate-registry.ts`.

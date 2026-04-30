@@ -42,7 +42,7 @@ const event: InboundEvent = {
   },
 };
 
-describe('registered-groups-fork resolver', () => {
+describe('registered-groups-extensions resolver', () => {
   beforeEach(() => {
     __resetGroupResolverForTests();
     __resetRegisteredGroupsForkInstalledForTests();

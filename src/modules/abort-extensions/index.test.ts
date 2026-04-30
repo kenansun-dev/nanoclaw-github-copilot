@@ -8,7 +8,7 @@ import {
   __resetAbortHandlersForTests,
 } from '../../abort-handler-registry.js';
 
-describe('abort-fork install', () => {
+describe('abort-extensions install', () => {
   beforeEach(() => {
     __resetAbortHandlersForTests();
     __resetAbortForkInstalledForTests();

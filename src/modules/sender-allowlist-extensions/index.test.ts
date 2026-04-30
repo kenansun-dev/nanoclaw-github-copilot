@@ -38,7 +38,7 @@ const event: InboundEvent = {
   },
 };
 
-describe('sender-allowlist-fork access gate', () => {
+describe('sender-allowlist-extensions access gate', () => {
   beforeEach(() => {
     vi.mocked(isSenderAllowed).mockReset();
     vi.mocked(loadSenderAllowlist).mockReset();

@@ -1,5 +1,5 @@
 /**
- * Bridge smoke test — verifies task-scheduler-fork-bridge.ts re-exports
+ * Bridge smoke test — verifies task-scheduler-bridge.ts re-exports
  * fork's startSchedulerLoop semantics and exposes the v2 dispatch hook
  * setter/getter without changing v1 behaviour.
  */
@@ -10,10 +10,10 @@ import {
   getSchedulerV2DispatchHook,
   computeNextRun,
   MAX_CONSECUTIVE_GROUP_MISSING,
-} from './task-scheduler-fork-bridge.js';
+} from './task-scheduler-bridge.js';
 import type { ScheduledTask } from './types.js';
 
-describe('task-scheduler-fork-bridge', () => {
+describe('task-scheduler-bridge', () => {
   afterEach(() => {
     setSchedulerV2DispatchHook(null);
   });
