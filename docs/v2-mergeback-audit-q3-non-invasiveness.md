@@ -40,7 +40,7 @@ This is a **deliberate B.6 in-progress state** (B.7 cutover plan documented in `
 | `src/env.ts` | +6/-4 | `log` → `logger` rename; `process.cwd()` → `resolveWorkspace()` for workspace-isolation support. Function shape unchanged. |
 | `src/log.ts` | **0** (post-P1.2) | ~~+83/-8~~ Compat shim extracted to fork-only `src/log-extensions.ts` (commit `f41633d`, 2026-04-30). `src/log.ts` is now upstream-verbatim. |
 | `src/channels/index.ts` | +22/-6 | Adds v1 channel self-registrations (discord/telegram/teams/tui) alongside v2's `cli`. v2 channels still register. |
-| `src/router.ts` | +180/-30 | Adds `setGroupResolver()` hook so fork's `registered-groups-extensions` can attach `RegisteredGroup` per inbound. v2 routing logic unchanged. |
+| `src/router.ts` | **+~227/-~32** (post-P2.1) | ~~+180/-30~~ Group-resolver hook (~80 lines) extracted to `src/modules/registered-groups-extensions/router-hook.ts` (commit `63e339d`). Residual delta = prettier reflow + one intentional logic delta (mention-sticky accumulate gate). |
 | `src/modules/mount-security/index.ts` | +35/-386 | Re-export of fork canonical `src/mount-security.ts` (which has stricter `nonMainReadOnly` validation). Net behavior: upstream signatures preserved + stricter check. Documented in 2026-04-28 02:24 GMT+8 decision. |
 | `src/container-runtime.ts` | **+10/0** (post-P1.1) | ~~+40/-30~~ `log → logger` rename reverted (commit `4e029e1`). Residual delta = fork-only `--filter name=nanoclaw-` orphan reaper (intentional install-isolation semantic). |
 | `container/agent-runner/src/providers/index.ts` | +1/-0 | Adds `import './copilot.js'` line; existing claude/mock providers untouched. |
