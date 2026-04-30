@@ -37,18 +37,26 @@ This is a **deliberate B.6 in-progress state** (B.7 cutover plan documented in `
 | File | +/- | Nature |
 |---|---|---|
 | `src/types.ts` | +230/-23 | New interfaces (`AdditionalMount`, `MountAllowlist`, `RegisteredGroup`, `ContainerConfig`). Existing v2 types untouched. |
-| `src/config.ts` | +87/-44 | Adds `loadConfig()` / `getConfig()` / `reloadConfig()` from new `config-loader.ts`. Upstream constants (`ASSISTANT_NAME`, `DATA_DIR`, etc.) still exported. |
 | `src/env.ts` | +6/-4 | `log` → `logger` rename; `process.cwd()` → `resolveWorkspace()` for workspace-isolation support. Function shape unchanged. |
-| `src/log.ts` | +83/-8 | **Pure compat shim**. Keeps `log.info/debug/error/...` exports verbatim. Adds `logger.info(data, msg)` wrapper for fork's pino-style call sites. Adds `applyConfigLogLevel`/`getLogLevel`/`setConsoleOutput` re-exports for fork callers. |
+| `src/log.ts` | **0** (post-P1.2) | ~~+83/-8~~ Compat shim extracted to fork-only `src/log-extensions.ts` (commit `f41633d`, 2026-04-30). `src/log.ts` is now upstream-verbatim. |
 | `src/channels/index.ts` | +22/-6 | Adds v1 channel self-registrations (discord/telegram/teams/tui) alongside v2's `cli`. v2 channels still register. |
-| `src/router.ts` | +180/-30 | Adds `setGroupResolver()` hook so fork's `registered-groups-fork` can attach `RegisteredGroup` per inbound. v2 routing logic unchanged. |
+| `src/router.ts` | +180/-30 | Adds `setGroupResolver()` hook so fork's `registered-groups-extensions` can attach `RegisteredGroup` per inbound. v2 routing logic unchanged. |
 | `src/modules/mount-security/index.ts` | +35/-386 | Re-export of fork canonical `src/mount-security.ts` (which has stricter `nonMainReadOnly` validation). Net behavior: upstream signatures preserved + stricter check. Documented in 2026-04-28 02:24 GMT+8 decision. |
-| `src/container-runtime.ts` | +40/-30 | `log` → `logger` rename, prettier reflow. Function bodies unchanged. |
+| `src/container-runtime.ts` | **+10/0** (post-P1.1) | ~~+40/-30~~ `log → logger` rename reverted (commit `4e029e1`). Residual delta = fork-only `--filter name=nanoclaw-` orphan reaper (intentional install-isolation semantic). |
 | `container/agent-runner/src/providers/index.ts` | +1/-0 | Adds `import './copilot.js'` line; existing claude/mock providers untouched. |
 | `container/agent-runner/package.json` | +1/-0 | Adds `@github/copilot-sdk` dep. |
 | `container/Dockerfile` | +53/-100 | Replaced with fork-tailored Dockerfile, but upstream container behavior preserved by `Dockerfile.ghc` running in parallel. |
 | `vitest.config.ts` | +8/-0 | Adds `setup/**`, `test/**`, `container/agent-runner-ghc/**` to includes. Upstream `src/**/*.test.ts` still included. |
 | `package.json` | +73/-21 | Renames pkg to `nanoclaw-github-copilot`, adds `bin`, `prepack`, `postinstall`, deps. v2 build script (`tsc`) preserved. |
+
+### REPLACED — upstream semantic supplanted (time-boxed tech debt)
+| File | Why reclassified | Cutover |
+|---|---|---|
+| `src/index.ts` | 2228 fork lines vs 187 upstream — v1 dispatcher loop entirely replaces v2's. | B.5.3 cutover deletes v1 path; `src/index.ts` reverts to extending upstream. |
+| `src/container-runner.ts` | Fork-only spawn semantic; upstream's not invoked. | B.7 sessions migration deletes fork path. |
+| `src/task-scheduler.ts` | Fork's scheduler is alternate impl, upstream's `modules/scheduling/` not wired. | B.x scheduling cutover. |
+| `src/config.ts` | **(reclassified 2026-04-30 P1.3 audit)** Data-source model entirely replaced: upstream is `process.env || envConfig.X || 'default'`; fork is `_config.agents.defaults.X` (loads from `nanoclaw.json` via `config-loader.ts`). Same export names, different signatures + side-effects. Was mis-bucketed as ADDITIVE in original audit because diff size (+87/-44) didn't reflect semantic replacement. | Future config cutover (TBD); restoring requires either reverting fork's JSON config model or wrapping all consts as getters across all importers. |
+
 
 ### DOC / META
 - `.github/PULL_REQUEST_TEMPLATE.md`, `.github/workflows/ci.yml`, `.gitignore`, `CLAUDE.md`, `CONTRIBUTING.md`, `README.md`, `groups/global/CLAUDE.md`, `groups/main/CLAUDE.md`, `repo-tokens/badge.svg` → no runtime behavior
