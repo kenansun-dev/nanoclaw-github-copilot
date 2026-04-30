@@ -96,3 +96,18 @@ Five files originally listed as "upstream deleted, we still call" were initially
 All have 3-18 importers (`src/index.ts`, `command-gate.ts`, `admin-command-registry.ts`, `task-scheduler.ts`, `host-runner.ts`, `container-runner.ts`, `modules/mount-security/index.ts`). They retire on the same cutover day as v1 dispatcher loop removal.
 
 **Rule for next mergeback**: before encoding accept-delete in any resolution script, run `grep -rn "from './<basename>(\.js)?'" src/` and verify zero callers. Local `find` / IDE "find usages" misses re-exports and dynamic imports.
+
+### `src/config.ts` — restore upstream + add `config-extensions.ts` overlay
+
+Deferred from Q2-followup engineering cleanup P1.3 (2026-04-30, rpi5 + VM agreed Option A; owner delegated decision in Discord `#nanoclaw`).
+
+**Why deferred** (not done in PR #36): `src/config.ts` was originally bucketed as ADDITIVE in the Q3 audit but re-review showed the data-source model is entirely REPLACED:
+
+- Upstream: `ASSISTANT_NAME = process.env.ASSISTANT_NAME || envConfig.X || 'Andy'` (env-first + install-slug)
+- Fork: `ASSISTANT_NAME = _config.agents.defaults.name` (loaded from `nanoclaw.json` via `config-loader.ts`, workspace-relative)
+
+Same export names, different signatures + side-effects. Restoring upstream cleanly requires either (a) reverting fork's JSON config-loader model or (b) wrapping every fork-derived const as a getter so `config-extensions.ts` can host the loader behind upstream's surface. Both are large mechanical refactors with regression surface across every importer of `ASSISTANT_NAME` / `DATA_DIR` / `STORE_DIR` / `CONTAINER_IMAGE` / `MOUNT_ALLOWLIST_PATH` etc.
+
+**Cutover plan** (when this lands): mirror the same approach used for `index.ts` / `container-runner.ts` / `task-scheduler.ts` — restore `src/config.ts` to upstream verbatim and put fork's JSON-loader-backed exports in `src/config-extensions.ts`. Likely the right time is the same window as the v1 dispatcher cutover (B.7 or shortly after), since fork callers can migrate to the extensions module in lockstep.
+
+Until then, `src/config.ts` stays in the REPLACED bucket of `docs/v2-mergeback-audit-q3-non-invasiveness.md` alongside `index.ts` / `container-runner.ts` / `task-scheduler.ts`.
