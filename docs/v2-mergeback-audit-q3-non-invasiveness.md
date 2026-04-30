@@ -14,7 +14,7 @@
 | Pure additions (new files) | 241 | ✅ Cannot affect upstream by definition |
 | Modified docs/CI/meta | 13 | ✅ Not behavior |
 | Modified upstream-tracked code, **ADDITIVE** | 11 files | ✅ Build-on-top hold |
-| Modified upstream-tracked code, **REPLACED** | **2 files** | ⚠️ See "Build-on-top broken" |
+| Modified upstream-tracked code, **REPLACED** | **3 files** (incl. fork-restored `task-scheduler.ts`) | ⚠️ See "Build-on-top broken" |
 
 **The original "build-on-top" promise no longer fully holds.** Two upstream-tracked files (`src/index.ts`, `src/container-runner.ts`) have been REPLACED rather than extended — fork ships a v1-style dispatcher + spawn+IPC container runner instead of running the v2 `routeInbound`/DB-poll path that upstream ships.
 
@@ -29,8 +29,9 @@ This is a **deliberate B.6 in-progress state** (B.7 cutover plan documented in `
 |---|---|---|---|
 | `src/index.ts` | +2193/-152 | 187-line thin orchestrator: init DB, run migrations, start `routeInbound`, sweep | 2228-line v1 dispatcher loop: poll messages, GroupQueue, container wake-loop. Imports `db.ts` (v1) not `db/connection.js` (v2) |
 | `src/container-runner.ts` | +839/-442 | v2: DB-polling agent that wakes on session row updates | Fork: spawn ChildProcess with sentinel-marker IPC (`---NANOCLAW_OUTPUT_START/END---`), v1-style |
+| `src/task-scheduler.ts` (+ `task-scheduler-fork-bridge.ts`) | fork-only restored | v2 deleted `src/task-scheduler.ts`, moved to per-session `messages_in` rows via `src/modules/scheduling/{actions,db,recurrence}.ts` | Fork keeps v1 polling loop (auto-pause on missing groups, `context_mode='isolated'`, `MAX_CONSECUTIVE_GROUP_MISSING`, group-folder snapshot writes not yet ported to v2). Bridge file = B.5.3 cutover toggle point |
 
-**Mitigation**: B.7 cutover plan flips `NANOCLAW_V2_DISPATCHER` env-gate default → on; once verified the fork-swapped versions of both files become deletable. Until then this is a **scoped, documented invasiveness**, not silent regression.
+**Mitigation**: B.5.3 (scheduler) and B.7 (dispatcher) cutover plans flip `NANOCLAW_V2_DISPATCHER` env-gate default → on; once fork-only scheduler features port to v2's `modules/scheduling/`, all three replaced files become deletable. Until then this is a **scoped, documented invasiveness**, not silent regression.
 
 ### ADDITIVE — upstream behavior preserved
 | File | +/- | Nature |
