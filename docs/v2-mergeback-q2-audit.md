@@ -94,7 +94,7 @@ New `src/modules/` entries to create (each with `index.ts` + colocated `.test.ts
 |---|---|
 | `modules/ipc/` | `ipc.ts`, `ipc-helpers.test.ts`, `ipc-plugin.test.ts`, `chat-manager.ts`, `chat-reconcile.ts`, `shadow-inbound.ts`, `sender-allowlist.ts` |
 | `modules/registries/` | `abort-handler-registry.ts`, `access-gate-registry.ts`, `admin-command-registry.ts`, `slash-command-registry.ts`, `slash-commands.ts`, `slash-plugin.test.ts` |
-| `modules/scheduling-fork/` | `task-scheduler.ts`, `task-scheduler-fork-bridge.ts`, `group-queue.ts` (or merge into upstream `modules/scheduling/`?) |
+| `modules/scheduling-fork/` | `task-scheduler.ts`, `task-scheduler-fork-bridge.ts`, `group-queue.ts` — **alternate impl, NOT build-on-top** (per VM Q3 audit). v2 deleted upstream `task-scheduler.ts` and moved to per-session `messages_in` rows; fork keeps v1 polling loop because fork-only features (auto-pause on missing groups, `context_mode='isolated'`, `MAX_CONSECUTIVE_GROUP_MISSING`, group-folder snapshot writes) are not yet ported. B.5.3 cutover candidate (deletable post-cutover). DO NOT merge into `modules/scheduling/`. |
 | `modules/audit/` | `audit.ts` + test |
 | `modules/doctor/` | `doctor.ts`, `env-doctor.test.ts` |
 | `modules/remote-control/` | `remote-control.ts` + test |
@@ -116,6 +116,8 @@ Files to **keep at `src/` root** (core entries, follow upstream convention):
 - Risk: low — purely structural, behavior unchanged.
 - Benefit: future upstream merges that touch `src/modules/` will conflict-resolve cleanly with fork modules of same shape; new contributors find fork features by feature name not by remembering "this lives at root because v1 was flat".
 
-## Open question for owner
+## Resolved cross-lane Q (was: open question for owner)
 
-Is `modules/scheduling-fork/` a real second module or should `task-scheduler.ts` etc. move INTO upstream's existing `src/modules/scheduling/`? Depends on whether fork's task scheduling is "build on top of upstream scheduling" (= merge into the same dir, namespace via filenames) or "alternate scheduler that doesn't compose" (= separate module). VM Q3 audit on upstream non-regression should answer this.
+**Q**: Is fork's `task-scheduler*` build-on-top of upstream `modules/scheduling/`, or alternate?
+
+**A** (resolved by VM Q3 audit, 2026-04-30): **Alternate, NOT build-on-top.** Upstream V2 deleted `src/task-scheduler.ts` and replaced with per-session `messages_in` rows + `src/modules/scheduling/{actions,db,recurrence}.ts`. Fork keeps v1 polling loop because fork-only features (auto-pause / isolated context-mode / MAX_CONSECUTIVE_GROUP_MISSING / group-folder snapshots) aren't yet ported. So `task-scheduler.ts` joins `src/index.ts` and `src/container-runner.ts` as the third REPLACED upstream-tracked file (per Q3 audit), all sharing B.x cutover-deletable status. Move target: `src/modules/scheduling-fork/` (alternate slot), not `src/modules/scheduling/` (upstream V2 slot).
