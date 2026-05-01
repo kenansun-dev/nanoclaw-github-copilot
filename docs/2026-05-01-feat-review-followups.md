@@ -75,3 +75,49 @@ follow-ups). I'll implement whichever you pick and add the tests.
 ---
 
 ## (more entries appended as discovered)
+
+---
+
+## P1 RESOLVED — implemented A + B in commit `d3109c2`
+
+Fix A landed in `src/cli/tui-direct.ts`; Fix B (idleTimeout 0 → 30_000)
+landed in `src/config-loader.ts` and `src/cli/init.ts`. Regression
+guard in `src/cli/tui-direct-sentinel.test.ts` (2 tests, mutation-
+verified). Smoke confirms `tui --ask` exits in ~14s with zero orphan
+containers (was hanging ~5 min + leaving a container alive).
+
+---
+
+## P2 — `tui --ask` (sandbox) prints empty result
+
+**Lane**: rpi5 (#3 follow-up after the orphan fix unmasked it)
+
+**What**: After the close-sentinel fix above, `tui --ask` now exits
+cleanly in ~14s, but stdout shows no `PONG` (or whatever the model
+actually replied). The container DID emit a complete `{status:
+success, result: 'PONG'}` marker pair (verified via `docker logs` on
+the earlier hang run), and `runContainerAgent` did call `onOutput`
+with it (we know because the close-sentinel write triggered, which is
+gated on a non-partial output arriving).
+
+**Likely cause** (not yet verified): in streaming mode
+`runContainerAgent` returns `{status: 'success', result: null}`
+(`src/container-runner.ts` ~line 745). `runSandboxQuery` does
+`return output.status === 'success' && output.result ? output : lastOutput`
+so it should fall through to `lastOutput` which captured the PONG
+in the callback. But somewhere between that return and the
+`console.log(result.result)` at `tui-direct.ts:158`, the result is
+empty. Worth a 30-min look with a `console.error` debug print.
+
+**Why P2, not P1**: previously masked by the hang bug; not a
+regression introduced by the feat branch (likely longstanding). Doesn't
+block merge — interactive `tui` mode and channel-driven flows are
+fine. Only `--ask` non-interactive mode is silent.
+
+**Suggested fix**: probably one of
+(a) `runSandboxQuery` should return `lastOutput` directly when
+`output.result` is null, or
+(b) `runContainerAgent` should populate `result` from the last
+successful onOutput frame even in streaming mode.
+
+---
