@@ -78,6 +78,61 @@ follow-ups). I'll implement whichever you pick and add the tests.
 
 ---
 
+## R1 follow-up (rpi5 verified VM's parity finding) — reframed
+
+VM flagged in `feat-review-vm.md`: "`nanoclaw setup groups [--list]` CLI
+path appears removed." After verification:
+
+**Reframe**: there was never a `nanoclaw setup` **top-level CLI verb** on
+either main or feat. `nanoclaw setup --help` returns `Unknown command:
+setup` on **both** branches. So no user-facing CLI command broke.
+
+**What did change** (feat-only, commit `4857512` by gavrielc):
+- `setup/groups.ts` deleted (was the whatsapp-only Baileys
+  `groupFetchAllParticipating` step + the only thing pinning `pino`)
+- Replacement paths:
+  - **v1→v2 migration**: `setup/migrate-v1/groups.ts` handles registered_
+    groups port (sqlite-level)
+  - **fresh whatsapp install**: `setup/add-whatsapp.sh` (NEW in feat,
+    not on main) shells through Baileys auth + group fetch
+  - **Programmatic from `setup/auto.ts`**: still references the "groups"
+    sub-step in the migration flow
+
+**Risk re-rating**: **LOW** (was MEDIUM in VM's report). No CLI surface
+lost. The functional behavior survives via 2 alternate paths. Caveat:
+any user who automated `node setup/groups.js --list` directly (not via
+`nanoclaw setup`) would break. Unlikely.
+
+**No fix needed**. Mention in CHANGELOG that whatsapp group sync moved
+to `setup/add-whatsapp.sh` for fresh installs.
+
+---
+
+## R3 follow-up (rpi5 verified) — confirmed
+
+VM flagged 9 deleted skills under `.claude/skills/`. After verification:
+
+| Deleted skill | Replacement found? |
+|---|---|
+| `add-pdf-reader` | NOT FOUND |
+| `add-image-vision` | NOT FOUND |
+| `add-voice-transcription` | NOT FOUND |
+| `add-gmail` | `add-gmail-tool/SKILL.md` (renamed) |
+| `add-reactions` | NOT FOUND |
+| `add-telegram-swarm` | NOT FOUND |
+| `add-compact` | NOT FOUND |
+| `channel-formatting` | NOT FOUND |
+| `use-local-whisper` | NOT FOUND |
+
+Fork has no `skills/` (non-`.claude/`) directory. 8 of 9 truly gone.
+
+**Risk rating**: **LOW**. These were Claude Code optional `add-*` skills
+that installed channels/tools on demand. Capability is reachable other
+ways (SDK allowedTools, manual install). No fix needed for this PR;
+mention in CHANGELOG.
+
+---
+
 ## P1 RESOLVED — implemented A + B in commit `d3109c2`
 
 Fix A landed in `src/cli/tui-direct.ts`; Fix B (idleTimeout 0 → 30_000)
