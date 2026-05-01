@@ -215,7 +215,19 @@ function traceSetTyping(
  * including the last one. Between the last final and turn-end (which can
  * be 30s+ for slow runner shutdowns), Teams kept showing 'typing forever'.
  */
-const boundedTypingTimers = new Map<string, NodeJS.Timeout>();
+// Typing pulse state machine: see src/typing-pulse.ts for the unit
+// tests + behavioral contract. We keep `boundedTypingTimers` here only
+// as the shared state map; the helpers delegate to typing-pulse.ts.
+import {
+  createTypingPulseState,
+  cancelBoundedTypingClear as _cancelBoundedTypingClear,
+  armTypingBounded as _armTypingBounded,
+} from './typing-pulse.js';
+
+const typingPulseState = createTypingPulseState({
+  warn: (obj, msg) => logger.warn(obj, msg ?? 'typing pulse warn'),
+});
+const boundedTypingTimers = typingPulseState.timers;
 
 /**
  * TTL for the bounded typing pulse after an interim final-output. Long
@@ -226,11 +238,7 @@ const boundedTypingTimers = new Map<string, NodeJS.Timeout>();
 const INTERIM_TYPING_TTL_MS = 8000;
 
 function cancelBoundedTypingClear(chatJid: string): void {
-  const t = boundedTypingTimers.get(chatJid);
-  if (t) {
-    clearTimeout(t);
-    boundedTypingTimers.delete(chatJid);
-  }
+  _cancelBoundedTypingClear(typingPulseState, chatJid);
 }
 
 /**
@@ -238,6 +246,9 @@ function cancelBoundedTypingClear(chatJid: string): void {
  * schedules an auto-clear after `ttlMs` if nothing else has touched
  * typing in the meantime. The next traceSetTyping (any direction)
  * cancels the pending clear via cancelBoundedTypingClear.
+ *
+ * We log the trace info here (kept for parity with traceSetTyping) and
+ * then delegate the actual setTyping + timer install to the pure helper.
  */
 async function armTypingBounded(
   channel: {
@@ -248,23 +259,11 @@ async function armTypingBounded(
   reason: string,
   ttlMs: number,
 ): Promise<void> {
-  await traceSetTyping(channel, chatJid, true, reason);
-  // traceSetTyping cleared any prior bounded timer; install a fresh one.
-  const t = setTimeout(() => {
-    boundedTypingTimers.delete(chatJid);
-    // Use the underlying channel.setTyping directly so we don't recurse
-    // through cancelBoundedTypingClear (no-op anyway since we just
-    // deleted the entry, but explicit is clearer).
-    if (channel.setTyping) {
-      channel.setTyping(chatJid, false).catch((err: any) => {
-        logger.warn(
-          { chatJid, channel: channel.name, err: err?.message ?? err },
-          'bounded typing auto-clear failed',
-        );
-      });
-    }
-  }, ttlMs);
-  boundedTypingTimers.set(chatJid, t);
+  logger.info(
+    { chatJid, channel: channel.name, isTyping: true, reason },
+    'Channel typing state change',
+  );
+  await _armTypingBounded(typingPulseState, channel, chatJid, ttlMs);
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
