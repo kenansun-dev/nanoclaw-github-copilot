@@ -2020,74 +2020,22 @@ async function main(): Promise<void> {
   });
 
   // ─── B.5.3 v2 dispatcher wiring (env-gated, default off) ──────────
-  // When NANOCLAW_V2_DISPATCHER=1, install the v2 router-side hooks so
-  // sender-allowlist-extensions + abort-extensions take effect via the v2
-  // access-gate / abort-handler registries. The fork v1 dispatcher
-  // loop (startMessageLoop below) STILL runs — this is wiring-only,
-  // not a swap. Full swap (replace v1 message loop with
-  // router.routeInbound + channel adapters-barrel + delivery polls)
-  // lands when the channel barrel swap (L5) goes in alongside it.
-  //
-  // Why behind a flag: production deploy today is fork v1 only. The
-  // v2 path is type-green + test-green but lacks an end-to-end smoke
-  // run on a live channel. Flag keeps the wiring in code (so future
-  // smokes can flip it on) without changing default startup behaviour.
-  //
-  // Modes:
+  // Implementation extracted to src/v2-dispatcher-wiring.ts so it has
+  // dedicated unit tests (see src/v2-dispatcher-wiring.test.ts). Modes:
   //   unset / 0  → fork v1 only (default).
-  //   '1'        → wiring only (gates + resolvers installed; no inbound
-  //                 dispatch change). For unit-style integration smoke.
-  //   '2'        → wiring + shadow inbound. v1 dispatch stays
-  //                 authoritative, but every onMessage also triggers
-  //                 routeInbound() fire-and-forget so the v2 router
-  //                 sees real traffic. Delivery polls stay off so the
-  //                 router doesn't double-send. See `src/shadow-inbound.ts`.
-  const v2Mode = process.env.NANOCLAW_V2_DISPATCHER;
-  if (v2Mode === '1' || v2Mode === '2') {
-    try {
-      const { setAccessGate } = await import('./router.js');
-      const { makeSenderAllowlistGate } = await import(
-        './modules/sender-allowlist-extensions/index.js'
-      );
-      const { installAbortFork } = await import(
-        './modules/abort-extensions/index.js'
-      );
-      const { installRegisteredGroupsFork } = await import(
-        './modules/registered-groups-extensions/index.js'
-      );
-      // v2 module barrels self-register on import (approvals,
-      // interactive, scheduling, permissions, agent-to-agent,
-      // self-mod). Importing here, after channel adapters init,
-      // matches the boot order specified in
-      // docs/v2-migration-inventory.md §"Side-effect import order".
-      await import('./modules/index.js');
-
-      setAccessGate(makeSenderAllowlistGate());
-      installAbortFork({
-        killActive: (jid: string) => queue.killActive(jid),
-        sendAck: async (jid: string, text: string) => {
-          const channel = findChannel(channels, jid);
-          if (channel) await channel.sendMessage(jid, text);
-        },
-      });
-      installRegisteredGroupsFork();
-      logger.info(
-        {
-          gates: ['sender-allowlist'],
-          abortHandler: 'fork',
-          groupResolver: 'registered-groups-extensions',
-          mode: v2Mode,
-          shadow: v2Mode === '2',
-        },
-        'v2 dispatcher hooks installed (NANOCLAW_V2_DISPATCHER=' + v2Mode + ')',
-      );
-    } catch (err) {
-      logger.error(
-        { err },
-        'v2 dispatcher wiring failed; continuing with fork v1 path only',
-      );
-    }
-  }
+  //   '1'        → wiring only (gates + resolvers installed).
+  //   '2'        → wiring + shadow inbound (see src/shadow-inbound.ts).
+  const { installV2DispatcherHooks } = await import(
+    './v2-dispatcher-wiring.js'
+  );
+  await installV2DispatcherHooks(process.env.NANOCLAW_V2_DISPATCHER, {
+    killActive: (jid: string) => queue.killActive(jid),
+    sendAck: async (jid: string, text: string) => {
+      const channel = findChannel(channels, jid);
+      if (channel) await channel.sendMessage(jid, text);
+    },
+    logger,
+  });
   // ─────────────────────────────────────────────────────────────────
 
   startIpcWatcher({

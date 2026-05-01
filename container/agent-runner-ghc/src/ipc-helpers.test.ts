@@ -16,7 +16,7 @@ import path from 'path';
 import os from 'os';
 
 // Real implementation under test.
-import { makeIpcHelpers } from '../container/agent-runner-ghc/src/ipc-helpers.js';
+import { makeIpcHelpers } from './ipc-helpers.js';
 
 describe('ipc-helpers (real module under test)', () => {
   let tmpDir: string;
