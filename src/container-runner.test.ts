@@ -107,9 +107,7 @@ vi.mock('@onecli-sh/sdk', () => ({
   OneCLI: class {
     applyContainerConfig = vi.fn().mockResolvedValue(true);
     createAgent = vi.fn().mockResolvedValue({ id: 'test' });
-    ensureAgent = vi
-      .fn()
-      .mockResolvedValue({ name: 'test', identifier: 'test', created: true });
+    ensureAgent = vi.fn().mockResolvedValue({ name: 'test', identifier: 'test', created: true });
   },
 }));
 
@@ -134,17 +132,14 @@ let fakeProc: ReturnType<typeof createFakeProcess>;
 
 // Mock child_process.spawn
 vi.mock('child_process', async () => {
-  const actual =
-    await vi.importActual<typeof import('child_process')>('child_process');
+  const actual = await vi.importActual<typeof import('child_process')>('child_process');
   return {
     ...actual,
     spawn: vi.fn(() => fakeProc),
-    exec: vi.fn(
-      (_cmd: string, _opts: unknown, cb?: (err: Error | null) => void) => {
-        if (cb) cb(null);
-        return new EventEmitter();
-      },
-    ),
+    exec: vi.fn((_cmd: string, _opts: unknown, cb?: (err: Error | null) => void) => {
+      if (cb) cb(null);
+      return new EventEmitter();
+    }),
   };
 });
 
@@ -165,10 +160,7 @@ const testInput = {
   isMain: false,
 };
 
-function emitOutputMarker(
-  proc: ReturnType<typeof createFakeProcess>,
-  output: ContainerOutput,
-) {
+function emitOutputMarker(proc: ReturnType<typeof createFakeProcess>, output: ContainerOutput) {
   const json = JSON.stringify(output);
   proc.stdout.push(`${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`);
 }
@@ -185,12 +177,7 @@ describe('container-runner timeout behavior', () => {
 
   it('timeout after output resolves as success', async () => {
     const onOutput = vi.fn(async () => {});
-    const resultPromise = runContainerAgent(
-      testGroup,
-      testInput,
-      () => {},
-      onOutput,
-    );
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {}, onOutput);
 
     // Emit output with a result
     emitOutputMarker(fakeProc, {
@@ -214,19 +201,12 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-123');
-    expect(onOutput).toHaveBeenCalledWith(
-      expect.objectContaining({ result: 'Here is my response' }),
-    );
+    expect(onOutput).toHaveBeenCalledWith(expect.objectContaining({ result: 'Here is my response' }));
   });
 
   it('timeout with no output resolves as error', async () => {
     const onOutput = vi.fn(async () => {});
-    const resultPromise = runContainerAgent(
-      testGroup,
-      testInput,
-      () => {},
-      onOutput,
-    );
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {}, onOutput);
 
     // No output emitted — fire the hard timeout
     await vi.advanceTimersByTimeAsync(1830000);
@@ -244,12 +224,7 @@ describe('container-runner timeout behavior', () => {
 
   it('normal exit after output resolves as success', async () => {
     const onOutput = vi.fn(async () => {});
-    const resultPromise = runContainerAgent(
-      testGroup,
-      testInput,
-      () => {},
-      onOutput,
-    );
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {}, onOutput);
 
     // Emit output
     emitOutputMarker(fakeProc, {
@@ -268,5 +243,118 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+});
+
+// --- Wire-protocol invariants for OUTPUT_MARKER stream parser ---
+//
+// These tests pin the streaming parser behavior. Real-world bug class:
+// stdout arrives as TCP-style chunks, so a marker can split across two
+// `data` events. A naive parser that only looks at one chunk at a time
+// would miss the marker entirely and resolve as 'no output -> error'
+// even though the agent completed successfully. Parser uses
+// `parseBuffer += chunk` + `indexOf` to handle this; these tests would
+// catch a regression to per-chunk parsing.
+
+describe('container-runner OUTPUT_MARKER stream parser', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('handles a marker split across two stdout chunks', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {}, onOutput);
+
+    // Split mid-marker. Naive per-chunk parser would never find either
+    // marker because neither chunk contains a complete START..END pair.
+    const json = JSON.stringify({
+      status: 'success',
+      result: 'split-payload',
+      newSessionId: 'split-session',
+    });
+    const full = `${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`;
+    const splitAt = OUTPUT_START_MARKER.length - 5; // mid-START marker
+    fakeProc.stdout.push(full.slice(0, splitAt));
+    await vi.advanceTimersByTimeAsync(5);
+    // Parser must NOT have called onOutput yet (incomplete pair)
+    expect(onOutput).not.toHaveBeenCalled();
+
+    fakeProc.stdout.push(full.slice(splitAt));
+    await vi.advanceTimersByTimeAsync(10);
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+    expect(result.newSessionId).toBe('split-session');
+    expect(onOutput).toHaveBeenCalledTimes(1);
+    expect(onOutput).toHaveBeenCalledWith(expect.objectContaining({ result: 'split-payload' }));
+  });
+
+  it('drains multiple markers arriving in a single chunk', async () => {
+    // Long sessions emit one marker per assistant turn. The parser
+    // loops `while (indexOf(START)) { ... }` to drain them all. A
+    // regression to a single `if` would silently drop all but the
+    // first marker.
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {}, onOutput);
+
+    const m = (id: string, sid: string) => {
+      const json = JSON.stringify({
+        status: 'success',
+        result: id,
+        newSessionId: sid,
+      });
+      return `${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`;
+    };
+    fakeProc.stdout.push(m('first', 's1') + m('second', 's2') + m('third', 's3'));
+    await vi.advanceTimersByTimeAsync(20);
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    // Final newSessionId reflects the LAST marker (per parser code
+    // `if (parsed.newSessionId) newSessionId = parsed.newSessionId`).
+    expect(result.newSessionId).toBe('s3');
+    expect(onOutput).toHaveBeenCalledTimes(3);
+    expect(onOutput).toHaveBeenNthCalledWith(1, expect.objectContaining({ result: 'first' }));
+    expect(onOutput).toHaveBeenNthCalledWith(3, expect.objectContaining({ result: 'third' }));
+  });
+
+  it('logs and continues when a framed payload is invalid JSON', async () => {
+    // Hardening: a corrupted/torn marker payload must NOT crash the
+    // parser or stop processing of subsequent valid markers. Without
+    // this, a single bad turn from the agent-runner could brick the
+    // entire container session.
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {}, onOutput);
+
+    // Invalid JSON between markers, then a valid marker after it.
+    const bad = `${OUTPUT_START_MARKER}\n{this is not json}\n${OUTPUT_END_MARKER}\n`;
+    const goodJson = JSON.stringify({
+      status: 'success',
+      result: 'recovered',
+      newSessionId: 'after-bad',
+    });
+    const good = `${OUTPUT_START_MARKER}\n${goodJson}\n${OUTPUT_END_MARKER}\n`;
+    fakeProc.stdout.push(bad + good);
+    await vi.advanceTimersByTimeAsync(20);
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+    expect(result.newSessionId).toBe('after-bad');
+    // Only the valid marker should have invoked onOutput.
+    expect(onOutput).toHaveBeenCalledTimes(1);
+    expect(onOutput).toHaveBeenCalledWith(expect.objectContaining({ result: 'recovered' }));
   });
 });
