@@ -15,6 +15,10 @@ import { loadConfig, saveConfig } from '../config-loader.js';
 import { resolveGithubToken, isGHCProvider } from '../config-extensions.js';
 import { resolveWorkspace, paths as wsPaths } from '../workspace.js';
 import { resolveGroupIpcPath } from '../group-folder.js';
+import {
+  makeCloseSentinelState,
+  shouldWriteCloseSentinel,
+} from './tui-direct-close-sentinel.js';
 
 const OUTPUT_START = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END = '---NANOCLAW_OUTPUT_END---';
@@ -546,17 +550,17 @@ export async function runSandboxQuery(opts: QueryOptions): Promise<ContainerOutp
     // output. Mirrors the host-mode finish() handler at line ~453.
     // Use container-runner's IPC path resolution (data/ipc/<folder>), NOT
     // tui-direct's host-mode ipcDir (ipc/<folder>) — they differ.
+    // Decision rule + once-only gate are extracted to tui-direct-close-
+    // sentinel.ts so they're independently mutation-tested (12 tests).
     const sandboxIpcInput = path.join(resolveGroupIpcPath(opts.groupFolder), 'input');
     const closeSentinel = path.join(sandboxIpcInput, '_close');
-    let sentinelWritten = false;
-    const writeCloseSentinelOnce = () => {
-      if (sentinelWritten) return;
-      sentinelWritten = true;
+    const closeState = makeCloseSentinelState();
+    const writeCloseSentinel = () => {
       try {
         fs.mkdirSync(sandboxIpcInput, { recursive: true });
         fs.writeFileSync(closeSentinel, '');
       } catch {
-        /* best effort */
+        /* swallow — CONTAINER_TIMEOUT is the safety net */
       }
     };
 
@@ -568,10 +572,7 @@ export async function runSandboxQuery(opts: QueryOptions): Promise<ContainerOutp
       },
       async (out) => {
         lastOutput = out;
-        // First complete result -> tell container to exit. Skip thinking-only
-        // / partial frames; wait for the real terminal output.
-        const isPartial = (out as any).partial === true || (out.status === 'thinking' && !out.result);
-        if (!isPartial) writeCloseSentinelOnce();
+        if (shouldWriteCloseSentinel(closeState, out)) writeCloseSentinel();
       },
     );
 
