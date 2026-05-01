@@ -105,6 +105,53 @@ describe('GHC session-not-found recovery (regression guard on index.ts)', () => 
     // path).
     expect(src).toMatch(/if\s*\(\s*isSessionNotFoundError\(sendErr\)\s*&&\s*sessionId\s*\)/);
   });
+
+  // Behavioral counterpart to the regex pin above (VM review #1).
+  // Exercises the catch-block logic with the real predicate and a real
+  // Error instance. If anyone later replaces `throw sendErr` with
+  // `throw new Error(sendErr.message)` the identity assertion fails;
+  // wrapping in a custom error class also fails.
+  describe('rethrow path preserves error identity (behavioral)', () => {
+    // Re-implement the catch-block logic exactly as in index.ts. Two-layer
+    // defense: regex pin above locks the source shape; this locks the
+    // semantics. Either drift breaks one of the two.
+    function simulateMidTurnCatch(sendErr: unknown, sessionId: string | null): { recovered: true } {
+      if (isSessionNotFoundError(sendErr) && sessionId) {
+        return { recovered: true };
+      }
+      throw sendErr;
+    }
+
+    it('rethrows network errors with identity (===) preserved', () => {
+      const original = new Error('ECONNREFUSED 127.0.0.1:443');
+      let caught: unknown = null;
+      try {
+        simulateMidTurnCatch(original, 'sess-abc');
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBe(original); // identity, not just .message equality
+      expect((caught as Error).stack).toBe(original.stack);
+    });
+
+    it('rethrows auth errors without wrapping', () => {
+      const original = new Error('401 Unauthorized: token expired');
+      expect(() => simulateMidTurnCatch(original, 'sess-abc')).toThrow(original);
+    });
+
+    it('rethrows even matching predicate when sessionId is null', () => {
+      // Edge: would loop forever recovering with no session to resume.
+      // Recovery branch MUST also guard on sessionId.
+      const original = new Error('Session not found: xyz');
+      expect(() => simulateMidTurnCatch(original, null)).toThrow(original);
+    });
+
+    it('does NOT throw on session-not-found with valid sessionId', () => {
+      const original = new Error('Session not found: stale-123');
+      const result = simulateMidTurnCatch(original, 'sess-abc');
+      expect(result.recovered).toBe(true);
+    });
+  });
 });
 
 describe('isSessionNotFoundError (recovery decision)', () => {

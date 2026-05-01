@@ -10,6 +10,19 @@ Lanes:
 - **Rpi5 (this doc)**: container/runner side, e2e expansion
 - **VM**: dispatcher / ipc / shadow-inbound / workspace-config / config-extensions / task-scheduler-fork-bridge
 
+## Index
+
+- [Audit gate (both lanes)](#audit-gate-both-lanes)
+- [Rpi5 lane — findings](#rpi5-lane--findings)
+  - `src/container-runner.test.ts`
+  - `src/container-runner.parse.test.ts`
+  - `src/container-runtime.test.ts`
+  - `src/ghc-session-recovery.test.ts`
+  - `container/agent-runner-ghc/src/load-plugin-agents.test.ts`
+  - `test/e2e/v2-container-smoke.test.ts` (new)
+- [What I am NOT doing](#what-i-am-not-doing)
+- [Status](#status)
+
 ## Audit gate (both lanes)
 
 For every existing test, answer: **"What concrete regression would this test catch if it stayed in the suite, that nothing else catches?"**

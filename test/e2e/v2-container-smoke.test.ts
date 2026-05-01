@@ -33,53 +33,59 @@ import os from 'os';
 import { execSync } from 'child_process';
 
 const E2E_ENABLED = process.env.NANOCLAW_E2E_V2_CONTAINER === '1';
-const HAS_TOKEN =
+const HAS_TOKEN_AT_LOAD =
   !!process.env.GITHUB_TOKEN ||
   !!process.env.COPILOT_GITHUB_TOKEN ||
   fs.existsSync(path.join(os.homedir(), '.copilot', 'config.json'));
 
-let dockerOk = false;
-let imageOk = false;
-let vaultOk = false;
-try {
-  if (E2E_ENABLED) {
-    execSync('docker info', { stdio: 'pipe', timeout: 5000 });
-    dockerOk = true;
-    const images = execSync('docker images --format "{{.Repository}}:{{.Tag}}"', {
-      encoding: 'utf-8',
-      timeout: 5000,
-    });
-    imageOk = images.includes('nanoclaw-agent-ghc:latest');
-    try {
-      execSync('curl -sf -o /dev/null --max-time 2 http://localhost:10254/health', {
-        stdio: 'pipe',
-      });
-      vaultOk = true;
-    } catch {
-      vaultOk = false;
-    }
+const E2E_ENABLED_AT_LOAD = process.env.NANOCLAW_E2E_V2_CONTAINER === '1';
+
+/**
+ * Compute skip reason at TEST RUN TIME, not module load time.
+ *
+ * Why: env vars / vault / docker can come up between import and the
+ * actual test execution (CI sequencing, beforeAll fixtures, vault that
+ * starts late, etc.). VM review #3 caught this: the original
+ * `it.skipIf(skipReason)` evaluated `skipReason` exactly once at
+ * module load and would silently skip even if the env became ready
+ * by the time the test ran.
+ */
+function computeSkipReason(): string | null {
+  if (!E2E_ENABLED_AT_LOAD && process.env.NANOCLAW_E2E_V2_CONTAINER !== '1') {
+    return 'NANOCLAW_E2E_V2_CONTAINER!=1';
   }
-} catch {
-  /* not enabled or env not ready */
+  const hasToken =
+    !!process.env.GITHUB_TOKEN ||
+    !!process.env.COPILOT_GITHUB_TOKEN ||
+    fs.existsSync(path.join(os.homedir(), '.copilot', 'config.json'));
+  if (!hasToken) return 'no GITHUB_TOKEN / ~/.copilot/config.json';
+  try {
+    execSync('docker info', { stdio: 'pipe', timeout: 5000 });
+  } catch {
+    return 'docker not running';
+  }
+  try {
+    const images = execSync('docker images --format "{{.Repository}}:{{.Tag}}"', { encoding: 'utf-8', timeout: 5000 });
+    if (!images.includes('nanoclaw-agent-ghc:latest')) return 'nanoclaw-agent-ghc:latest image missing';
+  } catch {
+    return 'docker images query failed';
+  }
+  try {
+    execSync('curl -sf -o /dev/null --max-time 2 http://localhost:10254/health', { stdio: 'pipe' });
+  } catch {
+    return 'OneCLI vault not reachable at :10254';
+  }
+  return null;
 }
 
 const WORKSPACE = path.join(os.tmpdir(), `nanoclaw-v2-e2e-${Date.now()}`);
 
-const skipReason = !E2E_ENABLED
-  ? 'NANOCLAW_E2E_V2_CONTAINER!=1'
-  : !HAS_TOKEN
-    ? 'no GITHUB_TOKEN / ~/.copilot/config.json'
-    : !dockerOk
-      ? 'docker not running'
-      : !imageOk
-        ? 'nanoclaw-agent-ghc:latest image missing'
-        : !vaultOk
-          ? 'OneCLI vault not reachable at :10254'
-          : null;
+const skipReasonAtLoad = E2E_ENABLED && HAS_TOKEN_AT_LOAD ? null : 'env not ready at load';
 
 describe('E2E: v2 container path (GHC smoke)', () => {
   beforeAll(() => {
-    if (skipReason) return;
+    const reason = computeSkipReason();
+    if (reason) return;
     process.env.NANOCLAW_WORKSPACE = WORKSPACE;
     fs.mkdirSync(WORKSPACE, { recursive: true });
     fs.mkdirSync(path.join(WORKSPACE, 'data'), { recursive: true });
@@ -109,7 +115,8 @@ describe('E2E: v2 container path (GHC smoke)', () => {
   });
 
   afterAll(() => {
-    if (skipReason) return;
+    const reason = computeSkipReason();
+    if (reason) return;
     try {
       // Stop any leftover container from this run
       execSync('docker ps -a --filter "name=nanoclaw-e2e-smoke-" -q | xargs -r docker rm -f', {
@@ -132,9 +139,28 @@ describe('E2E: v2 container path (GHC smoke)', () => {
   //     in the docker boundary, GHC SDK breaking change in resumeSession,
   //     etc.). Unit tests cover the parser with mocks; this exercises
   //     the live wire.
-  it.skipIf(skipReason)(
+  it.skipIf(E2E_ENABLED ? false : true)(
     'round-trips a single prompt through the v2 container path',
-    async () => {
+    async (ctx) => {
+      // Re-evaluate at run time so a vault that started after module load
+      // is still picked up. (VM review #3.) Use ctx.skip() so vitest
+      // reports SKIP with a reason rather than silently passing.
+      const reason = computeSkipReason();
+      if (reason) {
+        ctx.skip();
+        return;
+      }
+
+      // VM review #4: assert the host-side token resolution actually
+      // returns a non-empty string before we spawn. Otherwise the
+      // container could fall back to in-container auth lookup paths
+      // (which don't exist in the agent-runner-ghc image) and the smoke
+      // could pass for the wrong reason via vault secrets.
+      const { resolveGithubToken } = await import('../../src/github-token-provider.js');
+      const hostToken = resolveGithubToken();
+      expect(hostToken, 'host-side token must resolve before spawn').toBeTruthy();
+      expect((hostToken || '').length).toBeGreaterThan(20);
+
       const { runContainerAgent } = await import('../../src/container-runner.js');
 
       const group = {
@@ -172,11 +198,11 @@ describe('E2E: v2 container path (GHC smoke)', () => {
     180_000,
   );
 
-  // Document the skip explicitly so the suite report says WHY this didn't
-  // run, not just "skipped".
-  if (skipReason) {
-    it(`v2 container e2e skipped: ${skipReason}`, () => {
-      expect(skipReason).toBeTruthy();
+  // Document the load-time skip explicitly so suite report shows WHY.
+  // Runtime skip reason is logged from inside the test (see above).
+  if (skipReasonAtLoad) {
+    it(`v2 container e2e skipped at load: ${skipReasonAtLoad}`, () => {
+      expect(skipReasonAtLoad).toBeTruthy();
     });
   }
 });
