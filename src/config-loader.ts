@@ -154,10 +154,7 @@ export interface NanoclawConfig {
   security?: {
     allowedSenders?: {
       default?: { allow: '*' | string[]; mode?: 'trigger' | 'drop' };
-      chats?: Record<
-        string,
-        { allow: '*' | string[]; mode?: 'trigger' | 'drop' }
-      >;
+      chats?: Record<string, { allow: '*' | string[]; mode?: 'trigger' | 'drop' }>;
     };
   };
   credentialProxy: {
@@ -276,7 +273,10 @@ const DEFAULTS: NanoclawConfig = {
     timeout: 1800000,
     maxOutputSize: 10485760,
     maxConcurrent: 5,
-    idleTimeout: 0,
+    // 30s idle = container exits if no IPC activity for 30s. Defense-in-depth
+    // against orphaned long-lived containers (e.g. tui --ask leaks if the
+    // close-sentinel write is ever skipped). Set to 0 to disable.
+    idleTimeout: 30_000,
     engine: 'node' as const,
   },
   chats: {},
@@ -336,10 +336,7 @@ export function readWorkspaceEnv(): Record<string, string> {
       if (eqIdx === -1) continue;
       const key = trimmed.slice(0, eqIdx).trim();
       let value = trimmed.slice(eqIdx + 1).trim();
-      if (
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))
-      ) {
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
         value = value.slice(1, -1);
       }
       if (value) result[key] = value;
@@ -408,17 +405,8 @@ function normalizeChats(
 
   // 2. Also read from top-level chats (migration support)
   if (raw && typeof raw === 'object') {
-    const channelKeys = [
-      'telegram',
-      'teams',
-      'discord',
-      'slack',
-      'whatsapp',
-      'other',
-    ];
-    const isGrouped = Object.keys(raw).some(
-      (k) => channelKeys.includes(k) && Array.isArray(raw[k]),
-    );
+    const channelKeys = ['telegram', 'teams', 'discord', 'slack', 'whatsapp', 'other'];
+    const isGrouped = Object.keys(raw).some((k) => channelKeys.includes(k) && Array.isArray(raw[k]));
 
     if (isGrouped) {
       for (const [, entries] of Object.entries(raw)) {
@@ -452,10 +440,7 @@ function normalizeChats(
  * Resolve a user-supplied chat handle (numeric id or jid) to its jid.
  * Returns null if no chat matches. Used by CLI commands like `chat set-main <id-or-jid>`.
  */
-export function resolveChatHandle(
-  config: NanoclawConfig,
-  handle: string,
-): string | null {
+export function resolveChatHandle(config: NanoclawConfig, handle: string): string | null {
   if (!handle) return null;
   // jid path: contains a colon and matches an existing key
   if (handle.includes(':') && config.chats[handle]) return handle;
@@ -521,10 +506,7 @@ export function findExtraMainChats(
  * Write chats into channels.<name>.chats arrays for saving.
  * Removes top-level "chats" key.
  */
-function distributeChatsToChannels(
-  toSave: any,
-  flat: Record<string, any>,
-): void {
+function distributeChatsToChannels(toSave: any, flat: Record<string, any>): void {
   // Remove top-level chats
   delete toSave.chats;
 
@@ -599,10 +581,7 @@ function migrateConfig(config: Record<string, any>): boolean {
   if (version < 1) {
     // Ensure chats registered without isMain get isMain: true (personal use default)
     if (config.chats) {
-      const chats =
-        typeof config.chats === 'object' && !Array.isArray(config.chats)
-          ? config.chats
-          : {};
+      const chats = typeof config.chats === 'object' && !Array.isArray(config.chats) ? config.chats : {};
       for (const [channel, chatList] of Object.entries(chats)) {
         if (Array.isArray(chatList)) {
           for (const chat of chatList as any[]) {
@@ -698,14 +677,7 @@ function migrateConfig(config: Record<string, any>): boolean {
     }
 
     if (config.chats && typeof config.chats === 'object') {
-      const channelKeys = [
-        'telegram',
-        'teams',
-        'discord',
-        'slack',
-        'whatsapp',
-        'other',
-      ];
+      const channelKeys = ['telegram', 'teams', 'discord', 'slack', 'whatsapp', 'other'];
       const isGrouped = Object.keys(config.chats).some(
         (k) => channelKeys.includes(k) && Array.isArray(config.chats[k]),
       );
@@ -725,12 +697,10 @@ function migrateConfig(config: Record<string, any>): boolean {
 
     const used = new Set<number>();
     for (const { entry } of grouped) {
-      if (entry && typeof entry.id === 'number' && entry.id > 0)
-        used.add(entry.id);
+      if (entry && typeof entry.id === 'number' && entry.id > 0) used.add(entry.id);
     }
     for (const { entry } of flat) {
-      if (entry && typeof entry.id === 'number' && entry.id > 0)
-        used.add(entry.id);
+      if (entry && typeof entry.id === 'number' && entry.id > 0) used.add(entry.id);
     }
     let next = 1;
     const nextFree = (): number => {
@@ -755,9 +725,7 @@ function migrateConfig(config: Record<string, any>): boolean {
     // that lacked the field. With the v4 "at most one isMain" invariant, that
     // would brick any pre-v1 multi-chat config on first launch. Keep the
     // lowest-id main, clear the rest, and warn so the user can re-pick.
-    const allMains = [...grouped, ...flat]
-      .map(({ entry }) => entry)
-      .filter((e) => e && e.isMain);
+    const allMains = [...grouped, ...flat].map(({ entry }) => entry).filter((e) => e && e.isMain);
     if (allMains.length > 1) {
       allMains.sort((a, b) => (a.id ?? 1e9) - (b.id ?? 1e9));
       const kept = allMains[0];
@@ -789,8 +757,7 @@ function migrateConfig(config: Record<string, any>): boolean {
     // single `tui:default` row exists if any TUI chat existed before.
     if (config.chats && typeof config.chats === 'object') {
       const tuiKeys = Object.keys(config.chats).filter(
-        (k) =>
-          k.startsWith('tui:') && k !== 'tui:default' && /^tui:\d+$/.test(k),
+        (k) => k.startsWith('tui:') && k !== 'tui:default' && /^tui:\d+$/.test(k),
       );
       if (tuiKeys.length > 0) {
         // Pick a representative entry to seed tui:default if it doesn't exist
@@ -828,16 +795,10 @@ function migrateConfig(config: Record<string, any>): boolean {
     if (!config.plugins || typeof config.plugins !== 'object') {
       config.plugins = {};
     }
-    if (
-      !Array.isArray(config.plugins.enabledPlugins) &&
-      !Array.isArray(config.plugins.enabled)
-    ) {
+    if (!Array.isArray(config.plugins.enabledPlugins) && !Array.isArray(config.plugins.enabled)) {
       config.plugins.enabledPlugins = [];
     }
-    if (
-      !Array.isArray(config.plugins.extraKnownMarketplaces) &&
-      !Array.isArray(config.plugins.marketplaces)
-    ) {
+    if (!Array.isArray(config.plugins.extraKnownMarketplaces) && !Array.isArray(config.plugins.marketplaces)) {
       config.plugins.extraKnownMarketplaces = [
         { name: 'copilot-plugins', source: 'github/copilot-plugins' },
         { name: 'awesome-copilot', source: 'github/awesome-copilot' },
@@ -882,10 +843,7 @@ function migrateConfig(config: Record<string, any>): boolean {
         }
       }
       if (removed > 0) {
-        logger.info(
-          { removed },
-          'v7 migration: purged legacy tui:* and other entries from root chats',
-        );
+        logger.info({ removed }, 'v7 migration: purged legacy tui:* and other entries from root chats');
       }
     }
     config.configVersion = 7;
@@ -905,10 +863,7 @@ function migrateConfig(config: Record<string, any>): boolean {
         delete p.enabled;
         migrated = true;
       }
-      if (
-        Array.isArray(p.marketplaces) &&
-        !Array.isArray(p.extraKnownMarketplaces)
-      ) {
+      if (Array.isArray(p.marketplaces) && !Array.isArray(p.extraKnownMarketplaces)) {
         p.extraKnownMarketplaces = p.marketplaces;
         delete p.marketplaces;
         migrated = true;
@@ -925,18 +880,12 @@ function migrateConfig(config: Record<string, any>): boolean {
  * Recursively resolve ${VAR_NAME} placeholders in string values.
  * envMap is the merged .env + process.env (workspace .env takes priority).
  */
-function resolveEnvVars(
-  obj: any,
-  envMap: Record<string, string | undefined>,
-): any {
+function resolveEnvVars(obj: any, envMap: Record<string, string | undefined>): any {
   if (typeof obj === 'string') {
     return obj.replace(/\$\{([^}]+)\}/g, (match, varName) => {
       const value = envMap[varName];
       if (value !== undefined) return value;
-      logger.warn(
-        { var: varName },
-        `Env var \${${varName}} not found, leaving as-is`,
-      );
+      logger.warn({ var: varName }, `Env var \${${varName}} not found, leaving as-is`);
       return match;
     });
   }
@@ -975,10 +924,7 @@ export function loadConfig(): NanoclawConfig {
     if (recovered) {
       userConfig = recovered;
       recoveredFromBackup = true;
-      console.error(
-        '\n  ⚠️  nanoclaw.json was corrupt — recovered from backup.\n' +
-          `  File: ${paths.config}\n`,
-      );
+      console.error('\n  ⚠️  nanoclaw.json was corrupt — recovered from backup.\n' + `  File: ${paths.config}\n`);
     } else {
       console.error(
         '\n  ❌ nanoclaw.json is invalid JSON and no backup found.\n' +
@@ -999,14 +945,8 @@ export function loadConfig(): NanoclawConfig {
   const migrated = migrateConfig(userConfig);
   if (migrated && !recoveredFromBackup) {
     try {
-      fs.writeFileSync(
-        paths.config,
-        JSON.stringify(userConfig, null, 2) + '\n',
-      );
-      logger.debug(
-        { version: userConfig.configVersion },
-        'Config migrated and saved',
-      );
+      fs.writeFileSync(paths.config, JSON.stringify(userConfig, null, 2) + '\n');
+      logger.debug({ version: userConfig.configVersion }, 'Config migrated and saved');
     } catch {
       /* best effort */
     }
@@ -1064,8 +1004,7 @@ export function loadConfig(): NanoclawConfig {
 
   // Telegram
   if (!config.channels.telegram.botToken) {
-    config.channels.telegram.botToken =
-      process.env.TELEGRAM_BOT_TOKEN || env.TELEGRAM_BOT_TOKEN;
+    config.channels.telegram.botToken = process.env.TELEGRAM_BOT_TOKEN || env.TELEGRAM_BOT_TOKEN;
   }
 
   // Teams
@@ -1084,20 +1023,14 @@ export function loadConfig(): NanoclawConfig {
     teams.tenantId = process.env.MSTEAMS_TENANT_ID || env.MSTEAMS_TENANT_ID;
   }
   if (!teams.certThumbprint) {
-    teams.certThumbprint =
-      process.env.MSTEAMS_CERT_THUMBPRINT || env.MSTEAMS_CERT_THUMBPRINT;
+    teams.certThumbprint = process.env.MSTEAMS_CERT_THUMBPRINT || env.MSTEAMS_CERT_THUMBPRINT;
   }
   if (!teams.certPrivateKeyPath) {
-    teams.certPrivateKeyPath =
-      process.env.MSTEAMS_CERT_PRIVATE_KEY_PATH ||
-      env.MSTEAMS_CERT_PRIVATE_KEY_PATH;
+    teams.certPrivateKeyPath = process.env.MSTEAMS_CERT_PRIVATE_KEY_PATH || env.MSTEAMS_CERT_PRIVATE_KEY_PATH;
   }
 
   // Auto-enable channels if credentials are present
-  if (
-    config.channels.telegram.botToken &&
-    !userConfig.channels?.telegram?.enabled
-  ) {
+  if (config.channels.telegram.botToken && !userConfig.channels?.telegram?.enabled) {
     config.channels.telegram.enabled = true;
   }
   if (teams.appId && (teams.appPassword || teams.certThumbprint)) {
@@ -1170,10 +1103,7 @@ function backupConfig(configPath: string): void {
 function recoverFromBackup(configPath: string): Partial<NanoclawConfig> | null {
   const candidates = [
     `${configPath}.bak`,
-    ...Array.from(
-      { length: MAX_BACKUP_RING },
-      (_, i) => `${configPath}.bak.${i + 1}`,
-    ),
+    ...Array.from({ length: MAX_BACKUP_RING }, (_, i) => `${configPath}.bak.${i + 1}`),
   ];
   for (const bakPath of candidates) {
     try {
@@ -1221,17 +1151,11 @@ export function saveConfig(
   const toSave = JSON.parse(JSON.stringify(config));
   // Strip top-level channel secrets
   // Replace secrets with ${ENV_VAR} references (explicit, visible in json)
-  if (
-    toSave.channels?.telegram?.botToken &&
-    !toSave.channels.telegram.botToken.startsWith('${')
-  ) {
+  if (toSave.channels?.telegram?.botToken && !toSave.channels.telegram.botToken.startsWith('${')) {
     toSave.channels.telegram.botToken = '${TELEGRAM_BOT_TOKEN}';
   }
   if (toSave.channels?.teams) {
-    if (
-      toSave.channels.teams.appPassword &&
-      !toSave.channels.teams.appPassword.startsWith('${')
-    ) {
+    if (toSave.channels.teams.appPassword && !toSave.channels.teams.appPassword.startsWith('${')) {
       toSave.channels.teams.appPassword = '${MSTEAMS_APP_PASSWORD}';
     }
     delete toSave.channels.teams.certThumbprint;
@@ -1244,26 +1168,12 @@ export function saveConfig(
     const accounts = toSave.channels?.[ch]?.accounts;
     if (accounts && typeof accounts === 'object') {
       for (const [accId, acc] of Object.entries(accounts) as any[]) {
-        if (
-          ch === 'telegram' &&
-          acc.botToken &&
-          !acc.botToken.startsWith('${')
-        ) {
-          const envKey =
-            accId === 'default'
-              ? 'TELEGRAM_BOT_TOKEN'
-              : `TELEGRAM_BOT_TOKEN_${accId.toUpperCase()}`;
+        if (ch === 'telegram' && acc.botToken && !acc.botToken.startsWith('${')) {
+          const envKey = accId === 'default' ? 'TELEGRAM_BOT_TOKEN' : `TELEGRAM_BOT_TOKEN_${accId.toUpperCase()}`;
           acc.botToken = `\${${envKey}}`;
         }
-        if (
-          ch === 'teams' &&
-          acc.appPassword &&
-          !acc.appPassword.startsWith('${')
-        ) {
-          const envKey =
-            accId === 'default'
-              ? 'MSTEAMS_APP_PASSWORD'
-              : `MSTEAMS_APP_PASSWORD_${accId.toUpperCase()}`;
+        if (ch === 'teams' && acc.appPassword && !acc.appPassword.startsWith('${')) {
+          const envKey = accId === 'default' ? 'MSTEAMS_APP_PASSWORD' : `MSTEAMS_APP_PASSWORD_${accId.toUpperCase()}`;
           acc.appPassword = `\${${envKey}}`;
         }
         delete acc.certThumbprint;
@@ -1295,10 +1205,7 @@ export function saveConfig(
  * If agentId is provided, looks in agents.list[]. Falls back to agents.defaults.
  * List entries inherit missing fields from defaults.
  */
-export function resolveAgent(
-  config: NanoclawConfig,
-  agentId?: string,
-): AgentConfig {
+export function resolveAgent(config: NanoclawConfig, agentId?: string): AgentConfig {
   const defaults = config.agents.defaults;
   if (!agentId || !config.agents.list?.length) {
     return defaults;
@@ -1362,9 +1269,7 @@ export function getDefaultAgent(config: NanoclawConfig): AgentConfig {
   const list = config.agents.list;
   if (!list?.length) return config.agents.defaults;
   const defaultAgent = list.find((a) => a.default);
-  return defaultAgent
-    ? { ...config.agents.defaults, ...defaultAgent }
-    : { ...config.agents.defaults, ...list[0] };
+  return defaultAgent ? { ...config.agents.defaults, ...defaultAgent } : { ...config.agents.defaults, ...list[0] };
 }
 
 // ─── Secret Migration ────────────────────────────────────────────────────────
@@ -1378,51 +1283,32 @@ function migrateSecretsToEnv(config: any): void {
   let found = false;
 
   // Check top-level channel secrets (skip ${ENV_VAR} references)
-  if (
-    config.channels?.telegram?.botToken &&
-    !config.channels.telegram.botToken.startsWith('${')
-  ) {
+  if (config.channels?.telegram?.botToken && !config.channels.telegram.botToken.startsWith('${')) {
     secrets.TELEGRAM_BOT_TOKEN = config.channels.telegram.botToken;
     found = true;
   }
-  if (
-    config.channels?.teams?.appPassword &&
-    !config.channels.teams.appPassword.startsWith('${')
-  ) {
+  if (config.channels?.teams?.appPassword && !config.channels.teams.appPassword.startsWith('${')) {
     secrets.MSTEAMS_APP_PASSWORD = config.channels.teams.appPassword;
     found = true;
   }
   // Note: appId is NOT a secret — it's a public Azure App Registration ID.
   // It stays in nanoclaw.json, not in .env.
-  if (
-    config.channels?.teams?.tenantId &&
-    !config.channels.teams.tenantId.startsWith('${')
-  ) {
+  if (config.channels?.teams?.tenantId && !config.channels.teams.tenantId.startsWith('${')) {
     secrets.MSTEAMS_TENANT_ID = config.channels.teams.tenantId;
     found = true;
   }
 
   // Check per-account secrets (skip ${ENV_VAR} references)
-  for (const [accId, acc] of Object.entries(
-    config.channels?.telegram?.accounts || {},
-  ) as any[]) {
+  for (const [accId, acc] of Object.entries(config.channels?.telegram?.accounts || {}) as any[]) {
     if (acc.botToken && !acc.botToken.startsWith('${')) {
-      const key =
-        accId === 'default'
-          ? 'TELEGRAM_BOT_TOKEN'
-          : `TELEGRAM_BOT_TOKEN_${accId.toUpperCase()}`;
+      const key = accId === 'default' ? 'TELEGRAM_BOT_TOKEN' : `TELEGRAM_BOT_TOKEN_${accId.toUpperCase()}`;
       secrets[key] = acc.botToken;
       found = true;
     }
   }
-  for (const [accId, acc] of Object.entries(
-    config.channels?.teams?.accounts || {},
-  ) as any[]) {
+  for (const [accId, acc] of Object.entries(config.channels?.teams?.accounts || {}) as any[]) {
     if (acc.appPassword && !acc.appPassword.startsWith('${')) {
-      const key =
-        accId === 'default'
-          ? 'MSTEAMS_APP_PASSWORD'
-          : `MSTEAMS_APP_PASSWORD_${accId.toUpperCase()}`;
+      const key = accId === 'default' ? 'MSTEAMS_APP_PASSWORD' : `MSTEAMS_APP_PASSWORD_${accId.toUpperCase()}`;
       secrets[key] = acc.appPassword;
       found = true;
     }
@@ -1448,12 +1334,9 @@ function migrateSecretsToEnv(config: any): void {
   }
 
   if (lines.length > 0) {
-    const append =
-      '\n# Migrated from nanoclaw.json\n' + lines.join('\n') + '\n';
+    const append = '\n# Migrated from nanoclaw.json\n' + lines.join('\n') + '\n';
     fs.appendFileSync(envPath, append, { mode: 0o600 });
-    logger.info(
-      `Migrated ${lines.length} secret(s) from nanoclaw.json to .env`,
-    );
+    logger.info(`Migrated ${lines.length} secret(s) from nanoclaw.json to .env`);
 
     // Save clean config (saveConfig strips secrets)
     saveConfig(config, 'secret-migration', { migratedKeys: lines.length });
@@ -1467,19 +1350,14 @@ function migrateSecretsToEnv(config: any): void {
 // either field name on read so old configs that have not yet been re-saved
 // still work.
 
-export function getEnabledPlugins(
-  config: Pick<NanoclawConfig, 'plugins'>,
-): PluginEnabledEntry[] {
+export function getEnabledPlugins(config: Pick<NanoclawConfig, 'plugins'>): PluginEnabledEntry[] {
   const p = config.plugins as
     | (NonNullable<NanoclawConfig['plugins']> & {
         enabled?: PluginEnabledEntry[];
       })
     | undefined;
   if (!p) return [];
-  const raw =
-    (Array.isArray(p.enabledPlugins) && p.enabledPlugins) ||
-    (Array.isArray(p.enabled) && p.enabled) ||
-    [];
+  const raw = (Array.isArray(p.enabledPlugins) && p.enabledPlugins) || (Array.isArray(p.enabled) && p.enabled) || [];
   // Normalize: tolerate bare-string entries like `"workiq@work-iq"` that
   // users naturally write when copying a CC config or following docs that
   // pre-date the v8 schema split. Without this, the entry's `.name` and
@@ -1491,11 +1369,7 @@ export function getEnabledPlugins(
   // and the name is inferred from the last useful path segment.
   return raw
     .map((entry: any): PluginEnabledEntry | null => {
-      if (
-        entry &&
-        typeof entry === 'object' &&
-        typeof entry.name === 'string'
-      ) {
+      if (entry && typeof entry === 'object' && typeof entry.name === 'string') {
         return entry as PluginEnabledEntry;
       }
       if (typeof entry === 'string') {
@@ -1525,10 +1399,7 @@ function inferPluginNameFromSource(spec: string): string | null {
   // owner/repo[:subdir] → last path segment of the repo or subdir.
   const colonIdx = trimmed.indexOf(':');
   const headBeforeColon = colonIdx > 0 ? trimmed.slice(0, colonIdx) : trimmed;
-  const tail = (colonIdx > 0 ? trimmed.slice(colonIdx + 1) : headBeforeColon)
-    .split('/')
-    .filter(Boolean)
-    .pop();
+  const tail = (colonIdx > 0 ? trimmed.slice(colonIdx + 1) : headBeforeColon).split('/').filter(Boolean).pop();
   if (tail && /^[a-z0-9][a-z0-9._-]*$/i.test(tail)) {
     // Strip a trailing .git on git URLs.
     return tail.replace(/\.git$/i, '');
@@ -1536,9 +1407,7 @@ function inferPluginNameFromSource(spec: string): string | null {
   return null;
 }
 
-export function getExtraKnownMarketplaces(
-  config: Pick<NanoclawConfig, 'plugins'>,
-): PluginMarketplaceEntry[] {
+export function getExtraKnownMarketplaces(config: Pick<NanoclawConfig, 'plugins'>): PluginMarketplaceEntry[] {
   const p = config.plugins as
     | (NonNullable<NanoclawConfig['plugins']> & {
         marketplaces?: PluginMarketplaceEntry[];
@@ -1550,20 +1419,14 @@ export function getExtraKnownMarketplaces(
   return [];
 }
 
-export function setEnabledPlugins(
-  config: NanoclawConfig,
-  list: PluginEnabledEntry[],
-): void {
+export function setEnabledPlugins(config: NanoclawConfig, list: PluginEnabledEntry[]): void {
   if (!config.plugins) config.plugins = {};
   const p = config.plugins as Record<string, any>;
   p.enabledPlugins = list;
   delete p.enabled; // canonicalize
 }
 
-export function setExtraKnownMarketplaces(
-  config: NanoclawConfig,
-  list: PluginMarketplaceEntry[],
-): void {
+export function setExtraKnownMarketplaces(config: NanoclawConfig, list: PluginMarketplaceEntry[]): void {
   if (!config.plugins) config.plugins = {};
   const p = config.plugins as Record<string, any>;
   p.extraKnownMarketplaces = list;
