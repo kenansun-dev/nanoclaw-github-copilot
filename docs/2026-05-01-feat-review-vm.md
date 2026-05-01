@@ -109,7 +109,7 @@ Files reviewed: `src/container-runner.ts` (+79), `src/container-runtime.ts` (+16
 ### Strong points (defenses present)
 
 1. **No host-network mode**: `container-runner.ts` uses default bridge network; `--network=host` not granted.
-2. **Read-only root + tmpfs**: container starts with `--read-only` + `--tmpfs /tmp`; writable mounts limited to `/workspace/{group,global,extra}` and `/home/node` (777 — see Caveat C2).
+2. ~~**Read-only root + tmpfs**: container starts with `--read-only` + `--tmpfs /tmp`; writable mounts limited to `/workspace/{group,global,extra}` and `/home/node` (777 — see Caveat C2).~~ **❌ CORRECTED (rpi5 runtime audit, 2026-05-01)**: live `docker inspect` on a running v2 container (`nanoclaw-daily--tg-daily-...`) shows `ReadonlyRootfs: false`, no `--tmpfs` flag, and `buildContainerArgs` (`src/container-runner.ts:318-405`) emits **none** of `--read-only`, `--cap-drop`, `--security-opt`. Upstream v2 (`upstream/feat/migrate-from-v1`) is the same — confirmed by `git show upstream/feat/migrate-from-v1:src/container-runner.ts` + grep. So this is **not a fork regression**, it's an **upstream-parity gap** — see C5/C7 below (both WONTFIX, upstream parity).
 3. **Credential proxy, not pass-through**: GHC token resolved host-side, injected via `-e COPILOT_GITHUB_TOKEN=…`. Container never sees long-lived API keys.
 4. **`stopContainer` + `host-sweep`**: heartbeat-file based liveness + absolute 30-min ceiling kills runaway containers. Beats relying on docker's own healthcheck which the agent could spoof.
 5. **`ContainerConfig.AllowedRoot` allowlist**: `src/container-config.ts:53-90` — bind mounts are validated against a per-group allowlist; arbitrary host path mounting requires explicit config.
@@ -122,29 +122,33 @@ Files reviewed: `src/container-runner.ts` (+79), `src/container-runtime.ts` (+16
 | C2 | `chmod 777 /home/node` (in fork since `da4f01f`, matches upstream `d2e264a`) widens write surface. Acceptable per upstream rationale ("ephemeral, single-process, single-tenant") but means: if the agent escapes its own UID isolation, it can write to other host UIDs' mapped files. | LOW | Document in OneCLI hardening proposal; consider `--user $(id -u):$(id -g)` + `--userns-remap` instead of mode-777 widening. |
 | C3 | No AppArmor profile. Default docker AppArmor is permissive. | LOW | Author a `nanoclaw-agent` AppArmor profile after C1 lands. |
 | C4 | `COPILOT_GITHUB_TOKEN` env-var injection: anything inside the container can `printenv COPILOT_GITHUB_TOKEN`. A malicious MCP server bundled into agent code could exfiltrate. | MEDIUM | Move to a credential socket: host listens on `/var/run/onecli/cred.sock` mounted into container; agent requests scoped tokens per-call. OneCLI vault feature already half-there. |
-| C5 | No CPU/memory limits in `runContainerAgent` spawn args (verified `src/container-runner.ts` — no `--cpus` / `--memory` flags). A prompt-injection could spin a fork bomb or memory hog and starve host. | MEDIUM | Add `--cpus=2 --memory=4g --pids-limit=512` defaults; surface as `nanoclaw.json` `sandbox.limits.*`. |
+| C5 | No CPU/memory limits in `runContainerAgent` spawn args (verified `src/container-runner.ts` — no `--cpus` / `--memory` flags). A prompt-injection could spin a fork bomb or memory hog and starve host. **Bumped to HIGH on rpi5 hardware (8 GB RAM)** — live OOM trivially reachable. | ~~MEDIUM~~ → **WONTFIX (upstream parity)** | Owner decision 2026-05-01: upstream v2 also lacks these flags (`git show upstream/feat/migrate-from-v1:src/container-runner.ts | grep -E 'memory\|cpus\|pids'` → 0 hits). Not a regression. Future work = single fork-side hardening PR + upstream issue, not in this merge cycle. See `feat-review-followups.md`. |
 | C6 | `installV2DispatcherHooks` env gate (`NANOCLAW_V2_DISPATCHER`) accepts unset/0/'1'/'2'. No HMAC or signed config — anyone with shell access toggles modes. | LOW | OK for env-var pattern; not actually a security boundary. Fine. |
+| **C7 (NEW, rpi5 runtime audit)** | Missing 3 free hardening flags: `--read-only` rootfs, `--cap-drop=ALL`, `--security-opt no-new-privileges`. Each is a one-liner in `buildContainerArgs`. | ~~MEDIUM~~ → **WONTFIX (upstream parity)** | Same rationale as C5 — upstream v2 also missing all three. Bundle with C5 in any future hardening PR. |
 
 ### #6 sanity — sandbox timeout / orphan-prevention work survives v2
 
-| Fork-only feature | Status under v2 |
+| Feature (upstream commit) | Status under v2 |
 |---|---|
-| `host-sweep.ts` periodic maintenance (60s interval) | ✅ Present, runs regardless of dispatcher mode |
-| `killContainer(sessionId, reason)` | ✅ Present (`src/container-runner.ts`) |
-| Absolute 30-min heartbeat ceiling | ✅ `host-sweep.ts:30+` |
-| Message-scoped stuck detection | ✅ `host-sweep.ts:25+` |
+| `host-sweep.ts` periodic maintenance, 60s interval (`bee80b0`) | ✅ Present, runs regardless of dispatcher mode |
+| `killContainer(sessionId, reason)` (`2383bde`) | ✅ Present (`src/container-runner.ts`) |
+| Absolute 30-min heartbeat ceiling (`6a81519`) | ✅ `host-sweep.ts:30+` |
+| Message-scoped stuck detection (`e129400`) | ✅ `host-sweep.ts:25+` |
 | `stopContainer` with timeout | ✅ Re-exported from `container-runner.ts` |
 | `host-runner.ts` process-group kill on orphans | ✅ Present |
 
-**All 6 fork-only safety features are wired in and exercised by `host-sweep` regardless of v2 dispatcher mode.** The bridge pattern means v2-mode boots still get fork's orphan-prevention. Owner's worry on #6 is unfounded — these still mean something in v2.
+**All 6 features are wired in and exercised by `host-sweep` regardless of v2 dispatcher mode.** The bridge pattern means v2-mode boots still get this orphan-prevention. Owner's worry on #6 is unfounded — these still mean something in v2.
+
+**Nuance on `task-scheduler` (separate from #6 above)**: 4 features in `src/task-scheduler.ts` are genuinely **fork-only**, added in commit `68f2212` (2026-04-22 orphan-spam fix): `MAX_CONSECUTIVE_GROUP_MISSING` auto-pause, `context_mode='isolated'`, group-folder snapshot writes, consecutive-miss counter. Verified by `git grep MAX_CONSECUTIVE_GROUP_MISSING upstream/main upstream/feat/migrate-from-v1` → 0 hits. The bridge keeps the v1 scheduler loop alive under v2 mode, so users retain these features today. Porting them to v2-native `src/modules/scheduling/` is **deferred** with no PR-count commitment — see `feat-review-followups.md` #4 DEFERRED.
 
 ---
 
 ## Open items requiring rpi5 (Phase 2/3) or owner
 
-- **R1** (verify `nanoclaw setup groups` CLI is gone or aliased) — rpi5 catches in #3 smoke
-- **R3** (`.claude/skills/` deleted skills — does fork have replacements?) — rpi5 in #3
-- **C1, C4, C5** above — owner decision on whether to address in this PR or follow-up
+- **R1** (verify `nanoclaw setup groups` CLI is gone or aliased) — rpi5 verified LOW (no top-level CLI surface lost; `setup/groups.ts` was an internal helper module, not a `nanoclaw setup` verb). See `feat-review-rpi5.md` Phase 4 collation.
+- **R3** (`.claude/skills/` deleted skills — does fork have replacements?) — rpi5 verified LOW (8 skills genuinely deleted, 1 renamed). Owner-decide whether to restore or note in CHANGELOG.
+- **C1, C4** — owner decision on whether to address in this PR or follow-up.
+- **C5, C7** — **WONTFIX in this PR** (upstream parity; future hardening PR will address as a bundle).
 
 ---
 
