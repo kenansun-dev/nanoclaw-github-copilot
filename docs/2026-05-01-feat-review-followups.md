@@ -74,6 +74,38 @@ follow-ups). I'll implement whichever you pick and add the tests.
 
 ---
 
+## C5 / C7 — sandbox cgroup limits + 3 hardening flags — WONTFIX (upstream parity)
+
+**Status**: ❌ won't fix in this PR (owner decision 2026-05-01).
+
+**What we found**:
+- C5: `buildContainerArgs` doesn't pass `--memory` / `--cpus` / `--pids-limit`. Live `docker inspect` confirms `Memory: 0, CpuShares: 0, PidsLimit: null`. On rpi5 (8 GB RAM) a prompt-injection fork-bomb could OOM the host today.
+- C7: missing `--read-only` root + `--cap-drop=ALL` + `--security-opt no-new-privileges` (3 free flags).
+
+**Why WONTFIX here**:
+Verified `git show upstream/feat/migrate-from-v1:src/container-runner.ts` — upstream v2 also has none of these flags. We are at **parity with upstream**, not a regression. Owner rule: "this PR is not the place to add new safety features upstream doesn't have."
+
+**Future work** (separate ticket, not in this PR):
+Open an upstream issue + a single fork-side hardening PR adding all 6 flags together with a `sandbox.security.relaxed: true` opt-out for legacy users. Don't burn cycles on a 1-feature-per-PR drip. See `docs/2026-05-01-feat-review-rpi5.md` § "OneCLI hardening proposal" for the prepared write-up.
+
+---
+
+## #4 — port v1 scheduler safety features to v2 modules — DEFERRED
+
+**Status**: ⏸ deferred, no commitment (owner decision 2026-05-01).
+
+**Context**:
+`src/task-scheduler.ts` carries 4 fork-only features added in commit `68f2212` (2026-04-22 fix for orphan-task spam): `MAX_CONSECUTIVE_GROUP_MISSING` auto-pause, `context_mode='isolated'`, snapshot writes to group folder, and the consecutive-miss counter. Verified fork-only by `git grep MAX_CONSECUTIVE_GROUP_MISSING upstream/main upstream/feat/migrate-from-v1` → 0 matches.
+
+v2 upstream's scheduling moved to `src/modules/scheduling/` + per-session `inbound.db`, which doesn't have those 4 features.
+
+**Why DEFERRED**:
+`task-scheduler-bridge.ts` keeps the v1 polling loop alive under v2 mode, so users get the safety features today. Porting them to v2 modules is a separate cleanup — owner does not want to pre-commit to it.
+
+**If/when port becomes a priority**: open a single tracking issue, scope it then. Don't pre-split into 4 PRs.
+
+---
+
 ## (more entries appended as discovered)
 
 ---
