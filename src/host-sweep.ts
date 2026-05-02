@@ -42,17 +42,8 @@ import {
   type ContainerState,
 } from './db/session-db.js';
 import { log } from './log.js';
-import {
-  openInboundDb,
-  openOutboundDb,
-  inboundDbPath,
-  heartbeatPath,
-} from './session-manager.js';
-import {
-  isContainerRunning,
-  killContainer,
-  wakeContainer,
-} from './container-runner.js';
+import { openInboundDb, openOutboundDb, inboundDbPath, heartbeatPath } from './session-manager.js';
+import { isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
 import type { Session } from './types.js';
 
 const SWEEP_INTERVAL_MS = 60_000;
@@ -69,12 +60,7 @@ const BACKOFF_BASE_MS = 5000;
 export type StuckDecision =
   | { action: 'ok' }
   | { action: 'kill-ceiling'; heartbeatAgeMs: number; ceilingMs: number }
-  | {
-      action: 'kill-claim';
-      messageId: string;
-      claimAgeMs: number;
-      toleranceMs: number;
-    };
+  | { action: 'kill-claim'; messageId: string; claimAgeMs: number; toleranceMs: number };
 
 /**
  * Pure decision for whether a running container should be killed this sweep
@@ -102,11 +88,7 @@ export function decideStuckAction(args: {
     const heartbeatAge = now - heartbeatMtimeMs;
     const ceiling = Math.max(ABSOLUTE_CEILING_MS, declaredBashMs ?? 0);
     if (heartbeatAge > ceiling) {
-      return {
-        action: 'kill-ceiling',
-        heartbeatAgeMs: heartbeatAge,
-        ceilingMs: ceiling,
-      };
+      return { action: 'kill-ceiling', heartbeatAgeMs: heartbeatAge, ceilingMs: ceiling };
     }
   }
 
@@ -117,12 +99,7 @@ export function decideStuckAction(args: {
     const claimAge = now - claimedAt;
     if (claimAge <= tolerance) continue;
     if (heartbeatMtimeMs > claimedAt) continue;
-    return {
-      action: 'kill-claim',
-      messageId: claim.message_id,
-      claimAgeMs: claimAge,
-      toleranceMs: tolerance,
-    };
+    return { action: 'kill-claim', messageId: claim.message_id, claimAgeMs: claimAge, toleranceMs: tolerance };
   }
 
   return { action: 'ok' };
@@ -190,10 +167,7 @@ async function sweepSession(session: Session): Promise<void> {
     // and the wake would never fire.
     const dueCount = countDueMessages(inDb);
     if (dueCount > 0 && !isContainerRunning(session.id)) {
-      log.info('Waking container for due messages', {
-        sessionId: session.id,
-        count: dueCount,
-      });
+      log.info('Waking container for due messages', { sessionId: session.id, count: dueCount });
       await wakeContainer(session);
     }
 
@@ -214,8 +188,7 @@ async function sweepSession(session: Session): Promise<void> {
 
     // 5. Recurrence fanout for completed recurring tasks.
     // MODULE-HOOK:scheduling-recurrence:start
-    const { handleRecurrence } =
-      await import('./modules/scheduling/recurrence.js');
+    const { handleRecurrence } = await import('./modules/scheduling/recurrence.js');
     await handleRecurrence(inDb, session);
     // MODULE-HOOK:scheduling-recurrence:end
   } finally {
@@ -235,9 +208,7 @@ function heartbeatMtimeMs(agentGroupId: string, sessionId: string): number {
 
 function bashTimeoutMs(state: ContainerState | null): number | null {
   if (!state || state.current_tool !== 'Bash') return null;
-  return typeof state.tool_declared_timeout_ms === 'number'
-    ? state.tool_declared_timeout_ms
-    : null;
+  return typeof state.tool_declared_timeout_ms === 'number' ? state.tool_declared_timeout_ms : null;
 }
 
 function enforceRunningContainerSla(

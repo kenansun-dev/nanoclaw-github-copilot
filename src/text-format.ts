@@ -1,4 +1,4 @@
-import { Channel, NewMessage } from './types.js';
+import { Channel, NewMessage } from './types-extensions.js';
 import { formatLocalTime } from './timezone.js';
 
 export function escapeXml(s: string): string {

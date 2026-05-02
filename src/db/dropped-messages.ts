@@ -39,8 +39,6 @@ export function recordDroppedMessage(msg: {
 
 export function getUnregisteredSenders(limit = 50): UnregisteredSender[] {
   return getDb()
-    .prepare(
-      'SELECT * FROM unregistered_senders ORDER BY last_seen DESC LIMIT ?',
-    )
+    .prepare('SELECT * FROM unregistered_senders ORDER BY last_seen DESC LIMIT ?')
     .all(limit) as UnregisteredSender[];
 }

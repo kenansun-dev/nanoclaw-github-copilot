@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
-import type { RegisteredGroup } from './types.js';
+import type { RegisteredGroup } from './types-extensions.js';
 import {
   MAX_CONSECUTIVE_GROUP_MISSING,
   _resetSchedulerLoopForTests,

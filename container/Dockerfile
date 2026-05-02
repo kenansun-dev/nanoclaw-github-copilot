@@ -49,8 +49,13 @@ COPY agent-runner/ ./
 # Build TypeScript
 RUN npm run build
 
-# Create workspace directories
-RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
+# ---- Workspace + permissions -------------------------------------------------
+# IPC dirs (fork-only): /workspace/ipc/{messages,tasks,input} for follow-up messages
+# /home/node 777: upstream d2e264a — mapped host UID needs to write .claude.json etc.
+RUN mkdir -p /workspace/group /workspace/global /workspace/extra \
+        /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input && \
+    chown -R node:node /workspace && \
+    chmod 777 /home/node
 
 # Create entrypoint script
 # Container input (prompt, group info) is passed via stdin JSON.
@@ -58,8 +63,7 @@ RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/
 # Follow-up messages arrive via IPC files in /workspace/ipc/input/
 RUN printf '#!/bin/bash\nset -e\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\ncat > /tmp/input.json\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
-# Set ownership to node user (non-root) for writable directories
-RUN chown -R node:node /workspace && chmod 777 /home/node
+# (chown/chmod for /workspace + /home/node moved into the workspace mkdir RUN above)
 
 # Give node user passwordless sudo
 RUN echo "node ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers

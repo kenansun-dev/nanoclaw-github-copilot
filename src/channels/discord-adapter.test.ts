@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import type { ChannelSetup, InboundMessage } from './adapter.js';
-import type { NewMessage } from '../types.js';
+import type { NewMessage } from '../types-extensions.js';
 
 // Mock fork DiscordChannel so we never open a real gateway connection.
 const mockConnect = vi.fn().mockResolvedValue(undefined);

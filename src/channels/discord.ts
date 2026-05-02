@@ -8,7 +8,7 @@ import {
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
-import { logger } from '../log.js';
+import { logger } from '../log-extensions.js';
 import { sendWithRetry } from './send-with-retry.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
@@ -16,7 +16,7 @@ import {
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
-} from '../types.js';
+} from '../types-extensions.js';
 
 export interface DiscordChannelOpts {
   onMessage: OnInboundMessage;

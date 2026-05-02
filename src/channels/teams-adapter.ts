@@ -41,7 +41,7 @@ import type {
 } from './adapter.js';
 import { registerChannelAdapter } from './channel-registry.js';
 import { TeamsChannel } from './teams.js';
-import type { NewMessage, RegisteredGroup } from '../types.js';
+import type { NewMessage, RegisteredGroup } from '../types-extensions.js';
 
 const CHANNEL_TYPE = 'teams';
 const DEFAULT_PORT = 3978;

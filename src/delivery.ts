@@ -9,11 +9,7 @@
  */
 import type Database from 'better-sqlite3';
 
-import {
-  getRunningSessions,
-  getActiveSessions,
-  createPendingQuestion,
-} from './db/sessions.js';
+import { getRunningSessions, getActiveSessions, createPendingQuestion } from './db/sessions.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
 import { getMessagingGroupByPlatform } from './db/messaging-groups.js';
@@ -26,16 +22,8 @@ import {
 } from './db/session-db.js';
 import { log } from './log.js';
 import { normalizeOptions } from './channels/ask-question.js';
-import {
-  clearOutbox,
-  openInboundDb,
-  openOutboundDb,
-  readOutboxFiles,
-} from './session-manager.js';
-import {
-  pauseTypingRefreshAfterDelivery,
-  setTypingAdapter,
-} from './modules/typing/index.js';
+import { clearOutbox, openInboundDb, openOutboundDb, readOutboxFiles } from './session-manager.js';
+import { pauseTypingRefreshAfterDelivery, setTypingAdapter } from './modules/typing/index.js';
 import type { OutboundFile } from './channels/adapter.js';
 import type { Session } from './types.js';
 
@@ -70,11 +58,7 @@ export interface ChannelDeliveryAdapter {
     content: string,
     files?: OutboundFile[],
   ): Promise<string | undefined>;
-  setTyping?(
-    channelType: string,
-    platformId: string,
-    threadId: string | null,
-  ): Promise<void>;
+  setTyping?(channelType: string, platformId: string, threadId: string | null): Promise<void>;
 }
 
 let deliveryAdapter: ChannelDeliveryAdapter | null = null;
@@ -88,9 +72,7 @@ let sweepPolling = false;
  *
  * Not a general-purpose registry — narrow lifecycle hook only.
  */
-type AdapterReadyCallback = (
-  adapter: ChannelDeliveryAdapter,
-) => void | Promise<void>;
+type AdapterReadyCallback = (adapter: ChannelDeliveryAdapter) => void | Promise<void>;
 const adapterReadyCallbacks: AdapterReadyCallback[] = [];
 
 /** Current delivery adapter or null if not yet set. Modules use this in live
@@ -106,9 +88,7 @@ export function onDeliveryAdapterReady(cb: AdapterReadyCallback): void {
     // Already set — fire immediately so late registrations still run.
     void Promise.resolve()
       .then(() => cb(deliveryAdapter as ChannelDeliveryAdapter))
-      .catch((err) =>
-        log.error('onDeliveryAdapterReady callback threw', { err }),
-      );
+      .catch((err) => log.error('onDeliveryAdapterReady callback threw', { err }));
   }
 }
 
@@ -120,9 +100,7 @@ export function setDeliveryAdapter(adapter: ChannelDeliveryAdapter): void {
   for (const cb of adapterReadyCallbacks) {
     void Promise.resolve()
       .then(() => cb(adapter))
-      .catch((err) =>
-        log.error('onDeliveryAdapterReady callback threw', { err }),
-      );
+      .catch((err) => log.error('onDeliveryAdapterReady callback threw', { err }));
   }
 }
 
@@ -266,9 +244,7 @@ async function deliverMessage(
   inDb: Database.Database,
 ): Promise<string | undefined> {
   if (!deliveryAdapter) {
-    log.warn('No delivery adapter configured, dropping message', {
-      id: msg.id,
-    });
+    log.warn('No delivery adapter configured, dropping message', { id: msg.id });
     return;
   }
 
@@ -286,12 +262,9 @@ async function deliverMessage(
   // check will throw, which falls into the normal retry → mark-failed path.
   if (msg.channel_type === 'agent') {
     if (!hasTable(getDb(), 'agent_destinations')) {
-      throw new Error(
-        `agent-to-agent module not installed — cannot route message ${msg.id}`,
-      );
+      throw new Error(`agent-to-agent module not installed — cannot route message ${msg.id}`);
     }
-    const { routeAgentMessage } =
-      await import('./modules/agent-to-agent/agent-route.js');
+    const { routeAgentMessage } = await import('./modules/agent-to-agent/agent-route.js');
     await routeAgentMessage(msg, session);
     return;
   }
@@ -315,9 +288,7 @@ async function deliverMessage(
   if (msg.channel_type && msg.platform_id) {
     const mg = getMessagingGroupByPlatform(msg.channel_type, msg.platform_id);
     if (!mg) {
-      throw new Error(
-        `unknown messaging group for ${msg.channel_type}/${msg.platform_id} (message ${msg.id})`,
-      );
+      throw new Error(`unknown messaging group for ${msg.channel_type}/${msg.platform_id} (message ${msg.id})`);
     }
     const isOriginChat = session.messaging_group_id === mg.id;
     // Guarded: without the agent-to-agent module, `agent_destinations`
@@ -342,20 +313,13 @@ async function deliverMessage(
   // Guarded: without the interactive module, `pending_questions` doesn't
   // exist and we skip persistence — the card still delivers to the user,
   // but the response path has nowhere to land and will log unclaimed.
-  if (
-    content.type === 'ask_question' &&
-    content.questionId &&
-    hasTable(getDb(), 'pending_questions')
-  ) {
+  if (content.type === 'ask_question' && content.questionId && hasTable(getDb(), 'pending_questions')) {
     const title = content.title as string | undefined;
     const rawOptions = content.options as unknown;
     if (!title || !Array.isArray(rawOptions)) {
-      log.error(
-        'ask_question missing required title/options — not persisting',
-        {
-          questionId: content.questionId,
-        },
-      );
+      log.error('ask_question missing required title/options — not persisting', {
+        questionId: content.questionId,
+      });
     } else {
       const inserted = createPendingQuestion({
         question_id: content.questionId,
@@ -369,10 +333,7 @@ async function deliverMessage(
         created_at: new Date().toISOString(),
       });
       if (inserted) {
-        log.info('Pending question created', {
-          questionId: content.questionId,
-          sessionId: session.id,
-        });
+        log.info('Pending question created', { questionId: content.questionId, sessionId: session.id });
       }
     }
   }
@@ -388,12 +349,7 @@ async function deliverMessage(
   // extractAttachmentFiles) — delivery just hands buffers to the adapter.
   const files =
     Array.isArray(content.files) && content.files.length > 0
-      ? readOutboxFiles(
-          session.agent_group_id,
-          session.id,
-          msg.id,
-          content.files as string[],
-        )
+      ? readOutboxFiles(session.agent_group_id, session.id, msg.id, content.files as string[])
       : undefined;
 
   const platformMsgId = await deliveryAdapter.deliver(
@@ -438,10 +394,7 @@ export type DeliveryActionHandler = (
 
 const actionHandlers = new Map<string, DeliveryActionHandler>();
 
-export function registerDeliveryAction(
-  action: string,
-  handler: DeliveryActionHandler,
-): void {
+export function registerDeliveryAction(action: string, handler: DeliveryActionHandler): void {
   if (actionHandlers.has(action)) {
     log.warn('Delivery action handler overwritten', { action });
   }

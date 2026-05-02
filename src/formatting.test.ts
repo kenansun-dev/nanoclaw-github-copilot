@@ -11,7 +11,7 @@ import {
   formatOutbound,
   stripInternalTags,
 } from './text-format.js';
-import { NewMessage } from './types.js';
+import { NewMessage } from './types-extensions.js';
 
 function makeMsg(overrides: Partial<NewMessage> = {}): NewMessage {
   return {

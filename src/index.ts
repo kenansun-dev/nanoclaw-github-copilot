@@ -83,9 +83,9 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSessionCleanup } from './session-cleanup.js';
-import { startSchedulerLoop } from './task-scheduler-fork-bridge.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
-import { logger } from './log.js';
+import { startSchedulerLoop } from './task-scheduler-bridge.js';
+import { Channel, NewMessage, RegisteredGroup } from './types-extensions.js';
+import { logger } from './log-extensions.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './text-format.js';
@@ -215,7 +215,19 @@ function traceSetTyping(
  * including the last one. Between the last final and turn-end (which can
  * be 30s+ for slow runner shutdowns), Teams kept showing 'typing forever'.
  */
-const boundedTypingTimers = new Map<string, NodeJS.Timeout>();
+// Typing pulse state machine: see src/typing-pulse.ts for the unit
+// tests + behavioral contract. We keep `boundedTypingTimers` here only
+// as the shared state map; the helpers delegate to typing-pulse.ts.
+import {
+  createTypingPulseState,
+  cancelBoundedTypingClear as _cancelBoundedTypingClear,
+  armTypingBounded as _armTypingBounded,
+} from './typing-pulse.js';
+
+const typingPulseState = createTypingPulseState({
+  warn: (obj, msg) => logger.warn(obj, msg ?? 'typing pulse warn'),
+});
+const boundedTypingTimers = typingPulseState.timers;
 
 /**
  * TTL for the bounded typing pulse after an interim final-output. Long
@@ -226,11 +238,7 @@ const boundedTypingTimers = new Map<string, NodeJS.Timeout>();
 const INTERIM_TYPING_TTL_MS = 8000;
 
 function cancelBoundedTypingClear(chatJid: string): void {
-  const t = boundedTypingTimers.get(chatJid);
-  if (t) {
-    clearTimeout(t);
-    boundedTypingTimers.delete(chatJid);
-  }
+  _cancelBoundedTypingClear(typingPulseState, chatJid);
 }
 
 /**
@@ -238,6 +246,9 @@ function cancelBoundedTypingClear(chatJid: string): void {
  * schedules an auto-clear after `ttlMs` if nothing else has touched
  * typing in the meantime. The next traceSetTyping (any direction)
  * cancels the pending clear via cancelBoundedTypingClear.
+ *
+ * We log the trace info here (kept for parity with traceSetTyping) and
+ * then delegate the actual setTyping + timer install to the pure helper.
  */
 async function armTypingBounded(
   channel: {
@@ -248,23 +259,11 @@ async function armTypingBounded(
   reason: string,
   ttlMs: number,
 ): Promise<void> {
-  await traceSetTyping(channel, chatJid, true, reason);
-  // traceSetTyping cleared any prior bounded timer; install a fresh one.
-  const t = setTimeout(() => {
-    boundedTypingTimers.delete(chatJid);
-    // Use the underlying channel.setTyping directly so we don't recurse
-    // through cancelBoundedTypingClear (no-op anyway since we just
-    // deleted the entry, but explicit is clearer).
-    if (channel.setTyping) {
-      channel.setTyping(chatJid, false).catch((err: any) => {
-        logger.warn(
-          { chatJid, channel: channel.name, err: err?.message ?? err },
-          'bounded typing auto-clear failed',
-        );
-      });
-    }
-  }, ttlMs);
-  boundedTypingTimers.set(chatJid, t);
+  logger.info(
+    { chatJid, channel: channel.name, isTyping: true, reason },
+    'Channel typing state change',
+  );
+  await _armTypingBounded(typingPulseState, channel, chatJid, ttlMs);
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -521,7 +520,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // legacy progressiveMsgId path is bypassed entirely. See
   // src/types.ts:Channel.usesNativeStreaming docstring for why this is
   // a separate code path from editMessage-based partial accumulation.
-  let streamHandle: import('./types.js').StreamHandle | undefined;
+  let streamHandle: import('./types-extensions.js').StreamHandle | undefined;
   // IPC mode: the runAgent() promise resolves on the first query-complete
   // signal, but the spawned agent process keeps living and the stdout
   // listener (with this onOutput closure) keeps firing for follow-up
@@ -1673,7 +1672,7 @@ async function main(): Promise<void> {
   // applyConfigLogLevel (it's locked in logger.ts at module init).
   try {
     const { loadConfig: lc } = await import('./config-loader.js');
-    const { applyConfigLogLevel, getLogLevel } = await import('./log.js');
+    const { applyConfigLogLevel, getLogLevel } = await import('./log-extensions.js');
     const cfg = lc();
     applyConfigLogLevel(cfg.logLevel);
     logger.info(
@@ -1781,7 +1780,7 @@ async function main(): Promise<void> {
     try {
       const { reloadConfig, getConfig } = await import('./config.js');
       const { applyConfigLogLevel, setLogLevel, getLogLevel } =
-        await import('./log.js');
+        await import('./log-extensions.js');
       reloadConfig();
       const cfg = getConfig();
       const newLevel = cfg.logLevel;
@@ -2021,74 +2020,22 @@ async function main(): Promise<void> {
   });
 
   // ─── B.5.3 v2 dispatcher wiring (env-gated, default off) ──────────
-  // When NANOCLAW_V2_DISPATCHER=1, install the v2 router-side hooks so
-  // sender-allowlist-fork + abort-fork take effect via the v2
-  // access-gate / abort-handler registries. The fork v1 dispatcher
-  // loop (startMessageLoop below) STILL runs — this is wiring-only,
-  // not a swap. Full swap (replace v1 message loop with
-  // router.routeInbound + channel adapters-barrel + delivery polls)
-  // lands when the channel barrel swap (L5) goes in alongside it.
-  //
-  // Why behind a flag: production deploy today is fork v1 only. The
-  // v2 path is type-green + test-green but lacks an end-to-end smoke
-  // run on a live channel. Flag keeps the wiring in code (so future
-  // smokes can flip it on) without changing default startup behaviour.
-  //
-  // Modes:
+  // Implementation extracted to src/v2-dispatcher-wiring.ts so it has
+  // dedicated unit tests (see src/v2-dispatcher-wiring.test.ts). Modes:
   //   unset / 0  → fork v1 only (default).
-  //   '1'        → wiring only (gates + resolvers installed; no inbound
-  //                 dispatch change). For unit-style integration smoke.
-  //   '2'        → wiring + shadow inbound. v1 dispatch stays
-  //                 authoritative, but every onMessage also triggers
-  //                 routeInbound() fire-and-forget so the v2 router
-  //                 sees real traffic. Delivery polls stay off so the
-  //                 router doesn't double-send. See `src/shadow-inbound.ts`.
-  const v2Mode = process.env.NANOCLAW_V2_DISPATCHER;
-  if (v2Mode === '1' || v2Mode === '2') {
-    try {
-      const { setAccessGate } = await import('./router.js');
-      const { makeSenderAllowlistGate } = await import(
-        './modules/sender-allowlist-fork/index.js'
-      );
-      const { installAbortFork } = await import(
-        './modules/abort-fork/index.js'
-      );
-      const { installRegisteredGroupsFork } = await import(
-        './modules/registered-groups-fork/index.js'
-      );
-      // v2 module barrels self-register on import (approvals,
-      // interactive, scheduling, permissions, agent-to-agent,
-      // self-mod). Importing here, after channel adapters init,
-      // matches the boot order specified in
-      // docs/v2-migration-inventory.md §"Side-effect import order".
-      await import('./modules/index.js');
-
-      setAccessGate(makeSenderAllowlistGate());
-      installAbortFork({
-        killActive: (jid: string) => queue.killActive(jid),
-        sendAck: async (jid: string, text: string) => {
-          const channel = findChannel(channels, jid);
-          if (channel) await channel.sendMessage(jid, text);
-        },
-      });
-      installRegisteredGroupsFork();
-      logger.info(
-        {
-          gates: ['sender-allowlist'],
-          abortHandler: 'fork',
-          groupResolver: 'registered-groups-fork',
-          mode: v2Mode,
-          shadow: v2Mode === '2',
-        },
-        'v2 dispatcher hooks installed (NANOCLAW_V2_DISPATCHER=' + v2Mode + ')',
-      );
-    } catch (err) {
-      logger.error(
-        { err },
-        'v2 dispatcher wiring failed; continuing with fork v1 path only',
-      );
-    }
-  }
+  //   '1'        → wiring only (gates + resolvers installed).
+  //   '2'        → wiring + shadow inbound (see src/shadow-inbound.ts).
+  const { installV2DispatcherHooks } = await import(
+    './v2-dispatcher-wiring.js'
+  );
+  await installV2DispatcherHooks(process.env.NANOCLAW_V2_DISPATCHER, {
+    killActive: (jid: string) => queue.killActive(jid),
+    sendAck: async (jid: string, text: string) => {
+      const channel = findChannel(channels, jid);
+      if (channel) await channel.sendMessage(jid, text);
+    },
+    logger,
+  });
   // ─────────────────────────────────────────────────────────────────
 
   startIpcWatcher({

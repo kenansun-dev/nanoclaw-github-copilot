@@ -35,7 +35,7 @@ import type {
 } from './adapter.js';
 import { registerChannelAdapter } from './channel-registry.js';
 import { DiscordChannel } from './discord.js';
-import type { NewMessage, RegisteredGroup } from '../types.js';
+import type { NewMessage, RegisteredGroup } from '../types-extensions.js';
 
 const CHANNEL_TYPE = 'discord';
 

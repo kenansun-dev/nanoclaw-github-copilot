@@ -13,7 +13,7 @@ import {
   formatOutbound,
   findChannel,
 } from './text-format.js';
-import { Channel, NewMessage } from './types.js';
+import { Channel, NewMessage } from './types-extensions.js';
 
 // ─── escapeXml ───────────────────────────────────────────────────────────────
 

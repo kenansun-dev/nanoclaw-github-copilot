@@ -30,11 +30,7 @@ function freshDb() {
   return openInboundDb(DB_PATH);
 }
 
-function insertBasicTask(
-  db: ReturnType<typeof openInboundDb>,
-  id: string,
-  recurrence: string | null,
-) {
+function insertBasicTask(db: ReturnType<typeof openInboundDb>, id: string, recurrence: string | null) {
   insertTask(db, {
     id,
     processAfter: new Date().toISOString(),
@@ -54,9 +50,7 @@ describe('insertTask', () => {
   it('stamps series_id = id on insert', () => {
     const db = freshDb();
     insertBasicTask(db, 'task-1', null);
-    const row = db
-      .prepare('SELECT series_id FROM messages_in WHERE id = ?')
-      .get('task-1') as { series_id: string };
+    const row = db.prepare('SELECT series_id FROM messages_in WHERE id = ?').get('task-1') as { series_id: string };
     expect(row.series_id).toBe('task-1');
     db.close();
   });
@@ -70,9 +64,7 @@ describe('cancelTask / pauseTask / resumeTask series matching', () => {
   function seedRecurringChain(db: ReturnType<typeof openInboundDb>) {
     insertBasicTask(db, 'task-orig', '0 9 * * *');
     // Mark the original as completed (as syncProcessingAcks would do).
-    db.prepare(
-      "UPDATE messages_in SET status = 'completed' WHERE id = 'task-orig'",
-    ).run();
+    db.prepare("UPDATE messages_in SET status = 'completed' WHERE id = 'task-orig'").run();
 
     const msg: RecurringMessage = {
       id: 'task-orig',
@@ -85,12 +77,7 @@ describe('cancelTask / pauseTask / resumeTask series matching', () => {
       thread_id: null,
       series_id: 'task-orig',
     };
-    insertRecurrence(
-      db,
-      msg,
-      'task-next',
-      new Date(Date.now() + 86400000).toISOString(),
-    );
+    insertRecurrence(db, msg, 'task-next', new Date(Date.now() + 86400000).toISOString());
   }
 
   it('cancel by original id reaches the live follow-up via series_id', () => {
@@ -99,18 +86,10 @@ describe('cancelTask / pauseTask / resumeTask series matching', () => {
 
     cancelTask(db, 'task-orig');
 
-    const live = db
-      .prepare(
-        "SELECT id, status, recurrence FROM messages_in WHERE status = 'pending'",
-      )
-      .all();
+    const live = db.prepare("SELECT id, status, recurrence FROM messages_in WHERE status = 'pending'").all();
     expect(live).toHaveLength(0);
 
-    const followUp = db
-      .prepare(
-        "SELECT status, recurrence FROM messages_in WHERE id = 'task-next'",
-      )
-      .get() as {
+    const followUp = db.prepare("SELECT status, recurrence FROM messages_in WHERE id = 'task-next'").get() as {
       status: string;
       recurrence: string | null;
     };
@@ -136,9 +115,7 @@ describe('cancelTask / pauseTask / resumeTask series matching', () => {
 
     pauseTask(db, 'task-orig');
 
-    const followUp = db
-      .prepare("SELECT status FROM messages_in WHERE id = 'task-next'")
-      .get() as { status: string };
+    const followUp = db.prepare("SELECT status FROM messages_in WHERE id = 'task-next'").get() as { status: string };
     expect(followUp.status).toBe('paused');
     db.close();
   });
@@ -147,14 +124,10 @@ describe('cancelTask / pauseTask / resumeTask series matching', () => {
     const db = freshDb();
     seedRecurringChain(db);
 
-    db.prepare(
-      "UPDATE messages_in SET status = 'paused' WHERE id = 'task-next'",
-    ).run();
+    db.prepare("UPDATE messages_in SET status = 'paused' WHERE id = 'task-next'").run();
     resumeTask(db, 'task-orig');
 
-    const followUp = db
-      .prepare("SELECT status FROM messages_in WHERE id = 'task-next'")
-      .get() as { status: string };
+    const followUp = db.prepare("SELECT status FROM messages_in WHERE id = 'task-next'").get() as { status: string };
     expect(followUp.status).toBe('pending');
     db.close();
   });
@@ -170,19 +143,13 @@ describe('updateTask', () => {
       platformId: null,
       channelType: null,
       threadId: null,
-      content: JSON.stringify({
-        prompt: 'old',
-        script: 'echo old',
-        extra: 'keep me',
-      }),
+      content: JSON.stringify({ prompt: 'old', script: 'echo old', extra: 'keep me' }),
     });
 
     const touched = updateTask(db, 'task-1', { prompt: 'new' });
     expect(touched).toBe(1);
 
-    const row = db
-      .prepare('SELECT content FROM messages_in WHERE id = ?')
-      .get('task-1') as { content: string };
+    const row = db.prepare('SELECT content FROM messages_in WHERE id = ?').get('task-1') as { content: string };
     const parsed = JSON.parse(row.content);
     expect(parsed.prompt).toBe('new');
     expect(parsed.script).toBe('echo old');
@@ -201,14 +168,9 @@ describe('updateTask', () => {
       content: JSON.stringify({ prompt: 'p' }),
     });
 
-    updateTask(db, 'task-1', {
-      recurrence: '0 18 * * *',
-      processAfter: '2026-02-01T00:00:00Z',
-    });
+    updateTask(db, 'task-1', { recurrence: '0 18 * * *', processAfter: '2026-02-01T00:00:00Z' });
 
-    const row = db
-      .prepare('SELECT recurrence, process_after FROM messages_in WHERE id = ?')
-      .get('task-1') as {
+    const row = db.prepare('SELECT recurrence, process_after FROM messages_in WHERE id = ?').get('task-1') as {
       recurrence: string;
       process_after: string;
     };
@@ -230,9 +192,7 @@ describe('updateTask', () => {
 
     updateTask(db, 'task-1', { recurrence: null });
 
-    const row = db
-      .prepare('SELECT recurrence FROM messages_in WHERE id = ?')
-      .get('task-1') as {
+    const row = db.prepare('SELECT recurrence FROM messages_in WHERE id = ?').get('task-1') as {
       recurrence: string | null;
     };
     expect(row.recurrence).toBeNull();
@@ -249,9 +209,7 @@ describe('updateTask', () => {
       threadId: null,
       content: JSON.stringify({ prompt: 'old' }),
     });
-    db.prepare(
-      "UPDATE messages_in SET status = 'completed' WHERE id = 'task-orig'",
-    ).run();
+    db.prepare("UPDATE messages_in SET status = 'completed' WHERE id = 'task-orig'").run();
 
     const msg: RecurringMessage = {
       id: 'task-orig',
@@ -264,26 +222,17 @@ describe('updateTask', () => {
       thread_id: null,
       series_id: 'task-orig',
     };
-    insertRecurrence(
-      db,
-      msg,
-      'task-next',
-      new Date(Date.now() + 86400000).toISOString(),
-    );
+    insertRecurrence(db, msg, 'task-next', new Date(Date.now() + 86400000).toISOString());
 
     const touched = updateTask(db, 'task-orig', { prompt: 'new' });
     // Only the live follow-up should be touched — completed rows are excluded.
     expect(touched).toBe(1);
 
-    const live = db
-      .prepare("SELECT content FROM messages_in WHERE id = 'task-next'")
-      .get() as { content: string };
+    const live = db.prepare("SELECT content FROM messages_in WHERE id = 'task-next'").get() as { content: string };
     expect(JSON.parse(live.content).prompt).toBe('new');
 
     // Original (completed) row left alone.
-    const orig = db
-      .prepare("SELECT content FROM messages_in WHERE id = 'task-orig'")
-      .get() as { content: string };
+    const orig = db.prepare("SELECT content FROM messages_in WHERE id = 'task-orig'").get() as { content: string };
     expect(JSON.parse(orig.content).prompt).toBe('old');
   });
 
@@ -298,9 +247,7 @@ describe('updateTask', () => {
       threadId: null,
       content: JSON.stringify({ prompt: 'p' }),
     });
-    db.prepare(
-      "UPDATE messages_in SET status = 'completed' WHERE id = 'task-1'",
-    ).run();
+    db.prepare("UPDATE messages_in SET status = 'completed' WHERE id = 'task-1'").run();
 
     const touched = updateTask(db, 'task-1', { prompt: 'new' });
     expect(touched).toBe(0);
@@ -311,9 +258,7 @@ describe('insertRecurrence', () => {
   it('copies series_id forward', () => {
     const db = freshDb();
     insertBasicTask(db, 'task-orig', '0 9 * * *');
-    db.prepare(
-      "UPDATE messages_in SET status = 'completed' WHERE id = 'task-orig'",
-    ).run();
+    db.prepare("UPDATE messages_in SET status = 'completed' WHERE id = 'task-orig'").run();
 
     const msg: RecurringMessage = {
       id: 'task-orig',
@@ -328,9 +273,7 @@ describe('insertRecurrence', () => {
     };
     insertRecurrence(db, msg, 'task-next', new Date().toISOString());
 
-    const row = db
-      .prepare('SELECT series_id FROM messages_in WHERE id = ?')
-      .get('task-next') as {
+    const row = db.prepare('SELECT series_id FROM messages_in WHERE id = ?').get('task-next') as {
       series_id: string;
     };
     expect(row.series_id).toBe('task-orig');

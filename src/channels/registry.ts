@@ -1,9 +1,4 @@
-import {
-  Channel,
-  OnInboundMessage,
-  OnChatMetadata,
-  RegisteredGroup,
-} from '../types.js';
+import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types-extensions.js';
 
 export interface ChannelOpts {
   onMessage: OnInboundMessage;

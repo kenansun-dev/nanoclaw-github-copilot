@@ -1,4 +1,4 @@
-import { logger } from '../log.js';
+import { logger } from '../log-extensions.js';
 
 /**
  * Retry policy for transient channel send failures.

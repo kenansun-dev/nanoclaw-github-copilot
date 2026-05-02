@@ -85,12 +85,7 @@ describe('agent groups', () => {
 
   it('should list all', () => {
     createAgentGroup(ag());
-    createAgentGroup({
-      ...ag(),
-      id: 'ag-2',
-      name: 'Another',
-      folder: 'another',
-    });
+    createAgentGroup({ ...ag(), id: 'ag-2', name: 'Another', folder: 'another' });
     expect(getAllAgentGroups()).toHaveLength(2);
   });
 
@@ -208,12 +203,7 @@ describe('messaging group agents', () => {
       agent_provider: null,
       created_at: now(),
     });
-    createMessagingGroupAgent({
-      ...mga(),
-      id: 'mga-2',
-      agent_group_id: 'ag-2',
-      priority: 10,
-    });
+    createMessagingGroupAgent({ ...mga(), id: 'mga-2', agent_group_id: 'ag-2', priority: 10 });
     const results = getMessagingGroupAgents('mg-1');
     expect(results[0].agent_group_id).toBe('ag-2');
     expect(results[1].agent_group_id).toBe('ag-1');
@@ -221,9 +211,7 @@ describe('messaging group agents', () => {
 
   it('should enforce unique messaging_group + agent_group', () => {
     createMessagingGroupAgent(mga());
-    expect(() =>
-      createMessagingGroupAgent({ ...mga(), id: 'mga-dup' }),
-    ).toThrow();
+    expect(() => createMessagingGroupAgent({ ...mga(), id: 'mga-dup' })).toThrow();
   });
 
   it('should update', () => {
@@ -239,9 +227,7 @@ describe('messaging group agents', () => {
   });
 
   it('should enforce foreign key on agent_group_id', () => {
-    expect(() =>
-      createMessagingGroupAgent({ ...mga(), agent_group_id: 'nonexistent' }),
-    ).toThrow();
+    expect(() => createMessagingGroupAgent({ ...mga(), agent_group_id: 'nonexistent' })).toThrow();
   });
 
   it('auto-creates an agent_destinations row for the wiring', async () => {
@@ -256,8 +242,7 @@ describe('messaging group agents', () => {
   });
 
   it('does not duplicate destination row on re-wiring', async () => {
-    const { getDestinations } =
-      await import('../modules/agent-to-agent/db/agent-destinations.js');
+    const { getDestinations } = await import('../modules/agent-to-agent/db/agent-destinations.js');
     createMessagingGroupAgent(mga());
     // Re-create the same wiring throws (PK unique), but even if we got the
     // row in some other way (e.g. via createDestination directly followed
@@ -268,8 +253,7 @@ describe('messaging group agents', () => {
   });
 
   it('breaks local_name collisions within an agent group', async () => {
-    const { getDestinations } =
-      await import('../modules/agent-to-agent/db/agent-destinations.js');
+    const { getDestinations } = await import('../modules/agent-to-agent/db/agent-destinations.js');
     // Two messaging groups with the same `name` wired to the same agent
     // should get distinct local_names (gen, gen-2).
     createMessagingGroupAgent(mga());
@@ -282,11 +266,7 @@ describe('messaging group agents', () => {
       unknown_sender_policy: 'strict',
       created_at: now(),
     });
-    createMessagingGroupAgent({
-      ...mga(),
-      id: 'mga-2',
-      messaging_group_id: 'mg-2',
-    });
+    createMessagingGroupAgent({ ...mga(), id: 'mga-2', messaging_group_id: 'mg-2' });
 
     const dests = getDestinations('ag-1')
       .map((d) => d.local_name)
@@ -363,38 +343,20 @@ describe('sessions', () => {
 
   it('should list active sessions', () => {
     createSession(sess());
-    createSession({
-      ...sess(),
-      id: 'sess-closed',
-      status: 'closed',
-      thread_id: 'thread-x',
-    });
+    createSession({ ...sess(), id: 'sess-closed', status: 'closed', thread_id: 'thread-x' });
     expect(getActiveSessions()).toHaveLength(1);
   });
 
   it('should list running sessions', () => {
     createSession({ ...sess(), container_status: 'running' });
-    createSession({
-      ...sess(),
-      id: 'sess-idle',
-      container_status: 'idle',
-      thread_id: 'thread-1',
-    });
-    createSession({
-      ...sess(),
-      id: 'sess-stopped',
-      container_status: 'stopped',
-      thread_id: 'thread-2',
-    });
+    createSession({ ...sess(), id: 'sess-idle', container_status: 'idle', thread_id: 'thread-1' });
+    createSession({ ...sess(), id: 'sess-stopped', container_status: 'stopped', thread_id: 'thread-2' });
     expect(getRunningSessions()).toHaveLength(2);
   });
 
   it('should update', () => {
     createSession(sess());
-    updateSession('sess-1', {
-      container_status: 'running',
-      last_active: now(),
-    });
+    updateSession('sess-1', { container_status: 'running', last_active: now() });
     const result = getSession('sess-1')!;
     expect(result.container_status).toBe('running');
     expect(result.last_active).not.toBeNull();

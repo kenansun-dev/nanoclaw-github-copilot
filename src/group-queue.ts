@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.js';
-import { logger } from './log.js';
+import { logger } from './log-extensions.js';
 
 interface QueuedTask {
   id: string;

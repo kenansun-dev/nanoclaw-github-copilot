@@ -4,7 +4,7 @@ import path from 'path';
 
 import { DATA_DIR } from './config.js';
 import { IS_GHC_PROVIDER } from './config-extensions.js';
-import { logger } from './log.js';
+import { logger } from './log-extensions.js';
 
 interface RemoteControlSession {
   pid: number;

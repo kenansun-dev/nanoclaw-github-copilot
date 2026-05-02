@@ -1,7 +1,7 @@
 import fs from 'fs';
 
 import { SENDER_ALLOWLIST_PATH, getConfig } from './config.js';
-import { logger } from './log.js';
+import { logger } from './log-extensions.js';
 
 export interface ChatAllowlistEntry {
   allow: '*' | string[];

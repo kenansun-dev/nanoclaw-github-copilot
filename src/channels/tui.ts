@@ -20,13 +20,13 @@ import net from 'net';
 import path from 'path';
 
 import { ASSISTANT_NAME } from '../config.js';
-import { logger } from '../log.js';
+import { logger } from '../log-extensions.js';
 import { loadConfig } from '../config-loader.js';
 import { resolveWorkspace } from '../workspace.js';
 import { deriveGroupFolder } from '../chat-manager.js';
 // registerGroup callback is provided via ChannelOpts
 import { registerChannel, ChannelOpts } from './registry.js';
-import { Channel, NewMessage } from '../types.js';
+import { Channel, NewMessage } from '../types-extensions.js';
 
 const TUI_JID_PREFIX = 'tui:';
 // Single stable jid shared by every TUI connection. Each `nanoclaw tui`

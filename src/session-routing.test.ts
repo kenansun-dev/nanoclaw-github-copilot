@@ -4,7 +4,7 @@ import {
   uniqueIsMainFolder,
   agentSlug,
 } from './session-routing.js';
-import { RegisteredGroup } from './types.js';
+import { RegisteredGroup } from './types-extensions.js';
 
 function group(folder: string, isMain = true): RegisteredGroup {
   return {

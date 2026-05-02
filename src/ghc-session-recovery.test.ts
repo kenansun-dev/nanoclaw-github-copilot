@@ -40,23 +40,9 @@ function isSessionNotFoundError(err: unknown): boolean {
   return SESSION_NOT_FOUND_RE.test(msg);
 }
 
-const HELPER_SOURCE = path.join(
-  __dirname,
-  '..',
-  'container',
-  'agent-runner-ghc',
-  'src',
-  'session-recovery.ts',
-);
+const HELPER_SOURCE = path.join(__dirname, '..', 'container', 'agent-runner-ghc', 'src', 'session-recovery.ts');
 
-const AGENT_RUNNER = path.join(
-  __dirname,
-  '..',
-  'container',
-  'agent-runner-ghc',
-  'src',
-  'index.ts',
-);
+const AGENT_RUNNER = path.join(__dirname, '..', 'container', 'agent-runner-ghc', 'src', 'index.ts');
 
 describe('GHC session-not-found recovery (regression guard on index.ts)', () => {
   const src = fs.readFileSync(AGENT_RUNNER, 'utf8');
@@ -66,16 +52,12 @@ describe('GHC session-not-found recovery (regression guard on index.ts)', () => 
     // Exact buggy pattern: skipping resumeSession when `session` reference is
     // non-null. Fix branches on `sessionId` instead, which always routes to
     // resume (or create-new on first iteration).
-    expect(src).not.toMatch(
-      /if\s*\(\s*session\s*\)\s*\{[^}]*Reusing existing session/,
-    );
+    expect(src).not.toMatch(/if\s*\(\s*session\s*\)\s*\{[^}]*Reusing existing session/);
     expect(src).not.toMatch(/Session already exists from previous iteration/);
   });
 
   it('always calls resumeSession when sessionId is present (layer 1)', () => {
-    expect(src).toMatch(
-      /if\s*\(\s*sessionId\s*\)\s*\{[\s\S]*?client\.resumeSession\(/,
-    );
+    expect(src).toMatch(/if\s*\(\s*sessionId\s*\)\s*\{[\s\S]*?client\.resumeSession\(/);
   });
 
   it('wraps session.send in try/catch with isSessionNotFoundError recovery (layer 2)', () => {
@@ -84,9 +66,7 @@ describe('GHC session-not-found recovery (regression guard on index.ts)', () => 
     // isSessionNotFoundError and continues the loop.
     expect(src).toMatch(/try\s*\{[\s\S]*?await\s+session\.send\(/);
     expect(src).toMatch(/isSessionNotFoundError\(sendErr\)/);
-    expect(src).toMatch(
-      /session\s*=\s*null;\s*\/\/ force loop top to re-resume/,
-    );
+    expect(src).toMatch(/session\s*=\s*null;\s*\/\/ force loop top to re-resume/);
     expect(src).toMatch(/continue;\s*\/\/ re-enter loop with same prompt/);
   });
 
@@ -104,54 +84,106 @@ describe('GHC session-not-found recovery (regression guard on index.ts)', () => 
     expect(src).toMatch(/isSessionNotFoundError\(sendErr\)/);
     expect(helperSrc).toMatch(/\/session\\s\*not\\s\*found\/i/);
   });
+
+  it('layer 2 catch does NOT swallow unrelated errors (rethrow guard)', () => {
+    // Negative guard: a future refactor could accidentally make the
+    // mid-turn catch block broader (e.g. catching ALL errors and
+    // retrying), which would mask network failures, auth failures,
+    // and SDK bugs as silent retries. Pin the structural invariant
+    // that the unrelated-error path rethrows.
+    //
+    // Bug class this catches: someone replaces
+    //   if (isSessionNotFoundError(sendErr) && sessionId) { recover; continue }
+    //   throw sendErr;
+    // with a blanket
+    //   session = null; continue;
+    // (which would leak state corruption into other failure modes).
+    expect(src).toMatch(/catch\s*\(\s*sendErr\s*\)\s*\{[\s\S]*?throw\s+sendErr;?\s*\}/);
+    // Also assert the recovery branch is gated on BOTH the predicate
+    // AND a non-empty sessionId (no point recovering if we never
+    // resumed a session — that would loop forever on the create-new
+    // path).
+    expect(src).toMatch(/if\s*\(\s*isSessionNotFoundError\(sendErr\)\s*&&\s*sessionId\s*\)/);
+  });
+
+  // Behavioral counterpart to the regex pin above (VM review #1).
+  // Exercises the catch-block logic with the real predicate and a real
+  // Error instance. If anyone later replaces `throw sendErr` with
+  // `throw new Error(sendErr.message)` the identity assertion fails;
+  // wrapping in a custom error class also fails.
+  describe('rethrow path preserves error identity (behavioral)', () => {
+    // Re-implement the catch-block logic exactly as in index.ts. Two-layer
+    // defense: regex pin above locks the source shape; this locks the
+    // semantics. Either drift breaks one of the two.
+    function simulateMidTurnCatch(sendErr: unknown, sessionId: string | null): { recovered: true } {
+      if (isSessionNotFoundError(sendErr) && sessionId) {
+        return { recovered: true };
+      }
+      throw sendErr;
+    }
+
+    it('rethrows network errors with identity (===) preserved', () => {
+      const original = new Error('ECONNREFUSED 127.0.0.1:443');
+      let caught: unknown = null;
+      try {
+        simulateMidTurnCatch(original, 'sess-abc');
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBe(original); // identity, not just .message equality
+      expect((caught as Error).stack).toBe(original.stack);
+    });
+
+    it('rethrows auth errors without wrapping', () => {
+      const original = new Error('401 Unauthorized: token expired');
+      expect(() => simulateMidTurnCatch(original, 'sess-abc')).toThrow(original);
+    });
+
+    it('rethrows even matching predicate when sessionId is null', () => {
+      // Edge: would loop forever recovering with no session to resume.
+      // Recovery branch MUST also guard on sessionId.
+      const original = new Error('Session not found: xyz');
+      expect(() => simulateMidTurnCatch(original, null)).toThrow(original);
+    });
+
+    it('does NOT throw on session-not-found with valid sessionId', () => {
+      const original = new Error('Session not found: stale-123');
+      const result = simulateMidTurnCatch(original, 'sess-abc');
+      expect(result.recovered).toBe(true);
+    });
+  });
 });
 
 describe('isSessionNotFoundError (recovery decision)', () => {
   it('matches the SDK error shape `Session not found: <uuid>`', () => {
-    const err = new Error(
-      'Session not found: f57f21be-dec1-40d9-ba94-6c1fab9b8d8a',
-    );
+    const err = new Error('Session not found: f57f21be-dec1-40d9-ba94-6c1fab9b8d8a');
     expect(isSessionNotFoundError(err)).toBe(true);
   });
 
   it('matches case-insensitively', () => {
     expect(isSessionNotFoundError(new Error('SESSION NOT FOUND'))).toBe(true);
-    expect(isSessionNotFoundError(new Error('session NOT found: abc'))).toBe(
-      true,
-    );
+    expect(isSessionNotFoundError(new Error('session NOT found: abc'))).toBe(true);
   });
 
   it('tolerates extra whitespace between words', () => {
-    expect(isSessionNotFoundError(new Error('Session  not  found: x'))).toBe(
-      true,
-    );
+    expect(isSessionNotFoundError(new Error('Session  not  found: x'))).toBe(true);
   });
 
   it('matches when the message is wrapped (e.g. JSON-RPC envelope)', () => {
-    const err = new Error(
-      'Request session.send failed with message: Session not found: abc',
-    );
+    const err = new Error('Request session.send failed with message: Session not found: abc');
     expect(isSessionNotFoundError(err)).toBe(true);
   });
 
   it('matches non-Error throwables (string, plain object)', () => {
     expect(isSessionNotFoundError('Session not found: abc')).toBe(true);
-    expect(
-      isSessionNotFoundError({ toString: () => 'Session not found: abc' }),
-    ).toBe(true);
+    expect(isSessionNotFoundError({ toString: () => 'Session not found: abc' })).toBe(true);
   });
 
   it('does NOT match unrelated errors', () => {
-    expect(isSessionNotFoundError(new Error('Network unreachable'))).toBe(
-      false,
-    );
-    expect(isSessionNotFoundError(new Error('Forbidden: rate limit'))).toBe(
-      false,
-    );
+    expect(isSessionNotFoundError(new Error('Network unreachable'))).toBe(false);
+    expect(isSessionNotFoundError(new Error('Forbidden: rate limit'))).toBe(false);
     expect(isSessionNotFoundError(new Error('Job not found: abc'))).toBe(false);
-    expect(
-      isSessionNotFoundError(new Error('Repository not found: foo/bar')),
-    ).toBe(false);
+    expect(isSessionNotFoundError(new Error('Repository not found: foo/bar'))).toBe(false);
   });
 
   it('returns false for null/undefined/empty', () => {

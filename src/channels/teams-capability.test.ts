@@ -15,7 +15,7 @@ import { describe, it, expect } from 'vitest';
  * onChatMetadata). We assert the static class field via a partial mock
  * that mirrors the production declaration; the type system catches drift.
  */
-import type { Channel } from '../types.js';
+import type { Channel } from '../types-extensions.js';
 
 describe('Teams channel capability', () => {
   it('declares prefersNewMessageForFinal=true on the class', async () => {
@@ -328,7 +328,7 @@ describe('IPC turn boundary closure reset', () => {
  *   - The source contract that the dispatcher actually wires the
  *     branch (so a future refactor that drops it gets caught).
  */
-import type { StreamHandle } from '../types.js';
+import type { StreamHandle } from '../types-extensions.js';
 
 describe('Channel.usesNativeStreaming capability surface', () => {
   it('Channel interface declares usesNativeStreaming as optional boolean', () => {

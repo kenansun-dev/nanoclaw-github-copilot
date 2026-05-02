@@ -52,3 +52,62 @@ container/skills/status/SKILL.md (UD)
 - Do NOT push the half-merged branch — keep WIP local
 - Daily PR rule: ONE PR for the whole mergeback day
 - Don't touch the other person's owned files; if you must, paste the diff in chat first
+
+## Post-merge follow-ups (added 2026-04-30, post-PR-#36)
+
+### B.6/B.7 cutover blocker — `sessions` table schema collision
+
+Discovered during VM cross-review of PR #36 (RPI5-owned db slice).
+
+**v1 schema** (`src/db.ts:146`, currently authoritative — `initDatabase()` is the only DB entrypoint wired through `src/index.ts`):
+```
+CREATE TABLE sessions (
+  group_folder TEXT NOT NULL,
+  provider     TEXT NOT NULL,
+  session_id   TEXT NOT NULL,
+  ...
+  PRIMARY KEY (group_folder, provider)
+);
+```
+
+**v2 schema** (`src/db/sessions.ts`, taken from upstream — currently has zero callers):
+```
+INSERT INTO sessions (id, agent_group_id, messaging_group_id, thread_id,
+                      agent_provider, status, container_status,
+                      last_active, created_at) ...
+```
+
+While we're in B.5.5 shadow mode the collision is dormant (only v1 ever runs migrations on a real DB). When `NANOCLAW_V2_DISPATCHER` cutover lands, one of:
+
+1. **Drop+recreate strategy** — migration step exports v1 `sessions` rows to a JSON snapshot, drops the table, recreates with v2 schema, reloads with field-mapping. Risk: lossy if v1 rows have provider/session_id pairs that don't fit v2's `id` PK + `agent_group_id` FK.
+2. **Rename strategy** — v2 module-split renames its table to `sessions_v2` (or similar). v1 `sessions` table stays until v1 dispatcher is removed entirely; then a final cleanup migration drops it.
+
+Recommendation: option 2 (rename) — safer, reversible, allows v1+v2 to coexist longer if needed for staged cutover. Schedule for B.7 cutover prep.
+
+### Triage doc SHARED section reclassification
+
+Five files originally listed as "upstream deleted, we still call" were initially encoded as accept-delete in the resolution script, then restored in commit `200d7f1` after tsc/vitest regressed. Re-classify them as **"keep-fork until V2 dispatcher cutover"** rather than "upstream deleted, decide":
+
+- `src/session-cleanup.ts`
+- `src/remote-control.ts(.test)`
+- `src/group-queue.ts(.test)`
+- `src/mount-security.ts(.test)`
+
+All have 3-18 importers (`src/index.ts`, `command-gate.ts`, `admin-command-registry.ts`, `task-scheduler.ts`, `host-runner.ts`, `container-runner.ts`, `modules/mount-security/index.ts`). They retire on the same cutover day as v1 dispatcher loop removal.
+
+**Rule for next mergeback**: before encoding accept-delete in any resolution script, run `grep -rn "from './<basename>(\.js)?'" src/` and verify zero callers. Local `find` / IDE "find usages" misses re-exports and dynamic imports.
+
+### `src/config.ts` — restore upstream + add `config-extensions.ts` overlay
+
+Deferred from Q2-followup engineering cleanup P1.3 (2026-04-30, rpi5 + VM agreed Option A; owner delegated decision in Discord `#nanoclaw`).
+
+**Why deferred** (not done in PR #36): `src/config.ts` was originally bucketed as ADDITIVE in the Q3 audit but re-review showed the data-source model is entirely REPLACED:
+
+- Upstream: `ASSISTANT_NAME = process.env.ASSISTANT_NAME || envConfig.X || 'Andy'` (env-first + install-slug)
+- Fork: `ASSISTANT_NAME = _config.agents.defaults.name` (loaded from `nanoclaw.json` via `config-loader.ts`, workspace-relative)
+
+Same export names, different signatures + side-effects. Restoring upstream cleanly requires either (a) reverting fork's JSON config-loader model or (b) wrapping every fork-derived const as a getter so `config-extensions.ts` can host the loader behind upstream's surface. Both are large mechanical refactors with regression surface across every importer of `ASSISTANT_NAME` / `DATA_DIR` / `STORE_DIR` / `CONTAINER_IMAGE` / `MOUNT_ALLOWLIST_PATH` etc.
+
+**Cutover plan** (when this lands): mirror the same approach used for `index.ts` / `container-runner.ts` / `task-scheduler.ts` — restore `src/config.ts` to upstream verbatim and put fork's JSON-loader-backed exports in `src/config-extensions.ts`. Likely the right time is the same window as the v1 dispatcher cutover (B.7 or shortly after), since fork callers can migrate to the extensions module in lockstep.
+
+Until then, `src/config.ts` stays in the REPLACED bucket of `docs/v2-mergeback-audit-q3-non-invasiveness.md` alongside `index.ts` / `container-runner.ts` / `task-scheduler.ts`.

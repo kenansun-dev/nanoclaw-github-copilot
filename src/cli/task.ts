@@ -28,7 +28,7 @@ import {
   getTaskRunLogs,
   initDatabase,
 } from '../db.js';
-import { ScheduledTask } from '../types.js';
+import { ScheduledTask } from '../types-extensions.js';
 
 interface TaskRunLog {
   id: number;

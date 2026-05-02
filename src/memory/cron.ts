@@ -29,9 +29,9 @@ import { CronExpressionParser } from 'cron-parser';
 import { TIMEZONE } from './../config.js';
 import { loadConfig } from './../config-loader.js';
 import { createTask, getTaskById, updateTask } from './../db.js';
-import { logger } from './../log.js';
+import { logger } from './../log-extensions.js';
 // Need 'status' in the partial type now that we pause on disable.
-import type { ScheduledTask } from './../types.js';
+import type { ScheduledTask } from './../types-extensions.js';
 
 const DEFAULT_CRON = '45 23 * * *';
 const DEFAULT_ENABLED = true;

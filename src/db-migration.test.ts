@@ -24,25 +24,18 @@ describe('database migrations', () => {
         );
       `);
       legacyDb
-        .prepare(
-          `INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)`,
-        )
+        .prepare(`INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)`)
         .run('tg:12345', 'Telegram DM', '2024-01-01T00:00:00.000Z');
       legacyDb
-        .prepare(
-          `INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)`,
-        )
+        .prepare(`INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)`)
         .run('tg:-10012345', 'Telegram Group', '2024-01-01T00:00:01.000Z');
       legacyDb
-        .prepare(
-          `INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)`,
-        )
+        .prepare(`INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)`)
         .run('room@g.us', 'WhatsApp Group', '2024-01-01T00:00:02.000Z');
       legacyDb.close();
 
       vi.resetModules();
-      const { initDatabase, getAllChats, _closeDatabase } =
-        await import('./db.js');
+      const { initDatabase, getAllChats, _closeDatabase } = await import('./db.js');
 
       initDatabase();
 
@@ -73,9 +66,7 @@ describe('database migrations', () => {
     // adds them on top of an old (composite-PK already, but no override
     // columns) sessions table.
     const repoRoot = process.cwd();
-    const tempDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'nanoclaw-db-overrides-'),
-    );
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-db-overrides-'));
 
     try {
       process.chdir(tempDir);
@@ -94,21 +85,13 @@ describe('database migrations', () => {
         );
       `);
       legacyDb
-        .prepare(
-          `INSERT INTO sessions (group_folder, provider, session_id) VALUES (?, ?, ?)`,
-        )
+        .prepare(`INSERT INTO sessions (group_folder, provider, session_id) VALUES (?, ?, ?)`)
         .run('grp', 'github-copilot', 'old-session-id');
       legacyDb.close();
 
       vi.resetModules();
-      const {
-        initDatabase,
-        getSessionOverrides,
-        setSessionOverride,
-        getSession,
-        setSession,
-        _closeDatabase,
-      } = await import('./db.js');
+      const { initDatabase, getSessionOverrides, setSessionOverride, getSession, setSession, _closeDatabase } =
+        await import('./db.js');
 
       initDatabase();
 
@@ -133,12 +116,7 @@ describe('database migrations', () => {
       });
 
       // Setting override on a fresh group creates a placeholder row.
-      setSessionOverride(
-        'newgrp',
-        'model',
-        'claude-opus-4.6',
-        'github-copilot',
-      );
+      setSessionOverride('newgrp', 'model', 'claude-opus-4.6', 'github-copilot');
       expect(getSessionOverrides('newgrp', 'github-copilot')).toEqual({
         model: 'claude-opus-4.6',
       });

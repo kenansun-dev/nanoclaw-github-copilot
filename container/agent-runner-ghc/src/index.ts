@@ -19,6 +19,7 @@ import { CopilotClient, approveAll } from '@github/copilot-sdk';
 import { fileURLToPath } from 'url';
 import { isSessionNotFoundError } from './session-recovery.js';
 import { loadPluginAgents } from './load-plugin-agents.js';
+import { makeIpcHelpers } from './ipc-helpers.js';
 
 interface ContainerInput {
   prompt: string;
@@ -67,61 +68,14 @@ function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
 }
 
-function shouldClose(): boolean {
-  if (fs.existsSync(IPC_INPUT_CLOSE_SENTINEL)) {
-    try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
-    return true;
-  }
-  return false;
-}
-
-function drainIpcInput(): string[] {
-  try {
-    fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
-    const files = fs.readdirSync(IPC_INPUT_DIR)
-      .filter(f => f.endsWith('.json'))
-      .sort();
-
-    const messages: string[] = [];
-    for (const file of files) {
-      const filePath = path.join(IPC_INPUT_DIR, file);
-      try {
-        const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-        fs.unlinkSync(filePath);
-        if (data.type === 'message' && data.text) {
-          messages.push(data.text);
-        }
-      } catch (err) {
-        log(`Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`);
-        try { fs.unlinkSync(filePath); } catch { /* ignore */ }
-      }
-    }
-    return messages;
-  } catch (err) {
-    log(`IPC drain error: ${err instanceof Error ? err.message : String(err)}`);
-    return [];
-  }
-}
-
-function waitForIpcMessage(): Promise<string | null> {
-  return new Promise((resolve) => {
-    const poll = () => {
-      // Drain messages BEFORE checking close sentinel — prevents race where
-      // _close arrives before a pending message file is read
-      const messages = drainIpcInput();
-      if (messages.length > 0) {
-        resolve(messages.join('\n'));
-        return;
-      }
-      if (shouldClose()) {
-        resolve(null);
-        return;
-      }
-      setTimeout(poll, IPC_POLL_MS);
-    };
-    poll();
-  });
-}
+// IPC helpers extracted to ipc-helpers.ts so unit tests import the real
+// implementation instead of re-implementing the logic in the test file.
+const { shouldClose, drainIpcInput, waitForIpcMessage } = makeIpcHelpers({
+  inputDir: IPC_INPUT_DIR,
+  closeSentinel: IPC_INPUT_CLOSE_SENTINEL,
+  pollMs: IPC_POLL_MS,
+  log,
+});
 
 /**
  * Archive conversation transcript before it gets too long.

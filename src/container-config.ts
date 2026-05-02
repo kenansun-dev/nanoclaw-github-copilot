@@ -72,9 +72,7 @@ export function readContainerConfig(folder: string): ContainerConfig {
   const p = configPath(folder);
   if (!fs.existsSync(p)) return emptyConfig();
   try {
-    const raw = JSON.parse(
-      fs.readFileSync(p, 'utf8'),
-    ) as Partial<ContainerConfig>;
+    const raw = JSON.parse(fs.readFileSync(p, 'utf8')) as Partial<ContainerConfig>;
     return {
       mcpServers: raw.mcpServers ?? {},
       packages: {
@@ -101,10 +99,7 @@ export function readContainerConfig(folder: string): ContainerConfig {
  * directory if necessary. Pretty-printed JSON so diffs in the activation
  * flow are reviewable.
  */
-export function writeContainerConfig(
-  folder: string,
-  config: ContainerConfig,
-): void {
+export function writeContainerConfig(folder: string, config: ContainerConfig): void {
   const p = configPath(folder);
   const dir = path.dirname(p);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -116,10 +111,7 @@ export function writeContainerConfig(
  * result. Convenient for append-style changes like `install_packages` and
  * `add_mcp_server` handlers.
  */
-export function updateContainerConfig(
-  folder: string,
-  mutate: (config: ContainerConfig) => void,
-): ContainerConfig {
+export function updateContainerConfig(folder: string, mutate: (config: ContainerConfig) => void): ContainerConfig {
   const config = readContainerConfig(folder);
   mutate(config);
   writeContainerConfig(folder, config);

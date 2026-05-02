@@ -10,7 +10,7 @@ import {
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { loadConfig } from '../config-loader.js';
 import { readEnvFile } from '../env.js';
-import { logger } from '../log.js';
+import { logger } from '../log-extensions.js';
 import { sendWithRetry } from './send-with-retry.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
@@ -19,7 +19,7 @@ import {
   OnInboundMessage,
   RegisteredGroup,
   StreamHandle,
-} from '../types.js';
+} from '../types-extensions.js';
 import { TeamsStreamingSession, makeAdapterSender } from './teams-streaming.js';
 
 // ---------------------------------------------------------------------------

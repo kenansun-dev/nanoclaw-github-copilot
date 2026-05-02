@@ -5,19 +5,12 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import {
-  ABSOLUTE_CEILING_MS,
-  CLAIM_STUCK_MS,
-  decideStuckAction,
-} from './host-sweep.js';
+import { ABSOLUTE_CEILING_MS, CLAIM_STUCK_MS, decideStuckAction } from './host-sweep.js';
 
 const BASE = Date.parse('2026-04-20T12:00:00.000Z');
 
 function claim(id: string, offsetMs: number) {
-  return {
-    message_id: id,
-    status_changed: new Date(BASE - offsetMs).toISOString(),
-  };
+  return { message_id: id, status_changed: new Date(BASE - offsetMs).toISOString() };
 }
 
 describe('decideStuckAction', () => {

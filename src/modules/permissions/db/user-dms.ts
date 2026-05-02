@@ -13,23 +13,16 @@ export function upsertUserDm(row: UserDm): void {
     .run(row);
 }
 
-export function getUserDm(
-  userId: string,
-  channelType: string,
-): UserDm | undefined {
-  return getDb()
-    .prepare('SELECT * FROM user_dms WHERE user_id = ? AND channel_type = ?')
-    .get(userId, channelType) as UserDm | undefined;
+export function getUserDm(userId: string, channelType: string): UserDm | undefined {
+  return getDb().prepare('SELECT * FROM user_dms WHERE user_id = ? AND channel_type = ?').get(userId, channelType) as
+    | UserDm
+    | undefined;
 }
 
 export function getUserDmsForUser(userId: string): UserDm[] {
-  return getDb()
-    .prepare('SELECT * FROM user_dms WHERE user_id = ?')
-    .all(userId) as UserDm[];
+  return getDb().prepare('SELECT * FROM user_dms WHERE user_id = ?').all(userId) as UserDm[];
 }
 
 export function deleteUserDm(userId: string, channelType: string): void {
-  getDb()
-    .prepare('DELETE FROM user_dms WHERE user_id = ? AND channel_type = ?')
-    .run(userId, channelType);
+  getDb().prepare('DELETE FROM user_dms WHERE user_id = ? AND channel_type = ?').run(userId, channelType);
 }

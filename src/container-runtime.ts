@@ -5,7 +5,7 @@
 import { execSync } from 'child_process';
 import os from 'os';
 
-import { logger } from './log.js';
+import { log } from './log.js';
 
 /** The container runtime binary name. */
 export const CONTAINER_RUNTIME_BIN = 'docker';
@@ -42,9 +42,9 @@ export function ensureContainerRuntimeRunning(): void {
       stdio: 'pipe',
       timeout: 10000,
     });
-    logger.debug('Container runtime already running');
+    log.debug('Container runtime already running');
   } catch (err) {
-    logger.error({ err }, 'Failed to reach container runtime');
+    log.error('Failed to reach container runtime', { err });
     console.error(
       '\n╔════════════════════════════════════════════════════════════════╗',
     );
@@ -89,12 +89,12 @@ export function cleanupOrphans(): void {
       }
     }
     if (orphans.length > 0) {
-      logger.info(
-        { count: orphans.length, names: orphans },
-        'Stopped orphaned containers',
-      );
+      log.info('Stopped orphaned containers', {
+        count: orphans.length,
+        names: orphans,
+      });
     }
   } catch (err) {
-    logger.warn({ err }, 'Failed to clean up orphaned containers');
+    log.warn('Failed to clean up orphaned containers', { err });
   }
 }

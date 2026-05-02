@@ -35,4 +35,4 @@ export type {
   AdditionalMount,
   AllowedRoot,
   MountAllowlist,
-} from '../../types.js';
+} from '../../types-extensions.js';

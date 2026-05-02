@@ -64,11 +64,7 @@ export interface TaskUpdate {
 // clobbering other fields. Matches by id OR series_id so the live next
 // occurrence of a recurring task is updated, not just the completed row the
 // agent last saw. Returns the number of rows touched.
-export function updateTask(
-  db: Database.Database,
-  taskId: string,
-  update: TaskUpdate,
-): number {
+export function updateTask(db: Database.Database, taskId: string, update: TaskUpdate): number {
   const rows = db
     .prepare(
       "SELECT id, content FROM messages_in WHERE (id = ? OR series_id = ?) AND kind = 'task' AND status IN ('pending', 'paused')",
@@ -79,8 +75,7 @@ export function updateTask(
 
   const setProcessAfter = update.processAfter !== undefined;
   const setRecurrence = update.recurrence !== undefined;
-  const mergeContent =
-    update.prompt !== undefined || update.script !== undefined;
+  const mergeContent = update.prompt !== undefined || update.script !== undefined;
 
   const tx = db.transaction(() => {
     for (const row of rows) {
@@ -105,9 +100,7 @@ export function updateTask(
       }
       params.push(row.id);
 
-      db.prepare(`UPDATE messages_in SET ${sets.join(', ')} WHERE id = ?`).run(
-        ...params,
-      );
+      db.prepare(`UPDATE messages_in SET ${sets.join(', ')} WHERE id = ?`).run(...params);
     }
   });
   tx();
@@ -126,13 +119,9 @@ export interface RecurringMessage {
   series_id: string;
 }
 
-export function getCompletedRecurring(
-  db: Database.Database,
-): RecurringMessage[] {
+export function getCompletedRecurring(db: Database.Database): RecurringMessage[] {
   return db
-    .prepare(
-      "SELECT * FROM messages_in WHERE status = 'completed' AND recurrence IS NOT NULL",
-    )
+    .prepare("SELECT * FROM messages_in WHERE status = 'completed' AND recurrence IS NOT NULL")
     .all() as RecurringMessage[];
 }
 
@@ -159,11 +148,6 @@ export function insertRecurrence(
   );
 }
 
-export function clearRecurrence(
-  db: Database.Database,
-  messageId: string,
-): void {
-  db.prepare('UPDATE messages_in SET recurrence = NULL WHERE id = ?').run(
-    messageId,
-  );
+export function clearRecurrence(db: Database.Database, messageId: string): void {
+  db.prepare('UPDATE messages_in SET recurrence = NULL WHERE id = ?').run(messageId);
 }

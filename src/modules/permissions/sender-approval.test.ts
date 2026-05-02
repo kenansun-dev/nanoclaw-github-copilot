@@ -16,10 +16,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { initTestDb, closeDb, runMigrations } from '../../db/index.js';
 import { createAgentGroup } from '../../db/agent-groups.js';
-import {
-  createMessagingGroup,
-  createMessagingGroupAgent,
-} from '../../db/messaging-groups.js';
+import { createMessagingGroup, createMessagingGroupAgent } from '../../db/messaging-groups.js';
 import { upsertUser } from './db/users.js';
 import { grantRole } from './db/user-roles.js';
 
@@ -79,13 +76,7 @@ beforeEach(async () => {
 
   // Fixtures: agent group, messaging group with request_approval, wiring,
   // owner + DM messaging group for approver delivery.
-  createAgentGroup({
-    id: 'ag-1',
-    name: 'Agent',
-    folder: 'agent',
-    agent_provider: null,
-    created_at: now(),
-  });
+  createAgentGroup({ id: 'ag-1', name: 'Agent', folder: 'agent', agent_provider: null, created_at: now() });
 
   createMessagingGroup({
     id: 'mg-chat',
@@ -110,12 +101,7 @@ beforeEach(async () => {
   });
 
   // Owner user + their DM messaging group (pickApprover + ensureUserDm target).
-  upsertUser({
-    id: 'telegram:owner',
-    kind: 'telegram',
-    display_name: 'Owner',
-    created_at: now(),
-  });
+  upsertUser({ id: 'telegram:owner', kind: 'telegram', display_name: 'Owner', created_at: now() });
   grantRole({
     user_id: 'telegram:owner',
     role: 'owner',
@@ -175,8 +161,7 @@ describe('unknown-sender request_approval flow', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     expect(deliverMock).toHaveBeenCalledTimes(1);
-    const [channel, platformId, thread, kind, content] =
-      deliverMock.mock.calls[0];
+    const [channel, platformId, thread, kind, content] = deliverMock.mock.calls[0];
     expect(channel).toBe('telegram');
     expect(platformId).toBe('dm-owner'); // delivered to owner's DM
     expect(thread).toBeNull();
@@ -186,9 +171,7 @@ describe('unknown-sender request_approval flow', () => {
     expect(payload.questionId).toMatch(/^nsa-/);
 
     const { getDb } = await import('../../db/connection.js');
-    const rows = getDb()
-      .prepare('SELECT * FROM pending_sender_approvals')
-      .all();
+    const rows = getDb().prepare('SELECT * FROM pending_sender_approvals').all();
     expect(rows).toHaveLength(1);
   });
 
@@ -201,11 +184,7 @@ describe('unknown-sender request_approval flow', () => {
 
     expect(deliverMock).toHaveBeenCalledTimes(1);
     const { getDb } = await import('../../db/connection.js');
-    const count = (
-      getDb()
-        .prepare('SELECT COUNT(*) AS c FROM pending_sender_approvals')
-        .get() as { c: number }
-    ).c;
+    const count = (getDb().prepare('SELECT COUNT(*) AS c FROM pending_sender_approvals').get() as { c: number }).c;
     expect(count).toBe(1);
   });
 
@@ -219,9 +198,7 @@ describe('unknown-sender request_approval flow', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     const { getDb } = await import('../../db/connection.js');
-    const pending = getDb()
-      .prepare('SELECT id FROM pending_sender_approvals')
-      .get() as { id: string };
+    const pending = getDb().prepare('SELECT id FROM pending_sender_approvals').get() as { id: string };
     expect(pending).toBeDefined();
 
     // Fire the approve click through the response-handler chain.
@@ -242,16 +219,12 @@ describe('unknown-sender request_approval flow', () => {
 
     // Member row added for the stranger against the wired agent group.
     const member = getDb()
-      .prepare(
-        'SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?',
-      )
+      .prepare('SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?')
       .get('tg:stranger', 'ag-1');
     expect(member).toBeDefined();
 
     // Pending row cleared.
-    const stillPending = getDb()
-      .prepare('SELECT COUNT(*) AS c FROM pending_sender_approvals')
-      .get() as { c: number };
+    const stillPending = getDb().prepare('SELECT COUNT(*) AS c FROM pending_sender_approvals').get() as { c: number };
     expect(stillPending.c).toBe(0);
 
     // Message replayed + container woken.
@@ -266,9 +239,7 @@ describe('unknown-sender request_approval flow', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     const { getDb } = await import('../../db/connection.js');
-    const pending = getDb()
-      .prepare('SELECT id FROM pending_sender_approvals')
-      .get() as { id: string };
+    const pending = getDb().prepare('SELECT id FROM pending_sender_approvals').get() as { id: string };
     expect(pending).toBeDefined();
 
     for (const handler of getResponseHandlers()) {
@@ -283,16 +254,10 @@ describe('unknown-sender request_approval flow', () => {
       if (claimed) break;
     }
 
-    const count = (
-      getDb()
-        .prepare('SELECT COUNT(*) AS c FROM pending_sender_approvals')
-        .get() as { c: number }
-    ).c;
+    const count = (getDb().prepare('SELECT COUNT(*) AS c FROM pending_sender_approvals').get() as { c: number }).c;
     expect(count).toBe(0);
     const member = getDb()
-      .prepare(
-        'SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?',
-      )
+      .prepare('SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?')
       .get('tg:stranger', 'ag-1');
     expect(member).toBeUndefined();
   });
@@ -306,9 +271,7 @@ describe('unknown-sender request_approval flow', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     const { getDb } = await import('../../db/connection.js');
-    const pending = getDb()
-      .prepare('SELECT id FROM pending_sender_approvals')
-      .get() as { id: string };
+    const pending = getDb().prepare('SELECT id FROM pending_sender_approvals').get() as { id: string };
     expect(pending).toBeDefined();
 
     // A random user (not the stranger, not the owner, not an admin) tries to
@@ -328,29 +291,19 @@ describe('unknown-sender request_approval flow', () => {
 
     // No member added for the stranger.
     const member = getDb()
-      .prepare(
-        'SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?',
-      )
+      .prepare('SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?')
       .get('tg:stranger', 'ag-1');
     expect(member).toBeUndefined();
 
     // Pending row is still there — a legitimate approver can still act on it.
-    const stillPending = (
-      getDb()
-        .prepare('SELECT COUNT(*) AS c FROM pending_sender_approvals')
-        .get() as { c: number }
-    ).c;
+    const stillPending = (getDb().prepare('SELECT COUNT(*) AS c FROM pending_sender_approvals').get() as { c: number })
+      .c;
     expect(stillPending).toBe(1);
   });
 
   it('accepts a click from a global admin even if they are not the designated approver', async () => {
     // Pre-seed a separate admin user so we can click as them.
-    upsertUser({
-      id: 'telegram:admin-bob',
-      kind: 'telegram',
-      display_name: 'Bob',
-      created_at: now(),
-    });
+    upsertUser({ id: 'telegram:admin-bob', kind: 'telegram', display_name: 'Bob', created_at: now() });
     grantRole({
       user_id: 'telegram:admin-bob',
       role: 'admin',
@@ -366,9 +319,7 @@ describe('unknown-sender request_approval flow', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     const { getDb } = await import('../../db/connection.js');
-    const pending = getDb()
-      .prepare('SELECT id FROM pending_sender_approvals')
-      .get() as { id: string };
+    const pending = getDb().prepare('SELECT id FROM pending_sender_approvals').get() as { id: string };
     expect(pending).toBeDefined();
 
     // Admin clicks approve (not the designated approver, which was owner).
@@ -386,9 +337,7 @@ describe('unknown-sender request_approval flow', () => {
 
     // Stranger admitted thanks to the admin's authority.
     const member = getDb()
-      .prepare(
-        'SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?',
-      )
+      .prepare('SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?')
       .get('tg:stranger', 'ag-1');
     expect(member).toBeDefined();
   });

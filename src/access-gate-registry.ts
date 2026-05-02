@@ -2,7 +2,7 @@
  * Access-gate registry — B.5-prep #4 skeleton.
  *
  * Hook surface for per-message access gating. Modules (e.g.
- * `sender-allowlist-fork`) self-register a gate at import time;
+ * `sender-allowlist-extensions`) self-register a gate at import time;
  * the dispatcher calls `runAccessGates(...)` per message and the
  * first non-`'allow'` decision wins.
  *

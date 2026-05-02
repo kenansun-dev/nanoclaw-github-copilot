@@ -39,7 +39,7 @@ import {
   setRegisteredGroup,
   getAllChatIsGroup,
 } from './db.js';
-import { logger } from './log.js';
+import { logger } from './log-extensions.js';
 
 export interface ReconcileResult {
   added: string[]; // jids newly inserted into config.chats

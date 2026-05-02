@@ -11,7 +11,7 @@
  * future "real swap" (B.5.6+) flips one import, not surgery in
  * `src/index.ts`. Tests mock `routeInbound` here, not in index.ts.
  */
-import type { NewMessage } from './types.js';
+import type { NewMessage } from './types-extensions.js';
 import type { InboundEvent } from './channels/adapter.js';
 import { log } from './log.js';
 

@@ -33,7 +33,7 @@ import {
   PROVIDER_SESSION_DIR,
 } from './config-extensions.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
-import { logger } from './log.js';
+import { logger } from './log-extensions.js';
 import {
   CONTAINER_RUNTIME_BIN,
   hostGatewayArgs,
@@ -42,7 +42,7 @@ import {
 } from './container-runtime.js';
 import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
-import { RegisteredGroup } from './types.js';
+import { RegisteredGroup } from './types-extensions.js';
 
 const onecli = new OneCLI({ url: ONECLI_URL, apiKey: ONECLI_API_KEY });
 
@@ -893,8 +893,8 @@ export function writeGroupsSnapshot(
 // path — the v2 startup that calls them isn't activated yet.
 // ============================================================================
 
-import type { Session, AgentGroup as _AgentGroup } from './types.js';
-import { logger as _v2StubLogger } from './log.js';
+import type { Session, AgentGroup as _AgentGroup } from './types-extensions.js';
+import { logger as _v2StubLogger } from './log-extensions.js';
 
 /** v2 stub: returns whether a v2 container is currently running for a session. */
 export function isContainerRunning(_sessionId: string): boolean {
