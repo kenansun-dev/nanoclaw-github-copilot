@@ -294,11 +294,8 @@ export async function handleSlashCommand(
       try {
         const probe = !/\s+(no-?probe|fast)(\s|$)/.test(input);
         const { getMcpText } = await import('./cli/mcp-text.js');
-        const text = await getMcpText(probe, true); // chat: code-fenced
-        await ctx.channel.sendMessage(
-          ctx.chatJid,
-          '```\n' + text.trim() + '\n```',
-        );
+        const text = await getMcpText(probe, true); // chat: code-fenced (formatter owns the fence)
+        await ctx.channel.sendMessage(ctx.chatJid, text);
       } catch (err: any) {
         await ctx.channel.sendMessage(
           ctx.chatJid,
