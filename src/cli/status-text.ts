@@ -278,7 +278,7 @@ export function formatStatusText(s: StatusInfo): string {
         : s.showThinking === true || s.showThinking === 'on'
           ? ' [reasoning visible]'
           : ''
-    } [${s.mode}]`,
+    }`,
   );
   if (s.hasSessionOverride) {
     lines.push(
