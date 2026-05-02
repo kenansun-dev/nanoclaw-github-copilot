@@ -116,8 +116,8 @@ export const COMMANDS: SlashCommand[] = [
   {
     name: 'mcp',
     description:
-      'List configured MCP servers + connection status (parity with CC `/mcp` and `gh copilot mcp list`). Add `probe` to actively check auth/connection status (~1-2s).',
-    args: '[probe]',
+      'List configured MCP servers + live connection status (parity with CC `/mcp` and `gh copilot mcp list`). Probes mcporter by default (~1-2s); add `no-probe` for instant fast view.',
+    args: '[no-probe]',
   },
 ];
 
@@ -292,9 +292,9 @@ export async function handleSlashCommand(
   if (input === '/mcp' || input.startsWith('/mcp ')) {
     if (ctx.channel) {
       try {
-        const probe = /\s+probe(\s|$)/.test(input);
+        const probe = !/\s+(no-?probe|fast)(\s|$)/.test(input);
         const { getMcpText } = await import('./cli/mcp-text.js');
-        const text = await getMcpText(probe);
+        const text = await getMcpText(probe, true); // chat: code-fenced
         await ctx.channel.sendMessage(
           ctx.chatJid,
           '```\n' + text.trim() + '\n```',

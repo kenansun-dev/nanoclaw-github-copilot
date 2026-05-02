@@ -1176,7 +1176,7 @@ async function runMcp(args: string[]) {
       // slash command. Pass `probe` to actively check auth state (~1-2s).
       const { getMcpText } = await import('./cli/mcp-text.js');
       const probe = args.includes('probe');
-      const text = await getMcpText(probe);
+      const text = await getMcpText(probe, false); // CLI: no code fence
       console.log(text);
       break;
     }
