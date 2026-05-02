@@ -131,6 +131,16 @@ try {
       await runPluginCommand(commandArgs);
       break;
     }
+    case 'mcp': {
+      // List MCP servers (parity with `claude mcp` / `gh copilot mcp list`).
+      // Mirrors the `/mcp` slash command. Pass `probe` to actively check
+      // mcporter auth/connection status (~1-2s).
+      const { getMcpText } = await import('./cli/mcp-text.js');
+      const probe = commandArgs.includes('probe');
+      const text = await getMcpText(probe);
+      console.log(text);
+      break;
+    }
     case 'chat':
       await runChat(commandArgs);
       break;

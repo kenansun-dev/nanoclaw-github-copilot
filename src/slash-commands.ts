@@ -113,6 +113,12 @@ export const COMMANDS: SlashCommand[] = [
       'Manage plugins: list/install/remove/info/marketplace/reload (parity with `nanoclaw plugin` CLI; CC `/plugin` slash + GHC `nanoclaw plugin` shape)',
     args: '[list|install|remove|info|marketplace|reload] [args]',
   },
+  {
+    name: 'mcp',
+    description:
+      'List configured MCP servers + connection status (parity with CC `/mcp` and `gh copilot mcp list`). Add `probe` to actively check auth/connection status (~1-2s).',
+    args: '[probe]',
+  },
 ];
 
 // ─── Command execution ───────────────────────────────────────────────────────
@@ -275,6 +281,31 @@ export async function handleSlashCommand(
     const arg = modelMatch[1]?.trim();
     const isDefault = / --default(\s|$)/.test(input);
     await handleModel(arg, ctx, { isDefault });
+    return { handled: true };
+  }
+
+  // /mcp [probe] — list configured MCP servers (file-only; <50ms). With
+  // `probe`, additionally calls mcporter to check auth/connection state
+  // (adds ~100ms-2s). Mirrors CC `/mcp` and `gh copilot mcp list` output
+  // so users get a familiar view across surfaces. v2-only feature
+  // (kenan 2026-05-02): v1 frozen.
+  if (input === '/mcp' || input.startsWith('/mcp ')) {
+    if (ctx.channel) {
+      try {
+        const probe = /\s+probe(\s|$)/.test(input);
+        const { getMcpText } = await import('./cli/mcp-text.js');
+        const text = await getMcpText(probe);
+        await ctx.channel.sendMessage(
+          ctx.chatJid,
+          '```\n' + text.trim() + '\n```',
+        );
+      } catch (err: any) {
+        await ctx.channel.sendMessage(
+          ctx.chatJid,
+          `Failed to list MCP servers: ${err?.message ?? err}`,
+        );
+      }
+    }
     return { handled: true };
   }
 
