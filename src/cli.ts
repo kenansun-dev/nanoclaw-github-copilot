@@ -131,16 +131,7 @@ try {
       await runPluginCommand(commandArgs);
       break;
     }
-    case 'mcp': {
-      // List MCP servers (parity with `claude mcp` / `gh copilot mcp list`).
-      // Mirrors the `/mcp` slash command. Pass `probe` to actively check
-      // mcporter auth/connection status (~1-2s).
-      const { getMcpText } = await import('./cli/mcp-text.js');
-      const probe = commandArgs.includes('probe');
-      const text = await getMcpText(probe);
-      console.log(text);
-      break;
-    }
+
     case 'chat':
       await runChat(commandArgs);
       break;
@@ -1179,22 +1170,14 @@ async function runMcp(args: string[]) {
       }
       break;
     }
+    case undefined:
     case 'list': {
-      const { loadConfig: listCfg } = await import('./config-loader.js');
-      const listConfig = listCfg();
-      const servers = listConfig.mcp.servers;
-      if (Object.keys(servers).length === 0) {
-        console.log(
-          'No MCP servers configured. Add one with: nanoclaw mcp add <name> <url>',
-        );
-      } else {
-        for (const [name, srv] of Object.entries(servers)) {
-          const s = srv as any;
-          const type = s.type || 'local';
-          const target = s.url || s.command || '';
-          console.log(`  ${name} (${type}) → ${target}`);
-        }
-      }
+      // Parity with `claude mcp` / `gh copilot mcp list` and the `/mcp`
+      // slash command. Pass `probe` to actively check auth state (~1-2s).
+      const { getMcpText } = await import('./cli/mcp-text.js');
+      const probe = args.includes('probe');
+      const text = await getMcpText(probe);
+      console.log(text);
       break;
     }
     case 'add': {
