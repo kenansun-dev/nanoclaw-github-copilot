@@ -269,7 +269,12 @@ async function runTask(
         if (streamedOutput.result) {
           const text = streamedOutput.result;
           result = text;
-          if (streamedOutput.partial && deps.editMessage) {
+          // Skip empty / whitespace-only results: the scheduled-task
+          // prompt tells the agent to reply with an empty string when it
+          // has nothing useful to report. Don't push noise to the channel.
+          if (!text.trim()) {
+            // skip forward, but still record result for run log
+          } else if (streamedOutput.partial && deps.editMessage) {
             if (!progressiveMsgId) {
               const msgId = await deps.sendMessage(task.chat_jid, text + ' ◌');
               progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;

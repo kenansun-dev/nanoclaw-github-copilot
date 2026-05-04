@@ -154,7 +154,19 @@ async function main(): Promise<void> {
   // Build initial prompt
   let prompt = containerInput.prompt;
   if (containerInput.isScheduledTask) {
-    prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
+    prompt = [
+      '[SCHEDULED TASK]',
+      'This is an automated cron-triggered run. Strict output rules:',
+      '- Output ONLY the requested content (e.g. the summary, the report, the answer).',
+      '- Do NOT narrate work in progress (no "Let me check…", "Searching…", "I will now…").',
+      '- Do NOT add closing acknowledgments (no "Done", "Sent", "Hope this helps", "Let me know if…").',
+      '- No greetings, no sign-offs, no meta commentary about the task itself.',
+      '- If the task asks for a search/lookup, run the tool silently and reply with only the result.',
+      '- If you have nothing useful to report, reply with an empty string (the runner will skip it).',
+      '',
+      'Task instructions:',
+      prompt,
+    ].join('\n');
   }
   const pending = drainIpcInput();
   if (pending.length > 0) {

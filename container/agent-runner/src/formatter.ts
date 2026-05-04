@@ -181,7 +181,16 @@ function formatSingleChat(msg: MessageInRow): string {
 
 function formatTaskMessage(msg: MessageInRow): string {
   const content = parseContent(msg.content);
-  const parts = ['[SCHEDULED TASK]'];
+  const parts = [
+    '[SCHEDULED TASK]',
+    'This is an automated cron-triggered run. Strict output rules:',
+    '- Output ONLY the requested content (e.g. the summary, the report, the answer).',
+    '- Do NOT narrate work in progress (no "Let me check…", "Searching…", "I will now…").',
+    '- Do NOT add closing acknowledgments (no "Done", "Sent", "Hope this helps", "Let me know if…").',
+    '- No greetings, no sign-offs, no meta commentary about the task itself.',
+    '- If the task asks for a search/lookup, run the tool silently and reply with only the result.',
+    '- If you have nothing useful to report, reply with an empty string (the runner will skip it).',
+  ];
   if (content.scriptOutput) {
     parts.push('', 'Script output:', JSON.stringify(content.scriptOutput, null, 2));
   }
