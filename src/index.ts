@@ -1366,12 +1366,11 @@ export function applyOnModeThinkingPrepend(args: {
 }
 
 async function main(): Promise<void> {
-  // v2 workspace isolation: seed v2 from v1 on first run, then assert we are
-  // NOT pointing at the legacy v1 path. Both run before any file I/O so a
-  // misconfigured deploy aborts before it can corrupt v1 prod data.
+  // Workspace guard: assert resolved workspace basename matches WORKSPACE_DIR_NAME
+  // (or operator opt-in via NANOCLAW_WORKSPACE / setWorkspace). Aborts before
+  // any file I/O if a stale staging path is somehow still routed in.
   try {
-    const { assertWorkspaceIsolation, seedV2FromV1IfNeeded } = await import('./workspace.js');
-    seedV2FromV1IfNeeded();
+    const { assertWorkspaceIsolation } = await import('./workspace.js');
     const ws = assertWorkspaceIsolation();
     process.stderr.write(`[workspace] ${ws}\n`);
   } catch (err) {
