@@ -71,7 +71,19 @@ export async function collectStatus(chatJid?: string): Promise<StatusInfo> {
   const logFile = join(ws, 'logs', 'nanoclaw.log');
 
   const cfg = loadConfig();
-  const agent = (cfg.agents?.defaults || {}) as any;
+  // Resolve the agent the way the runner does: per-chat binding (or chat.agentId)
+  // first, then fall back to agents.defaults. Without this, /status in a sandbox
+  // bot's chat shows the global default's mode/provider/model instead of the
+  // bot's actual config (kenan repro 2026-05-05: sandbox TG bot showed Mode: host).
+  let agent: any = cfg.agents?.defaults || {};
+  if (chatJid) {
+    try {
+      const { resolveAgentForChat } = await import('../config-extensions.js');
+      agent = resolveAgentForChat(chatJid) as any;
+    } catch {
+      /* fall back to defaults */
+    }
+  }
   const provider = agent.provider || 'github-copilot';
   let model = agent.model || 'default';
   const mode = agent.mode || 'host';
