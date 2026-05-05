@@ -1,15 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import path from 'path';
 import os from 'os';
-import {
-  WORKSPACE_DIR_NAME,
-  LEGACY_WORKSPACE_DIR_NAME,
-} from './workspace-config.js';
-import {
-  setWorkspace,
-  resolveWorkspace,
-  assertWorkspaceIsolation,
-} from './workspace.js';
+import { WORKSPACE_DIR_NAME, LEGACY_WORKSPACE_DIR_NAME } from './workspace-config.js';
+import { setWorkspace, resolveWorkspace, assertWorkspaceIsolation } from './workspace.js';
 
 describe('workspace-config (v2 isolation)', () => {
   afterEach(() => {
@@ -54,10 +47,7 @@ describe('workspace-config (v2 isolation)', () => {
 
   it('assertWorkspaceIsolation rejects v1 even via env var', () => {
     setWorkspace(''); // clear explicit override so env var takes effect
-    process.env.NANOCLAW_WORKSPACE = path.join(
-      os.homedir(),
-      LEGACY_WORKSPACE_DIR_NAME,
-    );
+    process.env.NANOCLAW_WORKSPACE = path.join(os.homedir(), LEGACY_WORKSPACE_DIR_NAME);
     expect(() => assertWorkspaceIsolation()).toThrow(/v1 path/i);
   });
 });

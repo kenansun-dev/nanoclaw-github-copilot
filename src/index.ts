@@ -21,26 +21,11 @@ import {
 } from './config.js';
 import { getEffectiveShowThinking } from './session-overrides.js';
 import { createFlashEditCoalescer } from './flash-edit-coalescer.js';
-import {
-  runAgentForChat,
-  IS_GHC_PROVIDER,
-  resolveAgentForChat,
-  getAgentProvider,
-} from './config-extensions.js';
+import { runAgentForChat, IS_GHC_PROVIDER, resolveAgentForChat, getAgentProvider } from './config-extensions.js';
 import './channels/index.js';
-import {
-  getChannelFactory,
-  getRegisteredChannelNames,
-} from './channels/registry.js';
-import {
-  ContainerOutput,
-  writeGroupsSnapshot,
-  writeTasksSnapshot,
-} from './container-runner.js';
-import {
-  cleanupOrphans,
-  ensureContainerRuntimeRunning,
-} from './container-runtime.js';
+import { getChannelFactory, getRegisteredChannelNames } from './channels/registry.js';
+import { ContainerOutput, writeGroupsSnapshot, writeTasksSnapshot } from './container-runner.js';
+import { cleanupOrphans, ensureContainerRuntimeRunning } from './container-runtime.js';
 import {
   getAllChats,
   getAllRegisteredGroups,
@@ -65,23 +50,9 @@ import { isAbortRequestText } from './abort-triggers.js';
 import { shadowRoute } from './shadow-inbound.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
-import {
-  findChannel,
-  formatMessages,
-  formatOutbound,
-  formatConversationContext,
-} from './text-format.js';
-import {
-  restoreRemoteControl,
-  startRemoteControl,
-  stopRemoteControl,
-} from './remote-control.js';
-import {
-  isSenderAllowed,
-  isTriggerAllowed,
-  loadSenderAllowlist,
-  shouldDropMessage,
-} from './sender-allowlist.js';
+import { findChannel, formatMessages, formatOutbound, formatConversationContext } from './text-format.js';
+import { restoreRemoteControl, startRemoteControl, stopRemoteControl } from './remote-control.js';
+import { isSenderAllowed, isTriggerAllowed, loadSenderAllowlist, shouldDropMessage } from './sender-allowlist.js';
 import { startSessionCleanup } from './session-cleanup.js';
 import { startSchedulerLoop } from './task-scheduler-bridge.js';
 import { Channel, NewMessage, RegisteredGroup } from './types-extensions.js';
@@ -109,16 +80,10 @@ function ensureOneCLIAgent(jid: string, group: RegisteredGroup): void {
   const identifier = group.folder.toLowerCase().replace(/_/g, '-');
   onecli!.ensureAgent({ name: group.name, identifier }).then(
     (res: any) => {
-      logger.info(
-        { jid, identifier, created: res.created },
-        'OneCLI agent ensured',
-      );
+      logger.info({ jid, identifier, created: res.created }, 'OneCLI agent ensured');
     },
     (err: any) => {
-      logger.debug(
-        { jid, identifier, err: String(err) },
-        'OneCLI agent ensure skipped',
-      );
+      logger.debug({ jid, identifier, err: String(err) }, 'OneCLI agent ensure skipped');
     },
   );
 }
@@ -134,10 +99,7 @@ function loadState(): void {
   }
   sessions = getAllSessions();
   registeredGroups = getAllRegisteredGroups();
-  logger.info(
-    { groupCount: Object.keys(registeredGroups).length },
-    'State loaded',
-  );
+  logger.info({ groupCount: Object.keys(registeredGroups).length }, 'State loaded');
 }
 
 /**
@@ -150,10 +112,7 @@ function getOrRecoverCursor(chatJid: string): string {
 
   const botTs = getLastBotMessageTimestamp(chatJid, ASSISTANT_NAME);
   if (botTs) {
-    logger.info(
-      { chatJid, recoveredFrom: botTs },
-      'Recovered message cursor from last bot reply',
-    );
+    logger.info({ chatJid, recoveredFrom: botTs }, 'Recovered message cursor from last bot reply');
     lastAgentTimestamp[chatJid] = botTs;
     saveState();
     return botTs;
@@ -185,10 +144,7 @@ function traceSetTyping(
   // Any explicit state change cancels a pending bounded auto-clear so it
   // doesn't fire after a follow-on event has already managed the state.
   cancelBoundedTypingClear(chatJid);
-  logger.info(
-    { chatJid, channel: channel.name, isTyping, reason },
-    'Channel typing state change',
-  );
+  logger.info({ chatJid, channel: channel.name, isTyping, reason }, 'Channel typing state change');
   return channel.setTyping(chatJid, isTyping).catch((err: any) => {
     logger.warn(
       {
@@ -259,10 +215,7 @@ async function armTypingBounded(
   reason: string,
   ttlMs: number,
 ): Promise<void> {
-  logger.info(
-    { chatJid, channel: channel.name, isTyping: true, reason },
-    'Channel typing state change',
-  );
+  logger.info({ chatJid, channel: channel.name, isTyping: true, reason }, 'Channel typing state change');
   await _armTypingBounded(typingPulseState, channel, chatJid, ttlMs);
 }
 
@@ -271,10 +224,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   try {
     groupDir = resolveGroupFolderPath(group.folder);
   } catch (err: any) {
-    logger.warn(
-      { jid, folder: group.folder, err },
-      'Rejecting group registration with invalid folder',
-    );
+    logger.warn({ jid, folder: group.folder, err }, 'Rejecting group registration with invalid folder');
     return;
   }
 
@@ -288,12 +238,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   // identity and instructions from the first run.  (Fixes #1391)
   const groupMdFile = path.join(groupDir, 'CLAUDE.md');
   if (!fs.existsSync(groupMdFile)) {
-    const templateFile = path.join(
-      DATA_DIR,
-      GROUPS_DIR,
-      group.isMain ? 'main' : 'global',
-      'CLAUDE.md',
-    );
+    const templateFile = path.join(DATA_DIR, GROUPS_DIR, group.isMain ? 'main' : 'global', 'CLAUDE.md');
     if (fs.existsSync(templateFile)) {
       let content = fs.readFileSync(templateFile, 'utf-8');
       if (ASSISTANT_NAME !== 'Andy') {
@@ -308,10 +253,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   // Ensure a corresponding OneCLI agent exists (best-effort, non-blocking)
   ensureOneCLIAgent(jid, group);
 
-  logger.info(
-    { jid, name: group.name, folder: group.folder },
-    'Group registered',
-  );
+  logger.info({ jid, name: group.name, folder: group.folder }, 'Group registered');
 }
 
 /**
@@ -333,9 +275,7 @@ export function getAvailableGroups(): import('./container-runner.js').AvailableG
 }
 
 /** @internal - exported for testing */
-export function _setRegisteredGroups(
-  groups: Record<string, RegisteredGroup>,
-): void {
+export function _setRegisteredGroups(groups: Record<string, RegisteredGroup>): void {
   registeredGroups = groups;
 }
 
@@ -355,19 +295,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const isMainGroup = group.isMain === true;
 
-  let missedMessages = getMessagesSince(
-    chatJid,
-    getOrRecoverCursor(chatJid),
-    ASSISTANT_NAME,
-    MAX_MESSAGES_PER_PROMPT,
-  );
+  let missedMessages = getMessagesSince(chatJid, getOrRecoverCursor(chatJid), ASSISTANT_NAME, MAX_MESSAGES_PER_PROMPT);
 
   if (missedMessages.length === 0) return true;
 
   // Handle slash commands in ALL messages, not just the last one.
   // Separate slash commands from regular messages to avoid swallowing.
-  const { normalizeSlashInput, handleSlashCommand } =
-    await import('./slash-commands.js');
+  const { normalizeSlashInput, handleSlashCommand } = await import('./slash-commands.js');
   const slashCtx = {
     chatJid,
     groupFolder: group.folder,
@@ -399,8 +333,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const allowlistCfg = loadSenderAllowlist();
     const hasTrigger = missedMessages.some(
       (m) =>
-        triggerPattern.test(m.content.trim()) &&
-        (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
+        triggerPattern.test(m.content.trim()) && (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
     );
     if (!hasTrigger) return true;
   }
@@ -413,21 +346,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     ASSISTANT_NAME,
   );
   const newMessages = formatMessages(missedMessages, TIMEZONE);
-  const prompt = historyPrefix
-    ? historyPrefix + '\n\n' + newMessages
-    : newMessages;
+  const prompt = historyPrefix ? historyPrefix + '\n\n' + newMessages : newMessages;
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
-  lastAgentTimestamp[chatJid] =
-    missedMessages[missedMessages.length - 1].timestamp;
+  lastAgentTimestamp[chatJid] = missedMessages[missedMessages.length - 1].timestamp;
   saveState();
 
-  logger.info(
-    { group: group.name, messageCount: missedMessages.length },
-    'Processing messages',
-  );
+  logger.info({ group: group.name, messageCount: missedMessages.length }, 'Processing messages');
 
   // Track idle timer for closing stdin when agent is idle
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -436,10 +363,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (IDLE_TIMEOUT <= 0) return; // 0 = never timeout
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      logger.debug(
-        { group: group.name },
-        'Idle timeout, closing container stdin',
-      );
+      logger.debug({ group: group.name }, 'Idle timeout, closing container stdin');
       queue.closeStdin(chatJid);
     }, IDLE_TIMEOUT);
   };
@@ -564,11 +488,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       // non-null result resets per-turn message-id state. Doing the reset
       // here (on the sentinel) instead of pre-emptively at the top of the
       // next turn avoids racing with trailing partials of the current turn.
-      if (
-        result.result === null &&
-        (result as any).newSessionId &&
-        !result.partial
-      ) {
+      if (result.result === null && (result as any).newSessionId && !result.partial) {
         queryBoundaryPendingThinking = true;
         queryBoundaryPendingResult = true;
         // Don't return — let the rest of the handler run for thinking/status
@@ -604,21 +524,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           turnFinalized = false;
         }
         const thinkingMode = normalizeShowThinking(
-          getEffectiveShowThinking(chatJid) ??
-            getConfig().agents?.defaults?.showThinking,
+          getEffectiveShowThinking(chatJid) ?? getConfig().agents?.defaults?.showThinking,
         );
-        const streamThinking =
-          thinkingMode === 'flash' &&
-          !!channel.editMessage &&
-          !channel.usesNativeStreaming;
+        const streamThinking = thinkingMode === 'flash' && !!channel.editMessage && !channel.usesNativeStreaming;
         // In flash mode, once we've dismissed the thinking preview on the
         // first answer chunk, ignore trailing reasoning_delta events for
         // the rest of the turn (don't re-open it).
-        if (
-          streamThinking &&
-          channel.editMessage &&
-          !(thinkingMode === 'flash' && flashThinkingDismissed)
-        ) {
+        if (streamThinking && channel.editMessage && !(thinkingMode === 'flash' && flashThinkingDismissed)) {
           // Boundary handling: a new query (queryBoundaryPending=true)
           // means a fresh turn — drop the previous turn's thinking
           // pointer so this turn opens a new one.
@@ -639,9 +551,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           }
           const tp = formatThinkingForFlash(result.thinking, chatJid);
           if (tp) {
-            const sendOpts = tp.parseMode
-              ? { parseMode: tp.parseMode }
-              : undefined;
+            const sendOpts = tp.parseMode ? { parseMode: tp.parseMode } : undefined;
             if (!thinkingMsgId) {
               // Opening lock: openOnce() either runs sendMessage (if we're
               // first) or awaits the in-flight opener (if a sibling delta
@@ -650,11 +560,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               await flashOpeningLock.openOnce(async () => {
                 await traceSetTyping(channel, chatJid, false, 'thinking-first');
                 const desired = tp.text + ' ◌';
-                const msgId = await channel.sendMessage(
-                  chatJid,
-                  desired,
-                  sendOpts,
-                );
+                const msgId = await channel.sendMessage(chatJid, desired, sendOpts);
                 thinkingMsgId = typeof msgId === 'string' ? msgId : undefined;
                 lastThinkingRendered = desired;
               });
@@ -732,10 +638,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             }
             streamHandle = undefined;
           }
-          logger.debug(
-            { chatJid, group: group.name },
-            'IPC turn boundary: reset per-turn message-id state',
-          );
+          logger.debug({ chatJid, group: group.name }, 'IPC turn boundary: reset per-turn message-id state');
         }
         // Mode behavior on first answer event:
         //   `on`    -> prepend thinking to result.result as ONE message
@@ -749,22 +652,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         //   `off`   -> nothing to do.
         let thinkingParseMode: 'HTML' | 'Markdown' | undefined;
         const thinkingMode = normalizeShowThinking(
-          getEffectiveShowThinking(chatJid) ??
-            getConfig().agents?.defaults?.showThinking,
+          getEffectiveShowThinking(chatJid) ?? getConfig().agents?.defaults?.showThinking,
         );
-        if (
-          result.thinking &&
-          !result.partial &&
-          thinkingMode === 'on' &&
-          !thinkingPrependedThisQuery
-        ) {
+        if (result.thinking && !result.partial && thinkingMode === 'on' && !thinkingPrependedThisQuery) {
           const tp = formatThinkingForChannel(result.thinking, chatJid);
           const merged = applyOnModeThinkingPrepend({
             thinking: result.thinking,
-            resultText:
-              typeof result.result === 'string'
-                ? result.result
-                : JSON.stringify(result.result),
+            resultText: typeof result.result === 'string' ? result.result : JSON.stringify(result.result),
             alreadyPrepended: thinkingPrependedThisQuery,
             formatted: tp,
           });
@@ -774,11 +668,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             thinkingPrependedThisQuery = true;
           }
         }
-        if (
-          thinkingMsgId &&
-          thinkingMode === 'flash' &&
-          !flashThinkingDismissed
-        ) {
+        if (thinkingMsgId && thinkingMode === 'flash' && !flashThinkingDismissed) {
           // Drain coalescer first: a pending edit on this msgId would
           // race with the delete (delete succeeds → edit hits a deleted
           // msg → logs warn, harmless but noisy). Also remove the slot so
@@ -797,10 +687,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               await channel.editMessage(chatJid, thinkingMsgId, ' ');
             }
           } catch (err) {
-            logger.warn(
-              { chatJid, err: (err as Error).message },
-              'flash thinking dismiss failed (non-fatal)',
-            );
+            logger.warn({ chatJid, err: (err as Error).message }, 'flash thinking dismiss failed (non-fatal)');
           }
           thinkingMsgId = undefined;
           flashThinkingDismissed = true;
@@ -808,10 +695,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // (`on` mode now merges thinking into result.result above; the
         //  streamed-thinking-message design from PR #27 was reverted on
         //  2026-04-25 after producing orphan-bubble regression on TG.)
-        const raw =
-          typeof result.result === 'string'
-            ? result.result
-            : JSON.stringify(result.result);
+        const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
         const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
         if (!text) {
           if (result.status === 'success') queue.notifyIdle(chatJid);
@@ -822,15 +706,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // future silent stretch on a follow-up message can be acked again.
         queue.notifyAgentOutput(chatJid);
 
-        const sendOpts = thinkingParseMode
-          ? { parseMode: thinkingParseMode }
-          : undefined;
+        const sendOpts = thinkingParseMode ? { parseMode: thinkingParseMode } : undefined;
 
-        if (
-          result.partial &&
-          channel.usesNativeStreaming &&
-          channel.streamMessage
-        ) {
+        if (result.partial && channel.usesNativeStreaming && channel.streamMessage) {
           // Native streaming path: hand cumulative text to the channel's
           // StreamHandle. The handle is responsible for serializing
           // outbound activities and graceful degradation on platforms
@@ -848,29 +726,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           progressiveText = text; // delta buffer already accumulated in agent-runner
           if (!progressiveMsgId) {
             // First partial — send new message
-            await traceSetTyping(
-              channel,
-              chatJid,
-              false,
-              'progressive-first-partial',
-            );
-            const msgId = await channel.sendMessage(
-              chatJid,
-              text + ' ◌',
-              sendOpts,
-            );
+            await traceSetTyping(channel, chatJid, false, 'progressive-first-partial');
+            const msgId = await channel.sendMessage(chatJid, text + ' ◌', sendOpts);
             progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;
           } else {
             // Subsequent partial — edit existing message. Capture id in
             // case editMessage falls back to a fresh sendMessage (returns
             // a new id) so we keep editing the live message instead of
             // spawning duplicates. (kenan TG repro 2026-04-24)
-            const editedId = await channel.editMessage(
-              chatJid,
-              progressiveMsgId,
-              text + ' ◌',
-              sendOpts,
-            );
+            const editedId = await channel.editMessage(chatJid, progressiveMsgId, text + ' ◌', sendOpts);
             if (typeof editedId === 'string' && editedId !== progressiveMsgId) {
               progressiveMsgId = editedId;
             }
@@ -889,32 +753,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             // Replace the progressive message with final content. Capture
             // the (possibly new) id from the editMessage fallback path so
             // lastFinalMsgId tracks the actual visible message.
-            const editedId = await channel.editMessage(
-              chatJid,
-              progressiveMsgId,
-              text,
-              sendOpts,
-            );
+            const editedId = await channel.editMessage(chatJid, progressiveMsgId, text, sendOpts);
             if (typeof editedId === 'string') {
               lastFinalMsgId = editedId;
             }
-          } else if (
-            outputSentToUser &&
-            lastFinalMsgId &&
-            channel.editMessage &&
-            !channel.prefersNewMessageForFinal
-          ) {
+          } else if (outputSentToUser && lastFinalMsgId && channel.editMessage && !channel.prefersNewMessageForFinal) {
             // Multiple final outputs (e.g. tool call → new response): edit the
             // last message on channels where in-place edits feel natural
             // (Telegram). Channels with prefersNewMessageForFinal (Teams)
             // skip this branch and send a new message instead, otherwise
             // each subsequent final silently overwrites the previous one.
-            const editedId = await channel.editMessage(
-              chatJid,
-              lastFinalMsgId,
-              text,
-              sendOpts,
-            );
+            const editedId = await channel.editMessage(chatJid, lastFinalMsgId, text, sendOpts);
             if (typeof editedId === 'string' && editedId !== lastFinalMsgId) {
               lastFinalMsgId = editedId;
             }
@@ -938,17 +787,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           // turn-end, finally-guard) cancels the pending auto-clear.
           // (kenan Teams repro 2026-04-27 — 'always typing' regression
           //  after the unbounded re-arm in 18daa61.)
-          await armTypingBounded(
-            channel,
-            chatJid,
-            'after-interim-final',
-            INTERIM_TYPING_TTL_MS,
-          );
+          await armTypingBounded(channel, chatJid, 'after-interim-final', INTERIM_TYPING_TTL_MS);
         }
-        logger.info(
-          { group: group.name, partial: !!result.partial },
-          `Agent output: ${raw.length} chars`,
-        );
+        logger.info({ group: group.name, partial: !!result.partial }, `Agent output: ${raw.length} chars`);
         resetIdleTimer();
       }
 
@@ -977,10 +818,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       // Roll back cursor so retries can re-process these messages
       lastAgentTimestamp[chatJid] = previousCursor;
       saveState();
-      logger.warn(
-        { group: group.name },
-        'Agent error, rolled back message cursor for retry',
-      );
+      logger.warn({ group: group.name }, 'Agent error, rolled back message cursor for retry');
       return false;
     }
 
@@ -1043,12 +881,7 @@ async function runAgent(
 
   // Update available groups snapshot (main group only can see all groups)
   const availableGroups = getAvailableGroups();
-  writeGroupsSnapshot(
-    group.folder,
-    isMain,
-    availableGroups,
-    new Set(Object.keys(registeredGroups)),
-  );
+  writeGroupsSnapshot(group.folder, isMain, availableGroups, new Set(Object.keys(registeredGroups)));
 
   // Wrap onOutput to track session ID from streamed results
   const wrappedOnOutput = onOutput
@@ -1074,8 +907,7 @@ async function runAgent(
         isMain,
         assistantName: ASSISTANT_NAME,
       },
-      (proc, containerName) =>
-        queue.registerProcess(chatJid, proc, containerName, group.folder),
+      (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
     );
 
@@ -1096,11 +928,7 @@ async function runAgent(
       // deletion, or disk-full. The existing backoff in group-queue.ts
       // handles the retry; we just need to remove the broken session ID.
       const isStaleSession =
-        sessionId &&
-        output.error &&
-        /no conversation found|ENOENT.*\.jsonl|session.*not found/i.test(
-          output.error,
-        );
+        sessionId && output.error && /no conversation found|ENOENT.*\.jsonl|session.*not found/i.test(output.error);
 
       if (isStaleSession) {
         logger.warn(
@@ -1116,10 +944,7 @@ async function runAgent(
         deleteSession(group.folder, provider);
       }
 
-      logger.error(
-        { group: group.name, error: output.error },
-        'Container agent error',
-      );
+      logger.error({ group: group.name, error: output.error }, 'Container agent error');
 
       // Send error feedback to user (if enabled and not shutting down)
       const sendErrors = getConfig().sendErrorToUser === true;
@@ -1128,28 +953,16 @@ async function runAgent(
           const errMsg = output.error || 'Unknown error';
           let userMessage = '\u26a0\ufe0f Unable to process your message.';
           if (errMsg.includes('docker') || errMsg.includes('Docker')) {
-            userMessage +=
-              ' Docker is not running or not installed. Run "nanoclaw doctor" to check.';
+            userMessage += ' Docker is not running or not installed. Run "nanoclaw doctor" to check.';
           } else if (errMsg.includes('timeout')) {
             userMessage += ' The agent timed out processing your request.';
-          } else if (
-            errMsg.includes('ERR_MODULE_NOT_FOUND') ||
-            errMsg.includes('Cannot find package')
-          ) {
+          } else if (errMsg.includes('ERR_MODULE_NOT_FOUND') || errMsg.includes('Cannot find package')) {
             userMessage +=
               ' Container image may be outdated or wrong provider. Run "nanoclaw sandbox build" to rebuild.';
-          } else if (
-            errMsg.includes('No authentication info') ||
-            errMsg.includes('not created with authentication')
-          ) {
-            userMessage +=
-              ' Authentication failed. Check your GitHub token or API key configuration.';
-          } else if (
-            errMsg.includes('No such image') ||
-            errMsg.includes('image not found')
-          ) {
-            userMessage +=
-              ' Container image not found. Run "nanoclaw sandbox build" to build it.';
+          } else if (errMsg.includes('No authentication info') || errMsg.includes('not created with authentication')) {
+            userMessage += ' Authentication failed. Check your GitHub token or API key configuration.';
+          } else if (errMsg.includes('No such image') || errMsg.includes('image not found')) {
+            userMessage += ' Container image not found. Run "nanoclaw sandbox build" to build it.';
           } else {
             userMessage += ' Error: ' + errMsg.slice(0, 200);
           }
@@ -1173,33 +986,16 @@ async function runAgent(
       try {
         const errMsg = err?.message || String(err);
         let userMessage = '\u26a0\ufe0f Unable to process your message.';
-        if (
-          errMsg.includes('docker') ||
-          errMsg.includes('ENOENT') ||
-          errMsg.includes('spawn')
-        ) {
-          userMessage +=
-            ' Docker may not be running or installed. Run "nanoclaw doctor" to check.';
+        if (errMsg.includes('docker') || errMsg.includes('ENOENT') || errMsg.includes('spawn')) {
+          userMessage += ' Docker may not be running or installed. Run "nanoclaw doctor" to check.';
         } else if (errMsg.includes('timeout')) {
           userMessage += ' The agent timed out processing your request.';
-        } else if (
-          errMsg.includes('ERR_MODULE_NOT_FOUND') ||
-          errMsg.includes('Cannot find package')
-        ) {
-          userMessage +=
-            ' Container image may be outdated or wrong provider. Run "nanoclaw sandbox build" to rebuild.';
-        } else if (
-          errMsg.includes('No authentication info') ||
-          errMsg.includes('not created with authentication')
-        ) {
-          userMessage +=
-            ' Authentication failed. Check your GitHub token or API key configuration.';
-        } else if (
-          errMsg.includes('No such image') ||
-          errMsg.includes('image not found')
-        ) {
-          userMessage +=
-            ' Container image not found. Run "nanoclaw sandbox build" to build it.';
+        } else if (errMsg.includes('ERR_MODULE_NOT_FOUND') || errMsg.includes('Cannot find package')) {
+          userMessage += ' Container image may be outdated or wrong provider. Run "nanoclaw sandbox build" to rebuild.';
+        } else if (errMsg.includes('No authentication info') || errMsg.includes('not created with authentication')) {
+          userMessage += ' Authentication failed. Check your GitHub token or API key configuration.';
+        } else if (errMsg.includes('No such image') || errMsg.includes('image not found')) {
+          userMessage += ' Container image not found. Run "nanoclaw sandbox build" to build it.';
         } else {
           userMessage += ` Error: ${errMsg.slice(0, 200)}`;
         }
@@ -1226,11 +1022,7 @@ async function startMessageLoop(): Promise<void> {
   while (true) {
     try {
       const jids = Object.keys(registeredGroups);
-      const { messages, newTimestamp } = getNewMessages(
-        jids,
-        lastTimestamp,
-        ASSISTANT_NAME,
-      );
+      const { messages, newTimestamp } = getNewMessages(jids, lastTimestamp, ASSISTANT_NAME);
 
       if (messages.length > 0) {
         logger.info({ count: messages.length }, 'New messages');
@@ -1272,8 +1064,7 @@ async function startMessageLoop(): Promise<void> {
             const hasTrigger = groupMessages.some(
               (m) =>
                 triggerPattern.test(m.content.trim()) &&
-                (m.is_from_me ||
-                  isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
+                (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
             );
             if (!hasTrigger) continue;
           }
@@ -1286,13 +1077,11 @@ async function startMessageLoop(): Promise<void> {
             ASSISTANT_NAME,
             MAX_MESSAGES_PER_PROMPT,
           );
-          let messagesToSend =
-            allPending.length > 0 ? allPending : groupMessages;
+          let messagesToSend = allPending.length > 0 ? allPending : groupMessages;
 
           // Handle slash commands in ALL pending messages, not just the last
           if (messagesToSend.length > 0) {
-            const { normalizeSlashInput, handleSlashCommand } =
-              await import('./slash-commands.js');
+            const { normalizeSlashInput, handleSlashCommand } = await import('./slash-commands.js');
             const slashCtx2 = {
               chatJid,
               groupFolder: group.folder,
@@ -1303,10 +1092,7 @@ async function startMessageLoop(): Promise<void> {
             const nonSlash: typeof messagesToSend = [];
             for (const msg of messagesToSend) {
               const slashInput = normalizeSlashInput(msg.content);
-              const slashResult = await handleSlashCommand(
-                slashInput,
-                slashCtx2,
-              );
+              const slashResult = await handleSlashCommand(slashInput, slashCtx2);
               if (slashResult.handled) {
                 lastAgentTimestamp[chatJid] = msg.timestamp;
               } else {
@@ -1327,9 +1113,7 @@ async function startMessageLoop(): Promise<void> {
             TIMEZONE,
             ASSISTANT_NAME,
           );
-          const fullPrompt = contextPrefix
-            ? contextPrefix + '\n\n' + formatted
-            : formatted;
+          const fullPrompt = contextPrefix ? contextPrefix + '\n\n' + formatted : formatted;
 
           // Capture cursor BEFORE the optimistic advance so we can roll
           // back to it if the active agent dies before producing output
@@ -1338,17 +1122,12 @@ async function startMessageLoop(): Promise<void> {
           // cursor when the next agent spawn drains the DB.
           const cursorBeforePipe = lastAgentTimestamp[chatJid] || '';
           if (queue.sendMessage(chatJid, fullPrompt, cursorBeforePipe)) {
-            logger.debug(
-              { chatJid, count: messagesToSend.length },
-              'Piped messages to active container',
-            );
-            lastAgentTimestamp[chatJid] =
-              messagesToSend[messagesToSend.length - 1].timestamp;
+            logger.debug({ chatJid, count: messagesToSend.length }, 'Piped messages to active container');
+            lastAgentTimestamp[chatJid] = messagesToSend[messagesToSend.length - 1].timestamp;
             saveState();
             // Show typing indicator while the container processes the piped message
-            traceSetTyping(channel, chatJid, true, 'ipc-pipe').catch(
-              (err: any) =>
-                logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
+            traceSetTyping(channel, chatJid, true, 'ipc-pipe').catch((err: any) =>
+              logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
             );
             // Busy ack: if user piled on a 2nd message before the agent
             // produced anything, let them know we received it and are still
@@ -1356,13 +1135,8 @@ async function startMessageLoop(): Promise<void> {
             const ackDepth = queue.shouldSendBusyAck(chatJid);
             if (ackDepth !== null) {
               channel
-                .sendMessage(
-                  chatJid,
-                  `📥 收到，正在处理上一条，这是第 ${ackDepth} 条，处理完会一起回复。`,
-                )
-                ?.catch((err: any) =>
-                  logger.warn({ chatJid, err }, 'Failed to send busy ack'),
-                );
+                .sendMessage(chatJid, `📥 收到，正在处理上一条，这是第 ${ackDepth} 条，处理完会一起回复。`)
+                ?.catch((err: any) => logger.warn({ chatJid, err }, 'Failed to send busy ack'));
             }
           } else {
             // No active container — enqueue for a new one
@@ -1383,17 +1157,9 @@ async function startMessageLoop(): Promise<void> {
  */
 function recoverPendingMessages(): void {
   for (const [chatJid, group] of Object.entries(registeredGroups)) {
-    const pending = getMessagesSince(
-      chatJid,
-      getOrRecoverCursor(chatJid),
-      ASSISTANT_NAME,
-      MAX_MESSAGES_PER_PROMPT,
-    );
+    const pending = getMessagesSince(chatJid, getOrRecoverCursor(chatJid), ASSISTANT_NAME, MAX_MESSAGES_PER_PROMPT);
     if (pending.length > 0) {
-      logger.info(
-        { group: group.name, pendingCount: pending.length },
-        'Recovery: found unprocessed messages',
-      );
+      logger.info({ group: group.name, pendingCount: pending.length }, 'Recovery: found unprocessed messages');
       queue.enqueueMessageCheck(chatJid);
     }
   }
@@ -1415,8 +1181,7 @@ function ensureContainerSystemRunning(): void {
 
   // Only check Docker runtime if any agent needs container mode
   const needsContainers =
-    config.agents?.list?.some((a: any) => a.mode === 'sandbox') ||
-    config.agents?.defaults?.mode !== 'host';
+    config.agents?.list?.some((a: any) => a.mode === 'sandbox') || config.agents?.defaults?.mode !== 'host';
   if (!needsContainers) {
     logger.info('No agents require containers — skipping runtime check');
     return;
@@ -1431,9 +1196,7 @@ function ensureContainerSystemRunning(): void {
       { err: err.message },
       'Container runtime not available. Service will start but message processing will fail. Run "nanoclaw doctor" to diagnose.',
     );
-    console.warn(
-      '\n  \u26a0\ufe0f  WARNING: Docker is not running or not installed.',
-    );
+    console.warn('\n  \u26a0\ufe0f  WARNING: Docker is not running or not installed.');
     console.warn('  Messages will not be processed until Docker is available.');
     console.warn('  Run "nanoclaw doctor" to check your setup.\n');
   }
@@ -1449,9 +1212,7 @@ interface ThinkingFormat {
  * the dispatcher. Accepts legacy boolean shape (true=on, false=off) and
  * the new string enum ('on' | 'off' | 'flash').
  */
-export function normalizeShowThinking(
-  raw: boolean | 'on' | 'off' | 'flash' | undefined,
-): 'on' | 'off' | 'flash' {
+export function normalizeShowThinking(raw: boolean | 'on' | 'off' | 'flash' | undefined): 'on' | 'off' | 'flash' {
   if (raw === true) return 'on';
   if (raw === 'on') return 'on';
   if (raw === 'flash') return 'flash';
@@ -1462,22 +1223,15 @@ export function normalizeShowThinking(
  * Format thinking/reasoning content for channel display.
  * Returns structured data so callers can set parse mode correctly.
  */
-export function formatThinkingForChannel(
-  thinking: string,
-  chatJid: string,
-): ThinkingFormat | null {
+export function formatThinkingForChannel(thinking: string, chatJid: string): ThinkingFormat | null {
   const trimmed = thinking.trim();
   if (!trimmed) return null;
 
   // Truncate very long thinking to avoid flooding the channel
   const maxLen = 2000;
-  const content =
-    trimmed.length > maxLen
-      ? trimmed.substring(0, maxLen) + '\n...(truncated)'
-      : trimmed;
+  const content = trimmed.length > maxLen ? trimmed.substring(0, maxLen) + '\n...(truncated)' : trimmed;
 
-  const escapeHtml = (s: string) =>
-    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   if (chatJid.startsWith('tg:')) {
     // Telegram: expandable blockquote (collapsed by default, tap to expand)
@@ -1504,10 +1258,7 @@ export function formatThinkingForChannel(
  * parseMode. The flash UI is a placeholder that will be overwritten by the final
  * answer, so it should be visually quiet and not look like a persistent quote.
  */
-export function formatThinkingForFlash(
-  thinking: string,
-  chatJid: string,
-): ThinkingFormat | null {
+export function formatThinkingForFlash(thinking: string, chatJid: string): ThinkingFormat | null {
   const trimmed = thinking.trim();
   if (!trimmed) return null;
 
@@ -1515,12 +1266,10 @@ export function formatThinkingForFlash(
   const maxLen = 600;
   // Collapse newlines into spaces so the preview stays compact (1–2 lines).
   const oneLine = trimmed.replace(/\s+/g, ' ');
-  const content =
-    oneLine.length > maxLen ? oneLine.substring(0, maxLen) + '…' : oneLine;
+  const content = oneLine.length > maxLen ? oneLine.substring(0, maxLen) + '…' : oneLine;
 
   if (chatJid.startsWith('tg:')) {
-    const escapeHtml = (s: string) =>
-      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     return {
       text: `🧠 <i>thinking…</i> <i>${escapeHtml(content)}</i>`,
       parseMode: 'HTML',
@@ -1621,15 +1370,12 @@ async function main(): Promise<void> {
   // NOT pointing at the legacy v1 path. Both run before any file I/O so a
   // misconfigured deploy aborts before it can corrupt v1 prod data.
   try {
-    const { assertWorkspaceIsolation, seedV2FromV1IfNeeded } =
-      await import('./workspace.js');
+    const { assertWorkspaceIsolation, seedV2FromV1IfNeeded } = await import('./workspace.js');
     seedV2FromV1IfNeeded();
     const ws = assertWorkspaceIsolation();
     process.stderr.write(`[workspace] ${ws}\n`);
   } catch (err) {
-    process.stderr.write(
-      `[workspace] startup guard failed: ${(err as Error).message}\n`,
-    );
+    process.stderr.write(`[workspace] startup guard failed: ${(err as Error).message}\n`);
     process.exit(1);
   }
 
@@ -1646,10 +1392,7 @@ async function main(): Promise<void> {
     fs.mkdirSync(path.dirname(pidFilePath), { recursive: true });
     fs.writeFileSync(pidFilePath, String(process.pid));
   } catch (err) {
-    logger.warn(
-      { err },
-      'Failed to write PID file (status CLI may report stale)',
-    );
+    logger.warn({ err }, 'Failed to write PID file (status CLI may report stale)');
   }
   const cleanupPidFile = (): void => {
     if (!pidFilePath) return;
@@ -1713,16 +1456,10 @@ async function main(): Promise<void> {
     const { ensureEnabledPluginsInstalled } = await import('./cli/plugin.js');
     const result = await ensureEnabledPluginsInstalled();
     if (result.installed.length > 0) {
-      logger.info(
-        { installed: result.installed },
-        'plugins: auto-installed declared plugins',
-      );
+      logger.info({ installed: result.installed }, 'plugins: auto-installed declared plugins');
     }
     for (const f of result.failed) {
-      logger.warn(
-        { plugin: f.name, error: f.error },
-        'plugins: auto-install failed',
-      );
+      logger.warn({ plugin: f.name, error: f.error }, 'plugins: auto-install failed');
     }
   } catch (err: any) {
     logger.debug({ err }, 'plugins: auto-install skipped');
@@ -1779,8 +1516,7 @@ async function main(): Promise<void> {
   async function reloadFromConfigFile(source: string): Promise<void> {
     try {
       const { reloadConfig, getConfig } = await import('./config.js');
-      const { applyConfigLogLevel, setLogLevel, getLogLevel } =
-        await import('./log-extensions.js');
+      const { applyConfigLogLevel, setLogLevel, getLogLevel } = await import('./log-extensions.js');
       reloadConfig();
       const cfg = getConfig();
       const newLevel = cfg.logLevel;
@@ -1792,27 +1528,17 @@ async function main(): Promise<void> {
         applyConfigLogLevel(newLevel);
       }
       const mcpCount = Object.keys(cfg.mcp?.servers || {}).length;
-      logger.info(
-        { source, level: getLogLevel(), mcpServers: mcpCount },
-        'Config reloaded',
-      );
+      logger.info({ source, level: getLogLevel(), mcpServers: mcpCount }, 'Config reloaded');
     } catch (err) {
       logger.error({ source, err }, 'Config reload failed');
     }
   }
 
   // Handle /remote-control and /remote-control-end commands
-  async function handleRemoteControl(
-    command: string,
-    chatJid: string,
-    msg: NewMessage,
-  ): Promise<void> {
+  async function handleRemoteControl(command: string, chatJid: string, msg: NewMessage): Promise<void> {
     const group = registeredGroups[chatJid];
     if (!group?.isMain) {
-      logger.warn(
-        { chatJid, sender: msg.sender },
-        'Remote control rejected: not main group',
-      );
+      logger.warn({ chatJid, sender: msg.sender }, 'Remote control rejected: not main group');
       return;
     }
 
@@ -1825,10 +1551,7 @@ async function main(): Promise<void> {
       if (result.ok) {
         await channel.sendMessage(chatJid, result.url);
       } else {
-        await channel.sendMessage(
-          chatJid,
-          `Remote Control failed: ${result.error}`,
-        );
+        await channel.sendMessage(chatJid, `Remote Control failed: ${result.error}`);
       }
     } else {
       const result = stopRemoteControl();
@@ -1870,9 +1593,7 @@ async function main(): Promise<void> {
           const abortChannel = findChannel(channels, chatJid);
           abortChannel
             ?.sendMessage(chatJid, '⚙️ Agent aborted.')
-            .catch((err: any) =>
-              logger.warn({ err, chatJid }, 'abort: failed to send ack'),
-            );
+            .catch((err: any) => logger.warn({ err, chatJid }, 'abort: failed to send ack'));
         }
         // Always return: we don't store abort keywords as regular messages,
         // regardless of whether anything was actually running.
@@ -1889,20 +1610,13 @@ async function main(): Promise<void> {
           const pairChannel = findChannel(channels, chatJid);
           if (pairChannel) {
             const senderName = msg.sender || 'chat';
-            const safeName = senderName
-              .replace(/[^a-zA-Z0-9_-]/g, '-')
-              .substring(0, 40);
+            const safeName = senderName.replace(/[^a-zA-Z0-9_-]/g, '-').substring(0, 40);
             pairChannel
               .sendMessage(
                 chatJid,
                 `👋 This chat isn't paired yet.\n\nTo pair, run on your server:\n\`nanoclaw pair ${chatJid} --name "${safeName}"\`\n\`nanoclaw restart\``,
               )
-              .catch((err: any) =>
-                logger.debug(
-                  { err, chatJid },
-                  'Failed to send pair instructions',
-                ),
-              );
+              .catch((err: any) => logger.debug({ err, chatJid }, 'Failed to send pair instructions'));
           }
           return;
         }
@@ -1911,28 +1625,17 @@ async function main(): Promise<void> {
       // Sender allowlist drop mode: discard messages from denied senders before storing
       if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
         const cfg = loadSenderAllowlist();
-        if (
-          shouldDropMessage(chatJid, cfg) &&
-          !isSenderAllowed(chatJid, msg.sender, cfg)
-        ) {
+        if (shouldDropMessage(chatJid, cfg) && !isSenderAllowed(chatJid, msg.sender, cfg)) {
           if (cfg.logDenied) {
-            logger.debug(
-              { chatJid, sender: msg.sender },
-              'sender-allowlist: dropping message (drop mode)',
-            );
+            logger.debug({ chatJid, sender: msg.sender }, 'sender-allowlist: dropping message (drop mode)');
           }
           return;
         }
       }
       storeMessage(msg);
     },
-    onChatMetadata: (
-      chatJid: string,
-      timestamp: string,
-      name?: string,
-      channel?: string,
-      isGroup?: boolean,
-    ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
+    onChatMetadata: (chatJid: string, timestamp: string, name?: string, channel?: string, isGroup?: boolean) =>
+      storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
     registerGroup,
   };
@@ -1955,10 +1658,7 @@ async function main(): Promise<void> {
       const opts = { ...channelOpts, ...(accountId ? { accountId } : {}) };
       const channel = factory(opts);
       if (!channel) {
-        logger.warn(
-          { channel: channelName, accountId },
-          'Channel installed but credentials missing — skipping.',
-        );
+        logger.warn({ channel: channelName, accountId }, 'Channel installed but credentials missing — skipping.');
         continue;
       }
       channels.push(channel);
@@ -1966,28 +1666,21 @@ async function main(): Promise<void> {
 
       // Register slash commands with platform-native menus (non-invasive)
       try {
-        const { registerTelegramCommands } =
-          await import('./slash-commands.js');
+        const { registerTelegramCommands } = await import('./slash-commands.js');
         if (channelName === 'telegram') {
           // Multi-account: register for each account's bot token
           const tgConfig = getConfig().channels?.telegram;
           const accts = tgConfig?.accounts;
           if (accts && accountId && accts[accountId]?.botToken) {
             await registerTelegramCommands(accts[accountId].botToken!);
-            logger.info(
-              { accountId },
-              'Telegram slash command menu registered',
-            );
+            logger.info({ accountId }, 'Telegram slash command menu registered');
           } else if (tgConfig?.botToken) {
             await registerTelegramCommands(tgConfig.botToken);
             logger.info('Telegram slash command menu registered');
           }
         }
       } catch (err) {
-        logger.debug(
-          { err, channel: channelName },
-          'Slash command registration skipped',
-        );
+        logger.debug({ err, channel: channelName }, 'Slash command registration skipped');
       }
     } // end accountEntries loop
   }
@@ -2025,9 +1718,7 @@ async function main(): Promise<void> {
   //   unset / 0  → fork v1 only (default).
   //   '1'        → wiring only (gates + resolvers installed).
   //   '2'        → wiring + shadow inbound (see src/shadow-inbound.ts).
-  const { installV2DispatcherHooks } = await import(
-    './v2-dispatcher-wiring.js'
-  );
+  const { installV2DispatcherHooks } = await import('./v2-dispatcher-wiring.js');
   await installV2DispatcherHooks(process.env.NANOCLAW_V2_DISPATCHER, {
     killActive: (jid: string) => queue.killActive(jid),
     sendAck: async (jid: string, text: string) => {
@@ -2057,24 +1748,16 @@ async function main(): Promise<void> {
       if (channel?.sendFile) {
         await channel.sendFile(jid, filePath, filename);
       } else {
-        logger.debug(
-          { jid, filePath },
-          'Channel does not support file sending',
-        );
+        logger.debug({ jid, filePath }, 'Channel does not support file sending');
       }
     },
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroups: async (force: boolean) => {
-      await Promise.all(
-        channels
-          .filter((ch) => ch.syncGroups)
-          .map((ch) => ch.syncGroups!(force)),
-      );
+      await Promise.all(channels.filter((ch) => ch.syncGroups).map((ch) => ch.syncGroups!(force)));
     },
     getAvailableGroups,
-    writeGroupsSnapshot: (gf, im, ag, rj) =>
-      writeGroupsSnapshot(gf, im, ag, rj),
+    writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),
     onTasksChanged: () => {
       const tasks = getAllTasks();
       const taskRows = tasks.map((t) => ({
@@ -2099,62 +1782,39 @@ async function main(): Promise<void> {
   // re-read from the DB by the next agent spawn, and clear the typing
   // indicator (set fire-and-forget at the IPC pipe site — nothing else
   // would clear it on this code path).
-  queue.setOnProcessDiedWithoutOutput(
-    (
-      groupJid: string,
-      rollbackCursor: string | null,
-      exitCode: number | null,
-    ) => {
-      const channel = findChannel(channels, groupJid);
-      if (channel) {
-        traceSetTyping(channel, groupJid, false, 'agent-died').catch(
-          (err: any) =>
-            logger.warn(
-              { groupJid, err },
-              'Failed to clear typing indicator after agent died',
-            ),
+  queue.setOnProcessDiedWithoutOutput((groupJid: string, rollbackCursor: string | null, exitCode: number | null) => {
+    const channel = findChannel(channels, groupJid);
+    if (channel) {
+      traceSetTyping(channel, groupJid, false, 'agent-died').catch((err: any) =>
+        logger.warn({ groupJid, err }, 'Failed to clear typing indicator after agent died'),
+      );
+    }
+    // Surface non-zero exits to the user so they don't sit watching
+    // radio silence after a crash. Honours the same `sendErrorToUser`
+    // config gate as the structured-error path. (kenan, 2026-04-21
+    // gitignore reproducer: agent exit code=1 → bot said nothing.)
+    const sendErrors = getConfig().sendErrorToUser === true;
+    if (sendErrors && channel && exitCode !== null && exitCode !== 0 && !queue.isShuttingDown()) {
+      const msg =
+        `⚠️ Agent process crashed (exit ${exitCode}). ` + `Send your message again and a fresh agent will pick it up.`;
+      channel
+        .sendMessage(groupJid, msg)
+        .catch((err: any) =>
+          logger.warn({ groupJid, exitCode, err }, 'Failed to deliver agent-crash notice to channel'),
         );
-      }
-      // Surface non-zero exits to the user so they don't sit watching
-      // radio silence after a crash. Honours the same `sendErrorToUser`
-      // config gate as the structured-error path. (kenan, 2026-04-21
-      // gitignore reproducer: agent exit code=1 → bot said nothing.)
-      const sendErrors = getConfig().sendErrorToUser === true;
-      if (
-        sendErrors &&
-        channel &&
-        exitCode !== null &&
-        exitCode !== 0 &&
-        !queue.isShuttingDown()
-      ) {
-        const msg =
-          `⚠️ Agent process crashed (exit ${exitCode}). ` +
-          `Send your message again and a fresh agent will pick it up.`;
-        channel
-          .sendMessage(groupJid, msg)
-          .catch((err: any) =>
-            logger.warn(
-              { groupJid, exitCode, err },
-              'Failed to deliver agent-crash notice to channel',
-            ),
-          );
-      }
-      if (rollbackCursor) {
-        const before = lastAgentTimestamp[groupJid];
-        lastAgentTimestamp[groupJid] = rollbackCursor;
-        saveState();
-        logger.warn(
-          { groupJid, before, rolledBackTo: rollbackCursor },
-          'Agent died with piped IPC messages in flight; rolled back cursor',
-        );
-      } else {
-        logger.info(
-          { groupJid },
-          'Agent died while idle but no piped messages in flight; cursor untouched',
-        );
-      }
-    },
-  );
+    }
+    if (rollbackCursor) {
+      const before = lastAgentTimestamp[groupJid];
+      lastAgentTimestamp[groupJid] = rollbackCursor;
+      saveState();
+      logger.warn(
+        { groupJid, before, rolledBackTo: rollbackCursor },
+        'Agent died with piped IPC messages in flight; rolled back cursor',
+      );
+    } else {
+      logger.info({ groupJid }, 'Agent died while idle but no piped messages in flight; cursor untouched');
+    }
+  });
   recoverPendingMessages();
   startMessageLoop().catch((err: any) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
@@ -2163,9 +1823,7 @@ async function main(): Promise<void> {
 }
 
 // Guard: only run when executed directly, not when imported by tests
-const isDirectRun =
-  process.argv[1] &&
-  fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+const isDirectRun = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 
 if (isDirectRun) {
   main().catch((err: any) => {

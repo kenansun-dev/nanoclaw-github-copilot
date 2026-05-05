@@ -1,9 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  TeamsStreamingSession,
-  type ActivitySender,
-  type TeamsActivity,
-} from './teams-streaming.js';
+import { TeamsStreamingSession, type ActivitySender, type TeamsActivity } from './teams-streaming.js';
 
 /**
  * Tests for the Teams streaming wire protocol implementation.
@@ -100,9 +96,7 @@ describe('TeamsStreamingSession', () => {
     await s.end('abc');
 
     const first = calls[0];
-    const second = calls.find(
-      (c, i) => i > 0 && c.type === 'typing',
-    ) as Partial<TeamsActivity>;
+    const second = calls.find((c, i) => i > 0 && c.type === 'typing') as Partial<TeamsActivity>;
     const final = calls[calls.length - 1];
 
     // First activity has no id field set (it'll learn it from the response).
@@ -183,15 +177,11 @@ describe('TeamsStreamingSession', () => {
     // require the last typing-text to be the most recent cumulative
     // pre-end text and never any stale earlier-still-leading-prefix
     // (no typing call should send "a" twice).
-    const typingTexts = calls
-      .filter((c) => c.type === 'typing')
-      .map((c) => c.text);
+    const typingTexts = calls.filter((c) => c.type === 'typing').map((c) => c.text);
     expect(typingTexts[0]).toBe('a');
     expect(typingTexts.length).toBeLessThanOrEqual(2);
     // Last typing must be a prefix of the final text.
-    expect('abcde'.startsWith(typingTexts[typingTexts.length - 1] ?? '')).toBe(
-      true,
-    );
+    expect('abcde'.startsWith(typingTexts[typingTexts.length - 1] ?? '')).toBe(true);
   });
 
   it('end() and cancel() are idempotent', async () => {
@@ -224,9 +214,7 @@ describe('TeamsStreamingSession', () => {
       if (activity.type === 'typing') {
         chunkCalled++;
         if (chunkCalled === 1) {
-          throw new Error(
-            'BadArgument: streaming api is not enabled for this conversation',
-          );
+          throw new Error('BadArgument: streaming api is not enabled for this conversation');
         }
       }
       return `msg-${calls.length}`;
@@ -319,10 +307,7 @@ describe('TeamsStreamingSession', () => {
     const sender: ActivitySender = async (activity) => {
       calls.push(JSON.parse(JSON.stringify(activity)));
       // Fail the final activity that carries streaminfo entities.
-      if (
-        activity.type === 'message' &&
-        activity.entities?.some((e) => e.streamType === 'final')
-      ) {
+      if (activity.type === 'message' && activity.entities?.some((e) => e.streamType === 'final')) {
         throw new Error('AdapterError: final activity rejected');
       }
       return `msg-${calls.length}`;
@@ -512,9 +497,7 @@ describe('Teams streaming wire-protocol regression (2026-04-22)', () => {
     const typings = calls.filter((c) => c.type === 'typing');
     expect(typings.length).toBeGreaterThanOrEqual(2);
     // Exactly one informative activity — the bootstrap.
-    const informatives = typings.filter(
-      (c) => c.entities?.[0].streamType === 'informative',
-    );
+    const informatives = typings.filter((c) => c.entities?.[0].streamType === 'informative');
     expect(informatives.length).toBe(1);
     // All subsequent chunks must be `streaming`, not informative.
     for (let i = 1; i < typings.length; i++) {

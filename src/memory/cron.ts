@@ -68,12 +68,8 @@ function resolveDailySummaryConfig(): DailySummaryConfig {
   const ds = (memory.dailySummary as Record<string, unknown> | undefined) ?? {};
   return {
     enabled: typeof ds.enabled === 'boolean' ? ds.enabled : DEFAULT_ENABLED,
-    cron:
-      typeof ds.cron === 'string' && ds.cron.trim() ? ds.cron : DEFAULT_CRON,
-    prompt:
-      typeof ds.prompt === 'string' && ds.prompt.trim()
-        ? ds.prompt
-        : DEFAULT_PROMPT,
+    cron: typeof ds.cron === 'string' && ds.cron.trim() ? ds.cron : DEFAULT_CRON,
+    prompt: typeof ds.prompt === 'string' && ds.prompt.trim() ? ds.prompt : DEFAULT_PROMPT,
   };
 }
 
@@ -114,10 +110,7 @@ function nextRunFromCron(cron: string): string | null {
 // One-shot log dedup per process: don't spam every spawn.
 const loggedFirstRegistration = new Set<string>();
 
-export function ensureDailySummaryTask(opts: {
-  chatJid: string;
-  groupFolder: string;
-}): void {
+export function ensureDailySummaryTask(opts: { chatJid: string; groupFolder: string }): void {
   const { chatJid, groupFolder } = opts;
   const config = resolveDailySummaryConfig();
   const id = taskIdFor(chatJid);
@@ -129,15 +122,9 @@ export function ensureDailySummaryTask(opts: {
     if (existing && existing.status === 'active') {
       try {
         updateTask(id, { status: 'paused' });
-        logger.info(
-          { id, chatJid },
-          'memory-daily-summary: paused (memory.dailySummary.enabled=false)',
-        );
+        logger.info({ id, chatJid }, 'memory-daily-summary: paused (memory.dailySummary.enabled=false)');
       } catch (err) {
-        logger.warn(
-          { id, err },
-          'memory-daily-summary: pause-on-disable failed (non-fatal)',
-        );
+        logger.warn({ id, err }, 'memory-daily-summary: pause-on-disable failed (non-fatal)');
       }
     }
     return;
@@ -172,10 +159,7 @@ export function ensureDailySummaryTask(opts: {
         );
       }
     } catch (err) {
-      logger.warn(
-        { id, err },
-        'memory-daily-summary: createTask failed (non-fatal)',
-      );
+      logger.warn({ id, err }, 'memory-daily-summary: createTask failed (non-fatal)');
     }
     return;
   }
@@ -194,15 +178,9 @@ export function ensureDailySummaryTask(opts: {
     if (driftedPrompt) patch.prompt = config.prompt;
     try {
       updateTask(id, patch);
-      logger.info(
-        { id, driftedCron, driftedPrompt },
-        'memory-daily-summary: updated cron task to match config',
-      );
+      logger.info({ id, driftedCron, driftedPrompt }, 'memory-daily-summary: updated cron task to match config');
     } catch (err) {
-      logger.warn(
-        { id, err },
-        'memory-daily-summary: updateTask failed (non-fatal)',
-      );
+      logger.warn({ id, err }, 'memory-daily-summary: updateTask failed (non-fatal)');
     }
   }
 
@@ -214,9 +192,7 @@ export function ensureDailySummaryTask(opts: {
   // and schedule the next cron tick. We use the
   // `consecutive_group_missing` counter rather than parsing
   // last_result, so a manual user-pause (counter == 0) is preserved.
-  const wasAutoPaused =
-    existing.status === 'paused' &&
-    (existing.consecutive_group_missing ?? 0) > 0;
+  const wasAutoPaused = existing.status === 'paused' && (existing.consecutive_group_missing ?? 0) > 0;
   if (wasAutoPaused) {
     const next = nextRunFromCron(config.cron);
     try {
@@ -225,15 +201,9 @@ export function ensureDailySummaryTask(opts: {
         consecutive_group_missing: 0,
         ...(next ? { next_run: next } : {}),
       });
-      logger.info(
-        { id, chatJid, groupFolder, next },
-        'memory-daily-summary: resumed task after group came back',
-      );
+      logger.info({ id, chatJid, groupFolder, next }, 'memory-daily-summary: resumed task after group came back');
     } catch (err) {
-      logger.warn(
-        { id, err },
-        'memory-daily-summary: auto-resume failed (non-fatal)',
-      );
+      logger.warn({ id, err }, 'memory-daily-summary: auto-resume failed (non-fatal)');
     }
   }
 }

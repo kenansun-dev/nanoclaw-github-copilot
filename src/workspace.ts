@@ -10,10 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import {
-  WORKSPACE_DIR_NAME,
-  LEGACY_WORKSPACE_DIR_NAME,
-} from './workspace-config.js';
+import { WORKSPACE_DIR_NAME, LEGACY_WORKSPACE_DIR_NAME } from './workspace-config.js';
 
 const DEFAULT_WORKSPACE = path.join(os.homedir(), WORKSPACE_DIR_NAME);
 const LEGACY_WORKSPACE = path.join(os.homedir(), LEGACY_WORKSPACE_DIR_NAME);
@@ -57,9 +54,7 @@ export function assertWorkspaceIsolation(): string {
       `v2 builds must use ${DEFAULT_WORKSPACE} (or another non-v1 path).\n` +
       `Check: --workspace flag, NANOCLAW_WORKSPACE env var, systemd unit Environment=.\n`;
     process.stderr.write(msg);
-    throw new Error(
-      `Workspace guard tripped: refusing to run v2 build against v1 path ${legacyAbs}`,
-    );
+    throw new Error(`Workspace guard tripped: refusing to run v2 build against v1 path ${legacyAbs}`);
   }
   return resolved;
 }
@@ -79,9 +74,7 @@ export function seedV2FromV1IfNeeded(): boolean {
   if (fs.existsSync(v2)) return false;
   if (!fs.existsSync(v1)) return false;
   try {
-    process.stderr.write(
-      `\n[v2 workspace] First run detected. Seeding ${v2} from ${v1} (cp -a)...\n`,
-    );
+    process.stderr.write(`\n[v2 workspace] First run detected. Seeding ${v2} from ${v1} (cp -a)...\n`);
     // Use fs.cpSync (Node 16.7+) for recursive copy preserving perms/symlinks.
     fs.cpSync(v1, v2, {
       recursive: true,

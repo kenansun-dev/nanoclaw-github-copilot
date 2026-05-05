@@ -17,16 +17,9 @@ const mockSendMessage = vi.fn().mockResolvedValue('123');
 const mockIsConnected = vi.fn().mockReturnValue(true);
 const mockSetTyping = vi.fn().mockResolvedValue(undefined);
 
-let capturedOnMessage: ((chatJid: string, message: NewMessage) => void) | null =
-  null;
+let capturedOnMessage: ((chatJid: string, message: NewMessage) => void) | null = null;
 let capturedOnChatMetadata:
-  | ((
-      jid: string,
-      ts: string,
-      name: string,
-      channel: string,
-      isGroup: boolean,
-    ) => void)
+  | ((jid: string, ts: string, name: string, channel: string, isGroup: boolean) => void)
   | null = null;
 let capturedAccountId: string | undefined;
 
@@ -149,13 +142,7 @@ describe('TelegramV2Adapter', () => {
     await a.setup(cfg);
     expect(capturedOnChatMetadata).not.toBeNull();
 
-    capturedOnChatMetadata!(
-      'tg:99',
-      '2026-04-28T00:00:00.000Z',
-      'My Group',
-      'telegram',
-      true,
-    );
+    capturedOnChatMetadata!('tg:99', '2026-04-28T00:00:00.000Z', 'My Group', 'telegram', true);
 
     expect(metadata).toHaveLength(1);
     expect(metadata[0].platformId).toBe('99');

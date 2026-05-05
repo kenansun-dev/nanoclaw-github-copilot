@@ -15,10 +15,7 @@ import { loadConfig, saveConfig } from '../config-loader.js';
 import { resolveGithubToken, isGHCProvider } from '../config-extensions.js';
 import { resolveWorkspace, paths as wsPaths } from '../workspace.js';
 import { resolveGroupIpcPath } from '../group-folder.js';
-import {
-  makeCloseSentinelState,
-  shouldWriteCloseSentinel,
-} from './tui-direct-close-sentinel.js';
+import { makeCloseSentinelState, shouldWriteCloseSentinel } from './tui-direct-close-sentinel.js';
 
 const OUTPUT_START = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END = '---NANOCLAW_OUTPUT_END---';

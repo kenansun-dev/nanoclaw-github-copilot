@@ -17,13 +17,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * Generate a simple solid-color PNG image.
  * Returns a Buffer with a valid PNG file.
  */
-function generatePng(
-  width: number,
-  height: number,
-  r: number,
-  g: number,
-  b: number,
-): Buffer {
+function generatePng(width: number, height: number, r: number, g: number, b: number): Buffer {
   // Minimal PNG: IHDR + IDAT (uncompressed) + IEND
 
   // Raw image data: filter byte (0) + RGB pixels per row
@@ -173,10 +167,7 @@ function createZip(entries: Array<{ name: string; data: Buffer }>): Buffer {
  * @param botName - Bot display name
  * @returns Path to the generated zip file
  */
-export async function setupManifest(
-  appId: string,
-  botName: string,
-): Promise<string> {
+export async function setupManifest(appId: string, botName: string): Promise<string> {
   console.log('\n📄 Generating Teams App manifest...');
 
   // Auto-increment version on every manifest generation.
@@ -191,8 +182,7 @@ export async function setupManifest(
   const manifestVersion = `0.${parseInt(yymmdd, 10)}.${parseInt(hhmmss, 10)}`;
 
   const manifest = {
-    $schema:
-      'https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json',
+    $schema: 'https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json',
     manifestVersion: '1.17',
     version: manifestVersion,
     id: appId,
@@ -257,14 +247,7 @@ export async function setupManifest(
   const wsCfgDir = path.dirname(wsPaths.config);
   const customColorIcon = path.join(wsCfgDir, 'teams-color.png');
   const customOutlineIcon = path.join(wsCfgDir, 'teams-outline.png');
-  const bundledIcon = path.join(
-    __dirname,
-    '..',
-    '..',
-    'container',
-    'assets',
-    'teams-color-icon.png',
-  );
+  const bundledIcon = path.join(__dirname, '..', '..', 'container', 'assets', 'teams-color-icon.png');
   const colorIcon = fs.existsSync(customColorIcon)
     ? fs.readFileSync(customColorIcon)
     : fs.existsSync(bundledIcon)
@@ -293,9 +276,7 @@ export async function setupManifest(
   console.log(`  ✅ Manifest: ${zipPath}`);
   console.log('');
   console.log('  To sideload in Teams:');
-  console.log(
-    '    1. Open Teams → Apps → Manage your apps → Upload a custom app',
-  );
+  console.log('    1. Open Teams → Apps → Manage your apps → Upload a custom app');
   console.log(`    2. Select ${zipPath}`);
   console.log('    3. Add the bot to a chat or team');
   console.log('');

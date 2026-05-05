@@ -104,9 +104,7 @@ import { DiscordChannel, DiscordChannelOpts } from './discord.js';
 
 // --- Test helpers ---
 
-function createTestOpts(
-  overrides?: Partial<DiscordChannelOpts>,
-): DiscordChannelOpts {
+function createTestOpts(overrides?: Partial<DiscordChannelOpts>): DiscordChannelOpts {
   return {
     onMessage: vi.fn(),
     onChatMetadata: vi.fn(),
@@ -158,9 +156,7 @@ function createMessage(overrides: {
       displayName: overrides.authorDisplayName ?? 'Alice',
       bot: overrides.isBot ?? false,
     },
-    member: overrides.memberDisplayName
-      ? { displayName: overrides.memberDisplayName }
-      : null,
+    member: overrides.memberDisplayName ? { displayName: overrides.memberDisplayName } : null,
     guild: overrides.guildName ? { name: overrides.guildName } : null,
     channel: {
       name: overrides.channelName ?? 'general',
@@ -493,9 +489,7 @@ describe('DiscordChannel', () => {
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
 
-      const attachments = new Map([
-        ['att1', { name: 'photo.png', contentType: 'image/png' }],
-      ]);
+      const attachments = new Map([['att1', { name: 'photo.png', contentType: 'image/png' }]]);
       const msg = createMessage({
         content: '',
         attachments,
@@ -516,9 +510,7 @@ describe('DiscordChannel', () => {
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
 
-      const attachments = new Map([
-        ['att1', { name: 'clip.mp4', contentType: 'video/mp4' }],
-      ]);
+      const attachments = new Map([['att1', { name: 'clip.mp4', contentType: 'video/mp4' }]]);
       const msg = createMessage({
         content: '',
         attachments,
@@ -539,9 +531,7 @@ describe('DiscordChannel', () => {
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
 
-      const attachments = new Map([
-        ['att1', { name: 'report.pdf', contentType: 'application/pdf' }],
-      ]);
+      const attachments = new Map([['att1', { name: 'report.pdf', contentType: 'application/pdf' }]]);
       const msg = createMessage({
         content: '',
         attachments,
@@ -562,9 +552,7 @@ describe('DiscordChannel', () => {
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
 
-      const attachments = new Map([
-        ['att1', { name: 'photo.jpg', contentType: 'image/jpeg' }],
-      ]);
+      const attachments = new Map([['att1', { name: 'photo.jpg', contentType: 'image/jpeg' }]]);
       const msg = createMessage({
         content: 'Check this out',
         attachments,
@@ -639,11 +627,8 @@ describe('DiscordChannel', () => {
 
       await channel.sendMessage('dc:1234567890123456', 'Hello');
 
-      const fetchedChannel =
-        await currentClient().channels.fetch('1234567890123456');
-      expect(currentClient().channels.fetch).toHaveBeenCalledWith(
-        '1234567890123456',
-      );
+      const fetchedChannel = await currentClient().channels.fetch('1234567890123456');
+      expect(currentClient().channels.fetch).toHaveBeenCalledWith('1234567890123456');
     });
 
     it('strips dc: prefix from JID', async () => {
@@ -661,14 +646,10 @@ describe('DiscordChannel', () => {
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
 
-      currentClient().channels.fetch.mockRejectedValueOnce(
-        new Error('Channel not found'),
-      );
+      currentClient().channels.fetch.mockRejectedValueOnce(new Error('Channel not found'));
 
       // Should not throw
-      await expect(
-        channel.sendMessage('dc:1234567890123456', 'Will fail'),
-      ).resolves.toBeUndefined();
+      await expect(channel.sendMessage('dc:1234567890123456', 'Will fail')).resolves.toBeUndefined();
     });
 
     it('does nothing when client is not initialized', async () => {

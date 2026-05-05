@@ -5,10 +5,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // is exercised indirectly through slash-commands.test.ts and via runtime use.
 
 const overridesByKey: Record<string, any> = {};
-const groupsByJid: Record<
-  string,
-  { jid: string; folder: string; name: string; trigger_pattern: string }
-> = {};
+const groupsByJid: Record<string, { jid: string; folder: string; name: string; trigger_pattern: string }> = {};
 let configMock: any = { agents: { defaults: {} } };
 
 vi.mock('./db.js', () => ({

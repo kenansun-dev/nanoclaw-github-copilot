@@ -57,11 +57,11 @@ export function check(
  * - added>0 only                                → warn (DB-only chats; reconcile will fix non-destructively)
  * - dedupedMains>0 OR mirroredToDb>0            → error (mount collision risk; surface immediately)
  */
-export function chatDriftCheck(d: {
-  added: string[];
-  dedupedMains: string[];
-  mirroredToDb: string[];
-}): { ok: boolean; status?: 'ok' | 'warn' | 'error'; msg: string } {
+export function chatDriftCheck(d: { added: string[]; dedupedMains: string[]; mirroredToDb: string[] }): {
+  ok: boolean;
+  status?: 'ok' | 'warn' | 'error';
+  msg: string;
+} {
   const dirty = d.added.length + d.dedupedMains.length + d.mirroredToDb.length;
   if (dirty === 0) {
     return { ok: true, msg: 'config.chats and registered_groups in sync' };
@@ -137,8 +137,7 @@ export function mainChatSingletonCheck(
     };
   }
   if (mainJids.length >= 1) {
-    const dmsNote =
-      mainDms.length > 1 ? ` (${mainDms.length} DMs share session)` : '';
+    const dmsNote = mainDms.length > 1 ? ` (${mainDms.length} DMs share session)` : '';
     return {
       ok: true,
       msg: `${mainJids.length} main chat${mainJids.length === 1 ? '' : 's'}${dmsNote}`,
@@ -197,10 +196,10 @@ export function runDoctor(): CheckResult[] {
         } catch {
           /* fallback to default */
         }
-        const output = execSync(
-          `docker images ${image} --format "{{.Repository}}:{{.Tag}}"`,
-          { stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 },
-        )
+        const output = execSync(`docker images ${image} --format "{{.Repository}}:{{.Tag}}"`, {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          timeout: 5000,
+        })
           .toString()
           .trim();
         return {
@@ -247,11 +246,7 @@ export function runDoctor(): CheckResult[] {
   results.push(
     check('Provider: github-copilot', () => {
       // Check for token in various locations
-      if (
-        process.env.COPILOT_GITHUB_TOKEN ||
-        process.env.GH_TOKEN ||
-        process.env.GITHUB_TOKEN
-      ) {
+      if (process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN) {
         return { ok: true, msg: 'authenticated (env token)' };
       }
 
@@ -260,34 +255,25 @@ export function runDoctor(): CheckResult[] {
       const envFile = path.join(ws, '.env');
       if (fs.existsSync(envFile)) {
         const envContent = fs.readFileSync(envFile, 'utf-8');
-        const tokenLine = envContent
-          .split('\n')
-          .find((l) => l.startsWith('COPILOT_GITHUB_TOKEN=') && l.length > 22);
+        const tokenLine = envContent.split('\n').find((l) => l.startsWith('COPILOT_GITHUB_TOKEN=') && l.length > 22);
         if (tokenLine) return { ok: true, msg: 'authenticated (.env)' };
       }
 
       // Check ~/.copilot/ (GHC CLI's own auth storage from copilot login)
-      const copilotDir = path.join(
-        process.env.HOME || process.env.USERPROFILE || os.homedir(),
-        '.copilot',
-      );
+      const copilotDir = path.join(process.env.HOME || process.env.USERPROFILE || os.homedir(), '.copilot');
       if (fs.existsSync(path.join(copilotDir, 'config.json'))) {
         return { ok: true, msg: 'authenticated (~/.copilot/)' };
       }
 
       // Check OpenClaw auth profile
-      const profilePath = path.join(
-        os.homedir(),
-        '.openclaw/agents/main/agent/auth-profiles.json',
-      );
+      const profilePath = path.join(os.homedir(), '.openclaw/agents/main/agent/auth-profiles.json');
       if (fs.existsSync(profilePath)) {
         try {
           const profiles = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
           const hasGhc = Object.values(profiles.profiles || {}).some(
             (p: any) => p.provider === 'github-copilot' && p.token,
           );
-          if (hasGhc)
-            return { ok: true, msg: 'authenticated (OpenClaw profile)' };
+          if (hasGhc) return { ok: true, msg: 'authenticated (OpenClaw profile)' };
         } catch {
           /* ignore */
         }
@@ -304,9 +290,7 @@ export function runDoctor(): CheckResult[] {
       results.push(
         check('Channel: telegram', () => ({
           ok: !!config.channels.telegram.botToken,
-          msg: config.channels.telegram.botToken
-            ? 'configured'
-            : 'enabled but no bot token',
+          msg: config.channels.telegram.botToken ? 'configured' : 'enabled but no bot token',
         })),
       );
     }
@@ -318,9 +302,7 @@ export function runDoctor(): CheckResult[] {
           const hasAuth = !!(t.appId && (t.appPassword || t.certThumbprint));
           return {
             ok: hasAuth,
-            msg: hasAuth
-              ? `configured (${t.authMode})`
-              : 'enabled but missing credentials',
+            msg: hasAuth ? `configured (${t.authMode})` : 'enabled but missing credentials',
           };
         }),
       );
@@ -336,9 +318,7 @@ export function runDoctor(): CheckResult[] {
     const enabledChannels = Object.entries(config.channels ?? {})
       .filter(([, c]: any[]) => c?.enabled)
       .map(([name]) => name);
-    results.push(
-      check('Registered chats', () => chatsCheck(chatCount, enabledChannels)),
-    );
+    results.push(check('Registered chats', () => chatsCheck(chatCount, enabledChannels)));
 
     // Main chat singleton: catches the silent mount-collision bug for
     // group chats. Multiple isMain DMs are allowed and intentionally
@@ -355,19 +335,12 @@ export function runDoctor(): CheckResult[] {
         is_group?: number | null;
       }>;
       for (const c of allChats) {
-        isGroupByJid[c.jid] =
-          c.is_group === null || c.is_group === undefined
-            ? undefined
-            : c.is_group === 1;
+        isGroupByJid[c.jid] = c.is_group === null || c.is_group === undefined ? undefined : c.is_group === 1;
       }
     } catch {
       /* db not ready — fall back to no info, conservative warn */
     }
-    results.push(
-      check('Main chat singleton', () =>
-        mainChatSingletonCheck(mainJids, chatCount, isGroupByJid),
-      ),
-    );
+    results.push(check('Main chat singleton', () => mainChatSingletonCheck(mainJids, chatCount, isGroupByJid)));
 
     // Chat registry drift: catches the production bug found post-PR-#14
     // deploy where inbound-registered chats live only in registered_groups

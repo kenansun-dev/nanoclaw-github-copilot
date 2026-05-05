@@ -20,10 +20,7 @@ export function hostGatewayArgs(): string[] {
 }
 
 /** Returns CLI args for a readonly bind mount. */
-export function readonlyMountArgs(
-  hostPath: string,
-  containerPath: string,
-): string[] {
+export function readonlyMountArgs(hostPath: string, containerPath: string): string[] {
   return ['-v', `${hostPath}:${containerPath}:ro`];
 }
 
@@ -45,30 +42,14 @@ export function ensureContainerRuntimeRunning(): void {
     log.debug('Container runtime already running');
   } catch (err) {
     log.error('Failed to reach container runtime', { err });
-    console.error(
-      '\n╔════════════════════════════════════════════════════════════════╗',
-    );
-    console.error(
-      '║  FATAL: Container runtime failed to start                      ║',
-    );
-    console.error(
-      '║                                                                ║',
-    );
-    console.error(
-      '║  Agents cannot run without a container runtime. To fix:        ║',
-    );
-    console.error(
-      '║  1. Ensure Docker is installed and running                     ║',
-    );
-    console.error(
-      '║  2. Run: docker info                                           ║',
-    );
-    console.error(
-      '║  3. Restart NanoClaw                                           ║',
-    );
-    console.error(
-      '╚════════════════════════════════════════════════════════════════╝\n',
-    );
+    console.error('\n╔════════════════════════════════════════════════════════════════╗');
+    console.error('║  FATAL: Container runtime failed to start                      ║');
+    console.error('║                                                                ║');
+    console.error('║  Agents cannot run without a container runtime. To fix:        ║');
+    console.error('║  1. Ensure Docker is installed and running                     ║');
+    console.error('║  2. Run: docker info                                           ║');
+    console.error('║  3. Restart NanoClaw                                           ║');
+    console.error('╚════════════════════════════════════════════════════════════════╝\n');
     throw new Error('Container runtime is required but failed to start');
   }
 }
@@ -76,10 +57,10 @@ export function ensureContainerRuntimeRunning(): void {
 /** Kill orphaned NanoClaw containers from previous runs. */
 export function cleanupOrphans(): void {
   try {
-    const output = execSync(
-      `${CONTAINER_RUNTIME_BIN} ps --filter name=nanoclaw- --format '{{.Names}}'`,
-      { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
-    );
+    const output = execSync(`${CONTAINER_RUNTIME_BIN} ps --filter name=nanoclaw- --format '{{.Names}}'`, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      encoding: 'utf-8',
+    });
     const orphans = output.trim().split('\n').filter(Boolean);
     for (const name of orphans) {
       try {

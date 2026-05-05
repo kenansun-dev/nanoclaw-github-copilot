@@ -13,11 +13,7 @@
 import fs from 'fs';
 import path from 'path';
 import { DATA_DIR, getConfig, reloadConfig } from './config.js';
-import {
-  deleteSession,
-  getSessionOverrides,
-  setSessionOverride,
-} from './db.js';
+import { deleteSession, getSessionOverrides, setSessionOverride } from './db.js';
 import {
   getEffectiveThinkLevel,
   getEffectiveModel,
@@ -98,8 +94,7 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: 'model',
-    description:
-      'Show or set active model (validates against provider catalog)',
+    description: 'Show or set active model (validates against provider catalog)',
     args: '[<model-id>]',
   },
   {
@@ -116,8 +111,8 @@ export const COMMANDS: SlashCommand[] = [
   {
     name: 'mcp',
     description:
-      'List configured MCP servers + live connection status (parity with CC `/mcp` and `gh copilot mcp list`). Probes mcporter by default (~1-2s); add `no-probe` for instant fast view.',
-    args: '[no-probe]',
+      'List configured MCP servers (parity with CC `/mcp` and `gh copilot mcp list`). File-only read, <50ms.',
+    args: '',
   },
 ];
 
@@ -165,31 +160,20 @@ export interface SlashCommandContext {
  *
  * Side effects: sends messages via channel, modifies config, deletes sessions.
  */
-export async function handleSlashCommand(
-  input: string,
-  ctx: SlashCommandContext,
-): Promise<SlashCommandResult> {
+export async function handleSlashCommand(input: string, ctx: SlashCommandContext): Promise<SlashCommandResult> {
   // /new or /reset — clear session
   if (input === '/new' || input === '/reset') {
     ctx.clearSession(ctx.groupFolder);
     deleteSession(ctx.groupFolder);
 
     // Also clear .copilot session data
-    const sessionDir = path.join(
-      DATA_DIR,
-      'sessions',
-      ctx.groupFolder,
-      '.copilot',
-    );
+    const sessionDir = path.join(DATA_DIR, 'sessions', ctx.groupFolder, '.copilot');
     if (fs.existsSync(sessionDir)) {
       fs.rmSync(sessionDir, { recursive: true, force: true });
     }
 
     if (ctx.channel) {
-      await ctx.channel.sendMessage(
-        ctx.chatJid,
-        '🔄 Session reset. Next message starts a fresh conversation.',
-      );
+      await ctx.channel.sendMessage(ctx.chatJid, '🔄 Session reset. Next message starts a fresh conversation.');
     }
     return { handled: true };
   }
@@ -198,9 +182,7 @@ export async function handleSlashCommand(
   // Default scope is per-session (writes to sessions table). Pass
   // --default to write the global agent default in nanoclaw.json instead.
   // OpenClaw-style semantics, see PR #26 (2026-04-24).
-  const thinkMatch = input.match(
-    /^\/think(?:\s+(off|low|medium|high|xhigh))?(\s+--default)?$/,
-  );
+  const thinkMatch = input.match(/^\/think(?:\s+(off|low|medium|high|xhigh))?(\s+--default)?$/);
   if (thinkMatch) {
     const level = thinkMatch[1] as string | undefined;
     const isDefault = !!thinkMatch[2];
@@ -210,9 +192,7 @@ export async function handleSlashCommand(
 
   // /reasoning [on|off|flash] [--default] — show/hide/flash thinking
   // output. Per-session by default; --default writes global config.
-  const reasoningMatch = input.match(
-    /^\/reasoning(?:\s+(on|off|flash))?(\s+--default)?$/,
-  );
+  const reasoningMatch = input.match(/^\/reasoning(?:\s+(on|off|flash))?(\s+--default)?$/);
   if (reasoningMatch) {
     const mode = reasoningMatch[1] as 'on' | 'off' | 'flash' | undefined;
     const isDefault = !!reasoningMatch[2];
@@ -239,15 +219,9 @@ export async function handleSlashCommand(
         // Wrap in a code fence so emoji-aligned columns render correctly
         // on Telegram/Teams/Discord (their default proportional fonts
         // would otherwise scramble the column alignment).
-        await ctx.channel.sendMessage(
-          ctx.chatJid,
-          '```\n' + text.trim() + '\n```',
-        );
+        await ctx.channel.sendMessage(ctx.chatJid, '```\n' + text.trim() + '\n```');
       } catch (err: any) {
-        await ctx.channel.sendMessage(
-          ctx.chatJid,
-          `Failed to read status: ${err?.message ?? err}`,
-        );
+        await ctx.channel.sendMessage(ctx.chatJid, `Failed to read status: ${err?.message ?? err}`);
       }
     }
     return { handled: true };
@@ -259,15 +233,9 @@ export async function handleSlashCommand(
     if (ctx.channel) {
       try {
         const text = await buildModelsListText(ctx.chatJid);
-        await ctx.channel.sendMessage(
-          ctx.chatJid,
-          '```\n' + text.trim() + '\n```',
-        );
+        await ctx.channel.sendMessage(ctx.chatJid, '```\n' + text.trim() + '\n```');
       } catch (err: any) {
-        await ctx.channel.sendMessage(
-          ctx.chatJid,
-          `Failed to list models: ${err?.message ?? err}`,
-        );
+        await ctx.channel.sendMessage(ctx.chatJid, `Failed to list models: ${err?.message ?? err}`);
       }
     }
     return { handled: true };
@@ -284,23 +252,17 @@ export async function handleSlashCommand(
     return { handled: true };
   }
 
-  // /mcp [probe] — list configured MCP servers (file-only; <50ms). With
-  // `probe`, additionally calls mcporter to check auth/connection state
-  // (adds ~100ms-2s). Mirrors CC `/mcp` and `gh copilot mcp list` output
-  // so users get a familiar view across surfaces. v2-only feature
-  // (kenan 2026-05-02): v1 frozen.
+  // /mcp — list configured MCP servers (file-only; <50ms). Mirrors CC
+  // `/mcp` and `gh copilot mcp list` output so users get a familiar view
+  // across surfaces. v2-only feature (kenan 2026-05-02): v1 frozen.
   if (input === '/mcp' || input.startsWith('/mcp ')) {
     if (ctx.channel) {
       try {
-        const probe = !/\s+(no-?probe|fast)(\s|$)/.test(input);
         const { getMcpText } = await import('./cli/mcp-text.js');
-        const text = await getMcpText(probe, true); // chat: code-fenced (formatter owns the fence)
+        const text = await getMcpText(true); // chat: code-fenced (formatter owns the fence)
         await ctx.channel.sendMessage(ctx.chatJid, text);
       } catch (err: any) {
-        await ctx.channel.sendMessage(
-          ctx.chatJid,
-          `Failed to list MCP servers: ${err?.message ?? err}`,
-        );
+        await ctx.channel.sendMessage(ctx.chatJid, `Failed to list MCP servers: ${err?.message ?? err}`);
       }
     }
     return { handled: true };
@@ -329,11 +291,7 @@ export async function handleSlashCommand(
   //     refreshed plugin set / MCP server list. Closest to CC's hot-reload
   //     semantics without requiring per-channel runtime injection.
   if (input === '/plugin' || input.startsWith('/plugin ')) {
-    const argv = input
-      .slice('/plugin'.length)
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean);
+    const argv = input.slice('/plugin'.length).trim().split(/\s+/).filter(Boolean);
     await handlePluginSlash(argv, ctx);
     return { handled: true };
   }
@@ -382,11 +340,7 @@ async function captureStdout(fn: () => Promise<void> | void): Promise<string> {
   const origError = console.error;
   const origWarn = console.warn;
   const push = (...args: unknown[]) => {
-    chunks.push(
-      args
-        .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
-        .join(' '),
-    );
+    chunks.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
   };
   console.log = (...args: unknown[]) => push(...args);
   console.error = (...args: unknown[]) => push(...args);
@@ -401,10 +355,7 @@ async function captureStdout(fn: () => Promise<void> | void): Promise<string> {
   return chunks.join('\n');
 }
 
-async function handlePluginSlash(
-  argv: string[],
-  ctx: SlashCommandContext,
-): Promise<void> {
+async function handlePluginSlash(argv: string[], ctx: SlashCommandContext): Promise<void> {
   if (!ctx.channel) return;
   const sub = (argv[0] ?? 'list').toLowerCase();
 
@@ -424,20 +375,14 @@ async function handlePluginSlash(
         killed = ctx.killActiveRunner(ctx.chatJid);
       }
       const lines: string[] = ['🔄 Plugin reload:'];
-      if (result.installed.length)
-        lines.push(`  installed: ${result.installed.join(', ')}`);
-      if (result.skipped.length)
-        lines.push(`  already-installed: ${result.skipped.join(', ')}`);
+      if (result.installed.length) lines.push(`  installed: ${result.installed.join(', ')}`);
+      if (result.skipped.length) lines.push(`  already-installed: ${result.skipped.join(', ')}`);
       if (result.failed.length) {
         for (const f of result.failed) {
           lines.push(`  ❌ ${f.name}: ${f.error}`);
         }
       }
-      if (
-        !result.installed.length &&
-        !result.skipped.length &&
-        !result.failed.length
-      ) {
+      if (!result.installed.length && !result.skipped.length && !result.failed.length) {
         lines.push('  (no enabled plugins in nanoclaw.json)');
       }
       lines.push(
@@ -447,10 +392,7 @@ async function handlePluginSlash(
       );
       await ctx.channel.sendMessage(ctx.chatJid, lines.join('\n'));
     } catch (err: any) {
-      await ctx.channel.sendMessage(
-        ctx.chatJid,
-        `❌ Plugin reload failed: ${err?.message ?? err}`,
-      );
+      await ctx.channel.sendMessage(ctx.chatJid, `❌ Plugin reload failed: ${err?.message ?? err}`);
     }
     return;
   }
@@ -466,10 +408,7 @@ async function handlePluginSlash(
     // Telegram/Teams/Discord proportional fonts.
     await ctx.channel.sendMessage(ctx.chatJid, '```\n' + body + '\n```');
   } catch (err: any) {
-    await ctx.channel.sendMessage(
-      ctx.chatJid,
-      `❌ /plugin ${sub} failed: ${err?.message ?? err}`,
-    );
+    await ctx.channel.sendMessage(ctx.chatJid, `❌ /plugin ${sub} failed: ${err?.message ?? err}`);
   }
 }
 
@@ -485,9 +424,7 @@ async function handleReasoning(
   if (!mode) {
     const effective = getEffectiveShowThinking(ctx.chatJid) ?? 'off';
     const overrides = getSessionOverrides(ctx.groupFolder, provider);
-    const scopeLabel = overrides.showThinking
-      ? '(session override)'
-      : '(global default)';
+    const scopeLabel = overrides.showThinking ? '(session override)' : '(global default)';
     if (ctx.channel) {
       const usage =
         '\nUsage: /reasoning on|off|flash [--default]\n' +
@@ -497,16 +434,9 @@ async function handleReasoning(
         const card = ctx.chatJid.startsWith('teams:')
           ? buildTeamsAdaptiveCard(cmd, effective)
           : { command: 'reasoning', choices: cmd.choices };
-        await ctx.channel.sendCard(
-          ctx.chatJid,
-          card,
-          `🧠 Reasoning display: **${effective}** ${scopeLabel}${usage}`,
-        );
+        await ctx.channel.sendCard(ctx.chatJid, card, `🧠 Reasoning display: **${effective}** ${scopeLabel}${usage}`);
       } else {
-        await ctx.channel.sendMessage(
-          ctx.chatJid,
-          `🧠 Reasoning display: **${effective}** ${scopeLabel}${usage}`,
-        );
+        await ctx.channel.sendMessage(ctx.chatJid, `🧠 Reasoning display: **${effective}** ${scopeLabel}${usage}`);
       }
     }
     return;
@@ -544,10 +474,7 @@ async function handleReasoning(
         : mode === 'flash'
           ? '🧠 Reasoning set to **flash** for this chat — streamed live, replaced by final answer.'
           : '🧠 Reasoning is now **hidden** for this chat.';
-    await ctx.channel.sendMessage(
-      ctx.chatJid,
-      `${blurb} Use \`/reasoning ${mode} --default\` to apply globally.`,
-    );
+    await ctx.channel.sendMessage(ctx.chatJid, `${blurb} Use \`/reasoning ${mode} --default\` to apply globally.`);
   }
 }
 
@@ -561,8 +488,7 @@ interface ModelEntry {
   family?: string;
   reasoningEfforts?: string[];
 }
-const modelCatalogCache: Map<string, { ts: number; models: ModelEntry[] }> =
-  new Map();
+const modelCatalogCache: Map<string, { ts: number; models: ModelEntry[] }> = new Map();
 const MODEL_CATALOG_TTL_MS = 5 * 60 * 1000;
 
 /**
@@ -583,9 +509,7 @@ async function getModelCatalog(provider: string): Promise<ModelEntry[]> {
   try {
     sdk = await import('@github/copilot-sdk');
   } catch (err: any) {
-    throw new Error(
-      `@github/copilot-sdk not installed: ${err?.message ?? err}`,
-    );
+    throw new Error(`@github/copilot-sdk not installed: ${err?.message ?? err}`);
   }
   const client = new sdk.CopilotClient();
   await client.start();
@@ -617,10 +541,7 @@ function stripProviderPrefix(id: string): string {
   return slash > 0 ? id.substring(slash + 1) : id;
 }
 
-function suggestClosestModel(
-  candidate: string,
-  models: ModelEntry[],
-): string | undefined {
+function suggestClosestModel(candidate: string, models: ModelEntry[]): string | undefined {
   const lower = candidate.toLowerCase();
   const exact = models.find((m) => m.id === candidate);
   if (exact) return exact.id;
@@ -649,24 +570,16 @@ export async function buildModelsListText(chatJid?: string): Promise<string> {
   // ▸ marker pointing at the global default while /status reports gpt-5.5.
   // Reported by kenan 2026-04-27 (Teams chat with override).
   const currentModel =
-    (chatJid ? getEffectiveModel(chatJid) : undefined) ||
-    config.agents?.defaults?.model ||
-    '(unset)';
+    (chatJid ? getEffectiveModel(chatJid) : undefined) || config.agents?.defaults?.model || '(unset)';
   let models: ModelEntry[];
   try {
     models = await getModelCatalog(provider);
   } catch (err: any) {
     return `Provider: ${provider}\nCurrent model: ${currentModel}\n\nFailed to fetch catalog: ${err?.message ?? err}`;
   }
-  const lines: string[] = [
-    `Provider: ${provider}`,
-    `Current model: ${currentModel}`,
-    '',
-  ];
+  const lines: string[] = [`Provider: ${provider}`, `Current model: ${currentModel}`, ''];
   if (models.length === 0) {
-    lines.push(
-      `No catalog available for provider "${provider}". /model <id> still accepts any value (no validation).`,
-    );
+    lines.push(`No catalog available for provider "${provider}". /model <id> still accepts any value (no validation).`);
     return lines.join('\n');
   }
   const sorted = [...models].sort((a, b) => {
@@ -699,15 +612,11 @@ async function handleModel(
     if (!ctx.channel) return;
     const effective = getEffectiveModel(ctx.chatJid) || '(unset)';
     const overrides = getSessionOverrides(ctx.groupFolder, sessionProvider);
-    const scopeLabel = overrides.model
-      ? '(session override)'
-      : '(global default)';
+    const scopeLabel = overrides.model ? '(session override)' : '(global default)';
     let topModels: ModelEntry[] = [];
     try {
       const catalog = await getModelCatalog(provider);
-      topModels = catalog
-        .filter((m) => m.enabled)
-        .sort((a, b) => a.id.localeCompare(b.id));
+      topModels = catalog.filter((m) => m.enabled).sort((a, b) => a.id.localeCompare(b.id));
     } catch {
       // fall through to plain text
     }
@@ -728,16 +637,9 @@ async function handleModel(
       const card = ctx.chatJid.startsWith('teams:')
         ? buildTeamsAdaptiveCard(fakeCmd, effective)
         : { command: 'model', choices };
-      await ctx.channel.sendCard(
-        ctx.chatJid,
-        card,
-        `🧠 Model: **${effective}** (${provider}) ${scopeLabel}${usage}`,
-      );
+      await ctx.channel.sendCard(ctx.chatJid, card, `🧠 Model: **${effective}** (${provider}) ${scopeLabel}${usage}`);
     } else {
-      await ctx.channel.sendMessage(
-        ctx.chatJid,
-        `🧠 Model: **${effective}** (${provider}) ${scopeLabel}${usage}`,
-      );
+      await ctx.channel.sendMessage(ctx.chatJid, `🧠 Model: **${effective}** (${provider}) ${scopeLabel}${usage}`);
     }
     return;
   }
@@ -808,9 +710,7 @@ async function handleModel(
     setSessionOverride(ctx.groupFolder, 'model', requested, sessionProvider);
     const respawned = ctx.killActiveRunner?.(ctx.chatJid) ?? false;
     if (ctx.channel) {
-      const note = respawned
-        ? ' (current runner stopped — next message will use new model)'
-        : '';
+      const note = respawned ? ' (current runner stopped — next message will use new model)' : '';
       await ctx.channel.sendMessage(
         ctx.chatJid,
         `🧠 Model set to **${requested}** for this chat${note}. Use \`/model ${requested} --default\` to apply globally.`,
@@ -836,9 +736,7 @@ async function handleThink(
     // Show current effective level (session override > global default).
     const effective = getEffectiveThinkLevel(ctx.chatJid) ?? 'off';
     const overrides = getSessionOverrides(ctx.groupFolder, provider);
-    const scopeLabel = overrides.thinkLevel
-      ? '(session override)'
-      : '(global default)';
+    const scopeLabel = overrides.thinkLevel ? '(session override)' : '(global default)';
     if (ctx.channel) {
       const usage =
         '\nUsage: /think off|low|medium|high|xhigh [--default]\n' +
@@ -848,16 +746,9 @@ async function handleThink(
         const card = ctx.chatJid.startsWith('teams:')
           ? buildTeamsAdaptiveCard(thinkCmd, effective)
           : { command: 'think', choices: thinkCmd.choices };
-        await ctx.channel.sendCard(
-          ctx.chatJid,
-          card,
-          `🧠 Think level: **${effective}** ${scopeLabel}${usage}`,
-        );
+        await ctx.channel.sendCard(ctx.chatJid, card, `🧠 Think level: **${effective}** ${scopeLabel}${usage}`);
       } else {
-        await ctx.channel.sendMessage(
-          ctx.chatJid,
-          `🧠 Think level: **${effective}** ${scopeLabel}${usage}`,
-        );
+        await ctx.channel.sendMessage(ctx.chatJid, `🧠 Think level: **${effective}** ${scopeLabel}${usage}`);
       }
     }
     return;
@@ -870,11 +761,7 @@ async function handleThink(
     if (level === 'off') {
       delete config.agents.defaults.thinkLevel;
     } else {
-      config.agents.defaults.thinkLevel = level as
-        | 'low'
-        | 'medium'
-        | 'high'
-        | 'xhigh';
+      config.agents.defaults.thinkLevel = level as 'low' | 'medium' | 'high' | 'xhigh';
     }
     saveConfig(config, 'slash-command', {
       command: '/think --default',
@@ -891,21 +778,11 @@ async function handleThink(
   } else {
     // Per-session write: only this chat. Kill the active runner so the
     // next message respawns with the new env.
-    setSessionOverride(
-      ctx.groupFolder,
-      'think_level',
-      level === 'off' ? null : level,
-      provider,
-    );
+    setSessionOverride(ctx.groupFolder, 'think_level', level === 'off' ? null : level, provider);
     const respawned = ctx.killActiveRunner?.(ctx.chatJid) ?? false;
     if (ctx.channel) {
-      const note = respawned
-        ? ' (current runner stopped — next message will use new value)'
-        : '';
-      const detail =
-        level === 'off'
-          ? `cleared (will inherit global default)`
-          : `**${level}**`;
+      const note = respawned ? ' (current runner stopped — next message will use new value)' : '';
+      const detail = level === 'off' ? `cleared (will inherit global default)` : `**${level}**`;
       await ctx.channel.sendMessage(
         ctx.chatJid,
         `🧠 Think level set to ${detail} for this chat${note}. Use \`/think ${level} --default\` to apply globally.`,
@@ -920,28 +797,21 @@ async function handleThink(
  * Register commands with Telegram Bot API (setMyCommands).
  * Call once after bot connects. Non-invasive — uses HTTP API directly.
  */
-export async function registerTelegramCommands(
-  botToken: string,
-): Promise<void> {
+export async function registerTelegramCommands(botToken: string): Promise<void> {
   const commands = COMMANDS.map((c) => ({
     command: c.name,
     description: c.description + (c.args ? ` (${c.args})` : ''),
   }));
 
   try {
-    const resp = await fetch(
-      `https://api.telegram.org/bot${botToken}/setMyCommands`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ commands }),
-      },
-    );
+    const resp = await fetch(`https://api.telegram.org/bot${botToken}/setMyCommands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commands }),
+    });
     const data = (await resp.json()) as { ok: boolean; description?: string };
     if (!data.ok) {
-      console.error(
-        `[slash-commands] Telegram setMyCommands failed: ${data.description}`,
-      );
+      console.error(`[slash-commands] Telegram setMyCommands failed: ${data.description}`);
     }
   } catch (err) {
     console.error(`[slash-commands] Telegram setMyCommands error: ${err}`);
@@ -954,10 +824,7 @@ export async function registerTelegramCommands(
  * Build a Teams Adaptive Card JSON for a command with choices.
  * When user sends /think (no args), we reply with this card.
  */
-export function buildTeamsAdaptiveCard(
-  command: SlashCommand,
-  currentValue?: string,
-): object {
+export function buildTeamsAdaptiveCard(command: SlashCommand, currentValue?: string): object {
   if (!command.choices) {
     return {
       type: 'AdaptiveCard',

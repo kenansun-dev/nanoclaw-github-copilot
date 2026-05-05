@@ -11,10 +11,7 @@ vi.mock('../../sender-allowlist.js', () => {
   return actual;
 });
 
-import {
-  isSenderAllowed,
-  loadSenderAllowlist,
-} from '../../sender-allowlist.js';
+import { isSenderAllowed, loadSenderAllowlist } from '../../sender-allowlist.js';
 
 const mg: MessagingGroup = {
   id: 'mg-1',
@@ -54,11 +51,7 @@ describe('sender-allowlist-extensions access gate', () => {
     const gate = makeSenderAllowlistGate();
     const result = gate(event, 'user-42', mg, 'ag-1');
     expect(result).toEqual({ allowed: true });
-    expect(isSenderAllowed).toHaveBeenCalledWith(
-      'group-jid@g.us',
-      'user-42',
-      expect.any(Object),
-    );
+    expect(isSenderAllowed).toHaveBeenCalledWith('group-jid@g.us', 'user-42', expect.any(Object));
   });
 
   it('falls back to event.platformId when userId is null', () => {
@@ -66,11 +59,7 @@ describe('sender-allowlist-extensions access gate', () => {
     const gate = makeSenderAllowlistGate();
     const result = gate(event, null, mg, 'ag-1');
     expect(result).toEqual({ allowed: true });
-    expect(isSenderAllowed).toHaveBeenCalledWith(
-      'group-jid@g.us',
-      '11111@s.whatsapp.net',
-      expect.any(Object),
-    );
+    expect(isSenderAllowed).toHaveBeenCalledWith('group-jid@g.us', '11111@s.whatsapp.net', expect.any(Object));
   });
 
   it('denies when the allowlist rejects the sender', () => {

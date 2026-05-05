@@ -30,13 +30,7 @@
  * Until wire-up: importing this module is a no-op other than
  * re-export.
  */
-import {
-  handlePluginIpc,
-  processTaskIpc,
-  startIpcWatcher,
-  sweepOrphanResponses,
-  type IpcDeps,
-} from '../../ipc.js';
+import { handlePluginIpc, processTaskIpc, startIpcWatcher, sweepOrphanResponses, type IpcDeps } from '../../ipc.js';
 
 export const ipcFork = {
   startIpcWatcher,

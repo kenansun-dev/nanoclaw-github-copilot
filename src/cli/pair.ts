@@ -28,11 +28,7 @@ export async function runPair(args: string[]): Promise<void> {
       name = `${prefix}-chat`;
     }
 
-    const channel = jid.startsWith('tg:')
-      ? 'telegram'
-      : jid.startsWith('teams:')
-        ? 'teams'
-        : 'unknown';
+    const channel = jid.startsWith('tg:') ? 'telegram' : jid.startsWith('teams:') ? 'teams' : 'unknown';
 
     if (!config.chats) (config as any).chats = {};
     (config.chats as any)[jid] = { name, ...(isMain ? { isMain: true } : {}) };
@@ -51,8 +47,7 @@ export async function runPair(args: string[]): Promise<void> {
     input: process.stdin,
     output: process.stdout,
   });
-  const ask = (q: string): Promise<string> =>
-    new Promise((resolve) => rl.question(q, resolve));
+  const ask = (q: string): Promise<string> => new Promise((resolve) => rl.question(q, resolve));
 
   console.log('NanoClaw — Pair a new chat\n');
   const jid = await ask('Chat JID (e.g. tg:123456 or teams:abc): ');

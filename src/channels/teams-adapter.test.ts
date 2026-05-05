@@ -17,16 +17,9 @@ const mockSendMessage = vi.fn().mockResolvedValue('teams-msg-1');
 const mockIsConnected = vi.fn().mockReturnValue(true);
 const mockSetTyping = vi.fn().mockResolvedValue(undefined);
 
-let capturedOnMessage: ((chatJid: string, message: NewMessage) => void) | null =
-  null;
+let capturedOnMessage: ((chatJid: string, message: NewMessage) => void) | null = null;
 let capturedOnChatMetadata:
-  | ((
-      jid: string,
-      ts: string,
-      name: string,
-      channel: string,
-      isGroup: boolean,
-    ) => void)
+  | ((jid: string, ts: string, name: string, channel: string, isGroup: boolean) => void)
   | null = null;
 let capturedCtorArgs: {
   appId?: string;
@@ -187,13 +180,7 @@ describe('TeamsV2Adapter', () => {
     await a.setup(cfg);
     expect(capturedOnChatMetadata).not.toBeNull();
 
-    capturedOnChatMetadata!(
-      'teams:conv-99',
-      '2026-04-28T00:00:00.000Z',
-      'My Team channel',
-      'teams',
-      true,
-    );
+    capturedOnChatMetadata!('teams:conv-99', '2026-04-28T00:00:00.000Z', 'My Team channel', 'teams', true);
 
     expect(metadata).toHaveLength(1);
     expect(metadata[0].platformId).toBe('conv-99');
@@ -210,10 +197,7 @@ describe('TeamsV2Adapter', () => {
       kind: 'chat',
       content: 'hello world',
     });
-    expect(mockSendMessage).toHaveBeenCalledWith(
-      'teams:conv-555',
-      'hello world',
-    );
+    expect(mockSendMessage).toHaveBeenCalledWith('teams:conv-555', 'hello world');
     expect(id).toBe('teams-msg-1');
   });
 
@@ -226,10 +210,7 @@ describe('TeamsV2Adapter', () => {
       kind: 'chat',
       content: { text: 'boxed reply' },
     });
-    expect(mockSendMessage).toHaveBeenCalledWith(
-      'teams:conv-666',
-      'boxed reply',
-    );
+    expect(mockSendMessage).toHaveBeenCalledWith('teams:conv-666', 'boxed reply');
   });
 
   it('deliver skips when no text payload found', async () => {

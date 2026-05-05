@@ -19,10 +19,7 @@ import { homedir, platform } from 'os';
 const TUNNEL_DESCRIPTION = 'nanoclaw';
 const TUNNEL_PORT = 3978;
 
-function run(
-  cmd: string,
-  opts?: { silent?: boolean },
-): { ok: boolean; output: string } {
+function run(cmd: string, opts?: { silent?: boolean }): { ok: boolean; output: string } {
   try {
     const output = execSync(cmd, {
       encoding: 'utf-8',
@@ -31,10 +28,7 @@ function run(
     }).trim();
     return { ok: true, output };
   } catch (err: any) {
-    const output =
-      (err.stdout || '').toString().trim() +
-      '\n' +
-      (err.stderr || '').toString().trim();
+    const output = (err.stdout || '').toString().trim() + '\n' + (err.stderr || '').toString().trim();
     if (!opts?.silent) {
       // swallow
     }
@@ -55,13 +49,9 @@ export async function runTunnel(args: string[]): Promise<void> {
     console.log(`Usage: nanoclaw tunnel <setup|status|url>`);
     console.log('');
     console.log('Commands:');
-    console.log(
-      '  setup     Set up a dev tunnel for Teams webhook (port 3978)',
-    );
+    console.log('  setup     Set up a dev tunnel for Teams webhook (port 3978)');
     console.log('  status    Show tunnel status');
-    console.log(
-      '  url       Print the tunnel URL for Azure Bot endpoint config',
-    );
+    console.log('  url       Print the tunnel URL for Azure Bot endpoint config');
   }
 }
 
@@ -73,9 +63,7 @@ export async function setupTeamsTunnel(): Promise<void> {
   const devtunnelCheck = run('devtunnel --version');
   if (!devtunnelCheck.ok) {
     console.error('   ❌ devtunnel CLI not found.');
-    console.error(
-      '   Install: https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/get-started',
-    );
+    console.error('   Install: https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/get-started');
     console.error('   Or: curl -sL https://aka.ms/DevTunnelCliInstall | bash');
     process.exit(1);
   }
@@ -99,18 +87,14 @@ export async function setupTeamsTunnel(): Promise<void> {
     console.log(`   ✅ Found existing tunnel: ${tunnelId}`);
   } else {
     console.log('   Creating new tunnel...');
-    const createResult = run(
-      `devtunnel create --description "${TUNNEL_DESCRIPTION}"`,
-    );
+    const createResult = run(`devtunnel create --description "${TUNNEL_DESCRIPTION}"`);
     if (!createResult.ok) {
       console.error(`   ❌ Failed to create tunnel: ${createResult.output}`);
       process.exit(1);
     }
     tunnelId = parseTunnelId(createResult.output);
     if (!tunnelId) {
-      console.error(
-        `   ❌ Could not parse tunnel ID from output: ${createResult.output}`,
-      );
+      console.error(`   ❌ Could not parse tunnel ID from output: ${createResult.output}`);
       process.exit(1);
     }
     console.log(`   ✅ Created tunnel: ${tunnelId}`);
@@ -118,32 +102,24 @@ export async function setupTeamsTunnel(): Promise<void> {
 
   // 4. Add port 3978
   console.log(`\n4. Adding port ${TUNNEL_PORT}...`);
-  const portResult = run(
-    `devtunnel port create ${tunnelId} -p ${TUNNEL_PORT} --protocol http`,
-  );
+  const portResult = run(`devtunnel port create ${tunnelId} -p ${TUNNEL_PORT} --protocol http`);
   if (portResult.ok) {
     console.log(`   ✅ Port ${TUNNEL_PORT} added (protocol: http)`);
   } else if (portResult.output.includes('already exists')) {
     console.log(`   ✅ Port ${TUNNEL_PORT} already configured`);
   } else {
-    console.error(
-      `   ⚠️  Port setup issue (may already exist): ${portResult.output}`,
-    );
+    console.error(`   ⚠️  Port setup issue (may already exist): ${portResult.output}`);
   }
 
   // 5. Add anonymous access
   console.log('\n5. Setting anonymous access...');
-  const accessResult = run(
-    `devtunnel access create ${tunnelId} -p ${TUNNEL_PORT} --anonymous`,
-  );
+  const accessResult = run(`devtunnel access create ${tunnelId} -p ${TUNNEL_PORT} --anonymous`);
   if (accessResult.ok) {
     console.log('   ✅ Anonymous access enabled');
   } else if (accessResult.output.includes('already exists')) {
     console.log('   ✅ Anonymous access already configured');
   } else {
-    console.error(
-      `   ⚠️  Access setup issue (may already exist): ${accessResult.output}`,
-    );
+    console.error(`   ⚠️  Access setup issue (may already exist): ${accessResult.output}`);
   }
 
   // 6. No auto-persistence — user starts manually
@@ -175,13 +151,9 @@ export async function setupTeamsTunnel(): Promise<void> {
   console.log('\n8. Tunnel URL:');
   if (url) {
     console.log(`\n   🌐 ${url}/api/messages`);
-    console.log(
-      '\n   Use this as the Messaging endpoint in Azure Bot configuration.',
-    );
+    console.log('\n   Use this as the Messaging endpoint in Azure Bot configuration.');
   } else {
-    console.log(
-      '   ⚠️  Could not determine tunnel URL. Run: devtunnel show ' + tunnelId,
-    );
+    console.log('   ⚠️  Could not determine tunnel URL. Run: devtunnel show ' + tunnelId);
   }
 
   console.log('\n✅ DevTunnel setup complete!');
@@ -232,9 +204,7 @@ function findNanoclawTunnel(): string | null {
 
 function parseTunnelId(output: string): string | null {
   // devtunnel create output typically contains the tunnel ID
-  const match = output.match(
-    /Tunnel ID[:\s]+([a-zA-Z0-9._-]+)|(?:^|\s)([a-zA-Z0-9]+-[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*)/m,
-  );
+  const match = output.match(/Tunnel ID[:\s]+([a-zA-Z0-9._-]+)|(?:^|\s)([a-zA-Z0-9]+-[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*)/m);
   if (match) return match[1] || match[2];
 
   // Try first word that looks like a tunnel ID
@@ -247,17 +217,13 @@ function getTunnelUrl(tunnelId: string): string | null {
   if (!showResult.ok) return null;
 
   // Look for URL in output
-  const urlMatch = showResult.output.match(
-    /https?:\/\/[a-zA-Z0-9._-]+\.devtunnels\.ms[^\s]*/,
-  );
+  const urlMatch = showResult.output.match(/https?:\/\/[a-zA-Z0-9._-]+\.devtunnels\.ms[^\s]*/);
   if (urlMatch) return urlMatch[0].replace(/\/+$/, '');
 
   // Try port show
   const portResult = run(`devtunnel port show ${tunnelId} -p ${TUNNEL_PORT}`);
   if (portResult.ok) {
-    const portUrl = portResult.output.match(
-      /https?:\/\/[a-zA-Z0-9._-]+\.devtunnels\.ms[^\s]*/,
-    );
+    const portUrl = portResult.output.match(/https?:\/\/[a-zA-Z0-9._-]+\.devtunnels\.ms[^\s]*/);
     if (portUrl) return portUrl[0].replace(/\/+$/, '');
   }
 

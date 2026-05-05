@@ -31,13 +31,9 @@ describe('dispatcher: bounded typing pulse after interim final-output', () => {
   it('uses armTypingBounded (not raw traceSetTyping) for after-interim-final', () => {
     // The label must appear inside an armTypingBounded call, not a
     // traceSetTyping(..., true, 'after-interim-final').
-    expect(src).toMatch(
-      /armTypingBounded\([\s\S]{0,200}?'after-interim-final'/,
-    );
+    expect(src).toMatch(/armTypingBounded\([\s\S]{0,200}?'after-interim-final'/);
     // And NOT through the unbounded traceSetTyping path:
-    expect(src).not.toMatch(
-      /traceSetTyping\([\s\S]{0,200}?true[\s\S]{0,200}?'after-interim-final'/,
-    );
+    expect(src).not.toMatch(/traceSetTyping\([\s\S]{0,200}?true[\s\S]{0,200}?'after-interim-final'/);
   });
 
   it('defines a bounded TTL constant with a reasonable value (1s..30s)', () => {

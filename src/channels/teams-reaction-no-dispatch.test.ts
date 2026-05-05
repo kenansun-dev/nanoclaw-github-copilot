@@ -35,22 +35,13 @@ describe('Teams messageReaction must not dispatch to agent', () => {
     const nextMethod = src.indexOf('\n  private ', start + 30);
     const nextAsync = src.indexOf('\n  async ', start + 30);
     const end =
-      nextMethod > 0 && (nextAsync < 0 || nextMethod < nextAsync)
-        ? nextMethod
-        : nextAsync > 0
-          ? nextAsync
-          : src.length;
+      nextMethod > 0 && (nextAsync < 0 || nextMethod < nextAsync) ? nextMethod : nextAsync > 0 ? nextAsync : src.length;
     return src.slice(start, end);
   }
 
   function reactionBlock(methodBody: string): string {
-    const blockStart = methodBody.indexOf(
-      "activity.type === 'messageReaction'",
-    );
-    expect(
-      blockStart,
-      'reaction handler block not found in method',
-    ).toBeGreaterThan(0);
+    const blockStart = methodBody.indexOf("activity.type === 'messageReaction'");
+    expect(blockStart, 'reaction handler block not found in method').toBeGreaterThan(0);
     // The handler should return; bound the block at the next `return;`
     // followed by a closing brace, which marks the end of the if-block.
     const ret = methodBody.indexOf('return;', blockStart);
@@ -58,10 +49,7 @@ describe('Teams messageReaction must not dispatch to agent', () => {
     return methodBody.slice(blockStart, ret + 'return;'.length);
   }
 
-  for (const header of [
-    'private async handleIncomingRaw(',
-    'private async handleIncoming(',
-  ]) {
+  for (const header of ['private async handleIncomingRaw(', 'private async handleIncoming(']) {
     it(`${header}: reaction handler does not call onMessage`, () => {
       const src = loadTeamsSource();
       const body = extractMethodBody(src, header);

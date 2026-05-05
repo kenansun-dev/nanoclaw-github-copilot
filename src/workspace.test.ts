@@ -2,13 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import {
-  setWorkspace,
-  resolveWorkspace,
-  workspacePath,
-  ensureWorkspace,
-  paths,
-} from './workspace.js';
+import { setWorkspace, resolveWorkspace, workspacePath, ensureWorkspace, paths } from './workspace.js';
 
 describe('workspace', () => {
   const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-ws-${Date.now()}`);

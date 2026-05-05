@@ -3,12 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { setWorkspace, ensureWorkspace } from './workspace.js';
-import {
-  loadConfig,
-  saveConfig,
-  readWorkspaceEnv,
-  getEnabledPlugins,
-} from './config-loader.js';
+import { loadConfig, saveConfig, readWorkspaceEnv, getEnabledPlugins } from './config-loader.js';
 
 describe('config-loader', () => {
   const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-cfg-${Date.now()}`);
@@ -45,10 +40,7 @@ describe('config-loader', () => {
   });
 
   it('loadConfig reads .env secrets', () => {
-    fs.writeFileSync(
-      path.join(tmpDir, '.env'),
-      'TELEGRAM_BOT_TOKEN=test-token-123\n',
-    );
+    fs.writeFileSync(path.join(tmpDir, '.env'), 'TELEGRAM_BOT_TOKEN=test-token-123\n');
     const config = loadConfig();
     expect(config.channels.telegram.botToken).toBe('test-token-123');
     expect(config.channels.telegram.enabled).toBe(true); // auto-enabled
@@ -77,18 +69,13 @@ describe('config-loader', () => {
     config.channels.teams.appPassword = 'secret-pass';
     saveConfig(config);
 
-    const saved = JSON.parse(
-      fs.readFileSync(path.join(tmpDir, 'nanoclaw.json'), 'utf-8'),
-    );
+    const saved = JSON.parse(fs.readFileSync(path.join(tmpDir, 'nanoclaw.json'), 'utf-8'));
     expect(saved.channels.telegram.botToken).toBe('${TELEGRAM_BOT_TOKEN}');
     expect(saved.channels.teams.appPassword).toBe('${MSTEAMS_APP_PASSWORD}');
   });
 
   it('readWorkspaceEnv parses .env correctly', () => {
-    fs.writeFileSync(
-      path.join(tmpDir, '.env'),
-      '# comment\nKEY1=value1\nKEY2="quoted value"\nKEY3=\n',
-    );
+    fs.writeFileSync(path.join(tmpDir, '.env'), '# comment\nKEY1=value1\nKEY2="quoted value"\nKEY3=\n');
     const env = readWorkspaceEnv();
     expect(env.KEY1).toBe('value1');
     expect(env.KEY2).toBe('quoted value');
@@ -158,9 +145,7 @@ describe('channel accounts normalization', () => {
     const config = loadConfig();
     expect(config.channels.telegram.accounts).toBeDefined();
     expect(config.channels.telegram.accounts!.default).toBeDefined();
-    expect(config.channels.telegram.accounts!.default.botToken).toBe(
-      'test-token-123',
-    );
+    expect(config.channels.telegram.accounts!.default.botToken).toBe('test-token-123');
   });
 
   it('auto-normalizes flat teams credentials to accounts.default', () => {
@@ -202,10 +187,7 @@ describe('channel accounts normalization', () => {
       }),
     );
     const config = loadConfig();
-    expect(Object.keys(config.channels.telegram.accounts!)).toEqual([
-      'default',
-      'daily',
-    ]);
+    expect(Object.keys(config.channels.telegram.accounts!)).toEqual(['default', 'daily']);
     expect(config.channels.telegram.accounts!.default.botToken).toBe('token-a');
     expect(config.channels.telegram.accounts!.daily.botToken).toBe('token-b');
   });
@@ -269,18 +251,14 @@ describe('config migration v2→v3: tenantId dedup', () => {
     );
     const config = loadConfig();
     // Root tenantId should be gone after migration, account should have it
-    expect(config.channels.teams.accounts?.default?.tenantId).toBe(
-      'my-tenant-123',
-    );
+    expect(config.channels.teams.accounts?.default?.tenantId).toBe('my-tenant-123');
   });
 
   it('saveConfig strips root-level teams.tenantId', () => {
     const config = loadConfig();
     (config.channels.teams as any).tenantId = 'should-be-stripped';
     saveConfig(config);
-    const saved = JSON.parse(
-      fs.readFileSync(path.join(tmpDir4, 'nanoclaw.json'), 'utf-8'),
-    );
+    const saved = JSON.parse(fs.readFileSync(path.join(tmpDir4, 'nanoclaw.json'), 'utf-8'));
     expect(saved.channels?.teams?.tenantId).toBeUndefined();
   });
 
@@ -305,9 +283,7 @@ describe('config migration v2→v3: tenantId dedup', () => {
     );
     const config = loadConfig();
     // The existing account-level tenantId should be preserved
-    expect(config.channels.teams.accounts?.default?.tenantId).toBe(
-      'account-tenant',
-    );
+    expect(config.channels.teams.accounts?.default?.tenantId).toBe('account-tenant');
   });
 });
 
@@ -341,9 +317,7 @@ describe('env var interpolation', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.channels.teams.accounts?.default?.appId).toBe(
-      'resolved-app-id',
-    );
+    expect(config.channels.teams.accounts?.default?.appId).toBe('resolved-app-id');
   });
 
   it('leaves ${VAR} as-is when env var not found', () => {
@@ -361,18 +335,13 @@ describe('env var interpolation', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.channels.teams.accounts?.default?.appId).toBe(
-      '${NONEXISTENT_VAR_XYZ}',
-    );
+    expect(config.channels.teams.accounts?.default?.appId).toBe('${NONEXISTENT_VAR_XYZ}');
   });
 
   it('workspace .env takes priority over process.env', () => {
     const origVal = process.env.NANOCLAW_TEST_PRIORITY;
     process.env.NANOCLAW_TEST_PRIORITY = 'from-process';
-    fs.writeFileSync(
-      path.join(tmpDir5, '.env'),
-      'NANOCLAW_TEST_PRIORITY=from-dotenv\n',
-    );
+    fs.writeFileSync(path.join(tmpDir5, '.env'), 'NANOCLAW_TEST_PRIORITY=from-dotenv\n');
     fs.writeFileSync(
       path.join(tmpDir5, 'nanoclaw.json'),
       JSON.stringify({
@@ -408,19 +377,13 @@ describe('sandbox.engine config', () => {
   });
 
   it('respects explicit engine: tsx', () => {
-    fs.writeFileSync(
-      path.join(tmpDir3, 'nanoclaw.json'),
-      JSON.stringify({ sandbox: { engine: 'tsx' } }),
-    );
+    fs.writeFileSync(path.join(tmpDir3, 'nanoclaw.json'), JSON.stringify({ sandbox: { engine: 'tsx' } }));
     const config = loadConfig();
     expect(config.sandbox.engine).toBe('tsx');
   });
 
   it('respects explicit engine: node', () => {
-    fs.writeFileSync(
-      path.join(tmpDir3, 'nanoclaw.json'),
-      JSON.stringify({ sandbox: { engine: 'node' } }),
-    );
+    fs.writeFileSync(path.join(tmpDir3, 'nanoclaw.json'), JSON.stringify({ sandbox: { engine: 'node' } }));
     const config = loadConfig();
     expect(config.sandbox.engine).toBe('node');
   });
@@ -430,11 +393,7 @@ describe('sandbox.engine config', () => {
 // chat numeric-id surface (kenan model: numeric id is user-facing handle,
 // jid is detail field, isMain singleton enforced at load).
 // ──────────────────────────────────────────────────────────────────────────
-import {
-  resolveChatHandle,
-  nextChatId,
-  findExtraMainChats,
-} from './config-loader.js';
+import { resolveChatHandle, nextChatId, findExtraMainChats } from './config-loader.js';
 
 describe('config-loader / chat numeric ids', () => {
   const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-chatid-${Date.now()}`);
@@ -585,10 +544,7 @@ describe('config-loader / chat numeric ids', () => {
     );
     const config = loadConfig();
     const isGroupByJid = { 'tg:g1': true, 'tg:g2': true };
-    expect(findExtraMainChats(config, isGroupByJid)).toEqual([
-      'tg:g1',
-      'tg:g2',
-    ]);
+    expect(findExtraMainChats(config, isGroupByJid)).toEqual(['tg:g1', 'tg:g2']);
   });
 
   it('findExtraMainChats does NOT flag multi-isMain DMs', () => {
@@ -714,9 +670,7 @@ describe('config-loader / chat numeric ids', () => {
     const onDisk = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
     expect(onDisk.chats).toBeDefined();
     expect(onDisk.chats['signal:abc']).toBeDefined();
-    expect(onDisk.channels.telegram.chats).toEqual([
-      expect.objectContaining({ jid: 'tg:42', name: 'kenan-tg' }),
-    ]);
+    expect(onDisk.channels.telegram.chats).toEqual([expect.objectContaining({ jid: 'tg:42', name: 'kenan-tg' })]);
   });
 });
 
@@ -815,10 +769,7 @@ describe('config migration v5→v6: plugins block seed', () => {
   });
 
   it('seeds default marketplaces and empty enabledPlugins[] when missing', () => {
-    fs.writeFileSync(
-      path.join(tmpDir, 'nanoclaw.json'),
-      JSON.stringify({ configVersion: 5 }),
-    );
+    fs.writeFileSync(path.join(tmpDir, 'nanoclaw.json'), JSON.stringify({ configVersion: 5 }));
     const config = loadConfig();
     expect(config.configVersion).toBe(8);
     expect(config.plugins).toBeDefined();
@@ -869,9 +820,7 @@ describe('config migration v5→v6: plugins block seed', () => {
     );
     const config = loadConfig();
     // v8 renamed marketplaces → extraKnownMarketplaces; entries preserved.
-    expect(config.plugins?.extraKnownMarketplaces).toEqual([
-      { name: 'custom-mp', source: 'kenan/my-marketplace' },
-    ]);
+    expect(config.plugins?.extraKnownMarketplaces).toEqual([{ name: 'custom-mp', source: 'kenan/my-marketplace' }]);
     expect(config.plugins?.marketplaces).toBeUndefined();
   });
 
@@ -973,23 +922,17 @@ describe('getEnabledPlugins — bare-string entry normalization (kenan repro 202
           enabledPlugins: ['https://github.com/microsoft/work-iq.git' as any],
         },
       }),
-    ).toEqual([
-      { name: 'work-iq', source: 'https://github.com/microsoft/work-iq.git' },
-    ]);
+    ).toEqual([{ name: 'work-iq', source: 'https://github.com/microsoft/work-iq.git' }]);
   });
 
   it('preserves well-formed object entries unchanged', () => {
     expect(
       getEnabledPlugins({
         plugins: {
-          enabledPlugins: [
-            { name: 'workiq', source: 'workiq@work-iq', autoInstall: true },
-          ],
+          enabledPlugins: [{ name: 'workiq', source: 'workiq@work-iq', autoInstall: true }],
         },
       }),
-    ).toEqual([
-      { name: 'workiq', source: 'workiq@work-iq', autoInstall: true },
-    ]);
+    ).toEqual([{ name: 'workiq', source: 'workiq@work-iq', autoInstall: true }]);
   });
 
   it('drops unrecognizable string entries instead of poisoning the list', () => {

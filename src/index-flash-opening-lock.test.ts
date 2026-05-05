@@ -17,12 +17,7 @@ describe('createOpeningLock (flash opening race)', () => {
     const send = vi.fn(async () => {
       await new Promise((r) => setTimeout(r, 10));
     });
-    await Promise.all([
-      lock.openOnce(send),
-      lock.openOnce(send),
-      lock.openOnce(send),
-      lock.openOnce(send),
-    ]);
+    await Promise.all([lock.openOnce(send), lock.openOnce(send), lock.openOnce(send), lock.openOnce(send)]);
     expect(send).toHaveBeenCalledTimes(1);
   });
 
@@ -33,10 +28,7 @@ describe('createOpeningLock (flash opening race)', () => {
       await new Promise((r) => setTimeout(r, 5));
       done = true;
     });
-    const results = await Promise.all([
-      lock.openOnce(send).then(() => done),
-      lock.openOnce(send).then(() => done),
-    ]);
+    const results = await Promise.all([lock.openOnce(send).then(() => done), lock.openOnce(send).then(() => done)]);
     expect(results).toEqual([true, true]);
   });
 
@@ -104,11 +96,7 @@ describe('createOpeningLock (flash opening race)', () => {
       await new Promise((r) => setTimeout(r, 5));
       throw new Error('boom');
     });
-    const results = await Promise.allSettled([
-      lock.openOnce(send),
-      lock.openOnce(send),
-      lock.openOnce(send),
-    ]);
+    const results = await Promise.allSettled([lock.openOnce(send), lock.openOnce(send), lock.openOnce(send)]);
     expect(send).toHaveBeenCalledTimes(1);
     for (const r of results) {
       expect(r.status).toBe('rejected');

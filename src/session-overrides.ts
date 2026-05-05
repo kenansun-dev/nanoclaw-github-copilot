@@ -21,18 +21,12 @@
 
 import { getSessionOverrides, getRegisteredGroup } from './db.js';
 import { getConfig } from './config.js';
-import {
-  resolveAgentForChat,
-  getAgentModelName,
-  isAgentGHC,
-} from './config-extensions.js';
+import { resolveAgentForChat, getAgentModelName, isAgentGHC } from './config-extensions.js';
 
 export type ThinkLevel = 'off' | 'low' | 'medium' | 'high' | 'xhigh';
 export type ShowThinking = 'on' | 'off' | 'flash';
 
-export function providerForChat(
-  chatJid: string,
-): 'github-copilot' | 'anthropic' {
+export function providerForChat(chatJid: string): 'github-copilot' | 'anthropic' {
   const agent = resolveAgentForChat(chatJid);
   return isAgentGHC(agent) ? 'github-copilot' : 'anthropic';
 }
@@ -45,25 +39,19 @@ export function providerForChat(
  * (e.g. unregistered DM, scheduled task without a real chat). Callers
  * should fall back to global config in that case.
  */
-export function resolveSessionScope(
-  chatJid: string,
-): { groupFolder: string; provider: string } | undefined {
+export function resolveSessionScope(chatJid: string): { groupFolder: string; provider: string } | undefined {
   const group = getRegisteredGroup(chatJid);
   if (!group) return undefined;
   return { groupFolder: group.folder, provider: providerForChat(chatJid) };
 }
 
-export function getEffectiveThinkLevel(
-  chatJid: string,
-): ThinkLevel | undefined {
+export function getEffectiveThinkLevel(chatJid: string): ThinkLevel | undefined {
   const scope = resolveSessionScope(chatJid);
   if (scope) {
     const ov = getSessionOverrides(scope.groupFolder, scope.provider);
     if (ov.thinkLevel) return ov.thinkLevel as ThinkLevel;
   }
-  const cfg = getConfig().agents?.defaults?.thinkLevel as
-    | ThinkLevel
-    | undefined;
+  const cfg = getConfig().agents?.defaults?.thinkLevel as ThinkLevel | undefined;
   return cfg;
 }
 
@@ -77,18 +65,13 @@ export function getEffectiveModel(chatJid: string): string | undefined {
   return getAgentModelName(agent) ?? undefined;
 }
 
-export function getEffectiveShowThinking(
-  chatJid: string,
-): ShowThinking | undefined {
+export function getEffectiveShowThinking(chatJid: string): ShowThinking | undefined {
   const scope = resolveSessionScope(chatJid);
   if (scope) {
     const ov = getSessionOverrides(scope.groupFolder, scope.provider);
     if (ov.showThinking) return ov.showThinking as ShowThinking;
   }
-  const raw = getConfig().agents?.defaults?.showThinking as
-    | boolean
-    | string
-    | undefined;
+  const raw = getConfig().agents?.defaults?.showThinking as boolean | string | undefined;
   if (raw === true) return 'on';
   if (raw === 'flash') return 'flash';
   if (raw === 'on' || raw === 'off') return raw;

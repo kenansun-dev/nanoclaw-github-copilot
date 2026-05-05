@@ -60,11 +60,9 @@ export interface V2WiringLoaders {
 
 const defaultLoaders: Required<V2WiringLoaders> = {
   loadRouter: () => import('./router.js'),
-  loadSenderAllowlist: () =>
-    import('./modules/sender-allowlist-extensions/index.js'),
+  loadSenderAllowlist: () => import('./modules/sender-allowlist-extensions/index.js'),
   loadAbortFork: () => import('./modules/abort-extensions/index.js'),
-  loadRegisteredGroupsFork: () =>
-    import('./modules/registered-groups-extensions/index.js'),
+  loadRegisteredGroupsFork: () => import('./modules/registered-groups-extensions/index.js'),
   loadModulesBarrel: () => import('./modules/index.js'),
 };
 
@@ -129,10 +127,7 @@ export async function installV2DispatcherHooks(
     );
     return outcome;
   } catch (err) {
-    deps.logger.error(
-      { err },
-      'v2 dispatcher wiring failed; continuing with fork v1 path only',
-    );
+    deps.logger.error({ err }, 'v2 dispatcher wiring failed; continuing with fork v1 path only');
     return { kind: 'failed', mode: v2Mode, error: err };
   }
 }

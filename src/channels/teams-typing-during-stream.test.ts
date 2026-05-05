@@ -66,35 +66,22 @@ describe('Teams: typing keepalive during native streaming', () => {
   // ---------- Source-text contracts (catches edits dropping the gate) ----------
 
   it('TeamsChannel declares streamingActiveJids field', async () => {
-    const src = await fs.readFile(
-      new URL('./teams.ts', import.meta.url),
-      'utf-8',
-    );
+    const src = await fs.readFile(new URL('./teams.ts', import.meta.url), 'utf-8');
     expect(src).toMatch(/streamingActiveJids\s*=\s*new Set<string>\(\)/);
   });
 
   it('setTyping early-returns when jid is in streamingActiveJids', async () => {
-    const src = await fs.readFile(
-      new URL('./teams.ts', import.meta.url),
-      'utf-8',
-    );
+    const src = await fs.readFile(new URL('./teams.ts', import.meta.url), 'utf-8');
     // The gate must be after `if (!isTyping) return;` and before the
     // sendAction definition. We assert the gate text exists and is in
     // the setTyping function.
-    const setTypingMatch = src.match(
-      /async setTyping\([^)]*\):[^{]*\{[\s\S]*?\n\s\s\}/,
-    );
+    const setTypingMatch = src.match(/async setTyping\([^)]*\):[^{]*\{[\s\S]*?\n\s\s\}/);
     expect(setTypingMatch, 'setTyping function found').toBeTruthy();
-    expect(setTypingMatch![0]).toMatch(
-      /this\.streamingActiveJids\.has\(jid\)\)\s*return/,
-    );
+    expect(setTypingMatch![0]).toMatch(/this\.streamingActiveJids\.has\(jid\)\)\s*return/);
   });
 
   it('streamMessage marks the jid active and StreamHandle clears it on end/cancel', async () => {
-    const src = await fs.readFile(
-      new URL('./teams.ts', import.meta.url),
-      'utf-8',
-    );
+    const src = await fs.readFile(new URL('./teams.ts', import.meta.url), 'utf-8');
     // The streamMessage method must call markStreamingActive on its jid.
     expect(src).toMatch(/markStreamingActive\(jid\)/);
     // And the wrapped end/cancel must call markStreamingInactive in
@@ -104,29 +91,19 @@ describe('Teams: typing keepalive during native streaming', () => {
     expect(src).toMatch(/clearActive[^a-zA-Z]/);
     // markStreamingInactive must also tear down typingIntervals so a
     // stale keepalive from before the stream started is flushed.
-    expect(src).toMatch(
-      /markStreamingInactive[\s\S]{0,400}typingIntervals\.delete\(jid\)/,
-    );
+    expect(src).toMatch(/markStreamingInactive[\s\S]{0,400}typingIntervals\.delete\(jid\)/);
   });
 
   it('markStreamingActive also clears any in-flight bare-typing interval', async () => {
-    const src = await fs.readFile(
-      new URL('./teams.ts', import.meta.url),
-      'utf-8',
-    );
+    const src = await fs.readFile(new URL('./teams.ts', import.meta.url), 'utf-8');
     // The defensive clear inside markStreamingActive prevents the race
     // where the dispatcher opens a stream while a previous turn's
     // keepalive interval is still firing.
-    expect(src).toMatch(
-      /markStreamingActive[\s\S]{0,400}typingIntervals\.delete\(jid\)/,
-    );
+    expect(src).toMatch(/markStreamingActive[\s\S]{0,400}typingIntervals\.delete\(jid\)/);
   });
 
   it('onTurnError suppresses known-benign streaming wire rejects', async () => {
-    const src = await fs.readFile(
-      new URL('./teams.ts', import.meta.url),
-      'utf-8',
-    );
+    const src = await fs.readFile(new URL('./teams.ts', import.meta.url), 'utf-8');
     // The four known-benign reject substrings:
     //   - bare typing rejected because conversation is in stream-mode
     //   - bare message rejected because conversation is in stream-mode
@@ -135,9 +112,7 @@ describe('Teams: typing keepalive during native streaming', () => {
     // Posting 'Sorry, something went wrong' for any of these confuses
     // users (it interleaves with real agent output that lands seconds
     // later).
-    expect(src).toMatch(
-      /Only start streaming and continue streaming types are allowed/,
-    );
+    expect(src).toMatch(/Only start streaming and continue streaming types are allowed/);
     expect(src).toMatch(/Only end streaming type is allowed/);
     expect(src).toMatch(/You can set only one informative message/);
     expect(src).toMatch(/ContentStreamNotAllowed/);
@@ -164,21 +139,15 @@ describe('Teams: typing keepalive during native streaming', () => {
   });
 
   function makeStubChannel() {
-    const sendActivityMock = vi.fn<
-      (activity: Partial<Activity>) => Promise<void>
-    >(async () => {});
-    const continueConversationMock = vi.fn(
-      async (_ref: unknown, fn: (ctx: any) => Promise<void>) => {
-        await fn({ sendActivity: sendActivityMock });
-      },
-    );
+    const sendActivityMock = vi.fn<(activity: Partial<Activity>) => Promise<void>>(async () => {});
+    const continueConversationMock = vi.fn(async (_ref: unknown, fn: (ctx: any) => Promise<void>) => {
+      await fn({ sendActivity: sendActivityMock });
+    });
     // Mirror TeamsChannel state shape closely enough that the real
     // setTyping, dynamically copied from the prototype, runs against it.
     const stub: any = {
       typingIntervals: new Map<string, NodeJS.Timeout>(),
-      conversationRefs: new Map<string, unknown>([
-        ['jid-A', { conversation: { id: 'A' } }],
-      ]),
+      conversationRefs: new Map<string, unknown>([['jid-A', { conversation: { id: 'A' } }]]),
       streamingActiveJids: new Set<string>(),
       adapter: { continueConversation: continueConversationMock },
     };
@@ -273,8 +242,7 @@ describe('Teams: typing keepalive during native streaming', () => {
     timeouts.push(leaked);
     stub.typingIntervals.set('jid-A', leaked);
     const mod = await import('./teams.js');
-    const markInactive = (mod.TeamsChannel.prototype as any)
-      .markStreamingInactive;
+    const markInactive = (mod.TeamsChannel.prototype as any).markStreamingInactive;
     markInactive.call(stub, 'jid-A');
     expect(stub.streamingActiveJids.has('jid-A')).toBe(false);
     expect(stub.typingIntervals.has('jid-A')).toBe(false);
@@ -283,8 +251,7 @@ describe('Teams: typing keepalive during native streaming', () => {
   it('markStreamingInactive is idempotent', async () => {
     const { stub } = makeStubChannel();
     const mod = await import('./teams.js');
-    const markInactive = (mod.TeamsChannel.prototype as any)
-      .markStreamingInactive;
+    const markInactive = (mod.TeamsChannel.prototype as any).markStreamingInactive;
     expect(() => markInactive.call(stub, 'jid-never-streamed')).not.toThrow();
     expect(stub.streamingActiveJids.has('jid-never-streamed')).toBe(false);
     expect(stub.typingIntervals.has('jid-never-streamed')).toBe(false);

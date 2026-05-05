@@ -29,18 +29,10 @@ import {
 import { findSessionForAgent } from './db/sessions.js';
 import { startTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
-import {
-  resolveSession,
-  writeSessionMessage,
-  writeOutboundDirect,
-} from './session-manager.js';
+import { resolveSession, writeSessionMessage, writeOutboundDirect } from './session-manager.js';
 import { wakeContainer } from './container-runner.js';
 import { getSession } from './db/sessions.js';
-import type {
-  AgentGroup,
-  MessagingGroup,
-  MessagingGroupAgent,
-} from './types.js';
+import type { AgentGroup, MessagingGroup, MessagingGroupAgent } from './types.js';
 import type { InboundEvent } from './channels/adapter.js';
 
 function generateId(): string {
@@ -75,9 +67,7 @@ export function setSenderResolver(fn: SenderResolverFn): void {
  * own `dropped_messages` row on refusal (structural drops are already
  * recorded by core before the gate runs).
  */
-export type AccessGateResult =
-  | { allowed: true }
-  | { allowed: false; reason: string };
+export type AccessGateResult = { allowed: true } | { allowed: false; reason: string };
 
 export type AccessGateFn = (
   event: InboundEvent,
@@ -128,10 +118,7 @@ export function setSenderScopeGate(fn: SenderScopeGateFn): void {
  * Registered by the permissions module. Without the module the router
  * silently records the drop with reason='no_agent_wired' and moves on.
  */
-export type ChannelRequestGateFn = (
-  mg: MessagingGroup,
-  event: InboundEvent,
-) => Promise<void>;
+export type ChannelRequestGateFn = (mg: MessagingGroup, event: InboundEvent) => Promise<void>;
 
 let channelRequestGate: ChannelRequestGateFn | null = null;
 
@@ -172,10 +159,7 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
   //    single query. Cheap short-circuit for the common "unwired channel"
   //    case — one DB read and we're out, no auto-create, no sender
   //    resolution, no log spam.
-  const found = getMessagingGroupWithAgentCount(
-    event.channelType,
-    event.platformId,
-  );
+  const found = getMessagingGroupWithAgentCount(event.channelType, event.platformId);
 
   let mg: MessagingGroup;
   let agentCount: number;
@@ -242,14 +226,11 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
         }),
       );
     } else {
-      log.warn(
-        'MESSAGE DROPPED — no agent groups wired and no channel-request gate registered',
-        {
-          messagingGroupId: mg.id,
-          channelType: event.channelType,
-          platformId: event.platformId,
-        },
-      );
+      log.warn('MESSAGE DROPPED — no agent groups wired and no channel-request gate registered', {
+        messagingGroupId: mg.id,
+        channelType: event.channelType,
+        platformId: event.platformId,
+      });
     }
     return;
   }
@@ -286,32 +267,13 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
     const agentGroup = getAgentGroup(agent.agent_group_id);
     if (!agentGroup) continue;
 
-    const engages = evaluateEngage(
-      agent,
-      messageText,
-      isMention,
-      mg,
-      event.threadId,
-    );
+    const engages = evaluateEngage(agent, messageText, isMention, mg, event.threadId);
 
-    const accessOk =
-      engages &&
-      (!accessGate ||
-        accessGate(event, userId, mg, agent.agent_group_id).allowed);
-    const scopeOk =
-      engages &&
-      (!senderScopeGate || senderScopeGate(event, userId, mg, agent).allowed);
+    const accessOk = engages && (!accessGate || accessGate(event, userId, mg, agent.agent_group_id).allowed);
+    const scopeOk = engages && (!senderScopeGate || senderScopeGate(event, userId, mg, agent).allowed);
 
     if (engages && accessOk && scopeOk) {
-      await deliverToAgent(
-        agent,
-        agentGroup,
-        mg,
-        event,
-        userId,
-        adapter?.supportsThreads === true,
-        true,
-      );
+      await deliverToAgent(agent, agentGroup, mg, event, userId, adapter?.supportsThreads === true, true);
       engagedCount++;
 
       // Mention-sticky: ask the adapter to subscribe the thread so the
@@ -330,26 +292,16 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
         // Fire-and-forget — subscribe is platform-side bookkeeping and
         // shouldn't block message routing. Errors are logged inside the
         // adapter (or by the promise rejection handler below).
-        void adapter
-          .subscribe(event.platformId, event.threadId)
-          .catch((err) => {
-            log.warn('adapter.subscribe failed', {
-              channelType: event.channelType,
-              threadId: event.threadId,
-              err,
-            });
+        void adapter.subscribe(event.platformId, event.threadId).catch((err) => {
+          log.warn('adapter.subscribe failed', {
+            channelType: event.channelType,
+            threadId: event.threadId,
+            err,
           });
+        });
       }
     } else if (agent.ignored_message_policy === 'accumulate') {
-      await deliverToAgent(
-        agent,
-        agentGroup,
-        mg,
-        event,
-        userId,
-        adapter?.supportsThreads === true,
-        false,
-      );
+      await deliverToAgent(agent, agentGroup, mg, event, userId, adapter?.supportsThreads === true, false);
       accumulatedCount++;
     } else {
       log.debug('Message not engaged for agent (drop policy)', {
@@ -420,11 +372,7 @@ function evaluateEngage(
       // Sticky follow-up: session already exists for this (agent, mg, thread)
       // — the thread was activated before, keep firing.
       if (mg.is_group === 0) return false; // DMs never use mention-sticky sensibly
-      const existing = findSessionForAgent(
-        agent.agent_group_id,
-        mg.id,
-        threadId,
-      );
+      const existing = findSessionForAgent(agent.agent_group_id, mg.id, threadId);
       return existing !== undefined;
     }
     default:
@@ -446,20 +394,11 @@ async function deliverToAgent(
   // a cross-channel directive the adapter doesn't know about). DMs collapse
   // sub-threads to one session (is_group=0 short-circuit).
   let effectiveSessionMode = agent.session_mode;
-  if (
-    adapterSupportsThreads &&
-    effectiveSessionMode !== 'agent-shared' &&
-    mg.is_group !== 0
-  ) {
+  if (adapterSupportsThreads && effectiveSessionMode !== 'agent-shared' && mg.is_group !== 0) {
     effectiveSessionMode = 'per-thread';
   }
 
-  const { session, created } = resolveSession(
-    agent.agent_group_id,
-    mg.id,
-    event.threadId,
-    effectiveSessionMode,
-  );
+  const { session, created } = resolveSession(agent.agent_group_id, mg.id, event.threadId, effectiveSessionMode);
 
   // The inbound row's (channel_type, platform_id, thread_id) is the address
   // the agent's reply will be delivered to. Normally it mirrors the source
@@ -475,11 +414,7 @@ async function deliverToAgent(
   // Filtered commands are dropped silently. Denied admin commands get a
   // permission-denied response written directly to messages_out.
   if (event.message.kind === 'chat' || event.message.kind === 'chat-sdk') {
-    const gate = gateCommand(
-      event.message.content,
-      userId,
-      agent.agent_group_id,
-    );
+    const gate = gateCommand(event.message.content, userId, agent.agent_group_id);
     if (gate.action === 'filter') {
       log.debug('Filtered command dropped by gate', {
         agentGroupId: agent.agent_group_id,
@@ -531,13 +466,7 @@ async function deliverToAgent(
   if (wake) {
     // Typing indicator + wake are only for the engaged branch; accumulated
     // messages sit silently until a real trigger fires.
-    startTypingRefresh(
-      session.id,
-      session.agent_group_id,
-      event.channelType,
-      event.platformId,
-      event.threadId,
-    );
+    startTypingRefresh(session.id, session.agent_group_id, event.channelType, event.platformId, event.threadId);
     const freshSession = getSession(session.id);
     if (freshSession) {
       await wakeContainer(freshSession);
@@ -551,10 +480,7 @@ async function deliverToAgent(
  * collide across sessions (or, more subtly, within one session if re-routed
  * after a retry). Namespace by agent_group_id to keep ids unique per session.
  */
-function messageIdForAgent(
-  baseId: string | undefined,
-  agentGroupId: string,
-): string {
+function messageIdForAgent(baseId: string | undefined, agentGroupId: string): string {
   const id = baseId && baseId.length > 0 ? baseId : generateId();
   return `${id}:${agentGroupId}`;
 }

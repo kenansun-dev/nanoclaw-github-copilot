@@ -41,21 +41,15 @@ describe('escapeXml', () => {
 
 describe('stripInternalTags', () => {
   it('strips <internal>...</internal> tags', () => {
-    expect(stripInternalTags('hello <internal>secret</internal> world')).toBe(
-      'hello  world',
-    );
+    expect(stripInternalTags('hello <internal>secret</internal> world')).toBe('hello  world');
   });
 
   it('strips multiline internal tags', () => {
-    expect(
-      stripInternalTags('before\n<internal>\nline1\nline2\n</internal>\nafter'),
-    ).toBe('before\n\nafter');
+    expect(stripInternalTags('before\n<internal>\nline1\nline2\n</internal>\nafter')).toBe('before\n\nafter');
   });
 
   it('strips multiple internal blocks', () => {
-    expect(
-      stripInternalTags('a <internal>x</internal> b <internal>y</internal> c'),
-    ).toBe('a  b  c');
+    expect(stripInternalTags('a <internal>x</internal> b <internal>y</internal> c')).toBe('a  b  c');
   });
 
   it('returns original text when no internal tags', () => {
@@ -71,9 +65,7 @@ describe('stripInternalTags', () => {
 
 describe('formatOutbound', () => {
   it('strips internal tags from output', () => {
-    expect(formatOutbound('hello <internal>hidden</internal> world')).toBe(
-      'hello  world',
-    );
+    expect(formatOutbound('hello <internal>hidden</internal> world')).toBe('hello  world');
   });
 
   it('returns empty string for only-internal content', () => {

@@ -10,9 +10,7 @@ import {
   type AdminCommandMessage,
 } from './admin-command-registry.js';
 
-const noopHandler = vi.fn(
-  async (_jid: string, _args: string, _msg: AdminCommandMessage) => {},
-);
+const noopHandler = vi.fn(async (_jid: string, _args: string, _msg: AdminCommandMessage) => {});
 
 beforeEach(() => {
   __resetAdminCommandRegistryForTests();
@@ -32,9 +30,7 @@ describe('admin-command-registry', () => {
       aliases: ['/remote-control-end'],
       handler: noopHandler,
     });
-    expect(lookupAdminCommand('/remote-control-end')?.name).toBe(
-      '/remote-control',
-    );
+    expect(lookupAdminCommand('/remote-control-end')?.name).toBe('/remote-control');
   });
 
   it('returns null when no command matches', () => {
@@ -46,16 +42,14 @@ describe('admin-command-registry', () => {
   });
 
   it('rejects names not starting with /', () => {
-    expect(() =>
-      registerAdminCommand({ name: 'remote-control', handler: noopHandler }),
-    ).toThrow(/must start with '\/'/);
+    expect(() => registerAdminCommand({ name: 'remote-control', handler: noopHandler })).toThrow(
+      /must start with '\/'/,
+    );
   });
 
   it('rejects duplicate tokens across name or alias', () => {
     registerAdminCommand({ name: '/foo', handler: noopHandler });
-    expect(() =>
-      registerAdminCommand({ name: '/foo', handler: noopHandler }),
-    ).toThrow(/duplicate token/);
+    expect(() => registerAdminCommand({ name: '/foo', handler: noopHandler })).toThrow(/duplicate token/);
     expect(() =>
       registerAdminCommand({
         name: '/bar',
@@ -68,9 +62,6 @@ describe('admin-command-registry', () => {
   it('getRegisteredAdminCommands enumerates registered commands', () => {
     registerAdminCommand({ name: '/foo', handler: noopHandler });
     registerAdminCommand({ name: '/bar', handler: noopHandler });
-    expect(getRegisteredAdminCommands().map((c) => c.name)).toEqual([
-      '/foo',
-      '/bar',
-    ]);
+    expect(getRegisteredAdminCommands().map((c) => c.name)).toEqual(['/foo', '/bar']);
   });
 });

@@ -16,16 +16,15 @@ describe('formatMcpList', () => {
       servers: [],
       configPath: '/x/nanoclaw.json',
       mcpJsonPath: '/x/mcp.json',
-      mcporterInstalled: false,
     };
     const out = formatMcpList(info);
     expect(out).toContain('MCP Servers (0 configured)');
     expect(out).toContain('(no servers configured)');
     expect(out).toContain('/x/mcp.json');
-    expect(out).toContain('mcporter: not installed');
+    expect(out).not.toContain('mcporter');
   });
 
-  it('renders mixed http + stdio rows with status glyphs', () => {
+  it('renders mixed http + stdio rows', () => {
     const info: McpListInfo = {
       servers: [
         {
@@ -33,36 +32,30 @@ describe('formatMcpList', () => {
           type: 'http',
           transport: 'https://api.githubcopilot.com/mcp/',
           source: 'merged',
-          status: 'connected',
         },
         {
           name: 'memory',
           type: 'stdio',
           transport: 'npx -y @modelcontextprotocol/server-memory',
           source: 'merged',
-          status: 'unknown',
         },
         {
           name: 'linear',
           type: 'http',
           transport: 'https://mcp.linear.app/sse',
           source: 'merged',
-          status: 'auth-pending',
-          statusDetail: 'oauth required',
         },
       ],
       configPath: '/x/nanoclaw.json',
       mcpJsonPath: '/x/mcp.json',
-      mcporterInstalled: true,
-      mcporterDaemon: true,
     };
     const out = formatMcpList(info);
     expect(out).toContain('MCP Servers (3 configured)');
-    expect(out).toMatch(/✓ github\s+http\s+https:\/\/api\.githubcopilot\.com\/mcp\//);
-    expect(out).toMatch(/\? memory\s+stdio\s+npx -y @modelcontextprotocol\/server-memory/);
-    expect(out).toMatch(/! linear\s+http\s+https:\/\/mcp\.linear\.app\/sse  \(oauth required\)/);
-    expect(out).toContain('mcporter: installed (daemon: running)');
-    expect(out).toContain('Legend:');
+    expect(out).toMatch(/github\s+http\s+https:\/\/api\.githubcopilot\.com\/mcp\//);
+    expect(out).toMatch(/memory\s+stdio\s+npx -y @modelcontextprotocol\/server-memory/);
+    expect(out).toMatch(/linear\s+http\s+https:\/\/mcp\.linear\.app\/sse/);
+    expect(out).not.toContain('mcporter');
+    expect(out).not.toContain('Legend');
   });
 
   it('aligns name and type columns to widest entry', () => {
@@ -83,10 +76,8 @@ describe('formatMcpList', () => {
       ],
       configPath: '/x/nanoclaw.json',
       mcpJsonPath: '/x/mcp.json',
-      mcporterInstalled: false,
     };
     const out = formatMcpList(info);
-    // Both rows should have same column positions for transport
     const lines = out.split('\n').filter((l) => l.includes('https://x') || l.includes('cmd'));
     expect(lines).toHaveLength(2);
     const httpsCol = lines[0].indexOf('https://x');
@@ -114,22 +105,12 @@ describe('collectMcpList (file read)', () => {
   });
 
   it('returns empty when no mcp.json or nanoclaw.json mcp section', async () => {
-    const info = await collectMcpList(false);
+    const info = await collectMcpList();
     expect(info.servers).toHaveLength(0);
     expect(info.mcpJsonPath).toContain('mcp.json');
   });
 
-  it('picks up servers from mcp.json (mcpServers shape)', async () => {
-    fs.writeFileSync(
-      path.join(tmpDir, 'mcp.json'),
-      JSON.stringify({
-        mcpServers: {
-          github: { url: 'https://api.githubcopilot.com/mcp/' },
-          memory: { command: 'npx', args: ['-y', '@x/srv'] },
-        },
-      }),
-    );
-    // Ensure nanoclaw.json exists so loadConfig succeeds
+  it('picks up servers from nanoclaw.json mcp.servers', async () => {
     saveConfig({
       agents: { defaults: { provider: 'github-copilot' } as any },
       channels: {
@@ -140,10 +121,15 @@ describe('collectMcpList (file read)', () => {
           authMode: 'secret',
         } as any,
       } as any,
-      mcp: { servers: {} },
+      mcp: {
+        servers: {
+          github: { type: 'http', url: 'https://api.githubcopilot.com/mcp/', tools: ['*'] },
+          memory: { type: 'stdio', command: 'npx', args: ['-y', '@x/srv'] } as any,
+        },
+      },
     } as any);
 
-    const info = await collectMcpList(false);
+    const info = await collectMcpList();
     const names = info.servers.map((s) => s.name).sort();
     expect(names).toEqual(['github', 'memory']);
     const github = info.servers.find((s) => s.name === 'github')!;

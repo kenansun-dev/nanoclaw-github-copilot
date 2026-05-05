@@ -5,7 +5,7 @@ describe('parseHostCopilotConfig', () => {
   it('strips leading // comments and parses copilotTokens', () => {
     const raw = `// User settings belong in settings.json.\n{ "copilotTokens": { "user": "ghu_abc" }, "lastLoggedInUser": { "login": "u" } }\n`;
     const cfg = parseHostCopilotConfig(raw);
-    expect((cfg.copilotTokens as Record<string,string>).user).toBe('ghu_abc');
+    expect((cfg.copilotTokens as Record<string, string>).user).toBe('ghu_abc');
   });
 
   it('parses plain JSON without comments', () => {

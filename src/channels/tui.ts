@@ -35,8 +35,7 @@ const TUI_JID_PREFIX = 'tui:';
 // All TUI clients share the same isMain DM session via the share-main
 // collapse rule (see src/session-routing.ts).
 const TUI_JID = `${TUI_JID_PREFIX}default`;
-const SOCK_NAME =
-  process.platform === 'win32' ? '\\\\.\\pipe\\nanoclaw-tui' : 'tui.sock';
+const SOCK_NAME = process.platform === 'win32' ? '\\\\.\\pipe\\nanoclaw-tui' : 'tui.sock';
 
 interface TuiClient {
   id: string;
@@ -57,8 +56,7 @@ export class TuiChannel implements Channel {
   constructor(opts: ChannelOpts) {
     this.opts = opts;
     const ws = resolveWorkspace();
-    this.sockPath =
-      process.platform === 'win32' ? SOCK_NAME : path.join(ws, 'tui.sock');
+    this.sockPath = process.platform === 'win32' ? SOCK_NAME : path.join(ws, 'tui.sock');
   }
 
   async connect(): Promise<void> {
@@ -119,21 +117,12 @@ export class TuiChannel implements Channel {
         added_at: new Date().toISOString(),
       };
       this.opts.registerGroup(jid, tuiGroup);
-      logger.info(
-        { jid, folder, isMain: true },
-        'Auto-registered TUI group (single shared entry)',
-      );
+      logger.info({ jid, folder, isMain: true }, 'Auto-registered TUI group (single shared entry)');
     }
 
     // Notify chat metadata. isGroup=false so the share-main collapse
     // rule treats this as a DM and merges it onto the canonical session.
-    this.opts.onChatMetadata(
-      jid,
-      new Date().toISOString(),
-      'tui',
-      'tui',
-      false,
-    );
+    this.opts.onChatMetadata(jid, new Date().toISOString(), 'tui', 'tui', false);
 
     // Send connected message
     this.sendJson(socket, {
@@ -216,11 +205,7 @@ export class TuiChannel implements Channel {
     return messageId;
   }
 
-  async editMessage(
-    jid: string,
-    messageId: string,
-    text: string,
-  ): Promise<string | void> {
+  async editMessage(jid: string, messageId: string, text: string): Promise<string | void> {
     const clients = this.getClientsForJid(jid);
     if (clients.length === 0) return;
     // Distinguish streaming partial (still accumulating, has ◌ marker)

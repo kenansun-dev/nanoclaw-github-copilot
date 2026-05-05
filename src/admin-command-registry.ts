@@ -34,11 +34,7 @@ export interface AdminCommandMessage {
   [k: string]: unknown;
 }
 
-export type AdminCommandHandler = (
-  chatJid: string,
-  args: string,
-  msg: AdminCommandMessage,
-) => Promise<void>;
+export type AdminCommandHandler = (chatJid: string, args: string, msg: AdminCommandMessage) => Promise<void>;
 
 export interface AdminCommand {
   /** Primary command token, MUST start with '/' (e.g. '/remote-control'). */
@@ -53,9 +49,7 @@ const byToken = new Map<string, AdminCommand>();
 
 export function registerAdminCommand(cmd: AdminCommand): void {
   if (!cmd.name.startsWith('/')) {
-    throw new Error(
-      `admin-command-registry: name must start with '/' (got ${JSON.stringify(cmd.name)})`,
-    );
+    throw new Error(`admin-command-registry: name must start with '/' (got ${JSON.stringify(cmd.name)})`);
   }
   for (const token of [cmd.name, ...(cmd.aliases ?? [])]) {
     if (byToken.has(token)) {

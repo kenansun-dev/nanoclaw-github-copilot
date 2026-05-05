@@ -26,13 +26,7 @@
 
 import { log } from '../log.js';
 import { readEnvFile } from '../env.js';
-import type {
-  ChannelAdapter,
-  ChannelRegistration,
-  ChannelSetup,
-  InboundMessage,
-  OutboundMessage,
-} from './adapter.js';
+import type { ChannelAdapter, ChannelRegistration, ChannelSetup, InboundMessage, OutboundMessage } from './adapter.js';
 import { registerChannelAdapter } from './channel-registry.js';
 import { DiscordChannel } from './discord.js';
 import type { NewMessage, RegisteredGroup } from '../types-extensions.js';
@@ -114,11 +108,7 @@ class DiscordV2Adapter implements ChannelAdapter {
     return this.inner ? this.inner.isConnected() : false;
   }
 
-  async deliver(
-    platformId: string,
-    _threadId: string | null,
-    message: OutboundMessage,
-  ): Promise<string | undefined> {
+  async deliver(platformId: string, _threadId: string | null, message: OutboundMessage): Promise<string | undefined> {
     if (!this.inner) {
       log.warn('deliver called before setup', { channelType: CHANNEL_TYPE });
       return undefined;
@@ -162,8 +152,7 @@ export function makeDiscordV2AdapterRegistration(): ChannelRegistration {
   return {
     factory: () => {
       const env = readEnvFile(['DISCORD_BOT_TOKEN']);
-      const token =
-        process.env.DISCORD_BOT_TOKEN || env.DISCORD_BOT_TOKEN || '';
+      const token = process.env.DISCORD_BOT_TOKEN || env.DISCORD_BOT_TOKEN || '';
       if (!token) {
         log.warn('Discord v2 adapter: DISCORD_BOT_TOKEN not set, skipping');
         return null;

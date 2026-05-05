@@ -1,12 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  installAbortFork,
-  __resetAbortForkInstalledForTests,
-} from './index.js';
-import {
-  checkAbort,
-  __resetAbortHandlersForTests,
-} from '../../abort-handler-registry.js';
+import { installAbortFork, __resetAbortForkInstalledForTests } from './index.js';
+import { checkAbort, __resetAbortHandlersForTests } from '../../abort-handler-registry.js';
 
 describe('abort-extensions install', () => {
   beforeEach(() => {

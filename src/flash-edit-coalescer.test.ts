@@ -87,10 +87,7 @@ describe('flash-edit-coalescer', () => {
     coalescer.enqueue('m1', 'text', undefined);
     await coalescer.drain('m1');
 
-    expect(deleteMessage).toHaveBeenCalledWith(
-      'tg:1',
-      'm1-orphan-from-fallback',
-    );
+    expect(deleteMessage).toHaveBeenCalledWith('tg:1', 'm1-orphan-from-fallback');
     expect(onOrphan).toHaveBeenCalledTimes(1);
   });
 

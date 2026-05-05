@@ -25,11 +25,7 @@
  *   - everything else → final IF status is success/error OR result is
  *     populated (covers custom statuses with payload)
  */
-export function isFinalOutput(out: {
-  status?: string;
-  result?: unknown;
-  partial?: boolean;
-}): boolean {
+export function isFinalOutput(out: { status?: string; result?: unknown; partial?: boolean }): boolean {
   if (out.partial) return false;
   if (out.status === 'thinking' && !out.result) return false;
   return out.status === 'success' || out.status === 'error' || !!out.result;

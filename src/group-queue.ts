@@ -62,8 +62,7 @@ export class GroupQueue {
   private groups = new Map<string, GroupState>();
   private activeCount = 0;
   private waitingGroups: string[] = [];
-  private processMessagesFn: ((groupJid: string) => Promise<boolean>) | null =
-    null;
+  private processMessagesFn: ((groupJid: string) => Promise<boolean>) | null = null;
   private shuttingDown = false;
   /**
    * Optional listener invoked when the active process dies before producing
@@ -74,11 +73,7 @@ export class GroupQueue {
    * fire-and-forget at the IPC pipe site.
    */
   private onProcessDiedWithoutOutput:
-    | ((
-        groupJid: string,
-        rollbackTimestamp: string | null,
-        exitCode: number | null,
-      ) => void)
+    | ((groupJid: string, rollbackTimestamp: string | null, exitCode: number | null) => void)
     | null = null;
 
   private getGroup(groupJid: string): GroupState {
@@ -117,11 +112,7 @@ export class GroupQueue {
    * in flight). See `inFlightCursorRollback` on `GroupState` for context.
    */
   setOnProcessDiedWithoutOutput(
-    fn: (
-      groupJid: string,
-      rollbackTimestamp: string | null,
-      exitCode: number | null,
-    ) => void,
+    fn: (groupJid: string, rollbackTimestamp: string | null, exitCode: number | null) => void,
   ): void {
     this.onProcessDiedWithoutOutput = fn;
   }
@@ -142,10 +133,7 @@ export class GroupQueue {
       if (!this.waitingGroups.includes(groupJid)) {
         this.waitingGroups.push(groupJid);
       }
-      logger.debug(
-        { groupJid, activeCount: this.activeCount },
-        'At concurrency limit, message queued',
-      );
+      logger.debug({ groupJid, activeCount: this.activeCount }, 'At concurrency limit, message queued');
       return;
     }
 
@@ -183,10 +171,7 @@ export class GroupQueue {
       if (!this.waitingGroups.includes(groupJid)) {
         this.waitingGroups.push(groupJid);
       }
-      logger.debug(
-        { groupJid, taskId, activeCount: this.activeCount },
-        'At concurrency limit, task queued',
-      );
+      logger.debug({ groupJid, taskId, activeCount: this.activeCount }, 'At concurrency limit, task queued');
       return;
     }
 
@@ -196,12 +181,7 @@ export class GroupQueue {
     );
   }
 
-  registerProcess(
-    groupJid: string,
-    proc: ChildProcess,
-    containerName: string,
-    groupFolder?: string,
-  ): void {
+  registerProcess(groupJid: string, proc: ChildProcess, containerName: string, groupFolder?: string): void {
     const state = this.getGroup(groupJid);
     state.process = proc;
     state.containerName = containerName;
@@ -222,8 +202,7 @@ export class GroupQueue {
       // finally block owns the cleanup; double-cleanup here would corrupt
       // activeCount.
       const isCase1 = state.active && state.idleWaiting;
-      const isCase2 =
-        state.active && state.pipedSinceOutput > 0 && !state.agentHasOutput;
+      const isCase2 = state.active && state.pipedSinceOutput > 0 && !state.agentHasOutput;
       // Case 3 (added 2026-04-21 after kenan's silent-crash report): IPC-mode
       // agent had already delivered output for this turn (agentHasOutput=true,
       // idleWaiting=false because sendMessage cleared it on the most recent
@@ -235,17 +214,12 @@ export class GroupQueue {
       // gitignore request; agent exited code=1; bot replied nothing; later '?'
       // also rejected. Fix: treat any active-and-not-cleaned-up exit as needing
       // cleanup so the next message can respawn.
-      const isCase3 =
-        state.active && !state.idleWaiting && state.agentHasOutput;
+      const isCase3 = state.active && !state.idleWaiting && state.agentHasOutput;
       if (isCase1 || isCase2 || isCase3) {
         const hadInFlight = state.pipedSinceOutput > 0 && !state.agentHasOutput;
         const rollbackCursor = state.inFlightCursorRollback;
         const exitCode = (proc as any).exitCode;
-        const caseLabel = isCase2
-          ? 'piped-then-died'
-          : isCase3
-            ? 'delivered-then-died'
-            : 'idle-then-died';
+        const caseLabel = isCase2 ? 'piped-then-died' : isCase3 ? 'delivered-then-died' : 'idle-then-died';
         logger.info(
           {
             groupJid,
@@ -260,24 +234,14 @@ export class GroupQueue {
         );
         // Clean up stale IPC files that were written for this now-dead process
         if (state.groupFolder) {
-          const inputDir = path.join(
-            DATA_DIR,
-            'ipc',
-            state.groupFolder,
-            'input',
-          );
+          const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
           try {
-            const files = fs
-              .readdirSync(inputDir)
-              .filter((f) => f.endsWith('.json'));
+            const files = fs.readdirSync(inputDir).filter((f) => f.endsWith('.json'));
             for (const f of files) {
               fs.unlinkSync(path.join(inputDir, f));
             }
             if (files.length > 0) {
-              logger.info(
-                { groupJid, count: files.length },
-                'Cleaned stale IPC files',
-              );
+              logger.info({ groupJid, count: files.length }, 'Cleaned stale IPC files');
               // Re-set pendingMessages so drainGroup picks them up from DB
               state.pendingMessages = true;
             }
@@ -301,16 +265,9 @@ export class GroupQueue {
         // on exitCode.
         if (this.onProcessDiedWithoutOutput && (hadInFlight || isCase3)) {
           try {
-            this.onProcessDiedWithoutOutput(
-              groupJid,
-              hadInFlight ? rollbackCursor : null,
-              exitCode,
-            );
+            this.onProcessDiedWithoutOutput(groupJid, hadInFlight ? rollbackCursor : null, exitCode);
           } catch (err) {
-            logger.warn(
-              { groupJid, err },
-              'onProcessDiedWithoutOutput listener threw',
-            );
+            logger.warn({ groupJid, err }, 'onProcessDiedWithoutOutput listener threw');
           }
         }
         this.drainGroup(groupJid);
@@ -339,11 +296,7 @@ export class GroupQueue {
     state.idleWaiting = true;
   }
 
-  sendMessage(
-    groupJid: string,
-    text: string,
-    rollbackCursor?: string,
-  ): boolean {
+  sendMessage(groupJid: string, text: string, rollbackCursor?: string): boolean {
     const state = this.getGroup(groupJid);
     if (!state.active || !state.groupFolder || state.isTaskContainer) {
       logger.info(
@@ -480,9 +433,7 @@ export class GroupQueue {
       const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
       try {
         if (fs.existsSync(inputDir)) {
-          const files = fs
-            .readdirSync(inputDir)
-            .filter((f) => f.endsWith('.json') || f === '_close');
+          const files = fs.readdirSync(inputDir).filter((f) => f.endsWith('.json') || f === '_close');
           for (const f of files) {
             try {
               fs.unlinkSync(path.join(inputDir, f));
@@ -491,10 +442,7 @@ export class GroupQueue {
             }
           }
           if (files.length > 0) {
-            logger.info(
-              { groupJid, count: files.length },
-              'abort: cleared IPC backlog',
-            );
+            logger.info({ groupJid, count: files.length }, 'abort: cleared IPC backlog');
           }
         }
       } catch (err) {
@@ -512,10 +460,7 @@ export class GroupQueue {
     if (proc && !proc.killed) {
       try {
         proc.kill('SIGTERM');
-        logger.info(
-          { groupJid, pid: proc.pid },
-          'abort: SIGTERM sent to agent',
-        );
+        logger.info({ groupJid, pid: proc.pid }, 'abort: SIGTERM sent to agent');
       } catch (err) {
         logger.warn({ groupJid, err }, 'abort: SIGTERM failed');
       }
@@ -524,10 +469,7 @@ export class GroupQueue {
         if (proc && !proc.killed) {
           try {
             proc.kill('SIGKILL');
-            logger.warn(
-              { groupJid, pid: proc.pid },
-              'abort: SIGKILL escalation',
-            );
+            logger.warn({ groupJid, pid: proc.pid }, 'abort: SIGKILL escalation');
           } catch {
             /* ignore */
           }
@@ -537,10 +479,7 @@ export class GroupQueue {
       // Process handle lost but container name still set — try docker stop
       try {
         execSync(`docker kill ${state.containerName}`, { stdio: 'ignore' });
-        logger.info(
-          { groupJid, container: state.containerName },
-          'abort: docker kill sent',
-        );
+        logger.info({ groupJid, container: state.containerName }, 'abort: docker kill sent');
       } catch {
         /* ignore */
       }
@@ -565,10 +504,7 @@ export class GroupQueue {
     }
   }
 
-  private async runForGroup(
-    groupJid: string,
-    reason: 'messages' | 'drain',
-  ): Promise<void> {
+  private async runForGroup(groupJid: string, reason: 'messages' | 'drain'): Promise<void> {
     const state = this.getGroup(groupJid);
     state.active = true;
     state.idleWaiting = false;
@@ -580,10 +516,7 @@ export class GroupQueue {
     state.userTurnSeq += 1;
     this.activeCount++;
 
-    logger.debug(
-      { groupJid, reason, activeCount: this.activeCount },
-      'Starting container for group',
-    );
+    logger.debug({ groupJid, reason, activeCount: this.activeCount }, 'Starting container for group');
 
     try {
       if (this.processMessagesFn) {
@@ -600,10 +533,7 @@ export class GroupQueue {
     } finally {
       // Check if the process is truly alive — Docker stop doesn't set process.killed,
       // but exitCode becomes non-null when the process exits.
-      const processAlive =
-        state.process &&
-        state.process.exitCode === null &&
-        !state.process.killed;
+      const processAlive = state.process && state.process.exitCode === null && !state.process.killed;
       if (processAlive && state.idleWaiting) {
         logger.debug({ groupJid }, 'Agent idle-waiting for IPC');
       } else {
@@ -625,10 +555,7 @@ export class GroupQueue {
     state.runningTaskId = task.id;
     this.activeCount++;
 
-    logger.debug(
-      { groupJid, taskId: task.id, activeCount: this.activeCount },
-      'Running queued task',
-    );
+    logger.debug({ groupJid, taskId: task.id, activeCount: this.activeCount }, 'Running queued task');
 
     try {
       await task.fn();
@@ -658,10 +585,7 @@ export class GroupQueue {
     }
 
     const delayMs = BASE_RETRY_MS * Math.pow(2, state.retryCount - 1);
-    logger.info(
-      { groupJid, retryCount: state.retryCount, delayMs },
-      'Scheduling retry with backoff',
-    );
+    logger.info({ groupJid, retryCount: state.retryCount, delayMs }, 'Scheduling retry with backoff');
     setTimeout(() => {
       if (!this.shuttingDown) {
         this.enqueueMessageCheck(groupJid);
@@ -678,10 +602,7 @@ export class GroupQueue {
     if (state.pendingTasks.length > 0) {
       const task = state.pendingTasks.shift()!;
       this.runTask(groupJid, task).catch((err) =>
-        logger.error(
-          { groupJid, taskId: task.id, err },
-          'Unhandled error in runTask (drain)',
-        ),
+        logger.error({ groupJid, taskId: task.id, err }, 'Unhandled error in runTask (drain)'),
       );
       return;
     }
@@ -690,31 +611,20 @@ export class GroupQueue {
     if (state.pendingMessages) {
       // If process is idle-waiting, close it and re-enqueue
       // so a fresh processGroupMessages picks up new messages
-      if (
-        state.active &&
-        state.idleWaiting &&
-        state.process &&
-        !state.process.killed
-      ) {
+      if (state.active && state.idleWaiting && state.process && !state.process.killed) {
         // Process is alive and idle — pipe new messages via IPC instead of killing.
         // processMessagesFn will read from DB and call sendMessage() which writes
         // IPC files that the idle agent reads.
         state.pendingMessages = false;
         if (this.processMessagesFn) {
           this.processMessagesFn(groupJid).catch((err) =>
-            logger.error(
-              { groupJid, err },
-              'Error piping messages to idle agent',
-            ),
+            logger.error({ groupJid, err }, 'Error piping messages to idle agent'),
           );
         }
         return;
       }
       this.runForGroup(groupJid, 'drain').catch((err) =>
-        logger.error(
-          { groupJid, err },
-          'Unhandled error in runForGroup (drain)',
-        ),
+        logger.error({ groupJid, err }, 'Unhandled error in runForGroup (drain)'),
       );
       return;
     }
@@ -724,10 +634,7 @@ export class GroupQueue {
   }
 
   private drainWaiting(): void {
-    while (
-      this.waitingGroups.length > 0 &&
-      this.activeCount < MAX_CONCURRENT_CONTAINERS
-    ) {
+    while (this.waitingGroups.length > 0 && this.activeCount < MAX_CONCURRENT_CONTAINERS) {
       const nextJid = this.waitingGroups.shift()!;
       const state = this.getGroup(nextJid);
 
@@ -735,17 +642,11 @@ export class GroupQueue {
       if (state.pendingTasks.length > 0) {
         const task = state.pendingTasks.shift()!;
         this.runTask(nextJid, task).catch((err) =>
-          logger.error(
-            { groupJid: nextJid, taskId: task.id, err },
-            'Unhandled error in runTask (waiting)',
-          ),
+          logger.error({ groupJid: nextJid, taskId: task.id, err }, 'Unhandled error in runTask (waiting)'),
         );
       } else if (state.pendingMessages) {
         this.runForGroup(nextJid, 'drain').catch((err) =>
-          logger.error(
-            { groupJid: nextJid, err },
-            'Unhandled error in runForGroup (waiting)',
-          ),
+          logger.error({ groupJid: nextJid, err }, 'Unhandled error in runForGroup (waiting)'),
         );
       }
       // If neither pending, skip this group
@@ -789,17 +690,11 @@ export class GroupQueue {
       }
     }
 
-    logger.info(
-      { activeCount: this.activeCount, killed },
-      'GroupQueue shutting down (agents terminated)',
-    );
+    logger.info({ activeCount: this.activeCount, killed }, 'GroupQueue shutting down (agents terminated)');
   }
 
   /** Cross-platform process kill. Windows uses taskkill /T for tree kill. */
-  private killProcess(
-    proc: ChildProcess,
-    signal: NodeJS.Signals = 'SIGTERM',
-  ): void {
+  private killProcess(proc: ChildProcess, signal: NodeJS.Signals = 'SIGTERM'): void {
     if (!proc.pid) {
       proc.kill(signal);
       return;

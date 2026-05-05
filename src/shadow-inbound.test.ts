@@ -1,10 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  parseChatJid,
-  toInboundEvent,
-  shadowRoute,
-  __setShadowRouterForTests,
-} from './shadow-inbound.js';
+import { parseChatJid, toInboundEvent, shadowRoute, __setShadowRouterForTests } from './shadow-inbound.js';
 import type { NewMessage } from './types-extensions.js';
 
 const baseMsg: NewMessage = {

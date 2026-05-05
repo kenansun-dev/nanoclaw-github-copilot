@@ -24,10 +24,7 @@ import { logger } from './log-extensions.js';
  */
 export function resolveGithubToken(): string | undefined {
   // 1. Explicit environment variables (highest priority)
-  const envToken =
-    process.env.COPILOT_GITHUB_TOKEN ||
-    process.env.GH_TOKEN ||
-    process.env.GITHUB_TOKEN;
+  const envToken = process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   if (envToken) return envToken;
 
   const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
@@ -83,10 +80,7 @@ function readWindowsCredential(): string | null {
     try {
       if (fs.existsSync(configPath)) {
         const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        preferredUser =
-          config.lastLoggedInUser?.login ||
-          config.last_logged_in_user?.login ||
-          null;
+        preferredUser = config.lastLoggedInUser?.login || config.last_logged_in_user?.login || null;
       }
     } catch {
       /* ignore */
@@ -122,16 +116,8 @@ function readWindowsCredential(): string | null {
     // Try to read each credential
     for (const target of targets) {
       const token = readSingleCredential(target);
-      if (
-        token &&
-        (token.startsWith('gho_') ||
-          token.startsWith('ghu_') ||
-          token.startsWith('ghp_'))
-      ) {
-        logger.debug(
-          { target },
-          'Read GitHub token from Windows Credential Manager',
-        );
+      if (token && (token.startsWith('gho_') || token.startsWith('ghu_') || token.startsWith('ghp_'))) {
+        logger.debug({ target }, 'Read GitHub token from Windows Credential Manager');
         return token;
       }
     }
@@ -151,24 +137,17 @@ function readWindowsCredential(): string | null {
 function readSingleCredential(target: string): string | null {
   try {
     const scriptPath = path.join(
-      path.dirname(
-        path.dirname(
-          new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'),
-        ),
-      ),
+      path.dirname(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'))),
       'scripts',
       'read-credential.ps1',
     );
 
-    const result = execSync(
-      `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" "${target}"`,
-      {
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: 10000,
-        windowsHide: true,
-      },
-    ).trim();
+    const result = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" "${target}"`, {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 10000,
+      windowsHide: true,
+    }).trim();
 
     return result || null;
   } catch {

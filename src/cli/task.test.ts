@@ -16,8 +16,7 @@ vi.mock('../db.js', () => {
     initDatabase: () => {},
     getAllTasks: () => tasks.slice(),
     getTaskById: (id: string) => tasks.find((t) => t.id === id),
-    getTaskRunLogs: (id: string, _limit: number) =>
-      logs.filter((l) => l.task_id === id),
+    getTaskRunLogs: (id: string, _limit: number) => logs.filter((l) => l.task_id === id),
     __seed: (rows: any[], runs: any[] = []) => {
       tasks.length = 0;
       tasks.push(...rows);

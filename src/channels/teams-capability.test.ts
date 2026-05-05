@@ -39,15 +39,7 @@ describe('Teams channel capability', () => {
 
   it('Channel interface declares prefersNewMessageForFinal as optional boolean', async () => {
     // Type-only contract: a channel without the flag is still a Channel.
-    const minimal: Pick<
-      Channel,
-      | 'name'
-      | 'connect'
-      | 'sendMessage'
-      | 'isConnected'
-      | 'ownsJid'
-      | 'disconnect'
-    > = {
+    const minimal: Pick<Channel, 'name' | 'connect' | 'sendMessage' | 'isConnected' | 'ownsJid' | 'disconnect'> = {
       name: 'fake',
       connect: async () => {},
       sendMessage: async () => undefined,
@@ -80,12 +72,7 @@ describe('multi-final-output dispatch policy (logic mirror)', () => {
     prefersNewMessageForFinal?: boolean;
   }): Decision {
     if (args.progressiveMsgId && args.hasEdit) return 'editProgressive';
-    if (
-      args.outputSentToUser &&
-      args.lastFinalMsgId &&
-      args.hasEdit &&
-      !args.prefersNewMessageForFinal
-    ) {
+    if (args.outputSentToUser && args.lastFinalMsgId && args.hasEdit && !args.prefersNewMessageForFinal) {
       return 'editLast';
     }
     return 'sendNew';
@@ -193,10 +180,7 @@ describe('IPC turn boundary closure reset', () => {
   }
 
   /** Mirror of the onOutput sentinel detection in src/index.ts. */
-  function onOutput(
-    state: TurnState,
-    result: { result: any; partial?: boolean; newSessionId?: string },
-  ): void {
+  function onOutput(state: TurnState, result: { result: any; partial?: boolean; newSessionId?: string }): void {
     // Sentinel: query-complete (result===null + newSessionId + !partial)
     if (result.result === null && result.newSessionId && !result.partial) {
       state.queryBoundaryPending = true;
@@ -332,15 +316,7 @@ import type { StreamHandle } from '../types-extensions.js';
 
 describe('Channel.usesNativeStreaming capability surface', () => {
   it('Channel interface declares usesNativeStreaming as optional boolean', () => {
-    const minimal: Pick<
-      Channel,
-      | 'name'
-      | 'connect'
-      | 'sendMessage'
-      | 'isConnected'
-      | 'ownsJid'
-      | 'disconnect'
-    > = {
+    const minimal: Pick<Channel, 'name' | 'connect' | 'sendMessage' | 'isConnected' | 'ownsJid' | 'disconnect'> = {
       name: 'fake',
       connect: async () => {},
       sendMessage: async () => undefined,
@@ -396,8 +372,7 @@ describe('partial dispatch routing (logic mirror)', () => {
     hasStreamMessage: boolean;
     hasEdit: boolean;
   }): PartialRoute {
-    if (args.usesNativeStreaming && args.hasStreamMessage)
-      return 'native-stream';
+    if (args.usesNativeStreaming && args.hasStreamMessage) return 'native-stream';
     if (args.hasEdit) return 'legacy-edit';
     return 'no-partial-support';
   }
@@ -457,9 +432,7 @@ describe('native streaming dispatcher source contract', () => {
     const src = await import('node:fs').then((fs) =>
       fs.promises.readFile(new URL('../index.ts', import.meta.url), 'utf-8'),
     );
-    expect(src).toMatch(
-      /channel\.usesNativeStreaming\s*&&\s*channel\.streamMessage/,
-    );
+    expect(src).toMatch(/channel\.usesNativeStreaming\s*&&\s*channel\.streamMessage/);
     expect(src).toMatch(/streamHandle\s*=\s*await\s+channel\.streamMessage/);
     expect(src).toMatch(/streamHandle\.chunk\(text\)/);
     expect(src).toMatch(/streamHandle\.end\(text\)/);

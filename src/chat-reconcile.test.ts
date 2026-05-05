@@ -71,9 +71,7 @@ describe('chat-reconcile / _reconcilePure', () => {
     expect(r.dedupedMains).toEqual(['tui:1', 'tui:3', 'tui:4']);
     expect(r.mirroredToDb.sort()).toEqual(['tui:1', 'tui:3', 'tui:4']);
     expect(r.mirroredToDb).not.toContain('tg:8731187021');
-    const remaining = Object.entries(config.chats).filter(
-      ([, e]) => (e as any).isMain,
-    );
+    const remaining = Object.entries(config.chats).filter(([, e]) => (e as any).isMain);
     expect(remaining).toHaveLength(1);
     expect(remaining[0][0]).toBe('tg:8731187021');
   });

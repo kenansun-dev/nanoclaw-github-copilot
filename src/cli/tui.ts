@@ -46,8 +46,7 @@ function visualWidth(s: string): number {
   return w;
 }
 
-const SOCK_NAME =
-  process.platform === 'win32' ? '\\\\.\\pipe\\nanoclaw-tui' : 'tui.sock';
+const SOCK_NAME = process.platform === 'win32' ? '\\\\.\\pipe\\nanoclaw-tui' : 'tui.sock';
 
 export async function runTui(_args: string[]): Promise<void> {
   // Parse --ask flag for non-interactive single query
@@ -75,9 +74,7 @@ export async function runTui(_args: string[]): Promise<void> {
     }
     const query = filtered.join(' ').trim();
     if (!query) {
-      console.error(
-        'Usage: nanoclaw tui --ask "your question" [--model <model>] [--think <level>]',
-      );
+      console.error('Usage: nanoclaw tui --ask "your question" [--model <model>] [--think <level>]');
       process.exit(1);
     }
     return runTuiAsk(query, { model, think });
@@ -92,13 +89,10 @@ export async function runTui(_args: string[]): Promise<void> {
   const thinkLevel = tuiCfg.thinkLevel || agent.thinkLevel;
 
   const ws = resolveWorkspace();
-  const sockPath =
-    process.platform === 'win32' ? SOCK_NAME : path.join(ws, 'tui.sock');
+  const sockPath = process.platform === 'win32' ? SOCK_NAME : path.join(ws, 'tui.sock');
 
   console.log(`\n  ${assistantName} — Terminal Chat`);
-  console.log(
-    `  Model: ${model}${thinkLevel ? ` (think: ${thinkLevel})` : ''}`,
-  );
+  console.log(`  Model: ${model}${thinkLevel ? ` (think: ${thinkLevel})` : ''}`);
   console.log(`  Commands: /new /think <level> /quit\n`);
 
   // Try to connect to running service
@@ -202,9 +196,7 @@ export async function runTui(_args: string[]): Promise<void> {
             process.stdout.write('\x1b[A\x1b[K');
           }
         }
-        process.stdout.write(
-          `\r\x1b[K\x1b[32m${currentAssistantName}>\x1b[0m ${msg.text}\n\n`,
-        );
+        process.stdout.write(`\r\x1b[K\x1b[32m${currentAssistantName}>\x1b[0m ${msg.text}\n\n`);
         lastPartialLines = 0;
         break;
 
@@ -227,9 +219,7 @@ export async function runTui(_args: string[]): Promise<void> {
     if (spinTimer) return;
     spinIdx = 0;
     spinTimer = setInterval(() => {
-      process.stdout.write(
-        `\r${spinner[spinIdx++ % spinner.length]} thinking...`,
-      );
+      process.stdout.write(`\r${spinner[spinIdx++ % spinner.length]} thinking...`);
     }, 100);
   }
 
@@ -293,9 +283,7 @@ export async function runTui(_args: string[]): Promise<void> {
     }
 
     // /think command (local config change)
-    const thinkMatch = trimmed.match(
-      /^\/think(?:\s+(off|low|medium|high|xhigh))?$/i,
-    );
+    const thinkMatch = trimmed.match(/^\/think(?:\s+(off|low|medium|high|xhigh))?$/i);
     if (thinkMatch) {
       const level = thinkMatch[1]?.toLowerCase();
       if (!level) {
@@ -307,11 +295,7 @@ export async function runTui(_args: string[]): Promise<void> {
         if (level === 'off') {
           delete cfg.agents.defaults.thinkLevel;
         } else {
-          cfg.agents.defaults.thinkLevel = level as
-            | 'low'
-            | 'medium'
-            | 'high'
-            | 'xhigh';
+          cfg.agents.defaults.thinkLevel = level as 'low' | 'medium' | 'high' | 'xhigh';
         }
         saveConfig(cfg, 'tui', { command: '/think', level });
         console.log(`🧠 Think level: ${level}\n`);
@@ -356,10 +340,7 @@ function connectToService(sockPath: string): Promise<net.Socket> {
 
 // ─── Non-interactive single query mode ───────────────────────────────────────
 
-async function runTuiAsk(
-  query: string,
-  opts?: { model?: string; think?: string },
-): Promise<void> {
+async function runTuiAsk(query: string, opts?: { model?: string; think?: string }): Promise<void> {
   // Always use direct mode for --ask (skip socket)
   const { runTuiDirect } = await import('./tui-direct.js');
   const args = ['--query', query];

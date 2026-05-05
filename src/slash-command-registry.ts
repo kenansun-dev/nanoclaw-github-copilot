@@ -40,18 +40,13 @@ export interface SlashResult {
   [k: string]: unknown;
 }
 
-export type SlashRouter = (
-  input: string,
-  ctx: SlashContext,
-) => Promise<SlashResult>;
+export type SlashRouter = (input: string, ctx: SlashContext) => Promise<SlashResult>;
 
 let currentRouter: SlashRouter | null = null;
 
 export function registerSlashRouter(router: SlashRouter): void {
   if (currentRouter) {
-    throw new Error(
-      'slash-command-registry: a router is already registered (single-slot)',
-    );
+    throw new Error('slash-command-registry: a router is already registered (single-slot)');
   }
   currentRouter = router;
 }

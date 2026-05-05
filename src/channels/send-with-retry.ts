@@ -75,10 +75,7 @@ export interface SendWithRetryOptions {
  *
  * Tested in send-with-retry.test.ts.
  */
-export async function sendWithRetry<T>(
-  fn: () => Promise<T>,
-  opts: SendWithRetryOptions,
-): Promise<T> {
+export async function sendWithRetry<T>(fn: () => Promise<T>, opts: SendWithRetryOptions): Promise<T> {
   const backoff = opts.backoffMs ?? DEFAULT_BACKOFF_MS;
   const log = opts.log ?? logger;
   let lastErr: any;

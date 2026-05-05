@@ -7,12 +7,7 @@ import { logger } from '../log-extensions.js';
 import { sendWithRetry } from './send-with-retry.js';
 import { loadConfig } from '../config-loader.js';
 import { registerChannel, ChannelOpts } from './registry.js';
-import {
-  Channel,
-  OnChatMetadata,
-  OnInboundMessage,
-  RegisteredGroup,
-} from '../types-extensions.js';
+import { Channel, OnChatMetadata, OnInboundMessage, RegisteredGroup } from '../types-extensions.js';
 
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
@@ -43,12 +38,8 @@ async function sendTelegramMessage(
     });
   } catch (err: any) {
     // Fallback: send as plain text if parsing fails
-    logger.debug(
-      { err },
-      `${parseMode} send failed, falling back to plain text`,
-    );
-    const plainText =
-      parseMode === 'HTML' ? text.replace(/<[^>]*>/g, '') : text;
+    logger.debug({ err }, `${parseMode} send failed, falling back to plain text`);
+    const plainText = parseMode === 'HTML' ? text.replace(/<[^>]*>/g, '') : text;
     return await api.sendMessage(chatId, plainText, {
       message_thread_id: options.message_thread_id,
     });
@@ -71,9 +62,7 @@ export class TelegramChannel implements Channel {
 
   /** Build a chat JID, scoped by accountId when in multi-account mode. */
   private chatJid(chatId: number | string): string {
-    return this.accountId && this.accountId !== 'default'
-      ? `tg:${this.accountId}:${chatId}`
-      : `tg:${chatId}`;
+    return this.accountId && this.accountId !== 'default' ? `tg:${this.accountId}:${chatId}` : `tg:${chatId}`;
   }
 
   async connect(): Promise<void> {
@@ -88,14 +77,9 @@ export class TelegramChannel implements Channel {
       const chatId = ctx.chat.id;
       const chatType = ctx.chat.type;
       const chatName =
-        chatType === 'private'
-          ? ctx.from?.first_name || 'Private'
-          : (ctx.chat as any).title || 'Unknown';
+        chatType === 'private' ? ctx.from?.first_name || 'Private' : (ctx.chat as any).title || 'Unknown';
 
-      ctx.reply(
-        `Chat ID: \`tg:${chatId}\`\nName: ${chatName}\nType: ${chatType}`,
-        { parse_mode: 'Markdown' },
-      );
+      ctx.reply(`Chat ID: \`tg:${chatId}\`\nName: ${chatName}\nType: ${chatType}`, { parse_mode: 'Markdown' });
     });
 
     // Command to check bot status
@@ -146,11 +130,7 @@ export class TelegramChannel implements Channel {
       const chatJid = this.chatJid(ctx.chat.id);
       let content = ctx.message.text;
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
-      const senderName =
-        ctx.from?.first_name ||
-        ctx.from?.username ||
-        ctx.from?.id.toString() ||
-        'Unknown';
+      const senderName = ctx.from?.first_name || ctx.from?.username || ctx.from?.id.toString() || 'Unknown';
       const sender = ctx.from?.id.toString() || '';
       const msgId = ctx.message.message_id.toString();
 
@@ -158,20 +138,13 @@ export class TelegramChannel implements Channel {
       const replyMsg = ctx.message.reply_to_message;
       const replyText = replyMsg?.text || replyMsg?.caption;
       if (replyText) {
-        const replyAuthor =
-          replyMsg.from?.first_name || replyMsg.from?.username || 'Someone';
-        const truncated =
-          replyText.length > 200
-            ? replyText.slice(0, 200) + '\u2026'
-            : replyText;
+        const replyAuthor = replyMsg.from?.first_name || replyMsg.from?.username || 'Someone';
+        const truncated = replyText.length > 200 ? replyText.slice(0, 200) + '\u2026' : replyText;
         content = `[Replying to ${replyAuthor}: ${truncated}]\n${content}`;
       }
 
       // Determine chat name
-      const chatName =
-        ctx.chat.type === 'private'
-          ? senderName
-          : (ctx.chat as any).title || chatJid;
+      const chatName = ctx.chat.type === 'private' ? senderName : (ctx.chat as any).title || chatJid;
 
       // Translate Telegram @bot_username mentions into TRIGGER_PATTERN format.
       // Telegram @mentions (e.g., @andy_ai_bot) won't match TRIGGER_PATTERN
@@ -181,9 +154,7 @@ export class TelegramChannel implements Channel {
         const entities = ctx.message.entities || [];
         const isBotMentioned = entities.some((entity: any) => {
           if (entity.type === 'mention') {
-            const mentionText = content
-              .substring(entity.offset, entity.offset + entity.length)
-              .toLowerCase();
+            const mentionText = content.substring(entity.offset, entity.offset + entity.length).toLowerCase();
             return mentionText === `@${botUsername}`;
           }
           return false;
@@ -194,15 +165,8 @@ export class TelegramChannel implements Channel {
       }
 
       // Store chat metadata for discovery
-      const isGroup =
-        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-      this.opts.onChatMetadata(
-        chatJid,
-        timestamp,
-        chatName,
-        'telegram',
-        isGroup,
-      );
+      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(chatJid, timestamp, chatName, 'telegram', isGroup);
 
       // Note: unregistered chats are handled by index.ts (pair instructions)
 
@@ -217,10 +181,7 @@ export class TelegramChannel implements Channel {
         is_from_me: false,
       });
 
-      logger.info(
-        { chatJid, chatName, sender: senderName },
-        'Telegram message stored',
-      );
+      logger.info({ chatJid, chatName, sender: senderName }, 'Telegram message stored');
     });
 
     // Handle non-text messages with placeholders so the agent knows something was sent
@@ -230,22 +191,11 @@ export class TelegramChannel implements Channel {
       if (!group) return;
 
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
-      const senderName =
-        ctx.from?.first_name ||
-        ctx.from?.username ||
-        ctx.from?.id?.toString() ||
-        'Unknown';
+      const senderName = ctx.from?.first_name || ctx.from?.username || ctx.from?.id?.toString() || 'Unknown';
       const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
 
-      const isGroup =
-        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-      this.opts.onChatMetadata(
-        chatJid,
-        timestamp,
-        undefined,
-        'telegram',
-        isGroup,
-      );
+      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(chatJid, timestamp, undefined, 'telegram', isGroup);
       this.opts.onMessage(chatJid, {
         id: ctx.message.message_id.toString(),
         chat_jid: chatJid,
@@ -259,9 +209,7 @@ export class TelegramChannel implements Channel {
 
     this.bot.on('message:photo', (ctx: any) => storeNonText(ctx, '[Photo]'));
     this.bot.on('message:video', (ctx: any) => storeNonText(ctx, '[Video]'));
-    this.bot.on('message:voice', (ctx: any) =>
-      storeNonText(ctx, '[Voice message]'),
-    );
+    this.bot.on('message:voice', (ctx: any) => storeNonText(ctx, '[Voice message]'));
     this.bot.on('message:audio', (ctx: any) => storeNonText(ctx, '[Audio]'));
     this.bot.on('message:document', async (ctx: any) => {
       const name = ctx.message.document?.file_name || 'file';
@@ -273,12 +221,7 @@ export class TelegramChannel implements Channel {
           const fs = await import('fs');
           const path = await import('path');
           const { resolveWorkspace } = await import('../workspace.js');
-          const uploadsDir = path.default.join(
-            resolveWorkspace(),
-            'groups',
-            group.folder,
-            'uploads',
-          );
+          const uploadsDir = path.default.join(resolveWorkspace(), 'groups', group.folder, 'uploads');
           fs.default.mkdirSync(uploadsDir, { recursive: true });
           const file = await ctx.getFile();
           const localPath = path.default.join(uploadsDir, name);
@@ -287,10 +230,7 @@ export class TelegramChannel implements Channel {
           const res = await fetch(url);
           const buffer = Buffer.from(await res.arrayBuffer());
           fs.default.writeFileSync(localPath, buffer);
-          logger.info(
-            { jid: chatJid, file: name, path: localPath },
-            'Telegram file downloaded',
-          );
+          logger.info({ jid: chatJid, file: name, path: localPath }, 'Telegram file downloaded');
           storeNonText(ctx, `[Document: ${name}] (saved to ${localPath})`);
         } catch (err: any) {
           logger.error({ err, file: name }, 'Failed to download Telegram file');
@@ -304,12 +244,8 @@ export class TelegramChannel implements Channel {
       const emoji = ctx.message.sticker?.emoji || '';
       storeNonText(ctx, `[Sticker ${emoji}]`);
     });
-    this.bot.on('message:location', (ctx: any) =>
-      storeNonText(ctx, '[Location]'),
-    );
-    this.bot.on('message:contact', (ctx: any) =>
-      storeNonText(ctx, '[Contact]'),
-    );
+    this.bot.on('message:location', (ctx: any) => storeNonText(ctx, '[Location]'));
+    this.bot.on('message:contact', (ctx: any) => storeNonText(ctx, '[Contact]'));
 
     // Handle errors gracefully
     this.bot.catch((err: any) => {
@@ -320,14 +256,9 @@ export class TelegramChannel implements Channel {
     return new Promise<void>((resolve) => {
       this.bot!.start({
         onStart: async (botInfo: any) => {
-          logger.info(
-            { username: botInfo.username, id: botInfo.id },
-            'Telegram bot connected',
-          );
+          logger.info({ username: botInfo.username, id: botInfo.id }, 'Telegram bot connected');
           console.log(`\n  Telegram bot: @${botInfo.username}`);
-          console.log(
-            `  Send /chatid to the bot to get a chat's registration ID\n`,
-          );
+          console.log(`  Send /chatid to the bot to get a chat's registration ID\n`);
 
           // Register slash command menu in Telegram
           try {
@@ -354,10 +285,7 @@ export class TelegramChannel implements Channel {
             ]);
             logger.info('Telegram slash commands registered');
           } catch (err: any) {
-            logger.debug(
-              { err: err.message },
-              'Failed to register slash commands',
-            );
+            logger.debug({ err: err.message }, 'Failed to register slash commands');
           }
 
           resolve();
@@ -366,11 +294,7 @@ export class TelegramChannel implements Channel {
     });
   }
 
-  async sendMessage(
-    jid: string,
-    text: string,
-    options?: { parseMode?: 'HTML' | 'Markdown' },
-  ): Promise<string | void> {
+  async sendMessage(jid: string, text: string, options?: { parseMode?: 'HTML' | 'Markdown' }): Promise<string | void> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
       return;
@@ -400,16 +324,10 @@ export class TelegramChannel implements Channel {
       logger.info({ jid, length: text.length }, 'Telegram message sent');
       return lastMsgId;
     } catch (err: any) {
-      logger.error(
-        { jid, err: err?.message ?? String(err) },
-        'Telegram sendMessage failed after retries',
-      );
+      logger.error({ jid, err: err?.message ?? String(err) }, 'Telegram sendMessage failed after retries');
       // Best-effort user-visible notice — single attempt, no recursion.
       try {
-        await this.bot!.api.sendMessage(
-          numericId,
-          '⚠️ 上条回复未送达 (send failed after 3 retries — check logs)',
-        );
+        await this.bot!.api.sendMessage(numericId, '⚠️ 上条回复未送达 (send failed after 3 retries — check logs)');
       } catch {
         /* swallow */
       }
@@ -420,11 +338,7 @@ export class TelegramChannel implements Channel {
     return this.bot !== null;
   }
 
-  async sendFile(
-    jid: string,
-    filePath: string,
-    filename?: string,
-  ): Promise<void> {
+  async sendFile(jid: string, filePath: string, filename?: string): Promise<void> {
     if (!this.bot) return;
     const fs = await import('fs');
     const path = await import('path');
@@ -432,10 +346,7 @@ export class TelegramChannel implements Channel {
     try {
       const numericId = jid.split(':').pop()!;
       const name = filename || path.default.basename(filePath);
-      await this.bot.api.sendDocument(
-        numericId,
-        new InputFile(fs.default.createReadStream(filePath), name),
-      );
+      await this.bot.api.sendDocument(numericId, new InputFile(fs.default.createReadStream(filePath), name));
       logger.info({ jid, filename: name }, 'Telegram file sent');
     } catch (err: any) {
       logger.error({ err, jid, filePath }, 'Failed to send Telegram file');
@@ -454,11 +365,7 @@ export class TelegramChannel implements Channel {
     return parts.length === 2;
   }
 
-  async sendCard(
-    jid: string,
-    card: object,
-    fallbackText: string,
-  ): Promise<void> {
+  async sendCard(jid: string, card: object, fallbackText: string): Promise<void> {
     if (!this.bot) return;
     try {
       const numericId = jid.split(':').pop()!;
@@ -468,10 +375,7 @@ export class TelegramChannel implements Channel {
       if (cardObj.choices && Array.isArray(cardObj.choices)) {
         const keyboard = new InlineKeyboard();
         for (const choice of cardObj.choices) {
-          keyboard.text(
-            choice.title,
-            `${cardObj.command || 'action'}:${choice.value}`,
-          );
+          keyboard.text(choice.title, `${cardObj.command || 'action'}:${choice.value}`);
         }
         // Arrange in rows of 3
         const rows: any[][] = [];
@@ -510,17 +414,14 @@ export class TelegramChannel implements Channel {
       });
       return messageId;
     } catch (err: any) {
-      if (err?.description?.includes('message is not modified'))
-        return messageId;
+      if (err?.description?.includes('message is not modified')) return messageId;
       // Fallback: try without parse mode
       try {
-        const plainText =
-          parseMode === 'HTML' ? text.replace(/<[^>]*>/g, '') : text;
+        const plainText = parseMode === 'HTML' ? text.replace(/<[^>]*>/g, '') : text;
         await this.bot.api.editMessageText(numericId, msgId, plainText);
         return messageId;
       } catch (err2: any) {
-        if (err2?.description?.includes('message is not modified'))
-          return messageId;
+        if (err2?.description?.includes('message is not modified')) return messageId;
         // Was `logger.debug` — silenced in production. Same black-hole bug we
         // just fixed in Teams. Log at warn + fallback to a fresh sendMessage so
         // the user actually sees the agent's reply.
@@ -542,10 +443,7 @@ export class TelegramChannel implements Channel {
     } catch (err: any) {
       // Common: message too old (>48h), already deleted, or no permission.
       // Non-fatal — caller (dispatcher flash mode) will fall back to edit.
-      logger.debug(
-        { jid, messageId, err: err?.message ?? String(err) },
-        'Telegram deleteMessage failed (non-fatal)',
-      );
+      logger.debug({ jid, messageId, err: err?.message ?? String(err) }, 'Telegram deleteMessage failed (non-fatal)');
     }
   }
 
