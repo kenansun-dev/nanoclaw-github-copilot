@@ -814,10 +814,12 @@ export function isContainerRunning(_sessionId: string): boolean {
   return false; // v2 spawn machinery not yet wired
 }
 
-/** v2 stub: wake (or spawn) a v2 container for a session. */
-export function wakeContainer(session: Session): Promise<void> {
+/** v2 stub: wake (or spawn) a v2 container for a session.
+ *  Returns boolean to match upstream contract (false = transient spawn fail,
+ *  caller stops typing indicator). Stub always returns true for the no-op. */
+export function wakeContainer(session: Session): Promise<boolean> {
   _v2StubLogger.debug(`[v2-stub] wakeContainer called for session ${session.id} (no-op until B.5 dispatcher cut)`);
-  return Promise.resolve();
+  return Promise.resolve(true);
 }
 
 /** v2 stub: kill a running v2 container for a session. */
