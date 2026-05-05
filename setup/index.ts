@@ -14,6 +14,7 @@ const STEPS: Record<
   environment: () => import('./environment.js'),
   container: () => import('./container.js'),
   register: () => import('./register.js'),
+  'pair-telegram': () => import('./pair-telegram.js'),
   groups: () => import('./groups.js'),
   'whatsapp-auth': () => import('./whatsapp-auth.js'),
   'signal-auth': () => import('./signal-auth.js'),
@@ -23,14 +24,6 @@ const STEPS: Record<
   onecli: () => import('./onecli.js'),
   auth: () => import('./auth.js'),
   'cli-agent': () => import('./cli-agent.js'),
-  'migrate-detect': () => import('./migrate-v1/detect.js'),
-  'migrate-validate': () => import('./migrate-v1/validate.js'),
-  'migrate-db': () => import('./migrate-v1/db.js'),
-  'migrate-groups': () => import('./migrate-v1/groups.js'),
-  'migrate-env': () => import('./migrate-v1/env.js'),
-  'migrate-channel-auth': () => import('./migrate-v1/channel-auth.js'),
-  'migrate-channels': () => import('./migrate-v1/channels.js'),
-  'migrate-tasks': () => import('./migrate-v1/tasks.js'),
 };
 
 async function main(): Promise<void> {

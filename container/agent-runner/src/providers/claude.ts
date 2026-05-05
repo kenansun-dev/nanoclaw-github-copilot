@@ -34,7 +34,11 @@ const SDK_DISALLOWED_TOOLS = [
   'ExitWorktree',
 ];
 
-// Tool allowlist for NanoClaw agent containers
+// Tool allowlist for NanoClaw agent containers. MCP-tool entries are derived
+// at the call site from the registered `mcpServers` map so that any server
+// added via `add_mcp_server` (or wired in container.json directly) is
+// reachable to the agent — without this, the SDK's allowedTools filter
+// silently drops every MCP namespace not listed here.
 const TOOL_ALLOWLIST = [
   'Bash',
   'Read',
@@ -54,8 +58,14 @@ const TOOL_ALLOWLIST = [
   'ToolSearch',
   'Skill',
   'NotebookEdit',
-  'mcp__nanoclaw__*',
 ];
+
+// MCP server names are sanitized by the SDK when forming tool prefixes:
+// any character outside [A-Za-z0-9_-] becomes '_'. Mirror that here so our
+// allowlist patterns match what the SDK actually exposes.
+function mcpAllowPattern(serverName: string): string {
+  return `mcp__${serverName.replace(/[^a-zA-Z0-9_-]/g, '_')}__*`;
+}
 
 interface SDKUserMessage {
   type: 'user';
@@ -226,8 +236,12 @@ function createPreCompactHook(assistantName?: string): HookCallback {
 /**
  * Claude Code auto-compacts context at this window (tokens). Kept here so
  * the generic bootstrap doesn't need to know about Claude-specific env vars.
+ *
+ * Operator override: set CLAUDE_CODE_AUTO_COMPACT_WINDOW in the host env to
+ * raise or lower the threshold without editing source — useful when running
+ * with a 1M-context model variant or when emergency-tuning a deployment.
  */
-const CLAUDE_CODE_AUTO_COMPACT_WINDOW = '165000';
+const CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '165000';
 
 /**
  * Stale-session detection. Matches Claude Code's error text when a
@@ -273,7 +287,10 @@ export class ClaudeProvider implements AgentProvider {
         resume: input.continuation,
         pathToClaudeCodeExecutable: '/pnpm/claude',
         systemPrompt: instructions ? { type: 'preset' as const, preset: 'claude_code' as const, append: instructions } : undefined,
-        allowedTools: TOOL_ALLOWLIST,
+        allowedTools: [
+          ...TOOL_ALLOWLIST,
+          ...Object.keys(this.mcpServers).map(mcpAllowPattern),
+        ],
         disallowedTools: SDK_DISALLOWED_TOOLS,
         env: this.env,
         permissionMode: 'bypassPermissions',

@@ -1,55 +1,84 @@
 ---
 name: migrate-from-v1
-description: Finish migrating a NanoClaw v1 install into v2. Run this after `bash nanoclaw.sh` has completed its automated migration step. Seeds the owner user, applies v1 access defaults, fixes any migration sub-step that didn't finish, and interviews the user about custom v1 code to port forward. Triggers on "migrate from v1", "finish migration", "v1 migration", or automatically after setup when `logs/setup-migration/handoff.json` exists.
+description: Finish migrating a NanoClaw v1 install into v2. Run after `bash migrate-v2.sh` completes. Seeds the owner, cleans up CLAUDE.local.md files, reconciles container configs, and helps port custom v1 code. Triggers on "migrate from v1", "finish migration", "v1 migration".
 ---
 
-# Migrate from v1 to v2
+# Finish v1 → v2 migration
 
-> ⚠️ **Experimental.** This skill and the setup migration step are early. Remind the user to back up `data/v2.db` + `groups/` before making destructive changes, and prefer small, reversible edits. Not recommended yet for high-stakes production installs.
+`bash migrate-v2.sh` already ran the deterministic migration. It handled:
 
-The setup flow's `migration` step (in `setup/migrate-v1.ts`) already ran a best-effort automated pass. Your job is to finish what it couldn't do automatically, then interview the user about any custom code they had in v1 and help port it forward.
+- .env keys merged
+- v2 DB seeded (agent_groups, messaging_groups, wiring)
+- Group folders copied (v1 CLAUDE.md → v2 CLAUDE.local.md)
+- Session data copied with conversation continuity (incl. Claude Code memory + JSONL transcripts)
+- Scheduled tasks ported
+- Channel code installed and auth state copied (incl. WhatsApp Baileys keystore)
+- WhatsApp LIDs resolved from `store/auth` and aliased into `messaging_groups`
+- Container skills copied
+- Container image built
 
-Read [docs/v1-to-v2-changes.md](../../../docs/v1-to-v2-changes.md) before doing anything — it's the vocabulary for where v1 things moved to in v2.
+Your job is the parts that need human judgment: triage any failed steps, seed the owner, clean up CLAUDE.local.md files, reconcile configs, and port any fork customizations.
 
-## What the automation did
+Read `logs/setup-migration/handoff.json` first — it has `overall_status`, per-step results in `steps`, and a `followups` list.
 
-The setup flow ran these sub-steps (each as its own progression-log entry):
+## Preflight: was the script run?
 
-| Sub-step | What it did |
-|----------|-------------|
-| `migrate-detect` | Found v1 install on disk (scanned `~/nanoclaw`, `~/.nanoclaw`, `~/Code/nanoclaw`, etc., or `$NANOCLAW_V1_PATH`). |
-| `migrate-validate` | Checked v1 DB has expected tables + required columns. |
-| `migrate-db` | Seeded `agent_groups` + `messaging_groups` + `messaging_group_agents` from `registered_groups`. Mapped `trigger_pattern`/`requires_trigger` → `engage_mode`/`engage_pattern`. Did NOT seed `users`/`user_roles`. |
-| `migrate-groups` | Copied v1 `groups/<folder>/` to v2. v1 `CLAUDE.md` → v2 `CLAUDE.local.md`. v1 `container_config` JSON → `.v1-container-config.json` sidecar (don't silent-map to v2's `container.json`). |
-| `migrate-env` | Merged v1 `.env` keys into v2 `.env` (never overwrote existing keys). |
-| `migrate-channel-auth` | Copied non-env auth state per channel (Baileys keystore, matrix state, etc.) based on `CHANNEL_AUTH_REGISTRY` in `setup/migrate-v1/shared.ts`. |
-| `migrate-channels` | Ran `setup/install-<channel>.sh` for each channel detected in `registered_groups`. |
-| `migrate-tasks` | Ported active v1 `scheduled_tasks` into each session's `inbound.db` as `kind='task'` rows. Inactive tasks dumped to `inactive-tasks.json` for reference. |
+Before anything else, check that `logs/setup-migration/handoff.json` exists. If it doesn't, the user is invoking this skill before `migrate-v2.sh` ran. Stop and tell them, verbatim:
 
-## Artifacts to read first
+> This skill finishes a migration that `migrate-v2.sh` started. Run that first, in your terminal — not from inside Claude:
+>
+> ```bash
+> bash migrate-v2.sh
+> ```
+>
+> It needs interactive prompts (channel selection, service switchover) and runs Node/pnpm bootstrap, Docker, OneCLI setup, and a container build that don't fit inside a Claude session. When it finishes, it'll hand control back to Claude automatically — at which point this skill picks up.
 
-- `logs/setup-migration/handoff.json` — **start here.** Structured summary of every sub-step: `status`, `fields`, `notes`, plus detected channels, group selection, and a top-level `followups` list. The top-level `overall_status` tells you at a glance what kind of session this is.
-- `logs/setup.log` — the progression log. Each `migrate-*` sub-step has one entry with status, duration, and a pointer to its raw log.
-- `logs/setup-steps/NN-migrate-*.log` — raw per-sub-step stdout+stderr. Read these when a step failed or you need to understand why.
-- `logs/setup-migration/schema-mismatch.json` — only exists if `migrate-validate` rejected the v1 DB shape. Describes what was missing.
-- `logs/setup-migration/inactive-tasks.json` — v1 scheduled tasks we didn't migrate (completed, stopped, or unmappable schedule types).
+Do not attempt to run the script yourself, simulate its effects, or pick up the migration mid-stream. The deterministic side has dependencies on a real interactive shell.
 
-## Flow
+Once `handoff.json` exists, proceed to Phase 0.
 
-### Phase A — always run: owner seeding + access policy
+## Phase 0: Get v2 routing real messages
 
-The automation deliberately did not seed `users`, `user_roles`, or flip `messaging_groups.unknown_sender_policy`. v1 has no ground truth for who the owner is, and no single source for the "anyone can message / only known users" setting. Ask the user.
+Before any deeper migration work, prove v2 actually answers messages on the user's real channels. v1 is paused, not touched — flipping back is a service restart.
 
-1. Read `handoff.json` → `detected_channels` to know which channel(s) to address the user on.
-2. Use `AskUserQuestion` to ask "Which handle on `<primary channel>` is yours?" with options pulled from context if you have any hints (e.g. recent v1 message senders), plus "Let me type it" and "Use a different channel." Build the user id as `<channel_type>:<handle>`.
-3. Insert into v2 central DB (`data/v2.db`):
-   - `users(id, kind, display_name, created_at)` — use the channel_type as `kind`.
-   - `user_roles(user_id, role='owner', agent_group_id=NULL, granted_by=NULL, granted_at=now)`.
-4. Ask "In v1, could anyone message your assistant, or only known users?" via `AskUserQuestion`:
-   - "Anyone could message it" → update every row in `messaging_groups` (for migrated channel_types) to `unknown_sender_policy='public'`.
-   - "Only known users" → leave `unknown_sender_policy='strict'`; walk the user through seeding `agent_group_members` rows for each trusted handle they name.
+### 0a — Fix blockers only
 
-Use the DB helpers in `src/db/agent-groups.ts`, `src/db/messaging-groups.ts`, and `src/db/user-roles.ts` rather than hand-rolling SQL — they keep the companion `agent_destinations` and indexes correct. Always init the central DB first:
+Walk `handoff.steps`. Fix only the failures that would stop the bot from routing one message; defer the rest to its later phase.
+
+### 0b — Smoke test, then continue
+
+Tell the user the switch is non-destructive (v1 is paused, not modified; reverting is one command). Help them stop v1's service unit and start v2's, tail the host log for a clean boot, and have them send a real test message. Use `AskUserQuestion` to confirm the bot responded.
+
+If yes, continue to Phase 1. If no, diagnose from `logs/nanoclaw.log` and re-test — don't proceed to deeper work on a broken router.
+
+### Deferred failures
+
+Re-visit anything you skipped in 0a before declaring the migration done. Most surface naturally in later phases (`1c-groups` ↔ Phase 2, `1e-tasks` ↔ task verification).
+
+## Phase 1: Owner and access
+
+v2 auto-creates a `users` row for every sender it sees (via `extractAndUpsertUser` in `src/modules/permissions/index.ts`). By the time this skill runs, the owner's row likely already exists — it just needs the `owner` role granted.
+
+**User ID format**: always `<channel_type>:<platform_handle>`. Each channel populates this differently:
+- **Telegram**: `telegram:<numeric_user_id>` (e.g. `telegram:6037840640`)
+- **Discord**: `discord:<snowflake_user_id>` (e.g. `discord:123456789012345678`)
+- **WhatsApp**: `whatsapp:<phone>@s.whatsapp.net` (e.g. `whatsapp:14155551234@s.whatsapp.net`)
+- **Slack**: `slack:<user_id>` (e.g. `slack:U04ABCDEF`)
+- **Others**: `<channel_type>:<platform_id>`
+
+**Steps:**
+
+1. Query `users` table: `SELECT id, kind, display_name FROM users`.
+2. If exactly one user exists, confirm: `AskUserQuestion`: "Is `<display_name>` (`<id>`) you?" — Yes / No, let me type it.
+3. If multiple users exist, present them as options in `AskUserQuestion`.
+4. If no users exist yet (service hasn't received a message), ask the user to send a test message first, then re-query.
+5. Once confirmed, check `user_roles` — if the owner role already exists, skip. Otherwise insert:
+   ```sql
+   INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
+   VALUES ('<user_id>', 'owner', NULL, NULL, datetime('now'))
+   ```
+
+Use the DB helpers in `src/db/user-roles.ts` — they keep indexes correct. Init the DB first:
 
 ```ts
 import { initDb } from '../src/db/connection.js';
@@ -60,61 +89,144 @@ const db = initDb(path.join(DATA_DIR, 'v2.db'));
 runMigrations(db);
 ```
 
-### Phase B — branch on `handoff.json: overall_status`
+### Access policy
 
-**If `overall_status === 'success'`** and `followups` is empty: go straight to Phase C (customization interview).
+After seeding the owner, discuss the access policy. v2's `messaging_groups.unknown_sender_policy` controls who can interact with the bot. `migrate-v2.sh` set it to `public` so the bot would respond during the switchover test, but the user may want to tighten it.
 
-**Otherwise (partial, failed, or non-empty followups)**: walk `handoff.steps` and `handoff.followups` top-to-bottom. For each entry:
+Present the options via `AskUserQuestion`:
 
-- Read the step's `fields` and `notes` and its raw log (`logs/setup-steps/NN-<step>.log`).
-- Explain the situation to the user in one sentence, then propose a fix.
-- Do the fix yourself when it's mechanical (re-running an install script, seeding a missed `agent_destinations` row, re-copying a channel's auth files, manually translating an unsupported `schedule_type`). Use `AskUserQuestion` when a judgment call is needed (is this orphan channel worth keeping? is this v1 container_config still relevant?).
+1. **Public** (current) — anyone can message the bot. Good for personal DM bots.
+2. **Known users only** — only users in `agent_group_members` can trigger the bot. Others are silently dropped.
+3. **Approval required** — unknown senders trigger an approval request to the owner. Good for group chats where you want to vet new members.
 
-Common cases:
+If the user picks option 2 or 3, seed the known users from v1's message history. The v1 database is at `<handoff.v1_path>/store/messages.db`. It has a `messages` table with `sender` and `sender_name` columns. For each group:
 
-- **`migrate-validate` status=failed**: the v1 DB had an unexpected shape. Read `schema-mismatch.json`. If tables are missing, the user may have run a very old or customized v1 — ask before trying to salvage. If only columns are missing, you can often proceed by hand-writing the SELECT with the columns that exist.
-- **`migrate-db` status=partial, SKIPPED>0**: some `registered_groups` rows didn't seed. The `notes` field of the step entry names each failed folder. Most commonly: a JID we couldn't parse. Ask the user whether to manually wire each.
-- **`migrate-channels` status=partial, some entries `not_supported`**: v1 had channels v2 doesn't ship a skill for yet. Ask the user whether to keep the `messaging_groups` rows (they'll stay orphaned until v2 grows the adapter) or delete them.
-- **`migrate-channel-auth` has `files_missing`**: for WhatsApp specifically, encryption sessions often can't survive the copy — tell the user a fresh pair may be needed via `/add-whatsapp`.
-- **Per-folder `.v1-container-config.json` sidecars exist**: read each, discuss with the user, and translate to v2's `groups/<folder>/container.json` format.
+```sql
+-- v1: unique senders per chat (excluding bot messages)
+SELECT DISTINCT sender, sender_name
+FROM messages
+WHERE chat_jid = '<v1_jid>' AND is_from_me = 0 AND sender IS NOT NULL
+```
 
-### Phase C — customizations (fork-aware)
+The `sender` value is a platform handle (e.g. `6037840640` for Telegram). Build the v2 user ID by inferring the channel type from the chat JID prefix (use `parseJid` from `setup/migrate-v2/shared.ts`) and combining: `<channel_type>:<sender>`.
 
-NanoClaw recommends running on a fork, so most real v1 installs have at least some customizations.
+For each sender:
+1. Upsert into `users(id, kind, display_name)` if not already present.
+2. Insert into `agent_group_members(user_id, agent_group_id)` for each agent group wired to that messaging group.
 
-**Start with divergence detection.** In the v1 repo at `handoff.v1_path`:
+Show the user the list of senders being imported and let them deselect any they don't want.
+
+Then update the messaging groups:
+```sql
+UPDATE messaging_groups SET unknown_sender_policy = '<chosen_policy>'
+WHERE id IN (SELECT id FROM messaging_groups WHERE channel_type IN (<migrated_channels>))
+```
+
+## Phase 2: Clean up CLAUDE.local.md
+
+The migration copied v1's entire CLAUDE.md into CLAUDE.local.md for each group. This file now contains v1 boilerplate that v2 handles through its own composed fragments (`container/CLAUDE.md` + `.claude-fragments/module-*.md`). The user's customizations are buried inside.
+
+For each group that has a `CLAUDE.local.md`:
+
+1. Read the file.
+2. Read the v1 template it was based on. Determine which template by checking the v1 install:
+   - If the group had `is_main=1` in v1's `registered_groups`, the template was `groups/main/CLAUDE.md`
+   - Otherwise, the template was `groups/global/CLAUDE.md`
+   - The v1 path is in `handoff.json` → `v1_path`
+3. Diff the file against the template. Identify sections that are:
+   - **Stock boilerplate** (identical to template) — remove. v2's fragments cover this.
+   - **User customizations** (added sections, modified sections) — keep.
+4. The following v1 sections are now handled by v2 fragments and should be removed even if slightly modified:
+   - "What You Can Do" → v2 runtime system prompt
+   - "Communication" / "Internal thoughts" / "Sub-agents" → `container/CLAUDE.md` + `module-core.md`
+   - "Your Workspace" / workspace path references → `container/CLAUDE.md`
+   - "Memory" (the stock version) → `container/CLAUDE.md`
+   - "Message Formatting" → `container/CLAUDE.md`
+   - "Admin Context" → v2 uses `user_roles`, not is_main
+   - "Authentication" → v2 uses OneCLI
+   - "Container Mounts" → v2 mounts are different
+   - "Managing Groups" / "Finding Available Groups" / "Registered Groups Config" → v2 entity model, no IPC
+   - "Global Memory" → v2 has `.claude-shared.md` symlink
+   - "Scheduling for Other Groups" → `module-scheduling.md`
+   - "Task Scripts" → `module-scheduling.md`
+   - "Sender Allowlist" → v2 uses `unknown_sender_policy` + `user_roles`
+5. Fix path references in kept sections:
+   - `/workspace/group/` → `/workspace/agent/`
+   - `/workspace/project/` → these paths don't exist in v2; discuss with the user
+   - `/workspace/ipc/` → gone; remove references
+   - `/workspace/extra/` → v2 uses `container.json` `additionalMounts`; keep but note the path may change
+6. Keep the `# Name` heading and first paragraph (identity) — this is the user's agent personality.
+7. Show the user the proposed new CLAUDE.local.md before writing it. Use `AskUserQuestion`: "Here's what I'd keep — look right?" with options to approve, edit, or keep the original.
+
+If a CLAUDE.local.md has no user customizations (pure template copy), write a minimal file with just the identity heading.
+
+## Phase 3: Container config
+
+`migrate-v2.sh` writes `container.json` directly from v1's `container_config` (the `additionalMounts` shape is identical). If the v1 config was unparseable, it falls back to a `.v1-container-config.json` sidecar.
+
+For each group, check:
+
+1. If `container.json` exists, read it and verify the `additionalMounts` host paths are still valid on this machine. Flag any that don't exist.
+2. If `.v1-container-config.json` exists (parse failure fallback), read it, discuss with the user, and write a proper `container.json`. Then delete the sidecar.
+3. Check for `env` or `packages` fields — `env` may overlap with OneCLI vault, `packages` (apt/npm) are portable.
+
+## Phase 4: Fork customizations
+
+Check whether the user's v1 install was a customized fork.
 
 ```bash
 cd <v1_path>
-git remote -v                           # identify the upstream remote
-git log --oneline <upstream>/main..HEAD # commits ahead of upstream
+git remote -v
+git log --oneline <upstream>/main..HEAD 2>/dev/null
 ```
 
-If the log is **empty**: stock v1. Tell the user "no customizations to port" and skip the rest of Phase C.
+If no commits ahead of upstream: stock v1, skip this phase.
 
-If the log has commits, show them to the user and offer a scope via `AskUserQuestion`:
+If there are commits:
 
-1. **Mechanical** (recommended) — copy the portable categories (skills, docs), stash the rest as reference.
-2. **Full interview** — walk each commit with me, decide one-by-one. Use `Explore` sub-agents for diffs > 10 files.
-3. **Reference only** — stash everything to `docs/v1-fork-reference/`, copy nothing now.
-
-**Portability rules of thumb:**
-- **Portable**: `container/skills/*`, `.claude/skills/*`, `docs/*`, top-level config. Scan each with `scanForV1Patterns` (in `setup/migrate-v1/shared.ts`) before copying — clean ones land as-is, dirty ones get a followup.
-- **Not portable**: `src/*` (host) and `container/agent-runner/src/*` (agent-runner). v2's architecture is fundamentally different (Node host with split session DBs vs v1's single process + IPC file queue). Stash to `docs/v1-fork-reference/` with a README explaining the v1→v2 mapping — **don't translate**. Mechanical translation is a trap; let the user rebuild the feature on v2 primitives.
-- **Already handled**: `groups/*` — `migrate-groups` copied these and flagged v1 patterns. Don't redo in Phase C.
-- **Case by case**: `package.json` deps — check whether v2 already has each; never add to v2's lockfile without approval (supply-chain `minimumReleaseAge` applies).
-
-When stashing, write `docs/v1-fork-reference/README.md` with commits list, stashed source files, and the suggested porting plan.
+1. Show the commit list to the user.
+2. `AskUserQuestion`: "How do you want to handle your v1 customizations?"
+   - **Copy portable items** (recommended) — copy `container/skills/*`, `.claude/skills/*`, `docs/*`. Scan each with `scanForV1Patterns` from `setup/migrate-v2/shared.ts`.
+   - **Full walkthrough** — go commit by commit, decide together.
+   - **Reference only** — stash to `docs/v1-fork-reference/` for later.
+3. Source code (`src/*`, `container/agent-runner/src/*`) is NOT portable — v2's architecture is fundamentally different. Stash to `docs/v1-fork-reference/` with a README explaining what each file did. Don't translate.
 
 ## Principles
 
-- **Never silently copy code.** Read, explain, propose, apply. Show diffs before applying when non-trivial.
-- **Credentials are masked when displayed** (first 4 + `...` + last 4 characters). The handoff file doesn't contain values; keep it that way.
-- **The v1 checkout is read-only.** We never delete or modify `~/nanoclaw`. If the user wants to retire it later, that's a separate conversation.
-- **No migration re-runs.** The `migrate-*` sub-steps are idempotent, but re-running them from inside this skill is almost always the wrong move — finish by hand. Re-running is for when the user re-runs `bash nanoclaw.sh`.
-- **`handoff.json` is source of truth across context compactions.** If the conversation gets compacted mid-work, re-read it and `git status` to recover state. Do not maintain a separate state file.
+- **v1 checkout is read-only.** Never modify files under `handoff.v1_path`.
+- **Show before writing.** Show diffs/proposed content before modifying CLAUDE.local.md or container.json.
+- **Mask credentials** when displaying (first 4 + `...` + last 4 characters).
+- **`handoff.json` is the recovery point.** If context gets compacted, re-read it and `git status` to recover state.
 
-## When you're done
+## Setup steps you can run
 
-- Delete `logs/setup-migration/handoff.json` once every followup is cleared and the user confirms. The file is a working document, not a record — if the user wants a record, offer to move it to `docs/migration-<date>.md` before deleting.
-- Tell the user: if the service is running (check `launchctl list | grep nanoclaw` on macOS or `systemctl --user status nanoclaw*` on Linux), restart it so the seeded `users` / `user_roles` / any channel installs take effect.
+The setup flow at `setup/index.ts` has individual steps you can invoke if something is missing or failed:
+
+```bash
+pnpm exec tsx setup/index.ts --step <name>
+```
+
+| Step | When to use |
+|------|-------------|
+| `onecli` | OneCLI not installed or not healthy |
+| `auth` | No Anthropic credential in vault |
+| `container` | Container image needs rebuild |
+| `service` | Service not installed or not running |
+| `mounts` | Mount allowlist missing |
+| `verify` | End-to-end health check (run after everything else) |
+| `environment` | System check (Node, dirs) |
+
+## When done
+
+1. Run the verify step to confirm everything works:
+   ```bash
+   pnpm exec tsx setup/index.ts --step verify
+   ```
+2. Delete `logs/setup-migration/handoff.json` — offer to save as `docs/migration-<date>.md` first.
+3. Restart the service if running so changes take effect:
+   ```bash
+   # Linux
+   systemctl --user restart nanoclaw-v2-*
+   # macOS
+   launchctl kickstart -k gui/$(id -u)/com.nanoclaw-v2-*
+   ```
