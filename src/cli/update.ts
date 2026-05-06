@@ -178,6 +178,20 @@ export async function runUpdate(args: string[]): Promise<void> {
       }
     }
 
+    // Build env passed to `npm install -g` so the preinstall hook in the
+    // *new* tgz uses our flags (backup dir / skip). The v2 backup logic in
+    // this file ALSO runs when v2 is already installed (v2→v2.next), as a
+    // belt-and-braces guard; on a v1→v2 first upgrade only the preinstall
+    // hook runs, because v1's update.ts doesn't have it.
+    const npmEnv: NodeJS.ProcessEnv = { ...process.env };
+    if (backupDirOverride) npmEnv.NANOCLAW_BACKUP_DIR = backupDirOverride;
+    if (noBackup) npmEnv.NANOCLAW_SKIP_PREINSTALL_BACKUP = '1';
+    // Already done backup above when running from v2; tell preinstall to
+    // skip the duplicate snapshot in that case.
+    if (snapshotPath || stashedBinary) {
+      npmEnv.NANOCLAW_SKIP_PREINSTALL_BACKUP = '1';
+    }
+
     // Determine install source
     if (packagePath) {
       // Local tgz
@@ -189,7 +203,8 @@ export async function runUpdate(args: string[]): Promise<void> {
       console.log(`  Installing from: ${resolved}`);
       execSync(`npm install -g "${resolved}"`, {
         stdio: 'inherit',
-        timeout: 120000,
+        timeout: 600000,
+        env: npmEnv,
       });
     } else if (source === 'github' || source === 'auto') {
       // Try GitHub Release first (or exclusively if --source github)

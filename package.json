@@ -22,7 +22,8 @@
     "auth": "tsx src/whatsapp-auth.ts",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "preinstall": "node scripts/preinstall-backup.mjs"
   },
   "dependencies": {
     "@github/copilot-sdk": "^0.2.0",
@@ -101,6 +102,7 @@
     "install.ps1",
     "install.sh",
     "scripts/postinstall.mjs",
+    "scripts/preinstall-backup.mjs",
     "scripts/read-credential.ps1",
     "scripts/setup-teams.ps1",
     "scripts/setup-teams.sh",
