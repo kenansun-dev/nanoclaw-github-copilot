@@ -52,6 +52,8 @@ export async function runUpdate(args: string[]): Promise<void> {
   // Parse flags
   let packagePath: string | null = null;
   let source: 'npm' | 'github' | 'auto' = 'auto';
+  let backupDirOverride: string | null = null;
+  let noBackup = false;
 
   const pkgIdx = args.indexOf('--package');
   if (pkgIdx !== -1 && args[pkgIdx + 1]) {
@@ -61,6 +63,70 @@ export async function runUpdate(args: string[]): Promise<void> {
   if (srcIdx !== -1 && args[srcIdx + 1]) {
     const s = args[srcIdx + 1].toLowerCase();
     if (s === 'npm' || s === 'github') source = s;
+  }
+  const bIdx = args.indexOf('--backup-dir');
+  if (bIdx !== -1 && args[bIdx + 1]) {
+    backupDirOverride = path.resolve(args[bIdx + 1]);
+  }
+  if (args.includes('--no-backup')) noBackup = true;
+
+  // ─── Pre-install: backup workspace + stash current binary ─────────────
+  // Skipped only when the user explicitly passes --no-backup.
+  let backupDir: string | null = null;
+  let snapshotPath: string | null = null;
+  let stashedBinary: string | null = null;
+  try {
+    const {
+      defaultBackupDir,
+      dirSizeBytes,
+      freeBytesAt,
+      humanBytes,
+      snapshotWorkspace,
+      stashCurrentBinary,
+      ensureBackupDir,
+    } = await import('./backup.js');
+    const { resolveWorkspace } = await import('../workspace.js');
+    const ws = resolveWorkspace();
+
+    if (noBackup) {
+      console.log('  ⚠️  --no-backup: skipping workspace snapshot (rollback will be impossible without an external backup)');
+    } else if (!fs.existsSync(ws)) {
+      console.log(`  (no workspace at ${ws} yet — skipping backup)`);
+    } else {
+      backupDir = backupDirOverride ?? defaultBackupDir();
+      ensureBackupDir(backupDir);
+
+      // Disk pre-check: need at least 1.2× workspace size free at backup target.
+      const wsSize = dirSizeBytes(ws);
+      const free = freeBytesAt(backupDir);
+      const need = Math.ceil(wsSize * 1.2);
+      console.log(
+        `  workspace=${humanBytes(wsSize)}, free@backup=${humanBytes(free)}, need≈${humanBytes(need)}`,
+      );
+      if (free < need) {
+        console.error(
+          `❌ Not enough disk space at ${backupDir} for safe backup.\n` +
+            `   Free up space, or pass --backup-dir <path-on-bigger-fs>,\n` +
+            `   or pass --no-backup if you have your own backup (rollback won't work).`,
+        );
+        process.exit(1);
+      }
+
+      console.log(`  Snapshotting workspace → ${backupDir}/workspace-<ts>/ ...`);
+      snapshotPath = snapshotWorkspace(backupDir);
+      console.log(`  ✅ Workspace snapshot: ${snapshotPath}`);
+
+      console.log('  Stashing current binary as nanoclaw-prev.tgz ...');
+      stashedBinary = stashCurrentBinary(backupDir);
+      if (stashedBinary) {
+        console.log(`  ✅ Previous binary stashed: ${stashedBinary}`);
+      } else {
+        console.log('  ⚠️  Could not stash current binary (npm pack failed); rollback will need a manually saved tgz');
+      }
+    }
+  } catch (err: any) {
+    console.error(`❌ Backup step failed: ${err?.message ?? err}`);
+    process.exit(1);
   }
 
   // Show current version
@@ -221,6 +287,10 @@ export async function runUpdate(args: string[]): Promise<void> {
     } catch {
       console.log('');
       console.log('✅ Update complete!');
+    }
+    if (snapshotPath || stashedBinary) {
+      console.log('');
+      console.log('Rollback: nanoclaw rollback' + (backupDir ? ` --backup-dir ${backupDir}` : ''));
     }
   } catch (err: any) {
     console.error('❌ Update failed:', err.message || err);

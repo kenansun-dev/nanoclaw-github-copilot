@@ -1,23 +1,27 @@
 /**
  * Workspace directory name — single source of truth.
  *
- * v2-merge branch: '.nanoclaw-v2' (physically isolated from v1 prod data).
- * Merge-to-main: revert this constant to '.nanoclaw' before shipping v2 as default.
+ * Default: `.nanoclaw` (v1 + v2 share the same prod path; v2 schema is
+ * back-compat with v1 today, so an in-place upgrade reads the existing
+ * data without conversion).
  *
- * NOT exposed via env var on purpose — kenan asked for code-constant config only,
- * to keep v2 staging deploys impossible to misroute via stray env settings.
+ * Dev / staging override: set `NANOCLAW_WORKSPACE_DIR=.nanoclaw-staging`
+ * (basename only, lives under $HOME) to physically isolate a staging
+ * deploy from prod data. Existing `NANOCLAW_WORKSPACE=/abs/path` still
+ * wins over both — see `./workspace.ts` resolution priority.
  *
- * Any module that needs to compute a `~/.nanoclaw*` path MUST import this constant
- * (or use `workspacePath()` from `./workspace`) instead of hardcoding the literal
- * '.nanoclaw' string. The startup guard in `./workspace.ts` asserts the resolved
- * path's basename matches WORKSPACE_DIR_NAME and aborts otherwise.
+ * History: v2-merge originally hard-coded `.nanoclaw-v2` as a staging
+ * guard while the schema was unverified. Real-user upgrade is "no-seam"
+ * (data + .env + cron continue at the same path), so the constant is
+ * back to `.nanoclaw` and the env var carries the dev opt-out.
  */
-export const WORKSPACE_DIR_NAME = '.nanoclaw-v2';
+export const WORKSPACE_DIR_NAME =
+  process.env.NANOCLAW_WORKSPACE_DIR && process.env.NANOCLAW_WORKSPACE_DIR.trim() !== ''
+    ? process.env.NANOCLAW_WORKSPACE_DIR.trim()
+    : '.nanoclaw';
 
 /**
- * Legacy workspace dir name (v1 prod data). Used ONLY by:
- *   - first-run bootstrap to seed v2 from v1
- *   - startup guard error messages
- * Do NOT use this for any read/write path resolution.
+ * Legacy constant kept to avoid breaking any importers that still
+ * reference it (e.g. test fixtures). Always equals `.nanoclaw`.
  */
 export const LEGACY_WORKSPACE_DIR_NAME = '.nanoclaw';

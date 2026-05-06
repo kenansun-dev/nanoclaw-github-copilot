@@ -1,8 +1,6 @@
 /**
  * Workspace resolution for nanoclaw.
  * Default workspace dir name comes from `./workspace-config.ts` (single source of truth).
- * On v2-merge branch the constant resolves to `~/.nanoclaw-v2` to keep v2 staging
- * physically isolated from v1 prod data in `~/.nanoclaw`.
  *
  * Resolution priority: setWorkspace() > NANOCLAW_WORKSPACE env > <home>/<WORKSPACE_DIR_NAME>.
  */
@@ -10,13 +8,9 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import {
-  WORKSPACE_DIR_NAME,
-  LEGACY_WORKSPACE_DIR_NAME,
-} from './workspace-config.js';
+import { WORKSPACE_DIR_NAME } from './workspace-config.js';
 
 const DEFAULT_WORKSPACE = path.join(os.homedir(), WORKSPACE_DIR_NAME);
-const LEGACY_WORKSPACE = path.join(os.homedir(), LEGACY_WORKSPACE_DIR_NAME);
 
 let _workspace: string | null = null;
 
@@ -38,68 +32,17 @@ export function resolveWorkspace(): string {
 }
 
 /**
- * Startup guard: assert the resolved workspace is NOT the legacy v1 path.
- *
- * v2 builds must never read/write `~/.nanoclaw/` (v1 prod data). If a stray
- * --workspace flag or env var routes us there, abort hard with a red message
- * before any side effects can hit v1 data.
- *
- * Returns the resolved workspace path on success.
- * Throws (and logs to stderr) if the resolved path equals the legacy v1 path.
+ * Backward-compat shims. The v2-merge staging guard + seed copy logic
+ * was removed once `WORKSPACE_DIR_NAME` defaulted back to `.nanoclaw`
+ * (in-place upgrade with no path split). Kept as no-ops so existing
+ * call sites in `index.ts` keep compiling without churn; will be
+ * deleted in a future cleanup.
  */
 export function assertWorkspaceIsolation(): string {
-  const resolved = resolveWorkspace();
-  const resolvedAbs = path.resolve(resolved);
-  const legacyAbs = path.resolve(LEGACY_WORKSPACE);
-  if (resolvedAbs === legacyAbs) {
-    const msg =
-      `\n\x1b[31m[v2 workspace guard] FATAL: workspace resolved to legacy v1 path ${legacyAbs}.\x1b[0m\n` +
-      `v2 builds must use ${DEFAULT_WORKSPACE} (or another non-v1 path).\n` +
-      `Check: --workspace flag, NANOCLAW_WORKSPACE env var, systemd unit Environment=.\n`;
-    process.stderr.write(msg);
-    throw new Error(
-      `Workspace guard tripped: refusing to run v2 build against v1 path ${legacyAbs}`,
-    );
-  }
-  return resolved;
+  return resolveWorkspace();
 }
-
-/**
- * First-run bootstrap: if the v2 workspace dir does not exist but the legacy v1
- * dir does, seed the v2 dir from v1 with a recursive copy. Idempotent: no-op if
- * v2 dir already exists. Returns true if a seed copy ran.
- *
- * Intentionally a synchronous best-effort copy — if it fails, log a warning
- * and let `ensureWorkspace()` create an empty v2 dir as fallback. The user can
- * always re-seed manually with `cp -a`.
- */
 export function seedV2FromV1IfNeeded(): boolean {
-  const v2 = DEFAULT_WORKSPACE;
-  const v1 = LEGACY_WORKSPACE;
-  if (fs.existsSync(v2)) return false;
-  if (!fs.existsSync(v1)) return false;
-  try {
-    process.stderr.write(
-      `\n[v2 workspace] First run detected. Seeding ${v2} from ${v1} (cp -a)...\n`,
-    );
-    // Use fs.cpSync (Node 16.7+) for recursive copy preserving perms/symlinks.
-    fs.cpSync(v1, v2, {
-      recursive: true,
-      preserveTimestamps: true,
-      // dereference: false → preserve symlinks rather than follow them.
-      dereference: false,
-      // verbatimSymlinks: true → keep symlink targets exactly as written.
-      verbatimSymlinks: true,
-    });
-    process.stderr.write(`[v2 workspace] Seed complete: ${v2}\n\n`);
-    return true;
-  } catch (err) {
-    process.stderr.write(
-      `[v2 workspace] WARN: seed copy failed (${(err as Error).message}). ` +
-        `Continuing with empty workspace; re-seed manually with: cp -a ${v1} ${v2}\n`,
-    );
-    return false;
-  }
+  return false;
 }
 
 /**

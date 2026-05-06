@@ -165,6 +165,11 @@ try {
     case 'update':
       await runUpdateCmd(commandArgs);
       break;
+    case 'rollback': {
+      const { runRollback } = await import('./cli/rollback.js');
+      await runRollback(commandArgs);
+      break;
+    }
     default:
       console.error(`Unknown command: ${command}`);
       console.error('Run "nanoclaw --help" for usage.');
@@ -1041,6 +1046,14 @@ Setup
   init                              Initialize workspace
   doctor                            Check dependencies & config health
   update                            Update to latest version
+                                    --package <tgz>     Install local tgz
+                                    --backup-dir <path> Override backup location
+                                    --no-backup         Skip workspace snapshot (DANGEROUS)
+  rollback                          Restore previous binary + workspace snapshot
+                                    --backup-dir <path> Pick backup root
+                                    --to <snapshot>     Restore a specific snapshot
+                                    --no-keep-current   Delete current ws (default: side-stash)
+                                    --dry-run           Print plan only
 
 Service
   start                             Start nanoclaw (background)

@@ -9,55 +9,42 @@ import {
   setWorkspace,
   resolveWorkspace,
   assertWorkspaceIsolation,
+  seedV2FromV1IfNeeded,
 } from './workspace.js';
 
-describe('workspace-config (v2 isolation)', () => {
+describe('workspace-config (in-place upgrade defaults)', () => {
   afterEach(() => {
-    setWorkspace(''); // reset between tests
+    setWorkspace('');
     delete process.env.NANOCLAW_WORKSPACE;
   });
 
-  it('WORKSPACE_DIR_NAME is the v2 isolated dir on this branch', () => {
-    expect(WORKSPACE_DIR_NAME).toBe('.nanoclaw-v2');
+  it('WORKSPACE_DIR_NAME defaults to .nanoclaw (in-place v1↔v2 path)', () => {
+    // Module-load-time eval; env override would have been set before import.
+    // In normal test run NANOCLAW_WORKSPACE_DIR is unset → default applies.
+    if (!process.env.NANOCLAW_WORKSPACE_DIR) {
+      expect(WORKSPACE_DIR_NAME).toBe('.nanoclaw');
+    }
   });
 
-  it('LEGACY_WORKSPACE_DIR_NAME stays .nanoclaw for guard checks', () => {
+  it('LEGACY_WORKSPACE_DIR_NAME stays .nanoclaw', () => {
     expect(LEGACY_WORKSPACE_DIR_NAME).toBe('.nanoclaw');
   });
 
   it('resolveWorkspace defaults to <home>/<WORKSPACE_DIR_NAME>', () => {
-    setWorkspace(''); // clear any test override
+    setWorkspace('');
     delete process.env.NANOCLAW_WORKSPACE;
     const expected = path.join(os.homedir(), WORKSPACE_DIR_NAME);
     expect(resolveWorkspace()).toBe(expected);
   });
 
-  it('assertWorkspaceIsolation throws when workspace == legacy v1 path', () => {
-    const v1Path = path.join(os.homedir(), LEGACY_WORKSPACE_DIR_NAME);
-    setWorkspace(v1Path);
-    expect(() => assertWorkspaceIsolation()).toThrow(/v1 path/i);
-  });
-
-  it('assertWorkspaceIsolation passes for v2 default path', () => {
-    setWorkspace(''); // clear
+  it('assertWorkspaceIsolation is a no-op shim and returns resolved ws', () => {
+    setWorkspace('');
     delete process.env.NANOCLAW_WORKSPACE;
     expect(() => assertWorkspaceIsolation()).not.toThrow();
-    const ws = assertWorkspaceIsolation();
-    expect(path.basename(ws)).toBe(WORKSPACE_DIR_NAME);
+    expect(assertWorkspaceIsolation()).toBe(resolveWorkspace());
   });
 
-  it('assertWorkspaceIsolation passes for arbitrary non-v1 path', () => {
-    const customPath = path.join(os.tmpdir(), 'nanoclaw-test-isolated');
-    setWorkspace(customPath);
-    expect(() => assertWorkspaceIsolation()).not.toThrow();
-  });
-
-  it('assertWorkspaceIsolation rejects v1 even via env var', () => {
-    setWorkspace(''); // clear explicit override so env var takes effect
-    process.env.NANOCLAW_WORKSPACE = path.join(
-      os.homedir(),
-      LEGACY_WORKSPACE_DIR_NAME,
-    );
-    expect(() => assertWorkspaceIsolation()).toThrow(/v1 path/i);
+  it('seedV2FromV1IfNeeded is a no-op shim and returns false', () => {
+    expect(seedV2FromV1IfNeeded()).toBe(false);
   });
 });
