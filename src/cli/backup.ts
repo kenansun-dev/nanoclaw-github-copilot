@@ -124,11 +124,17 @@ export function stashCurrentBinary(backupDir: string): string | null {
   try {
     // npm pack writes to cwd; do it in a temp dir then move.
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-prev-'));
-    const out = execSync(`npm pack ${JSON.stringify(installDir)}`, {
-      cwd: tmp,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    // --ignore-scripts: skip the upstream package's own `prepack` (which runs
+    // a full `npm run build` and may reference dev-only scripts not shipped in
+    // the install). The install dir already has dist/; we just need to wrap it.
+    const out = execSync(
+      `npm pack --ignore-scripts ${JSON.stringify(installDir)}`,
+      {
+        cwd: tmp,
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
     const created = out.trim().split('\n').pop() || '';
     const src = path.join(tmp, created);
     if (!fs.existsSync(src)) return null;

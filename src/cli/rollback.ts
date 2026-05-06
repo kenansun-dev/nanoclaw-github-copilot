@@ -32,6 +32,7 @@ interface Options {
   keepCurrent: boolean;
   dryRun: boolean;
   yes: boolean;
+  noBinary: boolean;
 }
 
 function parseArgs(args: string[]): Options {
@@ -40,6 +41,7 @@ function parseArgs(args: string[]): Options {
   let keepCurrent = true; // safer default — never destroy v2 data
   let dryRun = false;
   let yes = false;
+  let noBinary = false;
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -53,11 +55,13 @@ function parseArgs(args: string[]): Options {
       keepCurrent = false;
     } else if (a === '--dry-run') {
       dryRun = true;
+    } else if (a === '--no-binary') {
+      noBinary = true;
     } else if (a === '--yes' || a === '-y') {
       yes = true;
     }
   }
-  return { backupDir, snapshot, keepCurrent, dryRun, yes };
+  return { backupDir, snapshot, keepCurrent, dryRun, yes, noBinary };
 }
 
 function timestamp(): string {
@@ -80,11 +84,18 @@ export async function runRollback(args: string[]): Promise<void> {
   }
 
   const tgz = path.join(opts.backupDir, PREV_BINARY_TGZ);
-  if (!fs.existsSync(tgz)) {
-    console.error(`❌ ${PREV_BINARY_TGZ} not found in ${opts.backupDir}.`);
-    console.error('   Cannot reinstall the previous binary automatically.');
-    console.error('   You can still restore the workspace snapshot manually.');
+  const haveTgz = fs.existsSync(tgz);
+  if (!haveTgz && !opts.noBinary) {
+    console.error(`❌ Previous binary tarball not found: ${tgz}`);
+    console.error('   The last `nanoclaw update` could not stash the prior install');
+    console.error('   (e.g. `npm pack` failed). Two ways forward:');
+    console.error('     1. Drop a v1 tgz at that path manually, then re-run rollback.');
+    console.error('     2. `nanoclaw rollback --no-binary` — restore workspace only,');
+    console.error('        keep the currently-installed binary in place.');
     process.exit(1);
+  }
+  if (!haveTgz && opts.noBinary) {
+    console.log('  --no-binary: skipping binary reinstall, restoring workspace only');
   }
 
   let snapshot: string;
@@ -109,7 +120,7 @@ export async function runRollback(args: string[]): Promise<void> {
 
   console.log('🔁 NanoClaw rollback plan');
   console.log(`  backup dir : ${opts.backupDir}`);
-  console.log(`  binary     : ${tgz}`);
+  console.log(`  binary     : ${haveTgz ? tgz : '(skipped — --no-binary)'}`);
   console.log(`  snapshot   : ${snapshot}`);
   console.log(`  workspace  : ${ws}`);
   if (opts.keepCurrent) {
@@ -151,12 +162,16 @@ export async function runRollback(args: string[]): Promise<void> {
   });
   console.log(`  Restored workspace from ${snapshot}`);
 
-  // Reinstall previous binary.
-  console.log('  Reinstalling previous nanoclaw binary...');
-  execSync(`npm install -g ${JSON.stringify(tgz)}`, {
-    stdio: 'inherit',
-    timeout: 180000,
-  });
+  // Reinstall previous binary (unless --no-binary).
+  if (haveTgz) {
+    console.log('  Reinstalling previous nanoclaw binary...');
+    execSync(`npm install -g ${JSON.stringify(tgz)}`, {
+      stdio: 'inherit',
+      timeout: 180000,
+    });
+  } else {
+    console.log('  (skipping binary reinstall: --no-binary)');
+  }
 
   // Restart.
   try {

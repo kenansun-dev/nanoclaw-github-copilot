@@ -1053,6 +1053,7 @@ Setup
                                     --backup-dir <path> Pick backup root
                                     --to <snapshot>     Restore a specific snapshot
                                     --no-keep-current   Delete current ws (default: side-stash)
+                                    --no-binary         Restore workspace only, skip binary reinstall
                                     --dry-run           Print plan only
 
 Service
