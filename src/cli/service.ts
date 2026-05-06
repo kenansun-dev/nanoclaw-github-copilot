@@ -57,6 +57,7 @@ ExecStart=${execStart}
 Restart=on-failure
 RestartSec=10
 Environment=NANOCLAW_WORKSPACE=${ws}
+EnvironmentFile=-${ws}/.env
 WorkingDirectory=${ws}
 
 [Install]

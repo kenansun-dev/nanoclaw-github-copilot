@@ -533,6 +533,14 @@ async function runService(action: string) {
     fs.mkdirSync(dirname(logFile), { recursive: true });
     fs.mkdirSync(dirname(pidFile), { recursive: true });
 
+    // Load workspace .env into our env BEFORE spawning so the child
+    // inherits TELEGRAM_BOT_TOKEN, COPILOT_GITHUB_TOKEN, MSTEAMS_*, etc.
+    // Fix 2026-05-06: detached daemon was starting with empty env
+    // because no shell sourced ~/.nanoclaw/.env.
+    {
+      const { loadWorkspaceEnv } = await import('./env-loader.js');
+      loadWorkspaceEnv(ws);
+    }
     const child = spawn('node', [entryPoint], {
       detached: true,
       stdio: ['ignore', fs.openSync(logFile, 'a'), fs.openSync(logFile, 'a')],
@@ -572,7 +580,11 @@ async function runService(action: string) {
 async function runDev() {
   // Run in foreground — just exec the main entry point
   const { resolveWorkspace } = await import('./workspace.js');
-  process.env.NANOCLAW_WORKSPACE = resolveWorkspace();
+  const ws = resolveWorkspace();
+  process.env.NANOCLAW_WORKSPACE = ws;
+  // Load .env before importing index.js so config/channels see the env.
+  const { loadWorkspaceEnv } = await import('./env-loader.js');
+  loadWorkspaceEnv(ws);
   await import('./index.js');
 }
 

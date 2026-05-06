@@ -92,6 +92,12 @@ export async function runTui(_args: string[]): Promise<void> {
   const thinkLevel = tuiCfg.thinkLevel || agent.thinkLevel;
 
   const ws = resolveWorkspace();
+  // Load workspace .env so TUI direct-mode (and any subprocess it spawns)
+  // sees TELEGRAM_BOT_TOKEN / COPILOT_GITHUB_TOKEN / MSTEAMS_*. (2026-05-06 fix.)
+  {
+    const { loadWorkspaceEnv } = await import('../env-loader.js');
+    loadWorkspaceEnv(ws);
+  }
   const sockPath =
     process.platform === 'win32' ? SOCK_NAME : path.join(ws, 'tui.sock');
 
