@@ -21,6 +21,7 @@ import path from 'path';
 import { resolveWorkspace } from '../workspace.js';
 
 export const PREV_BINARY_TGZ = 'nanoclaw-prev.tgz';
+export const PREV_INSTALL_DIR = 'nanoclaw-prev-install';
 const WORKSPACE_PREFIX = 'workspace-';
 
 export function defaultBackupDir(): string {
@@ -99,15 +100,19 @@ export function snapshotWorkspace(backupDir: string): string {
 }
 
 /**
- * Capture the currently-installed nanoclaw npm package as a tarball
- * at `<backupDir>/nanoclaw-prev.tgz`. Overwrites any existing file with
- * the same name (only the latest "previous" binary is needed for rollback).
+ * Capture the currently-installed nanoclaw npm package by `cp -a`'ing the
+ * install directory into `<backupDir>/nanoclaw-prev-install/`. We avoid
+ * `npm pack` because the upstream package's `prepare`/`prepack` scripts
+ * (e.g. husky, write-build-info.mjs) run in the install dir's context,
+ * have unmet dev deps, and explode — even with --ignore-scripts.
  *
- * Returns the absolute path of the tarball, or null on failure.
+ * `npm install -g <dir>` accepts a plain directory containing package.json,
+ * so the rollback path doesn't need a real tarball.
+ *
+ * Returns the absolute path of the captured install dir, or null on failure.
  */
 export function stashCurrentBinary(backupDir: string): string | null {
   ensureBackupDir(backupDir);
-  // Resolve install dir of the currently running nanoclaw package.
   let installDir: string;
   try {
     const root = execSync('npm root -g', {
@@ -122,28 +127,48 @@ export function stashCurrentBinary(backupDir: string): string | null {
     return null;
   }
   try {
-    // npm pack writes to cwd; do it in a temp dir then move.
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-prev-'));
-    // --ignore-scripts: skip the upstream package's own `prepack` (which runs
-    // a full `npm run build` and may reference dev-only scripts not shipped in
-    // the install). The install dir already has dist/; we just need to wrap it.
-    const out = execSync(
-      `npm pack --ignore-scripts ${JSON.stringify(installDir)}`,
-      {
-        cwd: tmp,
-        encoding: 'utf-8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
+    const dest = path.join(backupDir, PREV_INSTALL_DIR);
+    if (fs.existsSync(dest)) {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+    execSync(
+      `cp -a ${JSON.stringify(installDir)} ${JSON.stringify(dest)}`,
+      { stdio: 'inherit' },
     );
-    const created = out.trim().split('\n').pop() || '';
-    const src = path.join(tmp, created);
-    if (!fs.existsSync(src)) return null;
-    const dest = path.join(backupDir, PREV_BINARY_TGZ);
-    fs.copyFileSync(src, dest);
-    fs.rmSync(tmp, { recursive: true, force: true });
+    // Defang the captured package.json: npm runs `prepare`/`prepack` for
+    // local-dir installs even with --ignore-scripts in some versions, and
+    // they reference dev-only deps (husky) that aren't present in an end-user
+    // install — leaving rollback unable to reinstall. We ship dist/ already,
+    // so build/lifecycle hooks are unnecessary on rollback.
+    const pkgPath = path.join(dest, 'package.json');
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+      if (pkg.scripts) {
+        for (const k of [
+          'prepare',
+          'prepack',
+          'prepublish',
+          'prepublishOnly',
+          'preinstall',
+          'install',
+          'postinstall',
+          'prebuild',
+          'build',
+        ]) {
+          delete pkg.scripts[k];
+        }
+      }
+      fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+    } catch (err: any) {
+      process.stderr.write(
+        `  ⚠️  Could not defang package.json (${err?.message ?? err}); rollback may need --ignore-scripts manually\n`,
+      );
+    }
     return dest;
   } catch (err: any) {
-    process.stderr.write(`  ⚠️  npm pack of current install failed: ${err?.message ?? err}\n`);
+    process.stderr.write(
+      `  ⚠️  Capture of current install dir failed: ${err?.message ?? err}\n`,
+    );
     return null;
   }
 }

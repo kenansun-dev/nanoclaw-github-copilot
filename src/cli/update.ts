@@ -116,12 +116,12 @@ export async function runUpdate(args: string[]): Promise<void> {
       snapshotPath = snapshotWorkspace(backupDir);
       console.log(`  ✅ Workspace snapshot: ${snapshotPath}`);
 
-      console.log('  Stashing current binary as nanoclaw-prev.tgz ...');
+      console.log('  Stashing current install dir as nanoclaw-prev-install/ ...');
       stashedBinary = stashCurrentBinary(backupDir);
       if (stashedBinary) {
-        console.log(`  ✅ Previous binary stashed: ${stashedBinary}`);
+        console.log(`  ✅ Previous install captured: ${stashedBinary}`);
       } else {
-        console.log('  ⚠️  Could not stash current binary (npm pack failed); rollback will need a manually saved tgz');
+        console.log('  ⚠️  Could not capture current install (cp -a failed); rollback will need a manual v1 tgz at <backup-dir>/nanoclaw-prev.tgz');
       }
     }
   } catch (err: any) {
