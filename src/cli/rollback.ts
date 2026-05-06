@@ -173,10 +173,28 @@ export async function runRollback(args: string[]): Promise<void> {
   // Reinstall previous binary (unless --no-binary).
   if (binSpec) {
     console.log('  Reinstalling previous nanoclaw binary...');
-    execSync(`npm install -g --ignore-scripts ${JSON.stringify(binSpec)}`, {
-      stdio: 'inherit',
-      timeout: 180000,
-    });
+    if (haveDir) {
+      // Captured install dir: node_modules already populated (cp -a copied
+      // native bindings like better_sqlite3.node), package.json already
+      // defanged. Skip lifecycle scripts — nothing to gain, and the
+      // defanged scripts{} block has nothing to run anyway.
+      execSync(`npm install -g --ignore-scripts ${JSON.stringify(binSpec)}`, {
+        stdio: 'inherit',
+        timeout: 180000,
+      });
+    } else {
+      // Legacy tgz path (user-supplied / first-upgrade fallback): the tgz
+      // does NOT ship prebuilt native binaries, so lifecycle scripts MUST
+      // run — specifically better-sqlite3's prebuild-install postinstall,
+      // which downloads the platform-specific .node binding. Skipping it
+      // leaves nanoclaw start-up dead with "Could not locate the bindings
+      // file". The tgz is user-supplied: trust its scripts the same way
+      // the original install did.
+      execSync(`npm install -g ${JSON.stringify(binSpec)}`, {
+        stdio: 'inherit',
+        timeout: 300000,
+      });
+    }
   } else {
     console.log('  (skipping binary reinstall: --no-binary)');
   }
