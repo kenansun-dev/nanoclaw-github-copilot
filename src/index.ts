@@ -1626,6 +1626,18 @@ async function main(): Promise<void> {
     seedV2FromV1IfNeeded();
     const ws = assertWorkspaceIsolation();
     process.stderr.write(`[workspace] ${ws}\n`);
+    // B.5 restore: install daily-rotated file log sink. Must run AFTER
+    // workspace assert (so we know where logs/ goes) but BEFORE any
+    // logger.* call we want captured to disk.
+    try {
+      const { installFileLogSink } = await import('./log-file-sink.js');
+      const file = installFileLogSink();
+      if (file) process.stderr.write(`[log] writing to ${file}\n`);
+    } catch (sinkErr) {
+      process.stderr.write(
+        `[log] file sink install failed (continuing with stdout-only): ${(sinkErr as Error).message}\n`,
+      );
+    }
   } catch (err) {
     process.stderr.write(
       `[workspace] startup guard failed: ${(err as Error).message}\n`,

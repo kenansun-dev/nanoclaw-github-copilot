@@ -51,33 +51,63 @@ function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
 }
 
+// Cross-platform recursive directory size in KiB. Node-only, no shell.
+// Walks lazily, ignores symlinks, swallows per-entry errors so one
+// permission-denied file doesn't zero the estimate.
 function dirSizeKb(p) {
-  try {
-    const out = execSync(`du -sk ${JSON.stringify(p)}`, {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    return parseInt(out.split(/\s+/)[0], 10);
-  } catch {
-    return 0;
+  let bytes = 0;
+  const stack = [p];
+  while (stack.length) {
+    const cur = stack.pop();
+    let st;
+    try {
+      st = fs.lstatSync(cur);
+    } catch {
+      continue;
+    }
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) {
+      let entries = [];
+      try {
+        entries = fs.readdirSync(cur);
+      } catch {
+        continue;
+      }
+      for (const e of entries) stack.push(path.join(cur, e));
+    } else if (st.isFile()) {
+      bytes += st.size;
+    }
   }
+  return Math.ceil(bytes / 1024);
 }
 
+// Cross-platform free space via fs.statfsSync (Node ≥18.15). Falls back
+// to df on POSIX systems where statfsSync isn't available.
 function freeKbAt(p) {
-  try {
-    // Probe nearest existing ancestor.
-    let probe = p;
-    while (probe && !fs.existsSync(probe)) probe = path.dirname(probe);
-    const out = execSync(`df -Pk ${JSON.stringify(probe)}`, {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const lines = out.trim().split('\n');
-    const cols = lines[lines.length - 1].split(/\s+/);
-    return parseInt(cols[3], 10);
-  } catch {
-    return Infinity;
+  let probe = p;
+  while (probe && !fs.existsSync(probe)) probe = path.dirname(probe);
+  if (typeof fs.statfsSync === 'function') {
+    try {
+      const s = fs.statfsSync(probe);
+      return Math.floor((Number(s.bavail) * Number(s.bsize)) / 1024);
+    } catch {
+      /* fall through */
+    }
   }
+  if (process.platform !== 'win32') {
+    try {
+      const out = execSync(`df -Pk ${JSON.stringify(probe)}`, {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      const lines = out.trim().split('\n');
+      const cols = lines[lines.length - 1].split(/\s+/);
+      return parseInt(cols[3], 10);
+    } catch {
+      /* ignore */
+    }
+  }
+  return Infinity;
 }
 
 function npmRootGlobal() {
@@ -100,8 +130,16 @@ function timestamp() {
 function snapshotWorkspace(ws, backupDir) {
   const dest = path.join(backupDir, `workspace-${timestamp()}`);
   log(`snapshot workspace → ${dest}`);
-  execSync(`cp -a ${JSON.stringify(ws)} ${JSON.stringify(dest)}`, {
-    stdio: 'inherit',
+  // Cross-platform: fs.cpSync (Node ≥16.7) preserves file mode/times,
+  // skips symlinks correctly, and works on Windows where `cp -a` fails
+  // silently. Used to use `cp -a` which is why Windows users ended up
+  // with empty backup dirs (B.5 regression).
+  fs.cpSync(ws, dest, {
+    recursive: true,
+    preserveTimestamps: true,
+    dereference: false,
+    errorOnExist: false,
+    force: true,
   });
   return dest;
 }

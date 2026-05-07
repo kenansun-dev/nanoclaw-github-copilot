@@ -49,32 +49,59 @@ function timestamp(): string {
 /** Bytes used by a directory tree (best-effort, follows symlinks). */
 export function dirSizeBytes(dir: string): number {
   if (!fs.existsSync(dir)) return 0;
-  try {
-    const out = execSync(`du -sb ${JSON.stringify(dir)}`, {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    return parseInt(out.split(/\s+/)[0], 10) || 0;
-  } catch {
-    return 0;
+  let bytes = 0;
+  const stack = [dir];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    let st: fs.Stats;
+    try {
+      st = fs.lstatSync(cur);
+    } catch {
+      continue;
+    }
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) {
+      let entries: string[] = [];
+      try {
+        entries = fs.readdirSync(cur);
+      } catch {
+        continue;
+      }
+      for (const e of entries) stack.push(path.join(cur, e));
+    } else if (st.isFile()) {
+      bytes += st.size;
+    }
   }
+  return bytes;
 }
 
 /** Free bytes available on the filesystem holding `dir` (or its parent). */
 export function freeBytesAt(dir: string): number {
-  const probe = fs.existsSync(dir) ? dir : path.dirname(dir);
-  try {
-    const out = execSync(`df -PB1 ${JSON.stringify(probe)}`, {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const lines = out.trim().split('\n');
-    const cols = lines[lines.length - 1].split(/\s+/);
-    // Filesystem 1B-blocks Used Available Capacity Mounted-on
-    return parseInt(cols[3], 10) || 0;
-  } catch {
-    return Number.POSITIVE_INFINITY;
+  let probe = fs.existsSync(dir) ? dir : path.dirname(dir);
+  // Node ≥18.15 fs.statfsSync is cross-platform incl. Windows.
+  const statfs = (fs as unknown as { statfsSync?: (p: string) => { bavail: bigint | number; bsize: bigint | number } }).statfsSync;
+  if (typeof statfs === 'function') {
+    try {
+      const s = statfs(probe);
+      return Number(s.bavail) * Number(s.bsize);
+    } catch {
+      /* fall through */
+    }
   }
+  if (process.platform !== 'win32') {
+    try {
+      const out = execSync(`df -PB1 ${JSON.stringify(probe)}`, {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      const lines = out.trim().split('\n');
+      const cols = lines[lines.length - 1].split(/\s+/);
+      return parseInt(cols[3], 10) || 0;
+    } catch {
+      /* fall through */
+    }
+  }
+  return Number.POSITIVE_INFINITY;
 }
 
 export function ensureBackupDir(dir: string): void {
@@ -92,9 +119,14 @@ export function snapshotWorkspace(backupDir: string): string {
   }
   ensureBackupDir(backupDir);
   const dest = path.join(backupDir, `${WORKSPACE_PREFIX}${timestamp()}`);
-  // cp -a preserves perms, symlinks, timestamps. Faster + simpler than fs.cpSync.
-  execSync(`cp -a ${JSON.stringify(ws)} ${JSON.stringify(dest)}`, {
-    stdio: 'inherit',
+  // Cross-platform copy. Used to be `cp -a` which silently failed on
+  // Windows (B.5 regression that left users with empty backup dirs).
+  fs.cpSync(ws, dest, {
+    recursive: true,
+    preserveTimestamps: true,
+    dereference: false,
+    errorOnExist: false,
+    force: true,
   });
   return dest;
 }
@@ -131,10 +163,13 @@ export function stashCurrentBinary(backupDir: string): string | null {
     if (fs.existsSync(dest)) {
       fs.rmSync(dest, { recursive: true, force: true });
     }
-    execSync(
-      `cp -a ${JSON.stringify(installDir)} ${JSON.stringify(dest)}`,
-      { stdio: 'inherit' },
-    );
+    fs.cpSync(installDir, dest, {
+      recursive: true,
+      preserveTimestamps: true,
+      dereference: false,
+      errorOnExist: false,
+      force: true,
+    });
     // Defang the captured package.json: npm runs `prepare`/`prepack` for
     // local-dir installs even with --ignore-scripts in some versions, and
     // they reference dev-only deps (husky) that aren't present in an end-user
