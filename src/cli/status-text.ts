@@ -42,7 +42,11 @@ export interface StatusInfo {
   chatCount: number;
   tunnelRunning: boolean;
   workspace: string;
-  logFile: string;
+  /** Workspace logs directory. The active log file rotates daily
+   * (`nanoclaw-YYYY-MM-DD.log`) and gets gzipped after a week, so
+   * `/status` shows the directory and lets users discover the
+   * current/archived files themselves. */
+  logDir: string;
   /** When chatJid was supplied, true if any field came from the per-session
    * sessions-table override (instead of the global agents.defaults config). */
   hasSessionOverride?: boolean;
@@ -70,11 +74,12 @@ export async function collectStatus(chatJid?: string): Promise<StatusInfo> {
   const ws = resolveWorkspace();
   const pidFile = join(ws, 'state', 'nanoclaw.pid');
   // B.5 + 2026-05-09 followup: daily-rotated daemon log
-  // (`nanoclaw-YYYY-MM-DD.log`). Use the `paths` getter so this stays
-  // in sync with `nanoclaw logs` and the file the in-process log sink
-  // actually writes to.
+  // (`nanoclaw-YYYY-MM-DD.log`). `/status` displays the logs *directory*
+  // (kenan, 2026-05-09 — "显示 log 文件夹即可，让用户自己找");
+  // `nanoclaw logs` still reads `paths.logFile` directly to tail the
+  // current daily file.
   const { paths: wsPaths } = await import('../workspace.js');
-  const logFile = wsPaths.logFile;
+  const logDir = wsPaths.logDir;
 
   const cfg = loadConfig();
   const agent = (cfg.agents?.defaults || {}) as any;
@@ -251,7 +256,7 @@ export async function collectStatus(chatJid?: string): Promise<StatusInfo> {
     chatCount,
     tunnelRunning,
     workspace: ws,
-    logFile,
+    logDir,
     chatJid,
     hasSessionOverride: overrideFields.length > 0,
     sessionOverrideFields: overrideFields,
@@ -304,7 +309,7 @@ export function formatStatusText(s: StatusInfo): string {
     lines.push(`🌐 Tunnel:    running`);
   }
   lines.push(`📁 Workspace: ${s.workspace}`);
-  lines.push(`📝 Logs:      ${s.logFile}`);
+  lines.push(`📝 Logs:      ${s.logDir}`);
   lines.push('');
   return lines.join('\n');
 }

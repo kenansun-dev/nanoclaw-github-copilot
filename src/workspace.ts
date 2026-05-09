@@ -120,15 +120,20 @@ export const paths = {
   },
   get logFile() {
     // B.5 + 2026-05-09 followup: file logging is daily-rotated
-    // (`nanoclaw-YYYY-MM-DD.log`). Report today's daily file so
-    // `/status`, `nanoclaw status`, and `nanoclaw logs` all point at
-    // the file the daemon is actually writing to. Pure path math, no
-    // file-system / module-load side effects (avoids circular dep on
-    // log-file-sink which imports this module).
+    // (`nanoclaw-YYYY-MM-DD.log`). Return today's daily file (pure path
+    // math, no fs side effects). Used by `nanoclaw logs` to tail the
+    // active file and by `nanoclaw start` to redirect daemon stdio.
     const d = new Date();
     const yyyy = d.getFullYear();
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
     return workspacePath('logs', `nanoclaw-${yyyy}-${mm}-${dd}.log`);
+  },
+  /** Workspace logs directory. Reported by `/status` so users know
+   * where to find rotated/archived files (the active filename rotates
+   * daily and gets gzipped after a week, so showing a single path is
+   * misleading). */
+  get logDir() {
+    return workspacePath('logs');
   },
 };
