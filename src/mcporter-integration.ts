@@ -57,34 +57,78 @@ export interface McporterMcpServerConfig {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/**
- * Check if mcporter CLI is installed.
- */
-export function isMcporterInstalled(): boolean {
-  try {
-    execSync('mcporter --help', { stdio: 'pipe', timeout: 5000 });
-    return true;
-  } catch {
-    // Try npx
-    try {
-      execSync('npx mcporter --help', { stdio: 'pipe', timeout: 10000 });
-      return true;
-    } catch {
-      return false;
-    }
-  }
+// In-memory cache for installed/which probes — calling /mcp on a chat
+// surface should never spawn a child process more than once per minute.
+// Windows in particular pops a brief console window for execSync without
+// `windowsHide`, and `/mcp` previously fired up to 2 probes per call.
+const PROBE_TTL_MS = 60_000;
+let installedCache: { value: boolean; at: number } | null = null;
+let whichCache: {
+  value: { command: string; prefix: string[] };
+  at: number;
+} | null = null;
+
+/** Test seam: forget cached probe results. */
+export function _resetMcporterProbeCache(): void {
+  installedCache = null;
+  whichCache = null;
 }
 
 /**
- * Get the mcporter command (direct or via npx).
+ * Check if mcporter CLI is installed. Result cached for 60s.
+ *
+ * `windowsHide: true` keeps Windows from flashing a cmd.exe window
+ * every time `/mcp` runs (kenan, 2026-05-09).
+ */
+export function isMcporterInstalled(): boolean {
+  const now = Date.now();
+  if (installedCache && now - installedCache.at < PROBE_TTL_MS) {
+    return installedCache.value;
+  }
+  let value = false;
+  try {
+    execSync('mcporter --help', {
+      stdio: 'pipe',
+      timeout: 5000,
+      windowsHide: true,
+    });
+    value = true;
+  } catch {
+    try {
+      execSync('npx mcporter --help', {
+        stdio: 'pipe',
+        timeout: 10000,
+        windowsHide: true,
+      });
+      value = true;
+    } catch {
+      value = false;
+    }
+  }
+  installedCache = { value, at: now };
+  return value;
+}
+
+/**
+ * Get the mcporter command (direct or via npx). Result cached for 60s
+ * to avoid spawning `which` on every `/mcp` invocation.
  */
 function getMcporterCommand(): { command: string; prefix: string[] } {
-  try {
-    execSync('which mcporter', { stdio: 'pipe' });
-    return { command: 'mcporter', prefix: [] };
-  } catch {
-    return { command: 'npx', prefix: ['mcporter'] };
+  const now = Date.now();
+  if (whichCache && now - whichCache.at < PROBE_TTL_MS) {
+    return whichCache.value;
   }
+  // `where` on Windows; `which` on POSIX. Both honour windowsHide.
+  const probeCmd = process.platform === 'win32' ? 'where mcporter' : 'which mcporter';
+  let value: { command: string; prefix: string[] };
+  try {
+    execSync(probeCmd, { stdio: 'pipe', windowsHide: true });
+    value = { command: 'mcporter', prefix: [] };
+  } catch {
+    value = { command: 'npx', prefix: ['mcporter'] };
+  }
+  whichCache = { value, at: now };
+  return value;
 }
 
 /**
@@ -101,6 +145,7 @@ export function runMcporter(
     timeout: options.timeout || 30000,
     cwd: options.cwd,
     encoding: 'utf-8',
+    windowsHide: true,
   });
   return result.trim();
 }
@@ -227,6 +272,7 @@ export async function authenticateServer(
     const proc = spawn(command, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 120000,
+      windowsHide: true,
     });
 
     let stdout = '';

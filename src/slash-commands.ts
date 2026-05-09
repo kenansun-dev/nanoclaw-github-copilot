@@ -294,7 +294,11 @@ export async function handleSlashCommand(
       try {
         const probe = /\s+probe(\s|$)/.test(input);
         const { getMcpText } = await import('./cli/mcp-text.js');
-        const text = await getMcpText(probe);
+        // Teams renders box-drawing + check/cross glyphs as `?` inside
+        // code blocks; force ASCII fallback there. Telegram/Discord/CLI
+        // keep the prettier Unicode glyphs.
+        const ascii = ctx.channel.name === 'teams';
+        const text = await getMcpText(probe, { ascii });
         await ctx.channel.sendMessage(
           ctx.chatJid,
           '```\n' + text.trim() + '\n```',

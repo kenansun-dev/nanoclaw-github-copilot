@@ -127,6 +127,14 @@ export async function collectMcpList(
   };
 }
 
+/** Render options. `ascii: true` swaps Unicode glyphs (✓ ! ✗ ? ─) for
+ *  ASCII-safe equivalents (`[OK] [!] [X] [?]` / `-`). Channels with
+ *  poor Unicode rendering (Teams in code blocks) should pass
+ *  `ascii: true`; Telegram + Discord + plain CLI keep the default. */
+export interface FormatOptions {
+  ascii?: boolean;
+}
+
 /**
  * Format an McpListInfo as a plain-text block for chat / CLI display.
  *
@@ -141,11 +149,21 @@ export async function collectMcpList(
  *   Source: ~/.nanoclaw/nanoclaw.json + ~/.nanoclaw/mcp.json
  *   mcporter: installed (daemon: running)
  */
-export function formatMcpList(info: McpListInfo): string {
+export function formatMcpList(
+  info: McpListInfo,
+  opts: FormatOptions = {},
+): string {
+  const ascii = opts.ascii === true;
   const lines: string[] = [];
   const n = info.servers.length;
+  const ruleChar = ascii ? '-' : '─';
+  const okGlyph = ascii ? '[OK]' : '✓';
+  const authGlyph = ascii ? '[!] ' : '!';
+  const errGlyph = ascii ? '[X] ' : '✗';
+  const unkGlyph = ascii ? '[?] ' : '?';
+
   lines.push(`MCP Servers (${n} configured)`);
-  lines.push('─'.repeat(42));
+  lines.push(ruleChar.repeat(42));
 
   if (n === 0) {
     lines.push('(no servers configured)');
@@ -159,12 +177,12 @@ export function formatMcpList(info: McpListInfo): string {
     for (const s of info.servers) {
       const glyph =
         s.status === 'connected'
-          ? '✓'
+          ? okGlyph
           : s.status === 'auth-pending'
-            ? '!'
+            ? authGlyph
             : s.status === 'error'
-              ? '✗'
-              : '?';
+              ? errGlyph
+              : unkGlyph;
       const name = s.name.padEnd(nameW);
       const type = s.type.padEnd(typeW);
       const tail = s.statusDetail ? `  (${s.statusDetail})` : '';
@@ -180,14 +198,17 @@ export function formatMcpList(info: McpListInfo): string {
   lines.push(`mcporter: ${mc}`);
   lines.push('');
   lines.push(
-    'Legend: ✓ connected  ! auth-pending  ✗ error  ? unknown (run `/mcp probe` to check)',
+    `Legend: ${okGlyph} connected  ${authGlyph} auth-pending  ${errGlyph} error  ${unkGlyph} unknown (run \`/mcp probe\` to check)`,
   );
 
   return lines.join('\n');
 }
 
 /** One-shot helper used by both CLI and slash command. */
-export async function getMcpText(probe: boolean = false): Promise<string> {
+export async function getMcpText(
+  probe: boolean = false,
+  opts: FormatOptions = {},
+): Promise<string> {
   const info = await collectMcpList(probe);
-  return formatMcpList(info);
+  return formatMcpList(info, opts);
 }

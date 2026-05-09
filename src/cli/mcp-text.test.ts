@@ -10,6 +10,41 @@ import { formatMcpList, collectMcpList, type McpListInfo } from './mcp-text.js';
 import { setWorkspace, ensureWorkspace } from '../workspace.js';
 import { saveConfig } from '../config-loader.js';
 
+describe('formatMcpList ascii fallback', () => {
+  const baseInfo: McpListInfo = {
+    servers: [
+      { name: 'github', type: 'http', transport: 'https://api/', source: 'merged', status: 'connected' },
+      { name: 'mem', type: 'stdio', transport: 'npx srv', source: 'merged', status: 'unknown' },
+      { name: 'lin', type: 'http', transport: 'https://lin/', source: 'merged', status: 'auth-pending' },
+      { name: 'bad', type: 'http', transport: 'https://bad/', source: 'merged', status: 'error' },
+    ],
+    configPath: '/x/nanoclaw.json',
+    mcpJsonPath: '/x/mcp.json',
+    mcporterInstalled: true,
+  };
+
+  it('uses Unicode glyphs by default (Telegram/Discord/CLI)', () => {
+    const out = formatMcpList(baseInfo);
+    expect(out).toContain('\u2500'); // box-drawing rule
+    expect(out).toMatch(/\u2713 github/);
+    expect(out).toMatch(/\u2717 bad/);
+    expect(out).not.toContain('[OK]');
+  });
+
+  it('swaps to ASCII when ascii: true (Teams)', () => {
+    const out = formatMcpList(baseInfo, { ascii: true });
+    expect(out).not.toContain('\u2500');
+    expect(out).not.toContain('\u2713');
+    expect(out).not.toContain('\u2717');
+    expect(out).toContain('[OK] github');
+    expect(out).toContain('[X]  bad');
+    expect(out).toContain('[!]  lin');
+    expect(out).toContain('[?]  mem');
+    // rule line is ASCII dashes
+    expect(out).toMatch(/^-{42}$/m);
+  });
+});
+
 describe('formatMcpList', () => {
   it('renders empty list with helpful add hint', () => {
     const info: McpListInfo = {
