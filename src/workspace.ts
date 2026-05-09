@@ -119,6 +119,21 @@ export const paths = {
     return workspacePath('state', 'nanoclaw.pid');
   },
   get logFile() {
-    return workspacePath('logs', 'nanoclaw.log');
+    // B.5 + 2026-05-09 followup: file logging is daily-rotated
+    // (`nanoclaw-YYYY-MM-DD.log`). Return today's daily file (pure path
+    // math, no fs side effects). Used by `nanoclaw logs` to tail the
+    // active file and by `nanoclaw start` to redirect daemon stdio.
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return workspacePath('logs', `nanoclaw-${yyyy}-${mm}-${dd}.log`);
+  },
+  /** Workspace logs directory. Reported by `/status` so users know
+   * where to find rotated/archived files (the active filename rotates
+   * daily and gets gzipped after a week, so showing a single path is
+   * misleading). */
+  get logDir() {
+    return workspacePath('logs');
   },
 };

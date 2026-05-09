@@ -259,7 +259,10 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
     if (ctx.channel) {
       try {
         const { getMcpText } = await import('./cli/mcp-text.js');
-        const text = await getMcpText(true); // chat: code-fenced (formatter owns the fence)
+        // Teams renders box-drawing chars (`─`) as `?` inside code blocks;
+        // force ASCII fallback there. Telegram/Discord/CLI keep Unicode.
+        const ascii = ctx.channel.name === 'teams';
+        const text = await getMcpText({ codeFence: true, ascii });
         await ctx.channel.sendMessage(ctx.chatJid, text);
       } catch (err: any) {
         await ctx.channel.sendMessage(ctx.chatJid, `Failed to list MCP servers: ${err?.message ?? err}`);

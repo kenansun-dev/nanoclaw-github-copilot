@@ -77,6 +77,14 @@ export async function collectMcpList(): Promise<McpListInfo> {
   };
 }
 
+/** Render options. `ascii: true` swaps Unicode glyphs (✓ ! ✗ ? ─) for
+ *  ASCII-safe equivalents (`[OK] [!] [X] [?]` / `-`). Channels with
+ *  poor Unicode rendering (Teams in code blocks) should pass
+ *  `ascii: true`; Telegram + Discord + plain CLI keep the default. */
+export interface FormatOptions {
+  ascii?: boolean;
+}
+
 /**
  * Format an McpListInfo as a plain-text block for chat / CLI display.
  *
@@ -95,14 +103,21 @@ export interface FormatOptions {
    *  Discord) render monospace and preserve column alignment. CLI passes
    *  false. Default: true. */
   codeFence?: boolean;
+  /** ASCII-only output. Teams strips/garbles non-ASCII box-drawing chars
+   *  like `─`. When true, swap `─` → `-`. Default: false. (Glyphs for
+   *  per-server status are gone post mcporter-removal so only the rule
+   *  char needs swapping.) */
+  ascii?: boolean;
 }
 
 export function formatMcpList(info: McpListInfo, opts: FormatOptions = {}): string {
   const codeFence = opts.codeFence ?? true;
+  const ascii = opts.ascii === true;
+  const ruleChar = ascii ? '-' : '─';
   const body: string[] = [];
   const n = info.servers.length;
   body.push(`MCP Servers (${n} configured)`);
-  body.push('─'.repeat(42));
+  body.push(ruleChar.repeat(42));
 
   if (n === 0) {
     body.push('(no servers configured)');
@@ -127,9 +142,10 @@ export function formatMcpList(info: McpListInfo, opts: FormatOptions = {}): stri
 
 /** One-shot helper used by both CLI and slash command.
  *
- * @param codeFence — wrap output in ``` fence for chat rendering. Default true.
+ * @param opts — codeFence (default true) wraps the body in ``` for chat
+ *   rendering; ascii (default false) swaps `─` → `-` for Teams.
  */
-export async function getMcpText(codeFence: boolean = true): Promise<string> {
+export async function getMcpText(opts: FormatOptions = {}): Promise<string> {
   const info = await collectMcpList();
-  return formatMcpList(info, { codeFence });
+  return formatMcpList(info, opts);
 }

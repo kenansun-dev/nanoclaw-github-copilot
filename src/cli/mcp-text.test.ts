@@ -10,6 +10,34 @@ import { formatMcpList, collectMcpList, type McpListInfo } from './mcp-text.js';
 import { setWorkspace, ensureWorkspace } from '../workspace.js';
 import { saveConfig } from '../config-loader.js';
 
+describe('formatMcpList ascii fallback', () => {
+  const baseInfo: McpListInfo = {
+    servers: [
+      { name: 'github', type: 'http', transport: 'https://api/', source: 'merged' },
+      { name: 'mem', type: 'stdio', transport: 'npx srv', source: 'merged' },
+      { name: 'lin', type: 'http', transport: 'https://lin/', source: 'merged' },
+      { name: 'bad', type: 'http', transport: 'https://bad/', source: 'merged' },
+    ],
+    configPath: '/x/nanoclaw.json',
+    mcpJsonPath: '/x/mcp.json',
+  };
+
+  it('uses Unicode rule by default (Telegram/Discord/CLI)', () => {
+    const out = formatMcpList(baseInfo, { codeFence: false });
+    expect(out).toContain('\u2500'); // box-drawing rule
+    expect(out).toContain('github');
+    expect(out).toContain('bad');
+  });
+
+  it('swaps to ASCII rule when ascii: true (Teams)', () => {
+    const out = formatMcpList(baseInfo, { ascii: true, codeFence: false });
+    expect(out).not.toContain('\u2500');
+    // rule line is ASCII dashes
+    expect(out).toMatch(/^-{42}$/m);
+    expect(out).toContain('github');
+  });
+});
+
 describe('formatMcpList', () => {
   it('renders empty list with helpful add hint', () => {
     const info: McpListInfo = {
