@@ -205,15 +205,19 @@ async function runDoctor(_args: string[]) {
 }
 
 async function runService(action: string) {
-  const { resolveWorkspace } = await import('./workspace.js');
+    const { resolveWorkspace, paths: wsPaths } = await import('./workspace.js');
   const ws = resolveWorkspace();
   const os = await import('os');
   const fs = await import('fs');
   const { execSync, spawn } = await import('child_process');
 
+  // B.5 + 2026-05-09 followup: file logging is daily-rotated
+  // (`nanoclaw-YYYY-MM-DD.log`), driven by the in-process sink in
+  // `log-file-sink.ts`. Use the workspace `paths.logFile` getter so
+  // the start-time crash check reads the same file the sink writes to.
   const SERVICE_NAME = 'nanoclaw';
   const pidFile = join(ws, 'state', 'nanoclaw.pid');
-  const logFile = join(ws, 'logs', 'nanoclaw.log');
+  const logFile = wsPaths.logFile;
   const entryPoint = join(PROJECT_ROOT, 'dist', 'index.js');
 
   // --- Detect service backend ---
@@ -595,9 +599,16 @@ async function runDev() {
 
 async function runLogs(args: string[]) {
   const { resolveWorkspace } = await import('./workspace.js');
-  const logFile = join(resolveWorkspace(), 'logs', 'nanoclaw.log');
-  const follow = args.includes('-f') || args.includes('--follow');
+  const { paths: wsPaths } = await import('./workspace.js');
+  // B.5 + 2026-05-09 followup: tail today's daily-rotated file, with
+  // legacy `nanoclaw.log` fallback for older v1 workspaces.
+  let logFile = wsPaths.logFile;
   const fs = await import('fs');
+  if (!fs.existsSync(logFile)) {
+    const legacy = join(resolveWorkspace(), 'logs', 'nanoclaw.log');
+    if (fs.existsSync(legacy)) logFile = legacy;
+  }
+  const follow = args.includes('-f') || args.includes('--follow');
 
   if (!fs.existsSync(logFile)) {
     console.log('No logs found');

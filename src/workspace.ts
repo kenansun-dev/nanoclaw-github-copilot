@@ -119,6 +119,16 @@ export const paths = {
     return workspacePath('state', 'nanoclaw.pid');
   },
   get logFile() {
-    return workspacePath('logs', 'nanoclaw.log');
+    // B.5 + 2026-05-09 followup: file logging is daily-rotated
+    // (`nanoclaw-YYYY-MM-DD.log`). Report today's daily file so
+    // `/status`, `nanoclaw status`, and `nanoclaw logs` all point at
+    // the file the daemon is actually writing to. Pure path math, no
+    // file-system / module-load side effects (avoids circular dep on
+    // log-file-sink which imports this module).
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return workspacePath('logs', `nanoclaw-${yyyy}-${mm}-${dd}.log`);
   },
 };

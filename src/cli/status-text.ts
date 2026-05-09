@@ -69,7 +69,12 @@ export async function collectStatus(chatJid?: string): Promise<StatusInfo> {
 
   const ws = resolveWorkspace();
   const pidFile = join(ws, 'state', 'nanoclaw.pid');
-  const logFile = join(ws, 'logs', 'nanoclaw.log');
+  // B.5 + 2026-05-09 followup: daily-rotated daemon log
+  // (`nanoclaw-YYYY-MM-DD.log`). Use the `paths` getter so this stays
+  // in sync with `nanoclaw logs` and the file the in-process log sink
+  // actually writes to.
+  const { paths: wsPaths } = await import('../workspace.js');
+  const logFile = wsPaths.logFile;
 
   const cfg = loadConfig();
   const agent = (cfg.agents?.defaults || {}) as any;

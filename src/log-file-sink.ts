@@ -171,3 +171,22 @@ export function currentLogFile(): string | null {
   if (!currentStream) return null;
   return path.join(logDir, `nanoclaw-${currentDate}.log`);
 }
+
+/**
+ * Path of today's log file (whether or not the sink is installed).
+ *
+ * Used by `nanoclaw status`, `nanoclaw logs`, and `nanoclaw start` to
+ * report / tail / redirect to the same daily file the in-process sink
+ * writes to. Computes the path purely from today's local date + the
+ * workspace `logs/` directory; does not touch the filesystem and does
+ * not install the sink.
+ */
+export function expectedLogFile(): string {
+  const dir = logDir || workspacePath('logs');
+  return path.join(dir, `nanoclaw-${todayUtc()}.log`);
+}
+
+/** Legacy single-file log path (pre-B.5). Kept for fallback / docs. */
+export function legacyLogFile(): string {
+  return workspacePath('logs', 'nanoclaw.log');
+}
