@@ -4,7 +4,7 @@ import path from 'path';
 
 import { DATA_DIR } from './config.js';
 import { IS_GHC_PROVIDER } from './config-extensions.js';
-import { logger } from './logger.js';
+import { logger } from './log-extensions.js';
 
 interface RemoteControlSession {
   pid: number;
@@ -61,10 +61,7 @@ export function restoreRemoteControl(): void {
     const session: RemoteControlSession = JSON.parse(data);
     if (session.pid && isProcessAlive(session.pid)) {
       activeSession = session;
-      logger.info(
-        { pid: session.pid, url: session.url },
-        'Restored Remote Control session from previous run',
-      );
+      logger.info({ pid: session.pid, url: session.url }, 'Restored Remote Control session from previous run');
     } else {
       clearState();
     }
@@ -170,10 +167,7 @@ export async function startRemoteControl(
         activeSession = session;
         saveState(session);
 
-        logger.info(
-          { url: match[0], pid, sender, chatJid },
-          'Remote Control session started',
-        );
+        logger.info({ url: match[0], pid, sender, chatJid }, 'Remote Control session started');
         resolve({ ok: true, url: match[0] });
         return;
       }

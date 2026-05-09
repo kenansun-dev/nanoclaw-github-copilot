@@ -42,7 +42,7 @@ import {
   getExtraKnownMarketplaces,
   setExtraKnownMarketplaces,
 } from '../config-loader.js';
-import { logger } from '../logger.js';
+import { logger } from '../log-extensions.js';
 
 /**
  * Shape of a single MCP server entry inside a plugin manifest. Mirrors the
@@ -122,11 +122,7 @@ export function parseInstallSpec(spec: string): InstallSpec {
   }
 
   // Explicit git URL (http(s), git+, ssh, ends with .git).
-  if (
-    /^(https?|git|ssh):\/\//.test(trimmed) ||
-    trimmed.startsWith('git@') ||
-    trimmed.endsWith('.git')
-  ) {
+  if (/^(https?|git|ssh):\/\//.test(trimmed) || trimmed.startsWith('git@') || trimmed.endsWith('.git')) {
     return { kind: 'git', url: trimmed };
   }
 
@@ -137,10 +133,7 @@ export function parseInstallSpec(spec: string): InstallSpec {
   if (atIdx > 0 && atIdx < trimmed.length - 1) {
     const plugin = trimmed.slice(0, atIdx);
     const marketplace = trimmed.slice(atIdx + 1);
-    if (
-      /^[a-z0-9][a-z0-9_-]*$/i.test(plugin) &&
-      /^[a-z0-9][a-z0-9_-]*$/i.test(marketplace)
-    ) {
+    if (/^[a-z0-9][a-z0-9_-]*$/i.test(plugin) && /^[a-z0-9][a-z0-9_-]*$/i.test(marketplace)) {
       return { kind: 'marketplace', plugin, marketplace };
     }
     // Helpful error: user typed `plugin@owner/repo` (kenan repro 2026-04-27
@@ -221,18 +214,14 @@ export interface MarketplaceCatalogSource {
  * String form is parsed via parseInstallSpec; object form is converted into
  * either git or local kind.
  */
-export function catalogEntryToSpec(
-  entry: MarketplaceCatalogEntry,
-  marketplaceDir?: string,
-): InstallSpec {
+export function catalogEntryToSpec(entry: MarketplaceCatalogEntry, marketplaceDir?: string): InstallSpec {
   // Local-path detection: if marketplaceDir is provided and the source string
   // looks like a relative path (./foo, ../foo), resolve it against the
   // marketplace's cloned dir rather than cwd. This matches CC/GHC marketplace
   // semantics where catalog entries reference plugins inside the same repo.
   if (typeof entry.source === 'string') {
     const s = entry.source.trim();
-    const isRelLocal =
-      s.startsWith('./') || s.startsWith('../') || s === '.' || s === '..';
+    const isRelLocal = s.startsWith('./') || s.startsWith('../') || s === '.' || s === '..';
     if (isRelLocal && marketplaceDir) {
       return { kind: 'local', path: path.resolve(marketplaceDir, s) };
     }
@@ -258,9 +247,7 @@ export function catalogEntryToSpec(
       ref: src.ref,
     };
   }
-  throw new Error(
-    `Marketplace entry '${entry.name}' has unrecognized source object`,
-  );
+  throw new Error(`Marketplace entry '${entry.name}' has unrecognized source object`);
 }
 
 /**
@@ -289,24 +276,16 @@ function fetchMarketplaceCatalogWithDir(
     }
     resolvedDir = spec.subdir ? path.join(cacheDir, spec.subdir) : cacheDir;
   } else {
-    throw new Error(
-      `Marketplace source must be a git URL, owner/repo, or local path (got ${spec.kind})`,
-    );
+    throw new Error(`Marketplace source must be a git URL, owner/repo, or local path (got ${spec.kind})`);
   }
 
   // Catalog lives at .claude-plugin/marketplace.json (CC + GHC convention)
   // OR at marketplace.json at repo root (legacy / minimal).
   const ccPath = path.join(resolvedDir, '.claude-plugin', 'marketplace.json');
   const rootPath = path.join(resolvedDir, 'marketplace.json');
-  const catalogPath = fs.existsSync(ccPath)
-    ? ccPath
-    : fs.existsSync(rootPath)
-      ? rootPath
-      : null;
+  const catalogPath = fs.existsSync(ccPath) ? ccPath : fs.existsSync(rootPath) ? rootPath : null;
   if (!catalogPath) {
-    throw new Error(
-      `No marketplace.json found for '${name}' at ${resolvedDir}`,
-    );
+    throw new Error(`No marketplace.json found for '${name}' at ${resolvedDir}`);
   }
   return {
     catalog: JSON.parse(fs.readFileSync(catalogPath, 'utf-8')),
@@ -314,10 +293,7 @@ function fetchMarketplaceCatalogWithDir(
   };
 }
 
-function fetchMarketplaceCatalog(
-  name: string,
-  source: string,
-): MarketplaceCatalog {
+function fetchMarketplaceCatalog(name: string, source: string): MarketplaceCatalog {
   return fetchMarketplaceCatalogWithDir(name, source).catalog;
 }
 
@@ -330,23 +306,14 @@ function resolveMarketplacePlugin(
   marketplaceName: string,
 ): { spec: InstallSpec; entry: MarketplaceCatalogEntry } {
   const config = loadConfig();
-  const mp = getExtraKnownMarketplaces(config).find(
-    (m) => m.name === marketplaceName,
-  );
+  const mp = getExtraKnownMarketplaces(config).find((m) => m.name === marketplaceName);
   if (!mp) {
-    throw new Error(
-      `Marketplace '${marketplaceName}' not registered. Run \`nanoclaw plugin marketplace list\`.`,
-    );
+    throw new Error(`Marketplace '${marketplaceName}' not registered. Run \`nanoclaw plugin marketplace list\`.`);
   }
-  const { catalog, resolvedDir } = fetchMarketplaceCatalogWithDir(
-    mp.name,
-    mp.source,
-  );
+  const { catalog, resolvedDir } = fetchMarketplaceCatalogWithDir(mp.name, mp.source);
   const entry = catalog.plugins?.find((p) => p.name === pluginName);
   if (!entry) {
-    throw new Error(
-      `Plugin '${pluginName}' not found in marketplace '${marketplaceName}'`,
-    );
+    throw new Error(`Plugin '${pluginName}' not found in marketplace '${marketplaceName}'`);
   }
   return { spec: catalogEntryToSpec(entry, resolvedDir), entry };
 }
@@ -358,9 +325,7 @@ function resolveMarketplacePlugin(
  * entries rather than shipping a separate `plugin.json`. We treat the
  * catalog entry as authoritative when no on-disk manifest exists.
  */
-export function synthesizeManifestFromCatalogEntry(
-  entry: MarketplaceCatalogEntry,
-): PluginManifest {
+export function synthesizeManifestFromCatalogEntry(entry: MarketplaceCatalogEntry): PluginManifest {
   const e = entry as MarketplaceCatalogEntry & {
     skills?: string | string[];
     mcpServers?: string | Record<string, McpServerConfig>;
@@ -387,10 +352,7 @@ export function synthesizeManifestFromCatalogEntry(
 
 function loadManifest(pluginDir: string): PluginManifest | null {
   // Try root plugin.json first (GHC convention), then CC's .claude-plugin/plugin.json.
-  const candidates = [
-    path.join(pluginDir, 'plugin.json'),
-    path.join(pluginDir, '.claude-plugin', 'plugin.json'),
-  ];
+  const candidates = [path.join(pluginDir, 'plugin.json'), path.join(pluginDir, '.claude-plugin', 'plugin.json')];
   for (const manifestPath of candidates) {
     if (!fs.existsSync(manifestPath)) continue;
     try {
@@ -442,10 +404,7 @@ export function resolvePluginMcpServers(
           return servers as Record<string, McpServerConfig>;
         }
       } catch {
-        logger.warn(
-          { plugin: path.basename(pluginDir), mcpPath },
-          'Failed to parse plugin MCP config file',
-        );
+        logger.warn({ plugin: path.basename(pluginDir), mcpPath }, 'Failed to parse plugin MCP config file');
       }
     }
   }
@@ -462,10 +421,7 @@ export function resolvePluginMcpServers(
         return servers as Record<string, McpServerConfig>;
       }
     } catch {
-      logger.warn(
-        { plugin: path.basename(pluginDir), conventionalPath },
-        'Failed to parse plugin .mcp.json',
-      );
+      logger.warn({ plugin: path.basename(pluginDir), conventionalPath }, 'Failed to parse plugin .mcp.json');
     }
   }
 
@@ -501,9 +457,7 @@ async function installPlugin(source: string): Promise<void> {
       const resolved = resolveMarketplacePlugin(spec.plugin, spec.marketplace);
       spec = resolved.spec;
       catalogEntry = resolved.entry;
-      console.log(
-        `Resolved \`${source}\` via marketplace → ${describeSpec(spec)}`,
-      );
+      console.log(`Resolved \`${source}\` via marketplace → ${describeSpec(spec)}`);
     } catch (err: any) {
       console.error(`❌ ${err.message}`);
       return;
@@ -523,9 +477,7 @@ async function installPlugin(source: string): Promise<void> {
       });
       srcDir = spec.subdir ? path.join(tmpDir, spec.subdir) : tmpDir;
       if (!fs.existsSync(srcDir)) {
-        console.error(
-          `❌ Subdirectory '${spec.subdir}' not found in cloned repo.`,
-        );
+        console.error(`❌ Subdirectory '${spec.subdir}' not found in cloned repo.`);
         if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
         return;
       }
@@ -554,9 +506,7 @@ async function installPlugin(source: string): Promise<void> {
   let manifest = loadManifest(srcDir);
   if (!manifest && catalogEntry) {
     manifest = synthesizeManifestFromCatalogEntry(catalogEntry);
-    console.log(
-      `No plugin.json found. Using marketplace catalog metadata for: ${manifest.name}`,
-    );
+    console.log(`No plugin.json found. Using marketplace catalog metadata for: ${manifest.name}`);
   }
   if (!manifest) {
     // Try to treat as a bare skill directory (has SKILL.md but no plugin.json)
@@ -574,10 +524,7 @@ async function installPlugin(source: string): Promise<void> {
         skills: './',
         provider: 'both',
       };
-      fs.writeFileSync(
-        path.join(destDir, 'plugin.json'),
-        JSON.stringify(autoManifest, null, 2) + '\n',
-      );
+      fs.writeFileSync(path.join(destDir, 'plugin.json'), JSON.stringify(autoManifest, null, 2) + '\n');
       console.log(`✅ Installed skill plugin: ${dirName}`);
       syncPluginsToConfig();
       return;
@@ -604,10 +551,7 @@ async function installPlugin(source: string): Promise<void> {
       ghc: 'github-copilot',
       cc: 'anthropic',
     };
-    if (
-      providerMap[manifest.provider] &&
-      providerMap[manifest.provider] !== currentProvider
-    ) {
+    if (providerMap[manifest.provider] && providerMap[manifest.provider] !== currentProvider) {
       console.warn(
         `⚠️  Plugin '${manifest.name}' is designed for ${manifest.provider}, but current provider is ${currentProvider}. Installing anyway.`,
       );
@@ -628,9 +572,7 @@ async function installPlugin(source: string): Promise<void> {
     fs.rmSync(tmpDir, { recursive: true });
   }
 
-  console.log(
-    `✅ Installed plugin: ${manifest.name}${manifest.version ? ` v${manifest.version}` : ''}`,
-  );
+  console.log(`✅ Installed plugin: ${manifest.name}${manifest.version ? ` v${manifest.version}` : ''}`);
   if (manifest.description) {
     console.log(`   ${manifest.description}`);
   }
@@ -682,11 +624,7 @@ function listPlugins(): void {
         console.log(`     ${manifest.description}`);
       }
       // Count skills
-      const skillsDirs = Array.isArray(manifest.skills)
-        ? manifest.skills
-        : manifest.skills
-          ? [manifest.skills]
-          : [];
+      const skillsDirs = Array.isArray(manifest.skills) ? manifest.skills : manifest.skills ? [manifest.skills] : [];
       let skillCount = 0;
       for (const sd of skillsDirs) {
         const fullPath = path.join(pDir, entry.name, sd);
@@ -699,10 +637,7 @@ function listPlugins(): void {
         console.log(`     Skills: ${skillCount}`);
       }
       // Check MCP — works for both inline-object and path-string shapes.
-      const mcpServers = resolvePluginMcpServers(
-        path.join(pDir, entry.name),
-        manifest,
-      );
+      const mcpServers = resolvePluginMcpServers(path.join(pDir, entry.name), manifest);
       if (mcpServers && Object.keys(mcpServers).length > 0) {
         console.log(`     MCP: ✅ (${Object.keys(mcpServers).length})`);
       }
@@ -732,10 +667,7 @@ function pluginInfo(name: string): void {
   if (manifest.version) console.log(`   Version: ${manifest.version}`);
   if (manifest.description) console.log(`   ${manifest.description}`);
   if (manifest.author) {
-    const author =
-      typeof manifest.author === 'string'
-        ? manifest.author
-        : manifest.author.name;
+    const author = typeof manifest.author === 'string' ? manifest.author : manifest.author.name;
     console.log(`   Author: ${author}`);
   }
   if (manifest.license) console.log(`   License: ${manifest.license}`);
@@ -769,11 +701,7 @@ function syncPluginsToConfig(): void {
     if (!manifest) continue;
 
     // Collect skills directories
-    const skillsDirs = Array.isArray(manifest.skills)
-      ? manifest.skills
-      : manifest.skills
-        ? [manifest.skills]
-        : [];
+    const skillsDirs = Array.isArray(manifest.skills) ? manifest.skills : manifest.skills ? [manifest.skills] : [];
     for (const sd of skillsDirs) {
       const fullPath = path.join(pDir, entry.name, sd);
       if (fs.existsSync(fullPath)) {
@@ -787,10 +715,7 @@ function syncPluginsToConfig(): void {
     }
 
     // Collect MCP servers — resolver handles both inline object and path string.
-    const servers = resolvePluginMcpServers(
-      path.join(pDir, entry.name),
-      manifest,
-    );
+    const servers = resolvePluginMcpServers(path.join(pDir, entry.name), manifest);
     if (servers) {
       for (const [name, serverConfig] of Object.entries(servers)) {
         pluginMcpServers[`plugin:${entry.name}:${name}`] = serverConfig;
@@ -799,8 +724,7 @@ function syncPluginsToConfig(): void {
   }
 
   // Update skills.directories — ensure plugin dirs are included
-  if (!config.skills)
-    config.skills = { directories: ['./skills'], disabled: [] };
+  if (!config.skills) config.skills = { directories: ['./skills'], disabled: [] };
   const existingDirs = config.skills.directories || [];
   for (const dir of pluginSkillDirs) {
     if (!existingDirs.includes(dir)) {
@@ -811,9 +735,7 @@ function syncPluginsToConfig(): void {
   config.skills.directories = existingDirs.filter((d: string) => {
     if (d.includes('/plugins/') || d.includes('./plugins/')) {
       // Resolve relative path against workspace to check existence
-      const resolved = d.startsWith('./')
-        ? path.join(resolveWorkspace(), d)
-        : d;
+      const resolved = d.startsWith('./') ? path.join(resolveWorkspace(), d) : d;
       return fs.existsSync(resolved);
     }
     return true;
@@ -912,9 +834,7 @@ export async function runPluginCommand(args: string[]): Promise<void> {
         console.log('  nanoclaw plugin install ./my-plugin');
         console.log('  nanoclaw plugin install owner/repo');
         console.log('  nanoclaw plugin install owner/repo:path/to/plugin');
-        console.log(
-          '  nanoclaw plugin install https://github.com/user/repo.git',
-        );
+        console.log('  nanoclaw plugin install https://github.com/user/repo.git');
         console.log('  nanoclaw plugin install workiq@copilot-plugins');
         return;
       }
@@ -941,18 +861,12 @@ export async function runPluginCommand(args: string[]): Promise<void> {
       await runMarketplaceCommand(args.slice(1));
       break;
     default:
-      console.log(
-        'Usage: nanoclaw plugin <list|install|remove|info|marketplace> [args]',
-      );
+      console.log('Usage: nanoclaw plugin <list|install|remove|info|marketplace> [args]');
       console.log('');
       console.log('Commands:');
       console.log('  list                       List installed plugins');
-      console.log(
-        '  install <spec>             Install a plugin from path, URL,',
-      );
-      console.log(
-        '                             owner/repo, or plugin@marketplace',
-      );
+      console.log('  install <spec>             Install a plugin from path, URL,');
+      console.log('                             owner/repo, or plugin@marketplace');
       console.log('  remove <name>              Remove a plugin');
       console.log('  info <name>                Show plugin details');
       console.log('  marketplace add <spec>     Register a plugin marketplace');
@@ -977,9 +891,7 @@ async function runMarketplaceCommand(args: string[]): Promise<void> {
         console.log('');
         console.log('Examples:');
         console.log('  nanoclaw plugin marketplace add github/copilot-plugins');
-        console.log(
-          '  nanoclaw plugin marketplace add https://github.com/anthropics/claude-code.git',
-        );
+        console.log('  nanoclaw plugin marketplace add https://github.com/anthropics/claude-code.git');
         console.log('  nanoclaw plugin marketplace add ./my-marketplace');
         return;
       }
@@ -1006,9 +918,7 @@ async function runMarketplaceCommand(args: string[]): Promise<void> {
       marketplaceRemove(args[1]);
       break;
     default:
-      console.log(
-        'Usage: nanoclaw plugin marketplace <list|add|browse|remove> [args]',
-      );
+      console.log('Usage: nanoclaw plugin marketplace <list|add|browse|remove> [args]');
   }
 }
 
@@ -1044,17 +954,13 @@ function marketplaceAdd(source: string, explicitName?: string): void {
     }
   }
   if (!name) {
-    console.error(
-      '❌ Could not derive marketplace name from source. Pass --name <name>.',
-    );
+    console.error('❌ Could not derive marketplace name from source. Pass --name <name>.');
     return;
   }
 
   const existing = existingList.find((m) => m.name === name);
   if (existing) {
-    console.error(
-      `❌ Marketplace '${name}' already registered (source: ${existing.source}).`,
-    );
+    console.error(`❌ Marketplace '${name}' already registered (source: ${existing.source}).`);
     return;
   }
 
@@ -1063,9 +969,7 @@ function marketplaceAdd(source: string, explicitName?: string): void {
     const catalog = fetchMarketplaceCatalog(name, source);
     setExtraKnownMarketplaces(config, [...existingList, { name, source }]);
     saveConfig(config);
-    console.log(
-      `✅ Registered marketplace '${name}' (${catalog.plugins?.length ?? 0} plugins available)`,
-    );
+    console.log(`✅ Registered marketplace '${name}' (${catalog.plugins?.length ?? 0} plugins available)`);
   } catch (err: any) {
     console.error(`❌ Failed to register marketplace: ${err.message}`);
   }
@@ -1096,9 +1000,7 @@ function marketplaceBrowse(name: string): void {
     const ver = p.version ? ` v${p.version}` : '';
     console.log(`  📦 ${p.name}${ver}`);
     if (p.description) console.log(`     ${p.description}`);
-    console.log(
-      `     install: \`nanoclaw plugin install ${p.name}@${mp.name}\``,
-    );
+    console.log(`     install: \`nanoclaw plugin install ${p.name}@${mp.name}\``);
   }
   console.log('');
 }

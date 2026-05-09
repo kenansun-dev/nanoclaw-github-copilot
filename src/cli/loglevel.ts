@@ -15,7 +15,7 @@
 
 import fs from 'fs';
 import { paths } from '../workspace.js';
-import { getValidLevels } from '../logger.js';
+import { getValidLevels } from '../log-extensions.js';
 import { readPid, signalReload } from '../daemon-signal.js';
 
 const VALID = getValidLevels();
@@ -23,9 +23,7 @@ const VALID = getValidLevels();
 function readConfig(): any {
   const configPath = paths.config;
   if (!fs.existsSync(configPath)) {
-    throw new Error(
-      `Config not found: ${configPath}. Run "nanoclaw init" first.`,
-    );
+    throw new Error(`Config not found: ${configPath}. Run "nanoclaw init" first.`);
   }
   return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 }
@@ -50,9 +48,7 @@ export async function runLogLevel(args: string[]): Promise<void> {
         `Environment LOG_LEVEL:      ${envLevel}  ⚠️  env LOG_LEVEL is set on daemon; \`loglevel <x>\` will override on next SIGUSR2`,
       );
     }
-    console.log(
-      `Daemon:                     ${running ? `running (pid ${pid})` : 'not running'}`,
-    );
+    console.log(`Daemon:                     ${running ? `running (pid ${pid})` : 'not running'}`);
     console.log(`Valid levels:               ${VALID.join(' | ')}`);
     return;
   }
@@ -72,9 +68,7 @@ export async function runLogLevel(args: string[]): Promise<void> {
   if (previous === level) {
     console.log(`Log level already ${level} in config (no change).`);
   } else {
-    console.log(
-      `Log level set to ${level} in nanoclaw.json (was ${previous ?? 'unset'}).`,
-    );
+    console.log(`Log level set to ${level} in nanoclaw.json (was ${previous ?? 'unset'}).`);
   }
 
   // Try live reload via SIGUSR2 (or Windows trigger-file fallback).
@@ -90,12 +84,8 @@ export async function runLogLevel(args: string[]): Promise<void> {
     process.exit(1);
   }
   if (result.method === 'trigger-file') {
-    console.log(
-      'Wrote reload trigger; daemon will pick up the change shortly.',
-    );
+    console.log('Wrote reload trigger; daemon will pick up the change shortly.');
   } else {
-    console.log(
-      `Sent SIGUSR2 to daemon (pid ${result.pid}); reload requested.`,
-    );
+    console.log(`Sent SIGUSR2 to daemon (pid ${result.pid}); reload requested.`);
   }
 }

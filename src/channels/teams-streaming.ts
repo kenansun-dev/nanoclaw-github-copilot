@@ -63,8 +63,8 @@
  */
 
 import type { TurnContext, ConversationReference } from 'botbuilder';
-import { logger } from '../logger.js';
-import type { StreamHandle } from '../types.js';
+import { logger } from '../log-extensions.js';
+import type { StreamHandle } from '../types-extensions.js';
 
 // --- Types: minimal, deliberately narrow to ease unit testing ----------
 
@@ -76,9 +76,7 @@ import type { StreamHandle } from '../types.js';
  * Returns the activity id assigned by the server (or undefined when
  * not available — the dispatcher tolerates this).
  */
-export type ActivitySender = (
-  activity: Partial<TeamsActivity>,
-) => Promise<string | undefined>;
+export type ActivitySender = (activity: Partial<TeamsActivity>) => Promise<string | undefined>;
 
 /**
  * Subset of Bot Framework `Activity` shape we emit. Kept loose so we
@@ -205,10 +203,7 @@ export class TeamsStreamingSession implements StreamHandle {
         const id = await this.send({ type: 'message', text: finalText });
         return id;
       } catch (err: any) {
-        this.log.warn(
-          { err: err?.message ?? String(err) },
-          'Teams streaming: degraded final send failed',
-        );
+        this.log.warn({ err: err?.message ?? String(err) }, 'Teams streaming: degraded final send failed');
         return;
       }
     }
@@ -225,10 +220,7 @@ export class TeamsStreamingSession implements StreamHandle {
         const id = await this.send({ type: 'message', text: finalText });
         return id;
       } catch (err: any) {
-        this.log.warn(
-          { err: err?.message ?? String(err) },
-          'Teams streaming: post-drain degraded final send failed',
-        );
+        this.log.warn({ err: err?.message ?? String(err) }, 'Teams streaming: post-drain degraded final send failed');
         return;
       }
     }
@@ -280,10 +272,7 @@ export class TeamsStreamingSession implements StreamHandle {
         const id = await this.send({ type: 'message', text: finalText });
         return id;
       } catch (err2: any) {
-        this.log.error(
-          { err: err2?.message ?? String(err2) },
-          'Teams streaming: fallback final send also failed',
-        );
+        this.log.error({ err: err2?.message ?? String(err2) }, 'Teams streaming: fallback final send also failed');
       }
     }
   }
@@ -370,19 +359,12 @@ export class TeamsStreamingSession implements StreamHandle {
           // User paused / client disabled streaming. Stop sending,
           // but allow `end()` to publish a final non-streaming message
           // so the agent's reply still lands.
-          this.log.info(
-            'Teams streaming: client returned ContentStreamNotAllowed; degrading',
-          );
+          this.log.info('Teams streaming: client returned ContentStreamNotAllowed; degrading');
           this._cancelled = true;
           return;
         }
-        if (
-          msg.includes('BadArgument') &&
-          msg.toLowerCase().includes('streaming api is not enabled')
-        ) {
-          this.log.info(
-            'Teams streaming: channel rejected streaming; falling back to single final message',
-          );
+        if (msg.includes('BadArgument') && msg.toLowerCase().includes('streaming api is not enabled')) {
+          this.log.info('Teams streaming: channel rejected streaming; falling back to single final message');
           this._isStreamingChannel = false;
           // Don't cancel — `end()` will send a non-streaming final.
           return;
@@ -429,10 +411,7 @@ export class TeamsStreamingSession implements StreamHandle {
  */
 export function makeAdapterSender(opts: {
   adapter: {
-    continueConversation: (
-      ref: ConversationReference,
-      logic: (ctx: TurnContext) => Promise<void>,
-    ) => Promise<void>;
+    continueConversation: (ref: ConversationReference, logic: (ctx: TurnContext) => Promise<void>) => Promise<void>;
   };
   ref: ConversationReference;
 }): ActivitySender {

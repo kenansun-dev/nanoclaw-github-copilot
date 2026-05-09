@@ -12,26 +12,13 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import {
-  AGENT_RUN_TIMEOUT_MS,
-  CONTAINER_TIMEOUT,
-  IDLE_TIMEOUT,
-  TIMEZONE,
-  getConfig,
-} from './config.js';
+import { AGENT_RUN_TIMEOUT_MS, CONTAINER_TIMEOUT, IDLE_TIMEOUT, TIMEZONE, getConfig } from './config.js';
 import { resolveWorkspace, paths as wsPaths } from './workspace.js';
-import {
-  resolveAgentForChat,
-  isAgentGHC,
-  resolveGithubToken,
-} from './config-extensions.js';
-import {
-  getEffectiveModel,
-  getEffectiveThinkLevel,
-} from './session-overrides.js';
+import { resolveAgentForChat, isAgentGHC, resolveGithubToken } from './config-extensions.js';
+import { getEffectiveModel, getEffectiveThinkLevel } from './session-overrides.js';
 import type { AgentConfig } from './config-loader.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
-import { logger } from './logger.js';
+import { logger } from './log-extensions.js';
 import { ContainerInput, ContainerOutput } from './container-runner.js';
 import { ensureDailySummaryTask } from './memory/cron.js';
 
@@ -47,9 +34,7 @@ function agentPidsFile(): string {
 export function registerAgentPid(pid: number): void {
   try {
     const file = agentPidsFile();
-    const pids: number[] = fs.existsSync(file)
-      ? JSON.parse(fs.readFileSync(file, 'utf-8'))
-      : [];
+    const pids: number[] = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf-8')) : [];
     if (!pids.includes(pid)) pids.push(pid);
     fs.writeFileSync(file, JSON.stringify(pids));
   } catch {
@@ -157,10 +142,7 @@ export async function killAllAgentPids(): Promise<void> {
             try {
               if (pgroupOk) process.kill(-pid, 'SIGKILL');
               else process.kill(pid, 'SIGKILL');
-              logger.warn(
-                { pid },
-                'SIGTERM did not take effect after 2s — sent SIGKILL',
-              );
+              logger.warn({ pid }, 'SIGTERM did not take effect after 2s — sent SIGKILL');
             } catch {
               /* died during escalation */
             }
@@ -172,10 +154,7 @@ export async function killAllAgentPids(): Promise<void> {
     }
     fs.unlinkSync(file);
   } catch (err: any) {
-    logger.warn(
-      { err: err?.message ?? String(err) },
-      'killAllAgentPids: unexpected error',
-    );
+    logger.warn({ err: err?.message ?? String(err) }, 'killAllAgentPids: unexpected error');
   }
 }
 
@@ -185,21 +164,10 @@ export async function killAllAgentPids(): Promise<void> {
 function resolveAgentRunnerPath(agent: AgentConfig): string {
   const isGHC = isAgentGHC(agent);
   const runnerDir = isGHC ? 'agent-runner-ghc' : 'agent-runner';
-  const pkgRoot = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '..',
-  );
-  const distPath = path.join(
-    pkgRoot,
-    'container',
-    runnerDir,
-    'dist',
-    'index.js',
-  );
+  const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const distPath = path.join(pkgRoot, 'container', runnerDir, 'dist', 'index.js');
   if (!fs.existsSync(distPath)) {
-    throw new Error(
-      `Agent runner not compiled: ${distPath}. Run 'npm run build' first.`,
-    );
+    throw new Error(`Agent runner not compiled: ${distPath}. Run 'npm run build' first.`);
   }
   return distPath;
 }
@@ -240,13 +208,7 @@ export async function runHostAgent(
   // Prepare session directory
   const sessionDirName = isAgentGHC(agent) ? '.copilot' : '.claude';
   const ws = resolveWorkspace();
-  const sessionDir = path.join(
-    ws,
-    'data',
-    'sessions',
-    group.folder,
-    sessionDirName,
-  );
+  const sessionDir = path.join(ws, 'data', 'sessions', group.folder, sessionDirName);
   fs.mkdirSync(sessionDir, { recursive: true });
 
   // GHC: Create managed copilot config.json with nanoclaw-controlled settings
@@ -314,8 +276,7 @@ export async function runHostAgent(
       env.NANOCLAW_GITHUB_MCP = '1';
     }
     // Enable MCP config discovery (reads ~/.mcp.json etc.)
-    const mcpDiscovery =
-      (getConfig() as any).mcp?.enableConfigDiscovery ?? false;
+    const mcpDiscovery = (getConfig() as any).mcp?.enableConfigDiscovery ?? false;
     if (mcpDiscovery) {
       env.NANOCLAW_MCP_DISCOVERY = '1';
     }
@@ -334,15 +295,9 @@ export async function runHostAgent(
 
   // Skills directory — prefer workspace skills, fall back to container/skills
   // Use package root (relative to this file) for npm-installed fallback
-  const pkgRoot = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '..',
-  );
+  const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const containerSkills = path.join(pkgRoot, 'container', 'skills');
-  if (
-    fs.existsSync(wsPaths.skills) &&
-    fs.readdirSync(wsPaths.skills).length > 0
-  ) {
+  if (fs.existsSync(wsPaths.skills) && fs.readdirSync(wsPaths.skills).length > 0) {
     env.NANOCLAW_SKILLS_DIR = wsPaths.skills;
   } else if (fs.existsSync(containerSkills)) {
     env.NANOCLAW_SKILLS_DIR = containerSkills;
@@ -351,9 +306,7 @@ export async function runHostAgent(
   // MCP config — resolve Azure AD tokens for remote servers
   // Read from both mcp.json AND nanoclaw.json mcp.servers (merged by config-loader)
   const mergedMcpServers = getConfig().mcp?.servers || {};
-  const hasMcpConfig =
-    fs.existsSync(wsPaths.mcpConfig) ||
-    Object.keys(mergedMcpServers).length > 0;
+  const hasMcpConfig = fs.existsSync(wsPaths.mcpConfig) || Object.keys(mergedMcpServers).length > 0;
   if (hasMcpConfig) {
     try {
       // Start with mcp.json if it exists, then overlay nanoclaw.json servers
@@ -365,13 +318,10 @@ export async function runHostAgent(
         ...(mcpJson.mcpServers || mcpJson),
         ...mergedMcpServers,
       };
-      const hasAzureAuth = Object.values(servers).some(
-        (s: any) => s.auth?.provider === 'azure',
-      );
+      const hasAzureAuth = Object.values(servers).some((s: any) => s.auth?.provider === 'azure');
       if (hasAzureAuth) {
         const { resolveAllMcpTokens } = await import('./mcp-azure-auth.js');
-        const { headers: authHeaders, errors } =
-          await resolveAllMcpTokens(servers);
+        const { headers: authHeaders, errors } = await resolveAllMcpTokens(servers);
         // Inject auth headers into server configs
         for (const [name, hdrs] of Object.entries(authHeaders)) {
           if (servers[name]) {
@@ -387,18 +337,12 @@ export async function runHostAgent(
         }
         // Write augmented config to session dir
         const augmentedPath = path.join(sessionDir, 'mcp.json');
-        fs.writeFileSync(
-          augmentedPath,
-          JSON.stringify({ mcpServers: servers }, null, 2),
-        );
+        fs.writeFileSync(augmentedPath, JSON.stringify({ mcpServers: servers }, null, 2));
         env.NANOCLAW_MCP_CONFIG = augmentedPath;
       } else {
         // No azure auth needed, but still write merged config
         const augmentedPath = path.join(sessionDir, 'mcp.json');
-        fs.writeFileSync(
-          augmentedPath,
-          JSON.stringify({ mcpServers: servers }, null, 2),
-        );
+        fs.writeFileSync(augmentedPath, JSON.stringify({ mcpServers: servers }, null, 2));
         env.NANOCLAW_MCP_CONFIG = augmentedPath;
       }
     } catch (err) {
@@ -429,9 +373,7 @@ export async function runHostAgent(
             // Must have plugin.json or .claude-plugin/plugin.json
             if (
               fs.existsSync(path.join(pluginPath, 'plugin.json')) ||
-              fs.existsSync(
-                path.join(pluginPath, '.claude-plugin', 'plugin.json'),
-              )
+              fs.existsSync(path.join(pluginPath, '.claude-plugin', 'plugin.json'))
             ) {
               pluginDirs.push(pluginPath);
             }
@@ -461,12 +403,7 @@ export async function runHostAgent(
       ? 'COPILOT.md'
       : 'CLAUDE.md'
     : 'CLAUDE.md';
-  const globalClaudeMd = path.join(
-    pkgRoot,
-    'groups',
-    groupType,
-    promptFilename,
-  );
+  const globalClaudeMd = path.join(pkgRoot, 'groups', groupType, promptFilename);
   if (fs.existsSync(globalClaudeMd)) {
     env.NANOCLAW_GLOBAL_CLAUDE_MD = globalClaudeMd;
   }
@@ -478,10 +415,7 @@ export async function runHostAgent(
   // Spawn command
   // Resolve tsx: try package node_modules, then global
   const tsxExt = process.platform === 'win32' ? 'tsx.cmd' : 'tsx';
-  const tsxPkgRoot = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '..',
-  );
+  const tsxPkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const pkgTsx = path.join(tsxPkgRoot, 'node_modules', '.bin', tsxExt);
   let cmd: string;
   if (useTsx) {
@@ -563,10 +497,7 @@ export async function runHostAgent(
     const killOnTimeout = () => {
       if (timedOut) return; // Guard against double-trigger from idle + absolute timeout
       timedOut = true;
-      logger.error(
-        { group: group.name, processName },
-        'Host agent timeout, killing',
-      );
+      logger.error({ group: group.name, processName }, 'Host agent timeout, killing');
       // Kill the entire process group to avoid orphans
       try {
         process.kill(-child.pid!, 'SIGTERM');
@@ -582,9 +513,7 @@ export async function runHostAgent(
       }, 10_000);
     };
 
-    let timeout: ReturnType<typeof setTimeout> | null = neverTimeout
-      ? null
-      : setTimeout(killOnTimeout, timeoutMs);
+    let timeout: ReturnType<typeof setTimeout> | null = neverTimeout ? null : setTimeout(killOnTimeout, timeoutMs);
 
     // Absolute timeout: hard cap on a single query's run duration.
     // - Non-IPC mode (sandbox or short-lived host): cap = total process
@@ -633,10 +562,7 @@ export async function runHostAgent(
       if (absoluteTimeout) {
         clearTimeout(absoluteTimeout);
         absoluteTimeout = null;
-        logger.info(
-          { group: group.name, processName, reason },
-          'Absolute timeout paused (agent idle-waiting for IPC)',
-        );
+        logger.info({ group: group.name, processName, reason }, 'Absolute timeout paused (agent idle-waiting for IPC)');
       }
     };
 
@@ -648,11 +574,7 @@ export async function runHostAgent(
       try {
         const watchDir = path.join(ipcDir, 'input');
         ipcWatcher = fs.watch(watchDir, (eventType, filename) => {
-          if (
-            eventType === 'rename' &&
-            filename &&
-            String(filename).endsWith('.json')
-          ) {
+          if (eventType === 'rename' && filename && String(filename).endsWith('.json')) {
             logger.info(
               { group: group.name, processName, file: String(filename) },
               'IPC input received, restarting per-query timeout',
@@ -690,12 +612,8 @@ export async function runHostAgent(
         const endIdx = stdout.indexOf(OUTPUT_END, startIdx);
         if (endIdx === -1) break;
 
-        const jsonStr = stdout
-          .substring(startIdx + OUTPUT_START.length, endIdx)
-          .trim();
-        stdout =
-          stdout.substring(0, startIdx) +
-          stdout.substring(endIdx + OUTPUT_END.length);
+        const jsonStr = stdout.substring(startIdx + OUTPUT_START.length, endIdx).trim();
+        stdout = stdout.substring(0, startIdx) + stdout.substring(endIdx + OUTPUT_END.length);
 
         try {
           const output: ContainerOutput = JSON.parse(jsonStr);
@@ -713,22 +631,14 @@ export async function runHostAgent(
             // 3 thinking previews + 2 finals from a single short prompt.)
             outputCallbackChain = outputCallbackChain.then(() =>
               onOutput(output).catch((err) => {
-                logger.error(
-                  { error: err },
-                  'Error in host agent output callback',
-                );
+                logger.error({ error: err }, 'Error in host agent output callback');
               }),
             );
           }
 
           // Query-complete signal: result is null with newSessionId
           // This means agent finished the query and is waiting for IPC
-          if (
-            !resolved &&
-            output.result === null &&
-            output.newSessionId &&
-            !output.partial
-          ) {
+          if (!resolved && output.result === null && output.newSessionId && !output.partial) {
             resolved = true;
             resolve(output);
           }
@@ -738,19 +648,11 @@ export async function runHostAgent(
           // the next IPC input restarts it. Without this, an idle agent
           // sitting on the watch loop still gets killed at the budget
           // expiry even though it's not stuck on anything.
-          if (
-            neverTimeout &&
-            output.result === null &&
-            output.newSessionId &&
-            !output.partial
-          ) {
+          if (neverTimeout && output.result === null && output.newSessionId && !output.partial) {
             pauseAbsoluteTimeout('query-complete');
           }
         } catch (err) {
-          logger.error(
-            { error: err, json: jsonStr.substring(0, 200) },
-            'Failed to parse host agent output',
-          );
+          logger.error({ error: err, json: jsonStr.substring(0, 200) }, 'Failed to parse host agent output');
         }
       }
     });
@@ -807,10 +709,7 @@ export async function runHostAgent(
       }
 
       if (timedOut) {
-        logger.error(
-          { group: group.name, processName, duration },
-          'Host agent timed out',
-        );
+        logger.error({ group: group.name, processName, duration }, 'Host agent timed out');
         resolve({
           status: 'error',
           result: null,
@@ -824,15 +723,10 @@ export async function runHostAgent(
       if (lastStart !== -1) {
         const lastEnd = stdout.indexOf(OUTPUT_END, lastStart);
         if (lastEnd !== -1) {
-          const jsonStr = stdout
-            .substring(lastStart + OUTPUT_START.length, lastEnd)
-            .trim();
+          const jsonStr = stdout.substring(lastStart + OUTPUT_START.length, lastEnd).trim();
           try {
             const output: ContainerOutput = JSON.parse(jsonStr);
-            logger.info(
-              { group: group.name, processName, duration, code },
-              'Host agent completed',
-            );
+            logger.info({ group: group.name, processName, duration, code }, 'Host agent completed');
             resolve(output);
             return;
           } catch {
@@ -842,10 +736,7 @@ export async function runHostAgent(
       }
 
       if (hadStreamingOutput && code === 0) {
-        logger.info(
-          { group: group.name, processName, duration },
-          'Host agent completed (streaming mode)',
-        );
+        logger.info({ group: group.name, processName, duration }, 'Host agent completed (streaming mode)');
         resolve({
           status: 'success',
           result: null,
@@ -886,10 +777,7 @@ export async function runHostAgent(
           /* ignore */
         }
       }
-      logger.error(
-        { group: group.name, processName, error: err },
-        'Host agent spawn error',
-      );
+      logger.error({ group: group.name, processName, error: err }, 'Host agent spawn error');
       resolve({
         status: 'error',
         result: null,

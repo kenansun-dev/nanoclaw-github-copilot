@@ -4,19 +4,10 @@
  * Reads/writes chats section of nanoclaw.json + syncs with SQLite DB.
  */
 
-import {
-  loadConfig,
-  saveConfig,
-  NanoclawConfig,
-  nextChatId,
-} from './config-loader.js';
-import {
-  setRegisteredGroup,
-  getAllRegisteredGroups,
-  removeRegisteredGroup,
-} from './db.js';
+import { loadConfig, saveConfig, NanoclawConfig, nextChatId } from './config-loader.js';
+import { setRegisteredGroup, getAllRegisteredGroups, removeRegisteredGroup } from './db.js';
 import { reconcileChatRegistry } from './chat-reconcile.js';
-import { logger } from './logger.js';
+import { logger } from './log-extensions.js';
 import { uniqueIsMainFolder } from './session-routing.js';
 
 export interface ChatInfo {
@@ -43,10 +34,7 @@ export interface ChatInfo {
  * agent prefix to prevent session collisions when multiple agents share the
  * same chat (e.g. two Teams bots in one group conversation).
  */
-export function deriveGroupFolder(
-  jid: string,
-  chatConfig?: { isMain?: boolean; agentId?: string },
-): string {
+export function deriveGroupFolder(jid: string, chatConfig?: { isMain?: boolean; agentId?: string }): string {
   if (chatConfig?.isMain) {
     // Unique per jid in the DB; collapse-on-read maps DM mains back to
     // a shared canonical folder. Existing rows with folder='main' continue
@@ -91,10 +79,7 @@ export function syncChatsFromConfig(config: NanoclawConfig): void {
     // Reload config for the loop below now that reconcile may have added entries.
     config = loadConfig();
   } catch (err: any) {
-    logger.warn(
-      { err: err?.message },
-      'Chat reconcile skipped — falling back to one-way config→DB sync',
-    );
+    logger.warn({ err: err?.message }, 'Chat reconcile skipped — falling back to one-way config→DB sync');
   }
 
   const existing = getAllRegisteredGroups();
@@ -110,10 +95,7 @@ export function syncChatsFromConfig(config: NanoclawConfig): void {
         requiresTrigger: chatConfig.requiresTrigger ?? false,
         isMain: chatConfig.isMain ?? false,
       });
-      logger.info(
-        { jid, name: chatConfig.name, folder },
-        'Chat synced from config',
-      );
+      logger.info({ jid, name: chatConfig.name, folder }, 'Chat synced from config');
     }
   }
 }
@@ -192,10 +174,7 @@ export function removeChat(jid: string): boolean {
   const removedFromDb = removeRegisteredGroup(jid);
 
   if (!inConfig && !removedFromDb) return false;
-  logger.info(
-    { jid, fromConfig: inConfig, fromDb: removedFromDb },
-    'Chat removed',
-  );
+  logger.info({ jid, fromConfig: inConfig, fromDb: removedFromDb }, 'Chat removed');
   return true;
 }
 

@@ -7,17 +7,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { resolveWorkspace, ensureWorkspace } from '../workspace.js';
 
-export async function initWorkspace(
-  projectRoot: string,
-  args: string[] = [],
-): Promise<void> {
+export async function initWorkspace(projectRoot: string, args: string[] = []): Promise<void> {
   // --sync / --no-prompt: skip the interactive setup wizard entirely.
   // Used by `nanoclaw update` so a re-install doesn't re-prompt the user
   // for Telegram/Teams/auth choices that were already made on first install.
-  const syncOnly =
-    args.includes('--sync') ||
-    args.includes('--no-prompt') ||
-    args.includes('--non-interactive');
+  const syncOnly = args.includes('--sync') || args.includes('--no-prompt') || args.includes('--non-interactive');
 
   const ws = resolveWorkspace();
 
@@ -38,8 +32,7 @@ export async function initWorkspace(
   const configTemplate = fs.existsSync(path.join(templatesDir, 'nanoclaw.json'))
     ? fs.readFileSync(path.join(templatesDir, 'nanoclaw.json'), 'utf-8')
     : JSON.stringify(DEFAULT_CONFIG, null, 2);
-  if (!isUpdate)
-    fs.writeFileSync(path.join(ws, 'nanoclaw.json'), configTemplate);
+  if (!isUpdate) fs.writeFileSync(path.join(ws, 'nanoclaw.json'), configTemplate);
 
   // .env
   const envTemplate = fs.existsSync(path.join(templatesDir, '.env.template'))
@@ -80,26 +73,15 @@ export async function initWorkspace(
   }
 
   // Host mode: install agent-runner dependencies
-  const agentRunnerDir = path.join(
-    projectRoot,
-    'container',
-    'agent-runner-ghc',
-  );
+  const agentRunnerDir = path.join(projectRoot, 'container', 'agent-runner-ghc');
   // Check agent-runner source exists
   const runnerSrc = path.join(agentRunnerDir, 'src', 'index.ts');
   if (fs.existsSync(agentRunnerDir)) {
     if (!fs.existsSync(runnerSrc)) {
-      console.warn(
-        '  Warning: agent-runner-ghc source not found. Package may be incomplete.',
-      );
+      console.warn('  Warning: agent-runner-ghc source not found. Package may be incomplete.');
     }
     // Check if critical dependency exists (fs check, not npm ls)
-    const sdkDir = path.join(
-      agentRunnerDir,
-      'node_modules',
-      '@github',
-      'copilot-sdk',
-    );
+    const sdkDir = path.join(agentRunnerDir, 'node_modules', '@github', 'copilot-sdk');
     if (!fs.existsSync(sdkDir)) {
       console.log('Installing agent-runner dependencies (host mode)...');
       try {
@@ -153,9 +135,7 @@ export async function initWorkspace(
       );
       if (hasConfiguredChannel) {
         console.log('');
-        console.log(
-          'Workspace already configured — skipping channel setup wizard.',
-        );
+        console.log('Workspace already configured — skipping channel setup wizard.');
         console.log('Re-run with `nanoclaw init --force` to reconfigure.');
         return;
       }
@@ -173,17 +153,14 @@ export async function initWorkspace(
     input: process.stdin,
     output: process.stdout,
   });
-  const ask = (q: string): Promise<string> =>
-    new Promise((resolve) => rl.question(q, resolve));
+  const ask = (q: string): Promise<string> => new Promise((resolve) => rl.question(q, resolve));
 
   console.log('\n--- Quick Setup ---\n');
 
   // Mode selection
   const hasDocker = await checkDocker();
   if (hasDocker) {
-    const modeChoice = await ask(
-      'Run mode — sandbox (Docker) or host (direct)? (S/h): ',
-    );
+    const modeChoice = await ask('Run mode — sandbox (Docker) or host (direct)? (S/h): ');
     if (modeChoice.toLowerCase() === 'h') {
       updateConfigField(ws, 'agents.defaults.mode', 'host');
       console.log('✅ Mode: host');
@@ -212,19 +189,11 @@ export async function initWorkspace(
     }
 
     // Check ~/.copilot/ directory (GHC CLI's own auth storage)
-    const homeCopilotDir = path.join(
-      process.env.HOME || process.env.USERPROFILE || '',
-      '.copilot',
-    );
-    const hasCopilotAuth = fs.existsSync(
-      path.join(homeCopilotDir, 'config.json'),
-    );
+    const homeCopilotDir = path.join(process.env.HOME || process.env.USERPROFILE || '', '.copilot');
+    const hasCopilotAuth = fs.existsSync(path.join(homeCopilotDir, 'config.json'));
 
     if (copilotLoggedIn || hasCopilotAuth) {
-      console.log(
-        '✅ GitHub Copilot auth found' +
-          (hasCopilotAuth ? ' (~/.copilot/)' : ' (CLI)'),
-      );
+      console.log('✅ GitHub Copilot auth found' + (hasCopilotAuth ? ' (~/.copilot/)' : ' (CLI)'));
     } else {
       console.log('GitHub Copilot auth not found.');
       const loginChoice = await ask('Run copilot login now? (Y/n): ');
@@ -295,17 +264,14 @@ export async function initWorkspace(
       input: process.stdin,
       output: process.stdout,
     });
-    const ask2 = (q: string): Promise<string> =>
-      new Promise((resolve) => rl2.question(q, resolve));
+    const ask2 = (q: string): Promise<string> => new Promise((resolve) => rl2.question(q, resolve));
     const startNow = await ask2('Start nanoclaw now? (Y/n): ');
     rl2.close();
     if (startNow.toLowerCase() !== 'n') {
       console.log('');
       try {
         const { execSync } = await import('child_process');
-        const finalConfig = JSON.parse(
-          fs.readFileSync(path.join(ws, 'nanoclaw.json'), 'utf-8'),
-        );
+        const finalConfig = JSON.parse(fs.readFileSync(path.join(ws, 'nanoclaw.json'), 'utf-8'));
         if (finalConfig.agents?.defaults?.mode === 'sandbox') {
           console.log('Building container...');
           try {
@@ -314,9 +280,7 @@ export async function initWorkspace(
               timeout: 300000,
             });
           } catch {
-            console.log(
-              'Container build failed \u2014 switching to host mode.',
-            );
+            console.log('Container build failed \u2014 switching to host mode.');
             updateConfigField(ws, 'agents.defaults.mode', 'host');
           }
         }
@@ -336,12 +300,7 @@ export async function initWorkspace(
 
   // Write version file for tracking
   try {
-    const pkgJsonPath = path.join(
-      path.dirname(fileURLToPath(import.meta.url)),
-      '..',
-      '..',
-      'package.json',
-    );
+    const pkgJsonPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json');
     if (fs.existsSync(pkgJsonPath)) {
       const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf-8'));
       const versionInfo = JSON.stringify(
@@ -400,7 +359,9 @@ const DEFAULT_CONFIG = {
     timeout: 1800000,
     maxOutputSize: 10485760,
     maxConcurrent: 5,
-    idleTimeout: 0,
+    // 30s idle (matches config-loader default) — defense in depth against
+    // orphaned containers if a close-sentinel write is ever missed.
+    idleTimeout: 30_000,
   },
   credentialProxy: { port: 3001 },
   logLevel: 'info',

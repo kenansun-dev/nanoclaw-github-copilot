@@ -4,7 +4,7 @@
 
 import fs from 'fs';
 import { paths } from '../workspace.js';
-import { logger } from '../logger.js';
+import { logger } from '../log-extensions.js';
 
 /**
  * Set a nested config value by dot-separated key path.
@@ -14,9 +14,7 @@ export function configSet(key: string, value: string): void {
   const configPath = paths.config;
 
   if (!fs.existsSync(configPath)) {
-    throw new Error(
-      `Config not found: ${configPath}. Run "nanoclaw init" first.`,
-    );
+    throw new Error(`Config not found: ${configPath}. Run "nanoclaw init" first.`);
   }
 
   const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));

@@ -23,7 +23,8 @@ import os from 'os';
 import https from 'https';
 import http from 'http';
 
-import { logger } from './logger.js';
+import { logger } from './log-extensions.js';
+import { resolveWorkspace } from './workspace.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -57,7 +58,8 @@ interface TokenCache {
 // Azure CLI's well-known public client ID (multi-tenant, supports device code)
 const AZURE_CLI_CLIENT_ID = '04b07795-8ddb-461a-bbee-02f9e1bf7b46';
 
-const CREDENTIALS_DIR = path.join(os.homedir(), '.nanoclaw', 'credentials');
+// v2 isolation: derive credentials dir from resolved workspace.
+const CREDENTIALS_DIR = path.join(resolveWorkspace(), 'credentials');
 const TOKEN_CACHE_FILE = path.join(CREDENTIALS_DIR, 'mcp-tokens.json');
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -66,10 +68,7 @@ const TOKEN_CACHE_FILE = path.join(CREDENTIALS_DIR, 'mcp-tokens.json');
  * Get an access token for a remote MCP server with Azure AD auth.
  * Returns AuthResult with token and optional loginPrompt for LLM to handle.
  */
-export async function getAzureToken(
-  serverName: string,
-  authConfig: McpAzureAuthConfig,
-): Promise<AuthResult> {
+export async function getAzureToken(serverName: string, authConfig: McpAzureAuthConfig): Promise<AuthResult> {
   const resource = authConfig.resource;
   const tenantId = authConfig.tenantId || 'organizations';
   const scope = authConfig.scope || `${resource}/.default`;
@@ -86,16 +85,11 @@ export async function getAzureToken(
   if (cached?.refresh_token) {
     logger.info({ serverName }, 'Refreshing MCP token');
     try {
-      const refreshed = await refreshToken(
-        cached.refresh_token,
-        tenantId,
-        scope,
-      );
+      const refreshed = await refreshToken(cached.refresh_token, tenantId, scope);
       cache[serverName] = {
         access_token: refreshed.access_token,
         refresh_token: refreshed.refresh_token || cached.refresh_token,
-        expires_at:
-          Math.floor(Date.now() / 1000) + (refreshed.expires_in || 3600),
+        expires_at: Math.floor(Date.now() / 1000) + (refreshed.expires_in || 3600),
         resource,
         tenant_id: tenantId,
       };
@@ -151,10 +145,7 @@ export async function getAzureToken(
       tenant_id: tenantId,
     };
     saveTokenCache(cache);
-    logger.info(
-      { serverName },
-      'MCP token acquired via built-in device code flow',
-    );
+    logger.info({ serverName }, 'MCP token acquired via built-in device code flow');
     return { token: result.access_token, method: 'device-code' };
   } catch (err) {
     logger.error(
@@ -175,10 +166,7 @@ export async function getAzureToken(
  * Returns a map of server name → headers with Authorization.
  */
 export async function resolveAllMcpTokens(
-  servers: Record<
-    string,
-    { auth?: McpAzureAuthConfig; headers?: Record<string, string> }
-  >,
+  servers: Record<string, { auth?: McpAzureAuthConfig; headers?: Record<string, string> }>,
 ): Promise<{
   headers: Record<string, Record<string, string>>;
   errors: Record<string, string>;
@@ -220,15 +208,12 @@ function isAzInstalled(): boolean {
 
 function tryAzGetToken(resource: string): string | null {
   try {
-    const result = execSync(
-      `az account get-access-token --resource ${resource} --query accessToken -o tsv`,
-      {
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: 10000,
-        windowsHide: true,
-      },
-    ).trim();
+    const result = execSync(`az account get-access-token --resource ${resource} --query accessToken -o tsv`, {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 10000,
+      windowsHide: true,
+    }).trim();
     if (result && result.length > 10) return result;
     return null;
   } catch {
@@ -257,10 +242,7 @@ async function tryAzLogin(
       output += data.toString();
 
       // Check if device code prompt appeared
-      if (
-        (!resolved && output.includes('devicelogin')) ||
-        output.includes('device')
-      ) {
+      if ((!resolved && output.includes('devicelogin')) || output.includes('device')) {
         // Don't resolve yet — wait for login to complete or timeout
       }
     };
@@ -321,17 +303,12 @@ async function builtinDeviceCodeFlow(
   });
 
   if (!deviceResp.device_code) {
-    throw new Error(
-      `Device code request failed: ${JSON.stringify(deviceResp)}`,
-    );
+    throw new Error(`Device code request failed: ${JSON.stringify(deviceResp)}`);
   }
 
   // Print prompt (for CLI/TUI mode)
   logger.info('MCP Auth Required');
-  logger.info(
-    { code: deviceResp.user_code, url: deviceResp.verification_uri },
-    'MCP device code flow started',
-  );
+  logger.info({ code: deviceResp.user_code, url: deviceResp.verification_uri }, 'MCP device code flow started');
   if (deviceResp.verification_uri_complete) {
   }
   // Poll for token
@@ -362,10 +339,8 @@ async function builtinDeviceCodeFlow(
         await sleep(5000);
         continue;
       }
-      if (tokenResp.error === 'authorization_declined')
-        throw new Error('User declined');
-      if (tokenResp.error === 'expired_token')
-        throw new Error('Device code expired');
+      if (tokenResp.error === 'authorization_declined') throw new Error('User declined');
+      if (tokenResp.error === 'expired_token') throw new Error('Device code expired');
       throw new Error(`${tokenResp.error}: ${tokenResp.error_description}`);
     } catch (err) {
       if (err instanceof Error && err.message.includes('pending')) continue;
@@ -397,9 +372,7 @@ async function refreshToken(
   });
 
   if (!resp.access_token) {
-    throw new Error(
-      `Token refresh failed: ${resp.error}: ${resp.error_description}`,
-    );
+    throw new Error(`Token refresh failed: ${resp.error}: ${resp.error_description}`);
   }
 
   return {
@@ -429,10 +402,7 @@ function saveTokenCache(cache: TokenCache): void {
       mode: 0o600,
     });
   } catch (err) {
-    logger.warn(
-      { err: err instanceof Error ? err.message : String(err) },
-      'Failed to save MCP token cache',
-    );
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'Failed to save MCP token cache');
   }
 }
 
@@ -500,9 +470,7 @@ export async function testMcpAuth(serverName: string): Promise<void> {
   const auth = (server as any).auth as McpAzureAuthConfig | undefined;
   if (!auth || auth.provider !== 'azure') {
     console.error(`MCP server "${serverName}" has no azure auth configured`);
-    console.error(
-      'Add auth config: { "auth": { "provider": "azure", "resource": "https://..." } }',
-    );
+    console.error('Add auth config: { "auth": { "provider": "azure", "resource": "https://..." } }');
     process.exit(1);
   }
 
@@ -516,9 +484,7 @@ export async function testMcpAuth(serverName: string): Promise<void> {
 
   if (result.token) {
     console.log(`✅ Token acquired via ${result.method}`);
-    console.log(
-      `   Token: ${result.token.substring(0, 8) + '****'}... (${result.token.length} chars)`,
-    );
+    console.log(`   Token: ${result.token.substring(0, 8) + '****'}... (${result.token.length} chars)`);
   } else {
     console.log(`❌ Token not acquired`);
     if (result.loginPrompt) {

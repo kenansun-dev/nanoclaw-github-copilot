@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
-import type { RegisteredGroup } from './types.js';
+import type { RegisteredGroup } from './types-extensions.js';
 import {
   MAX_CONSECUTIVE_GROUP_MISSING,
   _resetSchedulerLoopForTests,
@@ -34,11 +34,9 @@ describe('task scheduler', () => {
       created_at: '2026-02-22T00:00:00.000Z',
     });
 
-    const enqueueTask = vi.fn(
-      (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
-        void fn();
-      },
-    );
+    const enqueueTask = vi.fn((_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+      void fn();
+    });
 
     startSchedulerLoop({
       registeredGroups: () => ({}),
@@ -124,8 +122,7 @@ describe('task scheduler', () => {
     // Must be in the future
     expect(new Date(nextRun!).getTime()).toBeGreaterThan(Date.now());
     // Must be aligned to the original schedule grid
-    const offset =
-      (new Date(nextRun!).getTime() - new Date(scheduledTime).getTime()) % ms;
+    const offset = (new Date(nextRun!).getTime() - new Date(scheduledTime).getTime()) % ms;
     expect(offset).toBe(0);
   });
 
@@ -147,11 +144,9 @@ describe('task scheduler', () => {
       created_at: '2026-04-22T00:00:00.000Z',
     });
 
-    const enqueueTask = vi.fn(
-      (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
-        void fn();
-      },
-    );
+    const enqueueTask = vi.fn((_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+      void fn();
+    });
 
     startSchedulerLoop({
       registeredGroups: () => ({}),
@@ -186,11 +181,9 @@ describe('task scheduler', () => {
       created_at: '2026-04-22T00:00:00.000Z',
     });
 
-    const enqueueTask = vi.fn(
-      (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
-        void fn();
-      },
-    );
+    const enqueueTask = vi.fn((_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+      void fn();
+    });
 
     startSchedulerLoop({
       registeredGroups: () => ({}),
@@ -220,9 +213,7 @@ describe('task scheduler', () => {
 
     const task = getTaskById('task-stale-orphan');
     expect(task?.status).toBe('paused');
-    expect(task?.consecutive_group_missing).toBeGreaterThanOrEqual(
-      MAX_CONSECUTIVE_GROUP_MISSING,
-    );
+    expect(task?.consecutive_group_missing).toBeGreaterThanOrEqual(MAX_CONSECUTIVE_GROUP_MISSING);
     expect(task?.last_result).toMatch(/missing-group/);
   });
 
@@ -253,11 +244,9 @@ describe('task scheduler', () => {
           }
         : {};
 
-    const enqueueTask = vi.fn(
-      (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
-        void fn();
-      },
-    );
+    const enqueueTask = vi.fn((_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+      void fn();
+    });
 
     startSchedulerLoop({
       registeredGroups,

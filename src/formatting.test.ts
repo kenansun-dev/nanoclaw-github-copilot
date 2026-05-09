@@ -1,17 +1,8 @@
 import { describe, it, expect } from 'vitest';
 
-import {
-  ASSISTANT_NAME,
-  getTriggerPattern,
-  TRIGGER_PATTERN,
-} from './config.js';
-import {
-  escapeXml,
-  formatMessages,
-  formatOutbound,
-  stripInternalTags,
-} from './router.js';
-import { NewMessage } from './types.js';
+import { ASSISTANT_NAME, getTriggerPattern, TRIGGER_PATTERN } from './config.js';
+import { escapeXml, formatMessages, formatOutbound, stripInternalTags } from './text-format.js';
+import { NewMessage } from './types-extensions.js';
 
 function makeMsg(overrides: Partial<NewMessage> = {}): NewMessage {
   return {
@@ -45,9 +36,7 @@ describe('escapeXml', () => {
   });
 
   it('handles multiple special characters together', () => {
-    expect(escapeXml('a & b < c > d "e"')).toBe(
-      'a &amp; b &lt; c &gt; d &quot;e&quot;',
-    );
+    expect(escapeXml('a & b < c > d "e"')).toBe('a &amp; b &lt; c &gt; d &quot;e&quot;');
   });
 
   it('passes through strings with no special chars', () => {
@@ -100,13 +89,8 @@ describe('formatMessages', () => {
   });
 
   it('escapes special characters in content', () => {
-    const result = formatMessages(
-      [makeMsg({ content: '<script>alert("xss")</script>' })],
-      TZ,
-    );
-    expect(result).toContain(
-      '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;',
-    );
+    const result = formatMessages([makeMsg({ content: '<script>alert("xss")</script>' })], TZ);
+    expect(result).toContain('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;');
   });
 
   it('handles empty array', () => {
@@ -128,9 +112,7 @@ describe('formatMessages', () => {
       TZ,
     );
     expect(result).toContain('reply_to="42"');
-    expect(result).toContain(
-      '<quoted_message from="Bob">Are you coming tonight?</quoted_message>',
-    );
+    expect(result).toContain('<quoted_message from="Bob">Are you coming tonight?</quoted_message>');
     expect(result).toContain('Yes, on my way!</message>');
   });
 
@@ -166,17 +148,12 @@ describe('formatMessages', () => {
       TZ,
     );
     expect(result).toContain('from="A &amp; B"');
-    expect(result).toContain(
-      '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;',
-    );
+    expect(result).toContain('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;');
   });
 
   it('converts timestamps to local time for given timezone', () => {
     // 2024-01-01T18:30:00Z in America/New_York (EST) = 1:30 PM
-    const result = formatMessages(
-      [makeMsg({ timestamp: '2024-01-01T18:30:00.000Z' })],
-      'America/New_York',
-    );
+    const result = formatMessages([makeMsg({ timestamp: '2024-01-01T18:30:00.000Z' })], 'America/New_York');
     expect(result).toContain('1:30');
     expect(result).toContain('PM');
     expect(result).toContain('<context timezone="America/New_York" />');
@@ -247,21 +224,15 @@ describe('getTriggerPattern', () => {
 
 describe('stripInternalTags', () => {
   it('strips single-line internal tags', () => {
-    expect(stripInternalTags('hello <internal>secret</internal> world')).toBe(
-      'hello  world',
-    );
+    expect(stripInternalTags('hello <internal>secret</internal> world')).toBe('hello  world');
   });
 
   it('strips multi-line internal tags', () => {
-    expect(
-      stripInternalTags('hello <internal>\nsecret\nstuff\n</internal> world'),
-    ).toBe('hello  world');
+    expect(stripInternalTags('hello <internal>\nsecret\nstuff\n</internal> world')).toBe('hello  world');
   });
 
   it('strips multiple internal tag blocks', () => {
-    expect(
-      stripInternalTags('<internal>a</internal>hello<internal>b</internal>'),
-    ).toBe('hello');
+    expect(stripInternalTags('<internal>a</internal>hello<internal>b</internal>')).toBe('hello');
   });
 
   it('returns empty string when text is only internal tags', () => {
@@ -279,9 +250,7 @@ describe('formatOutbound', () => {
   });
 
   it('strips internal tags from remaining text', () => {
-    expect(
-      formatOutbound('<internal>thinking</internal>The answer is 42'),
-    ).toBe('The answer is 42');
+    expect(formatOutbound('<internal>thinking</internal>The answer is 42')).toBe('The answer is 42');
   });
 });
 
@@ -290,10 +259,7 @@ describe('formatOutbound', () => {
 describe('trigger gating (requiresTrigger interaction)', () => {
   // Replicates the exact logic from processGroupMessages and startMessageLoop:
   //   if (!isMainGroup && group.requiresTrigger !== false) { check group.trigger }
-  function shouldRequireTrigger(
-    isMainGroup: boolean,
-    requiresTrigger: boolean | undefined,
-  ): boolean {
+  function shouldRequireTrigger(isMainGroup: boolean, requiresTrigger: boolean | undefined): boolean {
     return !isMainGroup && requiresTrigger !== false;
   }
 

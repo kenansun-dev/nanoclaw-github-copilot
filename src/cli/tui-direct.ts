@@ -14,6 +14,8 @@ import { fileURLToPath } from 'url';
 import { loadConfig, saveConfig } from '../config-loader.js';
 import { resolveGithubToken, isGHCProvider } from '../config-extensions.js';
 import { resolveWorkspace, paths as wsPaths } from '../workspace.js';
+import { resolveGroupIpcPath } from '../group-folder.js';
+import { makeCloseSentinelState, shouldWriteCloseSentinel } from './tui-direct-close-sentinel.js';
 
 const OUTPUT_START = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END = '---NANOCLAW_OUTPUT_END---';
@@ -49,13 +51,7 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
       ? _args
           .slice(queryIdx + 1)
           .filter((a) => a !== '--model' && a !== '--think')
-          .filter(
-            (a, i, arr) =>
-              !(
-                i > 0 &&
-                (arr[i - 1] === '--model' || arr[i - 1] === '--think')
-              ),
-          )
+          .filter((a, i, arr) => !(i > 0 && (arr[i - 1] === '--model' || arr[i - 1] === '--think')))
           .join(' ')
           .trim()
       : '';
@@ -81,19 +77,13 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
 
   // TUI config overrides agent defaults; CLI args override everything
   const assistantName = tuiCfg.name || agent.name || 'Nanoclaw';
-  const model =
-    modelOverride ||
-    tuiCfg.model ||
-    agent.model ||
-    'github-copilot/claude-sonnet-4';
+  const model = modelOverride || tuiCfg.model || agent.model || 'github-copilot/claude-sonnet-4';
   const thinkLevel = thinkOverride || tuiCfg.thinkLevel || agent.thinkLevel;
   const mode = tuiCfg.mode || agent.mode || 'host';
 
   if (!singleQuery) {
     console.log(`\n  ${assistantName} — Terminal Chat`);
-    console.log(
-      `  Model: ${model}${thinkLevel ? ` (think: ${thinkLevel})` : ''} [${mode}]`,
-    );
+    console.log(`  Model: ${model}${thinkLevel ? ` (think: ${thinkLevel})` : ''} [${mode}]`);
     console.log(`  Commands: /new /think <level> /quit\n`);
   }
 
@@ -188,13 +178,7 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
     if (trimmed === '/new' || trimmed === '/reset') {
       sessionId = undefined;
       // Clear copilot session data
-      const sessionDir = path.join(
-        ws,
-        'data',
-        'sessions',
-        groupFolder,
-        '.copilot',
-      );
+      const sessionDir = path.join(ws, 'data', 'sessions', groupFolder, '.copilot');
       if (fs.existsSync(sessionDir)) {
         fs.rmSync(sessionDir, { recursive: true, force: true });
       }
@@ -203,9 +187,7 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
     }
 
     // /think command
-    const thinkMatch = trimmed.match(
-      /^\/think(?:\s+(off|low|medium|high|xhigh))?$/i,
-    );
+    const thinkMatch = trimmed.match(/^\/think(?:\s+(off|low|medium|high|xhigh))?$/i);
     if (thinkMatch) {
       const level = thinkMatch[1]?.toLowerCase();
       if (!level) {
@@ -217,11 +199,7 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
         if (level === 'off') {
           delete cfg.agents.defaults.thinkLevel;
         } else {
-          cfg.agents.defaults.thinkLevel = level as
-            | 'low'
-            | 'medium'
-            | 'high'
-            | 'xhigh';
+          cfg.agents.defaults.thinkLevel = level as 'low' | 'medium' | 'high' | 'xhigh';
         }
         saveConfig(cfg, 'tui', { command: '/think', level });
         console.log(`🧠 Think level: ${level}\n`);
@@ -266,7 +244,7 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
   }
 }
 
-interface QueryOptions {
+export interface QueryOptions {
   prompt: string;
   sessionId?: string;
   groupFolder: string;
@@ -279,7 +257,7 @@ interface QueryOptions {
   onChild: (child: ChildProcess) => void;
 }
 
-async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
+export async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
   // Sandbox mode: use container-runner (Docker)
   if (opts.mode === 'sandbox') {
     return runSandboxQuery(opts);
@@ -288,13 +266,7 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
   // Host mode: spawn agent-runner directly
   const isGHC = isGHCProvider();
   const runnerDir = isGHC ? 'agent-runner-ghc' : 'agent-runner';
-  const runnerPath = path.join(
-    PROJECT_ROOT,
-    'container',
-    runnerDir,
-    'src',
-    'index.ts',
-  );
+  const runnerPath = path.join(PROJECT_ROOT, 'container', runnerDir, 'src', 'index.ts');
 
   if (!fs.existsSync(runnerPath)) {
     return {
@@ -337,10 +309,7 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
 
   // Skills
   const containerSkills = path.join(PROJECT_ROOT, 'container', 'skills');
-  if (
-    fs.existsSync(wsPaths.skills) &&
-    fs.readdirSync(wsPaths.skills).length > 0
-  ) {
+  if (fs.existsSync(wsPaths.skills) && fs.readdirSync(wsPaths.skills).length > 0) {
     env.NANOCLAW_SKILLS_DIR = wsPaths.skills;
   } else if (fs.existsSync(containerSkills)) {
     env.NANOCLAW_SKILLS_DIR = containerSkills;
@@ -420,9 +389,7 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
     const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let spinIdx = 0;
     const spinTimer = setInterval(() => {
-      process.stdout.write(
-        `\r${spinner[spinIdx++ % spinner.length]} thinking...`,
-      );
+      process.stdout.write(`\r${spinner[spinIdx++ % spinner.length]} thinking...`);
     }, 100);
 
     // Timeout
@@ -475,20 +442,13 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
         const endIdx = stdout.indexOf(OUTPUT_END, startIdx);
         if (endIdx === -1) break;
 
-        const jsonStr = stdout
-          .substring(startIdx + OUTPUT_START.length, endIdx)
-          .trim();
-        stdout =
-          stdout.substring(0, startIdx) +
-          stdout.substring(endIdx + OUTPUT_END.length);
+        const jsonStr = stdout.substring(startIdx + OUTPUT_START.length, endIdx).trim();
+        stdout = stdout.substring(0, startIdx) + stdout.substring(endIdx + OUTPUT_END.length);
 
         try {
           const output: ContainerOutput = JSON.parse(jsonStr);
           // Skip partial/thinking-only outputs — wait for final result
-          if (
-            output.partial ||
-            (output.status === 'thinking' && !output.result)
-          ) {
+          if (output.partial || (output.status === 'thinking' && !output.result)) {
             continue;
           }
           hadOutput = true;
@@ -514,9 +474,7 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
       if (lastStart !== -1) {
         const lastEnd = stdout.indexOf(OUTPUT_END, lastStart);
         if (lastEnd !== -1) {
-          const jsonStr = stdout
-            .substring(lastStart + OUTPUT_START.length, lastEnd)
-            .trim();
+          const jsonStr = stdout.substring(lastStart + OUTPUT_START.length, lastEnd).trim();
           try {
             finish(JSON.parse(jsonStr));
             return;
@@ -549,7 +507,7 @@ async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
  * Run query in sandbox (Docker container) mode.
  * Uses container-runner for Docker-based execution.
  */
-async function runSandboxQuery(opts: QueryOptions): Promise<ContainerOutput> {
+export async function runSandboxQuery(opts: QueryOptions): Promise<ContainerOutput> {
   try {
     const { runContainerAgent } = await import('../container-runner.js');
 
@@ -580,10 +538,28 @@ async function runSandboxQuery(opts: QueryOptions): Promise<ContainerOutput> {
     const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let spinIdx = 0;
     const spinTimer = setInterval(() => {
-      process.stdout.write(
-        `\r${spinner[spinIdx++ % spinner.length]} thinking...`,
-      );
+      process.stdout.write(`\r${spinner[spinIdx++ % spinner.length]} thinking...`);
     }, 100);
+
+    // Single-query mode: container is long-lived (waits for next IPC after
+    // each query). To avoid orphaning it after our one --ask, write the
+    // `_close` sentinel as soon as we see the first complete (non-partial)
+    // output. Mirrors the host-mode finish() handler at line ~453.
+    // Use container-runner's IPC path resolution (data/ipc/<folder>), NOT
+    // tui-direct's host-mode ipcDir (ipc/<folder>) — they differ.
+    // Decision rule + once-only gate are extracted to tui-direct-close-
+    // sentinel.ts so they're independently mutation-tested (12 tests).
+    const sandboxIpcInput = path.join(resolveGroupIpcPath(opts.groupFolder), 'input');
+    const closeSentinel = path.join(sandboxIpcInput, '_close');
+    const closeState = makeCloseSentinelState();
+    const writeCloseSentinel = () => {
+      try {
+        fs.mkdirSync(sandboxIpcInput, { recursive: true });
+        fs.writeFileSync(closeSentinel, '');
+      } catch {
+        /* swallow — CONTAINER_TIMEOUT is the safety net */
+      }
+    };
 
     const output = await runContainerAgent(
       group,
@@ -593,6 +569,7 @@ async function runSandboxQuery(opts: QueryOptions): Promise<ContainerOutput> {
       },
       async (out) => {
         lastOutput = out;
+        if (shouldWriteCloseSentinel(closeState, out)) writeCloseSentinel();
       },
     );
 

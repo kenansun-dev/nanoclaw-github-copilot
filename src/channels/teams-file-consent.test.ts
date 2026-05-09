@@ -45,11 +45,7 @@ describe('Teams fileConsent/invoke handler — wire path coverage', () => {
     const nextMethod = src.indexOf('\n  private ', handleIncomingStart + 30);
     const nextAsync = src.indexOf('\n  async ', handleIncomingStart + 30);
     const end =
-      nextMethod > 0 && (nextAsync < 0 || nextMethod < nextAsync)
-        ? nextMethod
-        : nextAsync > 0
-          ? nextAsync
-          : src.length;
+      nextMethod > 0 && (nextAsync < 0 || nextMethod < nextAsync) ? nextMethod : nextAsync > 0 ? nextAsync : src.length;
     const body = src.slice(handleIncomingStart, end);
 
     expect(body).toContain("activity.name === 'fileConsent/invoke'");
@@ -79,10 +75,7 @@ describe('handleFileConsentInvoke decision tree (logic mirror)', () => {
   // handler in teams.ts restructures its returns.
   type Outcome = { status: number; uploadCalled: boolean };
 
-  async function decide(
-    value: any,
-    uploadResponse: { ok: boolean; status?: number } = { ok: true },
-  ): Promise<Outcome> {
+  async function decide(value: any, uploadResponse: { ok: boolean; status?: number } = { ok: true }): Promise<Outcome> {
     let uploadCalled = false;
     if (value?.action === 'decline') {
       return { status: 200, uploadCalled };
@@ -182,9 +175,7 @@ describe('FileConsentCard outgoing attachment shape (sendFile DM path)', () => {
       .sort((a, b) => a - b)[0];
     const body = src.slice(sendFileStart, nextBoundary ?? src.length);
 
-    expect(body).toContain(
-      "contentType: 'application/vnd.microsoft.teams.card.file.consent'",
-    );
+    expect(body).toContain("contentType: 'application/vnd.microsoft.teams.card.file.consent'");
     expect(body).toMatch(/attachments:\s*\[consentCard/);
 
     // Regression guard: inside the `const consentCard = { ... }` literal,
@@ -275,9 +266,7 @@ describe('FileInfoCard attachment shape (file chiclet rendering)', () => {
     const src = fs.readFileSync(path.resolve(__dirname, 'teams.ts'), 'utf-8');
 
     // Find the FileInfoCard send block. Use the contentType marker as anchor.
-    const anchor = src.indexOf(
-      "'application/vnd.microsoft.teams.card.file.info'",
-    );
+    const anchor = src.indexOf("'application/vnd.microsoft.teams.card.file.info'");
     expect(anchor).toBeGreaterThan(0);
 
     // Bound to the surrounding setImmediate/continueConversation block.
@@ -303,8 +292,7 @@ describe('FileInfoCard attachment shape (file chiclet rendering)', () => {
     // the production code is caught here even if the source-grep above
     // passes (e.g. someone moves the literal but breaks the runtime shape).
     const uploadInfo = {
-      contentUrl:
-        'https://contoso.sharepoint.com/personal/u/Documents/Apps/file.txt',
+      contentUrl: 'https://contoso.sharepoint.com/personal/u/Documents/Apps/file.txt',
       name: 'file.txt',
       uploadUrl: 'https://upload.example/session',
       uniqueId: '1150D938-8870-4044-9F2C-5BBDEBA70C8C',
@@ -320,9 +308,7 @@ describe('FileInfoCard attachment shape (file chiclet rendering)', () => {
       },
     };
     // All four fields docs-mandate must be present.
-    expect(attachment.contentType).toBe(
-      'application/vnd.microsoft.teams.card.file.info',
-    );
+    expect(attachment.contentType).toBe('application/vnd.microsoft.teams.card.file.info');
     expect(attachment.contentUrl).toMatch(/^https:\/\//);
     expect(attachment.name).toBeTruthy();
     expect(attachment.content.uniqueId).toBeTruthy();

@@ -1,30 +1,48 @@
 /**
  * Workspace resolution for nanoclaw.
- * Default: ~/.nanoclaw/ — overridable via NANOCLAW_WORKSPACE env var or --workspace CLI flag.
+ * Default workspace dir name comes from `./workspace-config.ts` (single source of truth).
+ *
+ * Resolution priority: setWorkspace() > NANOCLAW_WORKSPACE env > <home>/<WORKSPACE_DIR_NAME>.
  */
 
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { WORKSPACE_DIR_NAME } from './workspace-config.js';
 
-const DEFAULT_WORKSPACE = path.join(os.homedir(), '.nanoclaw');
+const DEFAULT_WORKSPACE = path.join(os.homedir(), WORKSPACE_DIR_NAME);
 
 let _workspace: string | null = null;
 
 /**
- * Set the workspace path (called from CLI --workspace flag).
+ * Set the workspace path (called from CLI --workspace flag, or tests).
+ * Pass an empty string to clear and fall back to env var / default resolution.
  */
 export function setWorkspace(dir: string): void {
-  _workspace = path.resolve(dir);
+  _workspace = dir ? path.resolve(dir) : null;
 }
 
 /**
  * Resolve the workspace directory.
- * Priority: setWorkspace() > NANOCLAW_WORKSPACE env > ~/.nanoclaw/
+ * Priority: setWorkspace() > NANOCLAW_WORKSPACE env > <home>/<WORKSPACE_DIR_NAME>.
  */
 export function resolveWorkspace(): string {
   if (_workspace) return _workspace;
   return process.env.NANOCLAW_WORKSPACE || DEFAULT_WORKSPACE;
+}
+
+/**
+ * Backward-compat shims. The v2-merge staging guard + seed copy logic
+ * was removed once `WORKSPACE_DIR_NAME` defaulted back to `.nanoclaw`
+ * (in-place upgrade with no path split). Kept as no-ops so existing
+ * call sites in `index.ts` keep compiling without churn; will be
+ * deleted in a future cleanup.
+ */
+export function assertWorkspaceIsolation(): string {
+  return resolveWorkspace();
+}
+export function seedV2FromV1IfNeeded(): boolean {
+  return false;
 }
 
 /**
@@ -101,6 +119,21 @@ export const paths = {
     return workspacePath('state', 'nanoclaw.pid');
   },
   get logFile() {
-    return workspacePath('logs', 'nanoclaw.log');
+    // B.5 + 2026-05-09 followup: file logging is daily-rotated
+    // (`nanoclaw-YYYY-MM-DD.log`). Return today's daily file (pure path
+    // math, no fs side effects). Used by `nanoclaw logs` to tail the
+    // active file and by `nanoclaw start` to redirect daemon stdio.
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return workspacePath('logs', `nanoclaw-${yyyy}-${mm}-${dd}.log`);
+  },
+  /** Workspace logs directory. Reported by `/status` so users know
+   * where to find rotated/archived files (the active filename rotates
+   * daily and gets gzipped after a week, so showing a single path is
+   * misleading). */
+  get logDir() {
+    return workspacePath('logs');
   },
 };

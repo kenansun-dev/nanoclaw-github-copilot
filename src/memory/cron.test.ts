@@ -32,17 +32,15 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock('./../db.js', () => ({
-  createTask: vi.fn(
-    (row: { id: string; prompt: string; schedule_value: string }) => {
-      h.tasks.set(row.id, {
-        id: row.id,
-        status: 'active',
-        prompt: row.prompt,
-        schedule_value: row.schedule_value,
-        consecutive_group_missing: 0,
-      });
-    },
-  ),
+  createTask: vi.fn((row: { id: string; prompt: string; schedule_value: string }) => {
+    h.tasks.set(row.id, {
+      id: row.id,
+      status: 'active',
+      prompt: row.prompt,
+      schedule_value: row.schedule_value,
+      consecutive_group_missing: 0,
+    });
+  }),
   getTaskById: vi.fn((id: string) => h.tasks.get(id)),
   updateTask: vi.fn(
     (
@@ -66,7 +64,7 @@ vi.mock('./../config.js', () => ({ TIMEZONE: 'Asia/Shanghai' }));
 vi.mock('./../config-loader.js', () => ({
   loadConfig: () => ({ memory: { dailySummary: h.config.value } }),
 }));
-vi.mock('./../logger.js', () => ({
+vi.mock('./../log-extensions.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 

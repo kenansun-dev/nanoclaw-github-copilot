@@ -19,6 +19,7 @@ import { CopilotClient, approveAll } from '@github/copilot-sdk';
 import { fileURLToPath } from 'url';
 import { isSessionNotFoundError } from './session-recovery.js';
 import { loadPluginAgents } from './load-plugin-agents.js';
+import { makeIpcHelpers } from './ipc-helpers.js';
 
 interface ContainerInput {
   prompt: string;
@@ -67,61 +68,14 @@ function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
 }
 
-function shouldClose(): boolean {
-  if (fs.existsSync(IPC_INPUT_CLOSE_SENTINEL)) {
-    try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
-    return true;
-  }
-  return false;
-}
-
-function drainIpcInput(): string[] {
-  try {
-    fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
-    const files = fs.readdirSync(IPC_INPUT_DIR)
-      .filter(f => f.endsWith('.json'))
-      .sort();
-
-    const messages: string[] = [];
-    for (const file of files) {
-      const filePath = path.join(IPC_INPUT_DIR, file);
-      try {
-        const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-        fs.unlinkSync(filePath);
-        if (data.type === 'message' && data.text) {
-          messages.push(data.text);
-        }
-      } catch (err) {
-        log(`Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`);
-        try { fs.unlinkSync(filePath); } catch { /* ignore */ }
-      }
-    }
-    return messages;
-  } catch (err) {
-    log(`IPC drain error: ${err instanceof Error ? err.message : String(err)}`);
-    return [];
-  }
-}
-
-function waitForIpcMessage(): Promise<string | null> {
-  return new Promise((resolve) => {
-    const poll = () => {
-      // Drain messages BEFORE checking close sentinel — prevents race where
-      // _close arrives before a pending message file is read
-      const messages = drainIpcInput();
-      if (messages.length > 0) {
-        resolve(messages.join('\n'));
-        return;
-      }
-      if (shouldClose()) {
-        resolve(null);
-        return;
-      }
-      setTimeout(poll, IPC_POLL_MS);
-    };
-    poll();
-  });
-}
+// IPC helpers extracted to ipc-helpers.ts so unit tests import the real
+// implementation instead of re-implementing the logic in the test file.
+const { shouldClose, drainIpcInput, waitForIpcMessage } = makeIpcHelpers({
+  inputDir: IPC_INPUT_DIR,
+  closeSentinel: IPC_INPUT_CLOSE_SENTINEL,
+  pollMs: IPC_POLL_MS,
+  log,
+});
 
 /**
  * Archive conversation transcript before it gets too long.
@@ -185,10 +139,13 @@ async function main(): Promise<void> {
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   // Resolve IPC MCP server path.
-  // Compiled mode: __dirname = dist/, ipc-mcp-stdio.js exists locally.
+  // Compiled mode: __dirname = dist/, mcp-tools/index.js exists locally.
   // Dev mode (tsx): __dirname = src/, .js missing → use ../dist/.
-  const localJs = path.join(__dirname, 'ipc-mcp-stdio.js');
-  const distJs = path.join(__dirname, '..', 'dist', 'ipc-mcp-stdio.js');
+  // The 5-module barrel (mcp-tools/index.js) replaces the legacy single
+  // ipc-mcp-stdio.js entrypoint. The legacy file is retained one commit
+  // for rollback; cut here so smoke can validate the new path.
+  const localJs = path.join(__dirname, 'mcp-tools', 'index.js');
+  const distJs = path.join(__dirname, '..', 'dist', 'mcp-tools', 'index.js');
   const mcpServerPath = fs.existsSync(localJs) ? localJs : distJs;
 
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
@@ -197,7 +154,19 @@ async function main(): Promise<void> {
   // Build initial prompt
   let prompt = containerInput.prompt;
   if (containerInput.isScheduledTask) {
-    prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
+    prompt = [
+      '[SCHEDULED TASK]',
+      'This is an automated cron-triggered run. Strict output rules:',
+      '- Output ONLY the requested content (e.g. the summary, the report, the answer).',
+      '- Do NOT narrate work in progress (no "Let me check…", "Searching…", "I will now…").',
+      '- Do NOT add closing acknowledgments (no "Done", "Sent", "Hope this helps", "Let me know if…").',
+      '- No greetings, no sign-offs, no meta commentary about the task itself.',
+      '- If the task asks for a search/lookup, run the tool silently and reply with only the result.',
+      '- If you have nothing useful to report, reply with an empty string (the runner will skip it).',
+      '',
+      'Task instructions:',
+      prompt,
+    ].join('\n');
   }
   const pending = drainIpcInput();
   if (pending.length > 0) {
@@ -208,11 +177,13 @@ async function main(): Promise<void> {
   // Build dynamic identity + runtime info
   const agentName = containerInput.assistantName || 'Andy';
   const isHostMode = process.env.NANOCLAW_HOST_MODE === '1';
-  const modelStr = containerInput.model || process.env.COPILOT_MODEL || 'default';
-  const provider = modelStr.includes('/') ? modelStr.split('/')[0] : 'unknown';
-  const providerLabel = provider === 'github-copilot' ? 'GitHub Copilot'
-    : provider === 'anthropic' ? 'Claude (Anthropic)'
-    : provider;
+  // This runner is GHC-only (imports @github/copilot-sdk above), so the
+  // provider is always GitHub Copilot. Earlier code parsed `model` for a
+  // `provider/model` prefix and fell back to the literal string
+  // 'unknown', which leaked into the system prompt as
+  // "powered by unknown" whenever the agent's `model` config used a
+  // short name (e.g. 'claude-sonnet-4', 'gpt-5').
+  const providerLabel = 'GitHub Copilot';
   const os = await import('os');
   const runtimeLines = [
     `Your name is ${agentName}. You are a personal AI assistant powered by ${providerLabel}. When introducing yourself, use your name and mention you are powered by ${providerLabel}.`,

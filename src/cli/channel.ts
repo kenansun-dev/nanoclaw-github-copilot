@@ -73,9 +73,7 @@ export async function runChannelCommand(args: string[]): Promise<void> {
     case 'remove':
       return channelRemove(args[1]);
     default:
-      console.log(
-        'Usage: nanoclaw channel <list|add|remove> [name] [--agent <id>] [--force]',
-      );
+      console.log('Usage: nanoclaw channel <list|add|remove> [name] [--agent <id>] [--force]');
       console.log('Channels: ' + SUPPORTED_CHANNELS.join(', '));
   }
 }
@@ -177,13 +175,9 @@ function channelList(): void {
 
     const enabled = ch.enabled ? '✅ enabled' : '❌ disabled';
     const fields = CHANNEL_FIELDS[name];
-    const hasCredentials = fields
-      .filter((f) => f.required)
-      .every((f) => !!(ch as any)[f.key]);
+    const hasCredentials = fields.filter((f) => f.required).every((f) => !!(ch as any)[f.key]);
 
-    console.log(
-      `  ${name}: ${enabled}${hasCredentials ? '' : ' (missing credentials)'}`,
-    );
+    console.log(`  ${name}: ${enabled}${hasCredentials ? '' : ' (missing credentials)'}`);
   }
   console.log('');
 }
@@ -192,20 +186,13 @@ function channelList(): void {
 // channel add
 // ---------------------------------------------------------------------------
 
-async function channelAdd(
-  name: string | undefined,
-  args: string[],
-): Promise<void> {
+async function channelAdd(name: string | undefined, args: string[]): Promise<void> {
   if (!name) {
     console.log(
       'Usage: nanoclaw channel add <name> [--account <id>] [--setup] [--setup-tunnel] [--agent <id>] [--force]',
     );
-    console.log(
-      '       nanoclaw channel add teams --appId xxx --appPassword yyy [--account bot-b]',
-    );
-    console.log(
-      '       nanoclaw channel add telegram --botToken xxx [--account daily]',
-    );
+    console.log('       nanoclaw channel add teams --appId xxx --appPassword yyy [--account bot-b]');
+    console.log('       nanoclaw channel add telegram --botToken xxx [--account daily]');
     console.log('Available: ' + SUPPORTED_CHANNELS.join(', '));
     return;
   }
@@ -227,21 +214,15 @@ async function channelAdd(
     const agentList = config.agents?.list || [];
     const found = agentList.find((a: any) => a.id === agentId);
     if (!found) {
-      console.error(
-        `Agent '${agentId}' not found in config. Add it to agents.list first.`,
-      );
+      console.error(`Agent '${agentId}' not found in config. Add it to agents.list first.`);
       return;
     }
   }
 
   // Validate mutually exclusive flags
   if (flags.setup && (flags.appId || flags.botToken)) {
-    console.error(
-      'Error: --setup and --appId/--botToken are mutually exclusive.',
-    );
-    console.log(
-      '  Use --setup to provision new resources, OR pass credentials directly.',
-    );
+    console.error('Error: --setup and --appId/--botToken are mutually exclusive.');
+    console.log('  Use --setup to provision new resources, OR pass credentials directly.');
     return;
   }
 
@@ -255,12 +236,7 @@ async function channelAdd(
     if (!appResult) return;
     const tunnelUrl = await getTunnelUrlForSetup();
     if (tunnelUrl) {
-      await setupBot(
-        botName,
-        appResult.appId,
-        appResult.appPassword,
-        tunnelUrl,
-      );
+      await setupBot(botName, appResult.appId, appResult.appPassword, tunnelUrl);
     }
     await setupManifest(appResult.appId, botName);
     return;
@@ -286,22 +262,15 @@ async function channelAdd(
     const agentName = agent.name || agentId || 'default';
     const botName = `nanoclaw-${agentName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
     const cfg = loadConfig();
-    const appId =
-      cfg.channels.teams.accounts?.default?.appId || cfg.channels.teams.appId;
-    const appPassword =
-      cfg.channels.teams.accounts?.default?.appPassword ||
-      cfg.channels.teams.appPassword;
+    const appId = cfg.channels.teams.accounts?.default?.appId || cfg.channels.teams.appId;
+    const appPassword = cfg.channels.teams.accounts?.default?.appPassword || cfg.channels.teams.appPassword;
     if (!appId || !appPassword) {
-      console.error(
-        'Error: appId and appPassword required. Run --setup-app first or set them in config.',
-      );
+      console.error('Error: appId and appPassword required. Run --setup-app first or set them in config.');
       return;
     }
     const tunnelUrl = await getTunnelUrlForSetup();
     if (!tunnelUrl) {
-      console.error(
-        'Error: Could not determine tunnel URL. Run --setup-tunnel first.',
-      );
+      console.error('Error: Could not determine tunnel URL. Run --setup-tunnel first.');
       return;
     }
     await setupBot(botName, appId, appPassword, tunnelUrl);
@@ -316,18 +285,12 @@ async function channelAdd(
     const account = teamsAccounts[accountKey] || teamsAccounts.default;
     const appId = account?.appId || cfg.channels?.teams?.appId;
     if (!appId) {
-      console.error(
-        'Error: appId required. Run --setup-app first or set it in config.',
-      );
+      console.error('Error: appId required. Run --setup-app first or set it in config.');
       return;
     }
     // Name priority: account.name → agent.name → agents.defaults.name → 'Nanoclaw'
     const agent = resolveAgent(cfg, agentId);
-    const botName =
-      (account as any)?.name ||
-      agent.name ||
-      cfg.agents?.defaults?.name ||
-      'Nanoclaw';
+    const botName = (account as any)?.name || agent.name || cfg.agents?.defaults?.name || 'Nanoclaw';
     await setupManifest(appId, botName);
     return;
   }
@@ -355,10 +318,7 @@ async function channelAdd(
 // Interactive credential input (Telegram, etc.)
 // ---------------------------------------------------------------------------
 
-async function channelAddInteractive(
-  channelName: ChannelName,
-  accountId: string,
-): Promise<void> {
+async function channelAddInteractive(channelName: ChannelName, accountId: string): Promise<void> {
   const fields = CHANNEL_FIELDS[channelName];
 
   if (!process.stdin.isTTY) {
@@ -373,8 +333,7 @@ async function channelAddInteractive(
     input: process.stdin,
     output: process.stdout,
   });
-  const ask = (q: string): Promise<string> =>
-    new Promise((resolve) => rl.question(q, resolve));
+  const ask = (q: string): Promise<string> => new Promise((resolve) => rl.question(q, resolve));
 
   console.log(`\nConfiguring ${channelName} (account: ${accountId}):\n`);
 
@@ -397,16 +356,11 @@ async function channelAddInteractive(
 // Direct credential write (non-interactive)
 // ---------------------------------------------------------------------------
 
-function channelAddDirect(
-  channelName: ChannelName,
-  accountId: string,
-  credentials: Record<string, any>,
-): void {
+function channelAddDirect(channelName: ChannelName, accountId: string, credentials: Record<string, any>): void {
   const config = loadConfig();
   config.channels = config.channels || {};
 
-  const channelConfig: Record<string, any> =
-    (config.channels as any)[channelName] || {};
+  const channelConfig: Record<string, any> = (config.channels as any)[channelName] || {};
   channelConfig.enabled = true;
 
   // Write credentials to accounts.<accountId>
@@ -419,9 +373,7 @@ function channelAddDirect(
   (config.channels as any)[channelName] = channelConfig;
   saveConfig(config);
 
-  console.log(
-    `\n✅ ${channelName} account '${accountId}' configured in nanoclaw.json`,
-  );
+  console.log(`\n✅ ${channelName} account '${accountId}' configured in nanoclaw.json`);
   console.log('  Restart nanoclaw for changes to take effect.\n');
 }
 
@@ -429,10 +381,7 @@ function channelAddDirect(
 // Teams setup sub-steps
 // ---------------------------------------------------------------------------
 
-function runCmd(
-  cmd: string,
-  opts?: { silent?: boolean },
-): { ok: boolean; output: string } {
+function runCmd(cmd: string, opts?: { silent?: boolean }): { ok: boolean; output: string } {
   try {
     const output = execSync(cmd, {
       encoding: 'utf-8',
@@ -441,10 +390,7 @@ function runCmd(
     }).trim();
     return { ok: true, output };
   } catch (err: any) {
-    const output =
-      (err.stdout || '').toString().trim() +
-      '\n' +
-      (err.stderr || '').toString().trim();
+    const output = (err.stdout || '').toString().trim() + '\n' + (err.stderr || '').toString().trim();
     return { ok: false, output: output.trim() };
   }
 }
@@ -453,9 +399,7 @@ function runCmd(
  * --setup-app: Create Azure AD App Registration (appId + appPassword).
  * Reuses existing app if found by display name.
  */
-async function setupApp(
-  botName: string,
-): Promise<{ appId: string; appPassword: string } | null> {
+async function setupApp(botName: string): Promise<{ appId: string; appPassword: string } | null> {
   console.log(`\n🔑 Setting up Azure AD App Registration '${botName}'...`);
 
   // Check Azure CLI
@@ -467,9 +411,7 @@ async function setupApp(
   console.log(`  ✅ Azure CLI: ${azCheck.output}`);
 
   // Check if app already exists
-  const existingApp = runCmd(
-    `az ad app list --display-name "${botName}" --query "[0].appId" -o tsv`,
-  );
+  const existingApp = runCmd(`az ad app list --display-name "${botName}" --query "[0].appId" -o tsv`);
   let appId: string;
   let appPassword: string;
 
@@ -477,9 +419,7 @@ async function setupApp(
     appId = existingApp.output;
     console.log(`  Found existing app: ${appId}`);
     console.log('  Rotating client secret...');
-    const resetResult = runCmd(
-      `az ad app credential reset --id "${appId}" --years 2 --query "password" -o tsv`,
-    );
+    const resetResult = runCmd(`az ad app credential reset --id "${appId}" --years 2 --query "password" -o tsv`);
     if (!resetResult.ok) {
       console.error(`  ❌ Failed to rotate secret: ${resetResult.output}`);
       return null;
@@ -496,9 +436,7 @@ async function setupApp(
     }
     appId = createResult.output;
     console.log(`  Created app: ${appId}`);
-    const resetResult = runCmd(
-      `az ad app credential reset --id "${appId}" --years 2 --query "password" -o tsv`,
-    );
+    const resetResult = runCmd(`az ad app credential reset --id "${appId}" --years 2 --query "password" -o tsv`);
     if (!resetResult.ok) {
       console.error(`  ❌ Failed to create secret: ${resetResult.output}`);
       return null;
@@ -541,12 +479,7 @@ async function setupApp(
 /**
  * --setup-bot: Create Azure Bot resource (requires appId + tunnel URL).
  */
-async function setupBot(
-  botName: string,
-  appId: string,
-  appPassword: string,
-  tunnelUrl: string,
-): Promise<void> {
+async function setupBot(botName: string, appId: string, appPassword: string, tunnelUrl: string): Promise<void> {
   const resourceGroup = 'nanoclaw-rg';
   const location = 'eastus';
   const messagingEndpoint = `${tunnelUrl}/api/messages`;
@@ -559,9 +492,7 @@ async function setupBot(
   });
   if (!rgCheck.ok) {
     console.log(`  Creating resource group '${resourceGroup}'...`);
-    const rgCreate = runCmd(
-      `az group create --name "${resourceGroup}" --location "${location}" --output none`,
-    );
+    const rgCreate = runCmd(`az group create --name "${resourceGroup}" --location "${location}" --output none`);
     if (!rgCreate.ok) {
       console.error(`  ❌ Failed to create resource group: ${rgCreate.output}`);
       return;
@@ -585,9 +516,7 @@ async function setupBot(
       `az bot create --name "${botName}" --resource-group "${resourceGroup}" --app-type SingleTenant --appid "${appId}" --password "${appPassword}" --endpoint "${messagingEndpoint}" --sku F0 --output none`,
     );
     if (!createResult.ok) {
-      console.error(
-        `  ❌ Bot creation may have failed: ${createResult.output}`,
-      );
+      console.error(`  ❌ Bot creation may have failed: ${createResult.output}`);
     } else {
       console.log('  ✅ Bot created.');
     }
@@ -595,9 +524,7 @@ async function setupBot(
 
   // Enable Teams channel on the bot
   console.log('  Enabling Teams channel...');
-  runCmd(
-    `az bot msteams create --name "${botName}" --resource-group "${resourceGroup}" --output none`,
-  );
+  runCmd(`az bot msteams create --name "${botName}" --resource-group "${resourceGroup}" --output none`);
   console.log('  ✅ Teams channel enabled.');
   console.log(`  ✅ Messaging endpoint: ${messagingEndpoint}`);
 }
@@ -625,9 +552,7 @@ async function getTunnelUrlForSetup(): Promise<string | null> {
   const showResult = runCmd(`devtunnel show ${tunnelId}`);
   if (!showResult.ok) return null;
 
-  const urlMatch = showResult.output.match(
-    /https?:\/\/[a-zA-Z0-9._-]+\.devtunnels\.ms[^\s]*/,
-  );
+  const urlMatch = showResult.output.match(/https?:\/\/[a-zA-Z0-9._-]+\.devtunnels\.ms[^\s]*/);
   return urlMatch ? urlMatch[0].replace(/\/+$/, '') : null;
 }
 

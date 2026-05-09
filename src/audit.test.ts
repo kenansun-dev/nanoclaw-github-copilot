@@ -16,7 +16,7 @@ import * as path from 'path';
 
 // Capture logger.warn calls so we can assert on emitted audit lines.
 const warnSpy = vi.fn();
-vi.mock('./logger.js', () => ({
+vi.mock('./log-extensions.js', () => ({
   logger: {
     warn: (...args: unknown[]) => warnSpy(...args),
     info: vi.fn(),
@@ -121,11 +121,7 @@ describe('auditConfigDiff', () => {
   });
 
   it('handles undefined before-snapshot (first save) gracefully', () => {
-    auditConfigDiff(
-      undefined,
-      { agents: { defaults: { thinkLevel: 'high' } } },
-      'unknown',
-    );
+    auditConfigDiff(undefined, { agents: { defaults: { thinkLevel: 'high' } } }, 'unknown');
     expect(warnSpy).toHaveBeenCalledOnce();
     expect(warnSpy.mock.calls[0][0]).toMatchObject({
       before: '<unset>',
@@ -158,9 +154,7 @@ describe('saveConfig integration', () => {
     cfg2.agents.defaults.thinkLevel = 'high';
     saveConfig(cfg2, 'tui', { command: '/think', level: 'high' });
 
-    const auditCalls = warnSpy.mock.calls.filter(
-      (c) => c[0]?.subject === 'agents.defaults.thinkLevel',
-    );
+    const auditCalls = warnSpy.mock.calls.filter((c) => c[0]?.subject === 'agents.defaults.thinkLevel');
     expect(auditCalls).toHaveLength(1);
     expect(auditCalls[0][0]).toMatchObject({
       before: 'medium',

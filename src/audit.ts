@@ -15,7 +15,7 @@
  *   - Future: separate retention policy (audit kept 90 days, logs 7 days).
  */
 
-import { logger } from './logger.js';
+import { logger } from './log-extensions.js';
 
 /** A single audit event payload. */
 export interface AuditEvent {

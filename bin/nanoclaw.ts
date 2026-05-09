@@ -483,7 +483,6 @@ MCP
   mcp list                          List configured MCP servers
   mcp add <name> <url>              Add remote MCP server
   mcp remove <name>                 Remove MCP server
-  mcp daemon <start|stop|status>    Manage mcporter daemon
 
 Global Options
   --workspace <path>                Workspace (default: ~/.nanoclaw)
@@ -494,33 +493,6 @@ Global Options
 
 async function runMcp(args: string[]) {
   const sub = args[0];
-  const { resolveWorkspace } = await import('../dist/workspace.js');
-  const ws = resolveWorkspace();
-  const mcporterConfig = join(ws, 'mcporter', 'mcporter.json');
-  const { execSync, spawn: spawnChild } = await import('child_process');
-  const mcpBin = join(process.cwd(), 'node_modules', '.bin', 'mcporter');
-
-  // Ensure mcporter config exists and is synced from nanoclaw.json
-  const { mkdirSync, existsSync, writeFileSync, readFileSync } = await import('fs');
-  mkdirSync(join(ws, 'mcporter'), { recursive: true });
-  if (!existsSync(mcporterConfig)) {
-    writeFileSync(mcporterConfig, JSON.stringify({ mcpServers: {} }, null, 2));
-  }
-  // Sync remote MCP servers from nanoclaw.json → mcporter config
-  try {
-    const { loadConfig: syncCfg } = await import('../dist/config-loader.js');
-    const nc = syncCfg();
-    const mc = JSON.parse(readFileSync(mcporterConfig, 'utf-8'));
-    for (const [name, srv] of Object.entries(nc.mcp.servers)) {
-      const s = srv as any;
-      if ((s.type === 'http' || s.type === 'sse') && s.url && !mc.mcpServers?.[name]) {
-        mc.mcpServers = mc.mcpServers || {};
-        mc.mcpServers[name] = { url: s.url };
-      }
-    }
-    writeFileSync(mcporterConfig, JSON.stringify(mc, null, 2));
-  } catch { /* sync best-effort */ }
-
   switch (sub) {
     case 'auth': {
       const server = args[1];
@@ -528,15 +500,12 @@ async function runMcp(args: string[]) {
         console.error('Usage: nanoclaw mcp auth <server-name | url>');
         process.exit(1);
       }
-      console.log(`Authenticating MCP server: ${server}`);
-      try {
-        execSync(`${mcpBin} auth ${server} --config ${mcporterConfig}`, {
-          stdio: 'inherit',
-          timeout: 120000,
-        });
-      } catch {
-        console.error('Auth failed. Is the server URL correct?');
-      }
+      console.error(
+        `MCP "auth" command no longer ships a CLI proxy. ` +
+          `Use \`az login\` for Azure-AD-protected MCP servers; ` +
+          `tokens are auto-resolved at runtime by host-runner.`,
+      );
+      process.exit(1);
       break;
     }
     case 'list': {
@@ -567,13 +536,6 @@ async function runMcp(args: string[]) {
       const cfg = loadConfig();
       cfg.mcp.servers[name] = { type: 'http', url, tools: ['*'] };
       saveConfig(cfg);
-      // Also sync to mcporter config so auth works
-      try {
-        execSync(`${mcpBin} config add ${name} ${url} --config ${mcporterConfig}`, {
-          stdio: 'pipe',
-          timeout: 15000,
-        });
-      } catch { /* mcporter sync is best-effort */ }
       console.log(`Added MCP server: ${name} (saved to nanoclaw.json)`);
       break;
     }
@@ -588,36 +550,16 @@ async function runMcp(args: string[]) {
       const c = lc();
       delete c.mcp.servers[name];
       sc(c);
-      // Also remove from mcporter
-      try {
-        execSync(`${mcpBin} config remove ${name} --config ${mcporterConfig}`, {
-          stdio: 'pipe',
-          timeout: 15000,
-        });
-      } catch { /* best-effort */ }
       console.log(`Removed MCP server: ${name} (saved to nanoclaw.json)`);
       break;
     }
-    case 'daemon': {
-      const action = args[1] || 'status';
-      try {
-        execSync(`${mcpBin} daemon ${action} --config ${mcporterConfig}`, {
-          stdio: 'inherit',
-          timeout: 15000,
-        });
-      } catch {
-        console.error(`Daemon ${action} failed.`);
-      }
-      break;
-    }
     default:
-      console.log(`Usage: nanoclaw mcp <auth|list|add|remove|daemon> [args]
+      console.log(`Usage: nanoclaw mcp <auth|list|add|remove> [args]
 
 Commands:
-  auth <server|url>     Authenticate a remote MCP server (OAuth/PRM)
+  auth <server|url>     Authenticate a remote MCP server (deprecated; use az login)
   list                  List configured MCP servers
   add <name> <url>      Add a remote MCP server
-  remove <name>         Remove an MCP server
-  daemon <start|stop|status>  Manage mcporter daemon`);
+  remove <name>         Remove an MCP server`);
   }
 }

@@ -73,10 +73,7 @@ describe('resolveGithubToken (~/.copilot/config.json schema compat)', () => {
   });
 
   it('returns undefined when file exists but no token bag', () => {
-    fs.writeFileSync(
-      path.join(tmpHome, '.copilot', 'config.json'),
-      JSON.stringify({ firstLaunchAt: 123 }),
-    );
+    fs.writeFileSync(path.join(tmpHome, '.copilot', 'config.json'), JSON.stringify({ firstLaunchAt: 123 }));
     expect(resolveGithubToken()).toBeUndefined();
   });
 

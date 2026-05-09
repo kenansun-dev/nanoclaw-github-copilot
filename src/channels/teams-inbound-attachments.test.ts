@@ -90,10 +90,7 @@ describe('processIncomingAttachments \u2014 surfaces file to agent on every path
 
   let body: string;
   beforeEach(() => {
-    body = sliceMethod(
-      readTeamsSrc(),
-      'private async processIncomingAttachments(',
-    );
+    body = sliceMethod(readTeamsSrc(), 'private async processIncomingAttachments(');
   });
 
   it('success path: appends [Document: ...] note with local path', () => {
@@ -117,9 +114,7 @@ describe('processIncomingAttachments \u2014 surfaces file to agent on every path
   it('exception path: surfaces error note to activity.text', () => {
     expect(body).toContain('Failed to download Teams file');
     expect(body).toMatch(/\[Document: \$\{fileName\}\] \(download error/);
-    const errSection = body.slice(
-      body.indexOf('Failed to download Teams file'),
-    );
+    const errSection = body.slice(body.indexOf('Failed to download Teams file'));
     expect(errSection).toMatch(/activity\.text \+=/);
   });
 
@@ -128,12 +123,8 @@ describe('processIncomingAttachments \u2014 surfaces file to agent on every path
     // the attachment silently. Surface [Document: name] so the agent sees
     // that a file was sent, even without a local download.
     // Covers both `!activity.text` and text-present cases.
-    expect(body).toMatch(
-      /if \(!activity\.text\) \{[\s\S]*?activity\.text = `\[Document: \$\{fileName\}\]`;/,
-    );
-    expect(body).toMatch(
-      /\} else \{[\s\S]*?activity\.text \+= `\\n\[Document: \$\{fileName\}\]`;/,
-    );
+    expect(body).toMatch(/if \(!activity\.text\) \{[\s\S]*?activity\.text = `\[Document: \$\{fileName\}\]`;/);
+    expect(body).toMatch(/\} else \{[\s\S]*?activity\.text \+= `\\n\[Document: \$\{fileName\}\]`;/);
   });
 
   it('skips adaptive-card and hero-card attachments (non-file)', () => {
@@ -146,9 +137,7 @@ describe('processIncomingAttachments \u2014 surfaces file to agent on every path
     // Teams file.info attachments come with a pre-authenticated SharePoint
     // downloadUrl \u2014 must NOT attach a bearer (would get rejected).
     // Other contentUrls need the bot's credentials.
-    expect(body).toContain(
-      "'application/vnd.microsoft.teams.file.download.info'",
-    );
+    expect(body).toContain("'application/vnd.microsoft.teams.file.download.info'");
     expect(body).toMatch(/isTeamsFileInfo[\s\S]*downloadUrl/);
     expect(body).toMatch(/if \(!isTeamsFileInfo\)[\s\S]*credentialsFactory/);
   });

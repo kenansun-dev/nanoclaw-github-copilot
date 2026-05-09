@@ -4,14 +4,9 @@ import path from 'path';
 
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
-import { logger } from './logger.js';
+import { logger } from './log-extensions.js';
 import { collapseMainDmFolder } from './session-routing.js';
-import {
-  NewMessage,
-  RegisteredGroup,
-  ScheduledTask,
-  TaskRunLog,
-} from './types.js';
+import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types-extensions.js';
 
 let db: Database.Database;
 
@@ -23,9 +18,9 @@ let db: Database.Database;
  */
 function getChatIsGroup(jid: string): boolean | undefined {
   if (!db) return undefined;
-  const row = db
-    .prepare('SELECT is_group FROM chats WHERE jid = ?')
-    .get(jid) as { is_group: number | null } | undefined;
+  const row = db.prepare('SELECT is_group FROM chats WHERE jid = ?').get(jid) as
+    | { is_group: number | null }
+    | undefined;
   if (!row || row.is_group === null) return undefined;
   return row.is_group === 1;
 }
@@ -53,17 +48,13 @@ export function getAllChatIsGroup(): Map<string, boolean | undefined> {
  * nanoclaw.json or undefined if config can't be loaded. Wrapped so we
  * can call it once outside hot loops in `getAllRegisteredGroups`.
  */
-function loadChatsConfigSnapshot():
-  | Record<string, { agentId?: string; isMain?: boolean }>
-  | undefined {
+function loadChatsConfigSnapshot(): Record<string, { agentId?: string; isMain?: boolean }> | undefined {
   try {
     // Lazy require to avoid pulling config-loader during early db init.
     // config-loader does not import from db.ts, so this is acyclic.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { loadConfig } = require('./config-loader.js');
-    return loadConfig().chats as
-      | Record<string, { agentId?: string; isMain?: boolean }>
-      | undefined;
+    return loadConfig().chats as Record<string, { agentId?: string; isMain?: boolean }> | undefined;
   } catch {
     return undefined;
   }
@@ -77,16 +68,10 @@ function loadChatsConfigSnapshot():
  * Single-row path: used by `getRegisteredGroup`. For batch reads use
  * `resolveCollapsedFolderBatch` to avoid N+1 SQL/fs reads.
  */
-function resolveCollapsedFolder(
-  group: RegisteredGroup & { jid: string },
-): string {
+function resolveCollapsedFolder(group: RegisteredGroup & { jid: string }): string {
   if (!group.isMain) return group.folder;
   const chats = loadChatsConfigSnapshot();
-  return collapseMainDmFolder(
-    group,
-    chats?.[group.jid],
-    getChatIsGroup(group.jid),
-  );
+  return collapseMainDmFolder(group, chats?.[group.jid], getChatIsGroup(group.jid));
 }
 
 /**
@@ -95,17 +80,11 @@ function resolveCollapsedFolder(
  */
 function resolveCollapsedFolderBatch(
   group: RegisteredGroup & { jid: string },
-  chatsConfig:
-    | Record<string, { agentId?: string; isMain?: boolean }>
-    | undefined,
+  chatsConfig: Record<string, { agentId?: string; isMain?: boolean }> | undefined,
   isGroupMap: Map<string, boolean | undefined>,
 ): string {
   if (!group.isMain) return group.folder;
-  return collapseMainDmFolder(
-    group,
-    chatsConfig?.[group.jid],
-    isGroupMap.get(group.jid),
-  );
+  return collapseMainDmFolder(group, chatsConfig?.[group.jid], isGroupMap.get(group.jid));
 }
 
 function createSchema(database: Database.Database): void {
@@ -186,9 +165,7 @@ function createSchema(database: Database.Database): void {
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
   try {
-    database.exec(
-      `ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`,
-    );
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`);
   } catch {
     /* column already exists */
   }
@@ -199,9 +176,7 @@ function createSchema(database: Database.Database): void {
   // a one-time fresh session on next GHC use — acceptable trade-off vs trying
   // to retro-detect provider from session UUID format.
   try {
-    const cols = database
-      .prepare(`PRAGMA table_info(sessions)`)
-      .all() as Array<{ name: string }>;
+    const cols = database.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string }>;
     const hasProvider = cols.some((c) => c.name === 'provider');
     if (!hasProvider) {
       // Rebuild table with composite PK (SQLite can't change PK in place)
@@ -249,35 +224,25 @@ function createSchema(database: Database.Database): void {
   // logged out, etc.) so the scheduler stops spamming once-per-minute
   // "Group not found" errors. See task-scheduler.runTask().
   try {
-    database.exec(
-      `ALTER TABLE scheduled_tasks ADD COLUMN consecutive_group_missing INTEGER DEFAULT 0`,
-    );
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN consecutive_group_missing INTEGER DEFAULT 0`);
   } catch {
     /* column already exists */
   }
 
   // Add is_bot_message column if it doesn't exist (migration for existing DBs)
   try {
-    database.exec(
-      `ALTER TABLE messages ADD COLUMN is_bot_message INTEGER DEFAULT 0`,
-    );
+    database.exec(`ALTER TABLE messages ADD COLUMN is_bot_message INTEGER DEFAULT 0`);
     // Backfill: mark existing bot messages that used the content prefix pattern
-    database
-      .prepare(`UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`)
-      .run(`${ASSISTANT_NAME}:%`);
+    database.prepare(`UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`).run(`${ASSISTANT_NAME}:%`);
   } catch {
     /* column already exists */
   }
 
   // Add is_main column if it doesn't exist (migration for existing DBs)
   try {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN is_main INTEGER DEFAULT 0`,
-    );
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN is_main INTEGER DEFAULT 0`);
     // Backfill: existing rows with folder = 'main' are the main group
-    database.exec(
-      `UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`,
-    );
+    database.exec(`UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`);
   } catch {
     /* column already exists */
   }
@@ -287,18 +252,10 @@ function createSchema(database: Database.Database): void {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
     database.exec(`ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`);
     // Backfill from JID patterns
-    database.exec(
-      `UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'whatsapp', is_group = 0 WHERE jid LIKE '%@s.whatsapp.net'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'discord', is_group = 1 WHERE jid LIKE 'dc:%'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'telegram', is_group = 0 WHERE jid LIKE 'tg:%'`,
-    );
+    database.exec(`UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`);
+    database.exec(`UPDATE chats SET channel = 'whatsapp', is_group = 0 WHERE jid LIKE '%@s.whatsapp.net'`);
+    database.exec(`UPDATE chats SET channel = 'discord', is_group = 1 WHERE jid LIKE 'dc:%'`);
+    database.exec(`UPDATE chats SET channel = 'telegram', is_group = 0 WHERE jid LIKE 'tg:%'`);
   } catch {
     /* columns already exist */
   }
@@ -306,9 +263,7 @@ function createSchema(database: Database.Database): void {
   // Add reply context columns if they don't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE messages ADD COLUMN reply_to_message_id TEXT`);
-    database.exec(
-      `ALTER TABLE messages ADD COLUMN reply_to_message_content TEXT`,
-    );
+    database.exec(`ALTER TABLE messages ADD COLUMN reply_to_message_content TEXT`);
     database.exec(`ALTER TABLE messages ADD COLUMN reply_to_sender_name TEXT`);
   } catch {
     /* columns already exist */
@@ -419,9 +374,9 @@ export function getAllChats(): ChatInfo[] {
  */
 export function getLastGroupSync(): string | null {
   // Store sync time in a special chat entry
-  const row = db
-    .prepare(`SELECT last_message_time FROM chats WHERE jid = '__group_sync__'`)
-    .get() as { last_message_time: string } | undefined;
+  const row = db.prepare(`SELECT last_message_time FROM chats WHERE jid = '__group_sync__'`).get() as
+    | { last_message_time: string }
+    | undefined;
   return row?.last_message_time || null;
 }
 
@@ -509,9 +464,7 @@ export function getNewMessages(
     ) ORDER BY timestamp
   `;
 
-  const rows = db
-    .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as NewMessage[];
+  const rows = db.prepare(sql).all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as NewMessage[];
 
   let newTimestamp = lastTimestamp;
   for (const row of rows) {
@@ -530,12 +483,8 @@ export function getMessageById(
   messageId: string,
 ): { content: string; sender_name: string } | undefined {
   const row = db
-    .prepare(
-      'SELECT content, sender_name FROM messages WHERE id = ? AND chat_jid = ?',
-    )
-    .get(messageId, chatJid) as
-    | { content: string; sender_name: string }
-    | undefined;
+    .prepare('SELECT content, sender_name FROM messages WHERE id = ? AND chat_jid = ?')
+    .get(messageId, chatJid) as { content: string; sender_name: string } | undefined;
   return row;
 }
 
@@ -560,9 +509,7 @@ export function getMessagesSince(
       LIMIT ?
     ) ORDER BY timestamp
   `;
-  return db
-    .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+  return db.prepare(sql).all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
 }
 
 /**
@@ -604,10 +551,7 @@ export function getRecentConversation(
   return messages.slice(startIdx);
 }
 
-export function getLastBotMessageTimestamp(
-  chatJid: string,
-  botPrefix: string,
-): string | undefined {
+export function getLastBotMessageTimestamp(chatJid: string, botPrefix: string): string | undefined {
   const row = db
     .prepare(
       `SELECT MAX(timestamp) as ts FROM messages
@@ -617,9 +561,7 @@ export function getLastBotMessageTimestamp(
   return row?.ts ?? undefined;
 }
 
-export function createTask(
-  task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
-): void {
+export function createTask(task: Omit<ScheduledTask, 'last_run' | 'last_result'>): void {
   db.prepare(
     `
     INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, script, schedule_type, schedule_value, context_mode, next_run, status, created_at)
@@ -641,23 +583,17 @@ export function createTask(
 }
 
 export function getTaskById(id: string): ScheduledTask | undefined {
-  return db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as
-    | ScheduledTask
-    | undefined;
+  return db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as ScheduledTask | undefined;
 }
 
 export function getTasksForGroup(groupFolder: string): ScheduledTask[] {
   return db
-    .prepare(
-      'SELECT * FROM scheduled_tasks WHERE group_folder = ? ORDER BY created_at DESC',
-    )
+    .prepare('SELECT * FROM scheduled_tasks WHERE group_folder = ? ORDER BY created_at DESC')
     .all(groupFolder) as ScheduledTask[];
 }
 
 export function getAllTasks(): ScheduledTask[] {
-  return db
-    .prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC')
-    .all() as ScheduledTask[];
+  return db.prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC').all() as ScheduledTask[];
 }
 
 export function updateTask(
@@ -665,13 +601,7 @@ export function updateTask(
   updates: Partial<
     Pick<
       ScheduledTask,
-      | 'prompt'
-      | 'script'
-      | 'schedule_type'
-      | 'schedule_value'
-      | 'next_run'
-      | 'status'
-      | 'consecutive_group_missing'
+      'prompt' | 'script' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status' | 'consecutive_group_missing'
     >
   >,
 ): void {
@@ -710,9 +640,7 @@ export function updateTask(
   if (fields.length === 0) return;
 
   values.push(id);
-  db.prepare(
-    `UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`,
-  ).run(...values);
+  db.prepare(`UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`).run(...values);
 }
 
 /**
@@ -739,9 +667,7 @@ export function incrementConsecutiveGroupMissing(id: string): number {
  * service restart) does not eventually pause an otherwise-healthy task.
  */
 export function clearConsecutiveGroupMissing(id: string): void {
-  db.prepare(
-    `UPDATE scheduled_tasks SET consecutive_group_missing = 0 WHERE id = ?`,
-  ).run(id);
+  db.prepare(`UPDATE scheduled_tasks SET consecutive_group_missing = 0 WHERE id = ?`).run(id);
 }
 
 export function deleteTask(id: string): void {
@@ -763,11 +689,7 @@ export function getDueTasks(): ScheduledTask[] {
     .all(now) as ScheduledTask[];
 }
 
-export function updateTaskAfterRun(
-  id: string,
-  nextRun: string | null,
-  lastResult: string,
-): void {
+export function updateTaskAfterRun(id: string, nextRun: string | null, lastResult: string): void {
   const now = new Date().toISOString();
   db.prepare(
     `
@@ -780,9 +702,7 @@ export function updateTaskAfterRun(
 
 export function getTaskRunLogs(taskId: string, limit = 10): TaskRunLog[] {
   return db
-    .prepare(
-      'SELECT * FROM task_run_logs WHERE task_id = ? ORDER BY run_at DESC LIMIT ?',
-    )
+    .prepare('SELECT * FROM task_run_logs WHERE task_id = ? ORDER BY run_at DESC LIMIT ?')
     .all(taskId, limit) as TaskRunLog[];
 }
 
@@ -792,29 +712,18 @@ export function logTaskRun(log: TaskRunLog): void {
     INSERT INTO task_run_logs (task_id, run_at, duration_ms, status, result, error)
     VALUES (?, ?, ?, ?, ?, ?)
   `,
-  ).run(
-    log.task_id,
-    log.run_at,
-    log.duration_ms,
-    log.status,
-    log.result,
-    log.error,
-  );
+  ).run(log.task_id, log.run_at, log.duration_ms, log.status, log.result, log.error);
 }
 
 // --- Router state accessors ---
 
 export function getRouterState(key: string): string | undefined {
-  const row = db
-    .prepare('SELECT value FROM router_state WHERE key = ?')
-    .get(key) as { value: string } | undefined;
+  const row = db.prepare('SELECT value FROM router_state WHERE key = ?').get(key) as { value: string } | undefined;
   return row?.value;
 }
 
 export function setRouterState(key: string, value: string): void {
-  db.prepare(
-    'INSERT OR REPLACE INTO router_state (key, value) VALUES (?, ?)',
-  ).run(key, value);
+  db.prepare('INSERT OR REPLACE INTO router_state (key, value) VALUES (?, ?)').run(key, value);
 }
 
 // --- Session accessors ---
@@ -828,23 +737,14 @@ export function setRouterState(key: string, value: string): void {
  * group can independently resume CC and GHC sessions when its bound
  * agent is switched.
  */
-export function getSession(
-  groupFolder: string,
-  provider: string = 'anthropic',
-): string | undefined {
+export function getSession(groupFolder: string, provider: string = 'anthropic'): string | undefined {
   const row = db
-    .prepare(
-      'SELECT session_id FROM sessions WHERE group_folder = ? AND provider = ?',
-    )
+    .prepare('SELECT session_id FROM sessions WHERE group_folder = ? AND provider = ?')
     .get(groupFolder, provider) as { session_id: string } | undefined;
   return row?.session_id;
 }
 
-export function setSession(
-  groupFolder: string,
-  sessionId: string,
-  provider: string = 'anthropic',
-): void {
+export function setSession(groupFolder: string, sessionId: string, provider: string = 'anthropic'): void {
   // Preserve any existing session-level overrides (think_level, model,
   // show_thinking) by using INSERT … ON CONFLICT instead of REPLACE,
   // which would NULL them out on every session refresh.
@@ -867,14 +767,9 @@ export interface SessionOverrides {
   showThinking?: string;
 }
 
-export function getSessionOverrides(
-  groupFolder: string,
-  provider: string = 'anthropic',
-): SessionOverrides {
+export function getSessionOverrides(groupFolder: string, provider: string = 'anthropic'): SessionOverrides {
   const row = db
-    .prepare(
-      'SELECT think_level, model, show_thinking FROM sessions WHERE group_folder = ? AND provider = ?',
-    )
+    .prepare('SELECT think_level, model, show_thinking FROM sessions WHERE group_folder = ? AND provider = ?')
     .get(groupFolder, provider) as
     | {
         think_level: string | null;
@@ -915,9 +810,7 @@ export function setSessionOverride(
 
 export function deleteSession(groupFolder: string, provider?: string): void {
   if (provider) {
-    db.prepare(
-      'DELETE FROM sessions WHERE group_folder = ? AND provider = ?',
-    ).run(groupFolder, provider);
+    db.prepare('DELETE FROM sessions WHERE group_folder = ? AND provider = ?').run(groupFolder, provider);
   } else {
     // Provider omitted = clear all providers for this group (legacy behavior)
     db.prepare('DELETE FROM sessions WHERE group_folder = ?').run(groupFolder);
@@ -932,9 +825,7 @@ export function deleteSession(groupFolder: string, provider?: string): void {
  * represent dual-provider state.
  */
 export function getAllSessions(): Record<string, Record<string, string>> {
-  const rows = db
-    .prepare('SELECT group_folder, provider, session_id FROM sessions')
-    .all() as Array<{
+  const rows = db.prepare('SELECT group_folder, provider, session_id FROM sessions').all() as Array<{
     group_folder: string;
     provider: string;
     session_id: string;
@@ -949,12 +840,8 @@ export function getAllSessions(): Record<string, Record<string, string>> {
 
 // --- Registered group accessors ---
 
-export function getRegisteredGroup(
-  jid: string,
-): (RegisteredGroup & { jid: string }) | undefined {
-  const row = db
-    .prepare('SELECT * FROM registered_groups WHERE jid = ?')
-    .get(jid) as
+export function getRegisteredGroup(jid: string): (RegisteredGroup & { jid: string }) | undefined {
+  const row = db.prepare('SELECT * FROM registered_groups WHERE jid = ?').get(jid) as
     | {
         jid: string;
         name: string;
@@ -968,10 +855,7 @@ export function getRegisteredGroup(
     | undefined;
   if (!row) return undefined;
   if (!isValidGroupFolder(row.folder)) {
-    logger.warn(
-      { jid: row.jid, folder: row.folder },
-      'Skipping registered group with invalid folder',
-    );
+    logger.warn({ jid: row.jid, folder: row.folder }, 'Skipping registered group with invalid folder');
     return undefined;
   }
   const baseGroup: RegisteredGroup & { jid: string } = {
@@ -980,11 +864,8 @@ export function getRegisteredGroup(
     folder: row.folder,
     trigger: row.trigger_pattern,
     added_at: row.added_at,
-    containerConfig: row.container_config
-      ? JSON.parse(row.container_config)
-      : undefined,
-    requiresTrigger:
-      row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+    containerConfig: row.container_config ? JSON.parse(row.container_config) : undefined,
+    requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
   };
   // Collapse-on-read: isMain DMs share a canonical session per agent.
@@ -1018,9 +899,7 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
  * config↔DB dual-store doesn't get re-populated by reconcile-on-CLI.
  */
 export function removeRegisteredGroup(jid: string): boolean {
-  const info = db
-    .prepare('DELETE FROM registered_groups WHERE jid = ?')
-    .run(jid);
+  const info = db.prepare('DELETE FROM registered_groups WHERE jid = ?').run(jid);
   return info.changes > 0;
 }
 
@@ -1043,10 +922,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
   const chatsConfig = loadChatsConfigSnapshot();
   for (const row of rows) {
     if (!isValidGroupFolder(row.folder)) {
-      logger.warn(
-        { jid: row.jid, folder: row.folder },
-        'Skipping registered group with invalid folder',
-      );
+      logger.warn({ jid: row.jid, folder: row.folder }, 'Skipping registered group with invalid folder');
       continue;
     }
     const baseGroup: RegisteredGroup = {
@@ -1054,22 +930,15 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       folder: row.folder,
       trigger: row.trigger_pattern,
       added_at: row.added_at,
-      containerConfig: row.container_config
-        ? JSON.parse(row.container_config)
-        : undefined,
-      requiresTrigger:
-        row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+      containerConfig: row.container_config ? JSON.parse(row.container_config) : undefined,
+      requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       isMain: row.is_main === 1 ? true : undefined,
     };
     // Collapse-on-read: isMain DMs share a canonical session per agent.
     // See src/session-routing.ts and features/dm-session-sharing.md.
     result[row.jid] = {
       ...baseGroup,
-      folder: resolveCollapsedFolderBatch(
-        { ...baseGroup, jid: row.jid },
-        chatsConfig,
-        isGroupMap,
-      ),
+      folder: resolveCollapsedFolderBatch({ ...baseGroup, jid: row.jid }, chatsConfig, isGroupMap),
     };
   }
   return result;
@@ -1100,18 +969,12 @@ function migrateJsonState(): void {
       setRouterState('last_timestamp', routerState.last_timestamp);
     }
     if (routerState.last_agent_timestamp) {
-      setRouterState(
-        'last_agent_timestamp',
-        JSON.stringify(routerState.last_agent_timestamp),
-      );
+      setRouterState('last_agent_timestamp', JSON.stringify(routerState.last_agent_timestamp));
     }
   }
 
   // Migrate sessions.json
-  const sessions = migrateFile('sessions.json') as Record<
-    string,
-    string
-  > | null;
+  const sessions = migrateFile('sessions.json') as Record<string, string> | null;
   if (sessions) {
     for (const [folder, sessionId] of Object.entries(sessions)) {
       // Old sessions.json predates per-provider sessions — assume CC
@@ -1121,19 +984,13 @@ function migrateJsonState(): void {
   }
 
   // Migrate registered_groups.json
-  const groups = migrateFile('registered_groups.json') as Record<
-    string,
-    RegisteredGroup
-  > | null;
+  const groups = migrateFile('registered_groups.json') as Record<string, RegisteredGroup> | null;
   if (groups) {
     for (const [jid, group] of Object.entries(groups)) {
       try {
         setRegisteredGroup(jid, group);
       } catch (err) {
-        logger.warn(
-          { jid, folder: group.folder, err },
-          'Skipping migrated registered group with invalid folder',
-        );
+        logger.warn({ jid, folder: group.folder, err }, 'Skipping migrated registered group with invalid folder');
       }
     }
   }

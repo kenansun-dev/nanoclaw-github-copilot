@@ -227,10 +227,7 @@ describe('catalogEntryToSpec', () => {
 });
 
 describe('ensureEnabledPluginsInstalled', () => {
-  const tmpDir = path.join(
-    os.tmpdir(),
-    `nanoclaw-test-pluginauto-${Date.now()}`,
-  );
+  const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-pluginauto-${Date.now()}`);
 
   beforeEach(() => {
     setWorkspace(tmpDir);
@@ -272,9 +269,7 @@ describe('ensureEnabledPluginsInstalled', () => {
   it('skips plugins explicitly marked autoInstall:false', async () => {
     const config = loadConfig();
     config.plugins = {
-      enabledPlugins: [
-        { name: 'workiq', source: 'microsoft/work-iq', autoInstall: false },
-      ],
+      enabledPlugins: [{ name: 'workiq', source: 'microsoft/work-iq', autoInstall: false }],
       extraKnownMarketplaces: [],
       directories: [],
     };
@@ -321,17 +316,12 @@ describe('ensureEnabledPluginsInstalled', () => {
     const result = await ensureEnabledPluginsInstalled();
     expect(result.installed).toEqual(['localfoo']);
     expect(result.failed).toEqual([]);
-    expect(
-      fs.existsSync(path.join(tmpDir, 'plugins', 'localfoo', 'plugin.json')),
-    ).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, 'plugins', 'localfoo', 'plugin.json'))).toBe(true);
   });
 });
 
 describe('resolvePluginMcpServers', () => {
-  const tmpDir = path.join(
-    os.tmpdir(),
-    `nanoclaw-test-mcpresolver-${Date.now()}`,
-  );
+  const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-mcpresolver-${Date.now()}`);
 
   beforeEach(() => {
     fs.mkdirSync(tmpDir, { recursive: true });
@@ -395,10 +385,7 @@ describe('resolvePluginMcpServers', () => {
 
   it('reads path-string form with `servers` wrapper', () => {
     const mcpFile = path.join(tmpDir, 'servers.json');
-    fs.writeFileSync(
-      mcpFile,
-      JSON.stringify({ servers: { bar: { command: 'echo' } } }),
-    );
+    fs.writeFileSync(mcpFile, JSON.stringify({ servers: { bar: { command: 'echo' } } }));
     const manifest: PluginManifest = {
       name: 'p5',
       mcpServers: 'servers.json',
@@ -439,9 +426,7 @@ describe('resolvePluginMcpServers', () => {
         },
       },
     };
-    expect(resolvePluginMcpServers(tmpDir, manifest)).toEqual(
-      manifest.mcpServers,
-    );
+    expect(resolvePluginMcpServers(tmpDir, manifest)).toEqual(manifest.mcpServers);
   });
 });
 
@@ -503,12 +488,8 @@ describe('synthesizeManifestFromCatalogEntry', () => {
       source: 'owner/repo',
     };
     const manifest = synthesizeManifestFromCatalogEntry(entry);
-    expect(Object.prototype.hasOwnProperty.call(manifest, 'skills')).toBe(
-      false,
-    );
-    expect(Object.prototype.hasOwnProperty.call(manifest, 'mcpServers')).toBe(
-      false,
-    );
+    expect(Object.prototype.hasOwnProperty.call(manifest, 'skills')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(manifest, 'mcpServers')).toBe(false);
   });
 });
 
@@ -517,10 +498,7 @@ describe('resolvePluginMcpServers — .mcp.json fallback (CC convention)', () =>
   // explicit reference from plugin.json. Auto-detecting it lets such plugins
   // install into nanoclaw without manifest edits — this is the same pattern
   // that workiq uses today.
-  const tmpDir = path.join(
-    os.tmpdir(),
-    `nanoclaw-test-mcpfallback-${Date.now()}`,
-  );
+  const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-mcpfallback-${Date.now()}`);
 
   beforeEach(() => {
     fs.mkdirSync(tmpDir, { recursive: true });
@@ -546,10 +524,7 @@ describe('resolvePluginMcpServers — .mcp.json fallback (CC convention)', () =>
   });
 
   it('inline mcpServers in manifest takes precedence over .mcp.json sibling', () => {
-    fs.writeFileSync(
-      path.join(tmpDir, '.mcp.json'),
-      JSON.stringify({ mcpServers: { fromfile: { command: 'a' } } }),
-    );
+    fs.writeFileSync(path.join(tmpDir, '.mcp.json'), JSON.stringify({ mcpServers: { fromfile: { command: 'a' } } }));
     const manifest: PluginManifest = {
       name: 'p',
       mcpServers: { inline: { command: 'b' } },
@@ -572,9 +547,7 @@ describe('parseInstallSpec — marketplace-vs-repo confusion (kenan repro 2026-0
   // (`https://github.com/workiq@microsoft/work-iq.git`). Now we surface a
   // helpful error that names both fix paths.
   it('throws a helpful error for plugin@owner/repo (slash in marketplace name)', () => {
-    expect(() => parseInstallSpec('workiq@microsoft/work-iq')).toThrow(
-      /looks like an owner\/repo path/,
-    );
+    expect(() => parseInstallSpec('workiq@microsoft/work-iq')).toThrow(/looks like an owner\/repo path/);
   });
 
   it('error mentions both fix options (register marketplace OR install repo)', () => {

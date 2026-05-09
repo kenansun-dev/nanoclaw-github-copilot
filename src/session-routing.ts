@@ -13,7 +13,7 @@
  * - Different agents stay isolated (per-agent collapse buckets)
  */
 
-import { RegisteredGroup } from './types.js';
+import { RegisteredGroup } from './types-extensions.js';
 
 /**
  * Sanitize an agentId to a folder-safe slug.

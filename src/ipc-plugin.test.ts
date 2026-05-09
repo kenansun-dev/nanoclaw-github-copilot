@@ -13,10 +13,7 @@ import { sweepOrphanResponses } from './ipc.js';
 import { saveConfig, loadConfig } from './config-loader.js';
 
 describe('handlePluginIpc', () => {
-  const tmpDir = path.join(
-    os.tmpdir(),
-    `nanoclaw-test-pluginipc-${Date.now()}`,
-  );
+  const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-pluginipc-${Date.now()}`);
   const responseDir = path.join(tmpDir, 'responses');
 
   beforeEach(() => {
@@ -96,47 +93,28 @@ describe('handlePluginIpc', () => {
   it('install with local-path source adds entry + fetches', async () => {
     const srcRoot = path.join(tmpDir, 'src-plugin');
     fs.mkdirSync(srcRoot, { recursive: true });
-    fs.writeFileSync(
-      path.join(srcRoot, 'plugin.json'),
-      JSON.stringify({ name: 'localfoo', version: '0.0.1' }),
-    );
+    fs.writeFileSync(path.join(srcRoot, 'plugin.json'), JSON.stringify({ name: 'localfoo', version: '0.0.1' }));
     const requestId = 'req-install-local';
-    await handlePluginIpc(
-      { action: 'install', source: srcRoot, requestId },
-      responseDir,
-    );
+    await handlePluginIpc({ action: 'install', source: srcRoot, requestId }, responseDir);
     const res = readResponse(requestId);
     expect(res.ok).toBe(true);
     expect(res.name).toBe('localfoo');
     expect(res.result.installed).toContain('localfoo');
     // Config should now declare it.
     const config = loadConfig();
-    expect(
-      config.plugins?.enabledPlugins?.find((e) => e.name === 'localfoo'),
-    ).toBeTruthy();
+    expect(config.plugins?.enabledPlugins?.find((e) => e.name === 'localfoo')).toBeTruthy();
     // Plugin dir should exist.
-    expect(
-      fs.existsSync(path.join(tmpDir, 'plugins', 'localfoo', 'plugin.json')),
-    ).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, 'plugins', 'localfoo', 'plugin.json'))).toBe(true);
   });
 
   it('install is idempotent (re-install skips existing)', async () => {
     const srcRoot = path.join(tmpDir, 'src-plugin-idem');
     fs.mkdirSync(srcRoot, { recursive: true });
-    fs.writeFileSync(
-      path.join(srcRoot, 'plugin.json'),
-      JSON.stringify({ name: 'idem', version: '0.0.1' }),
-    );
+    fs.writeFileSync(path.join(srcRoot, 'plugin.json'), JSON.stringify({ name: 'idem', version: '0.0.1' }));
     // First install
-    await handlePluginIpc(
-      { action: 'install', source: srcRoot, requestId: 'req-1' },
-      responseDir,
-    );
+    await handlePluginIpc({ action: 'install', source: srcRoot, requestId: 'req-1' }, responseDir);
     // Second install
-    await handlePluginIpc(
-      { action: 'install', source: srcRoot, requestId: 'req-2' },
-      responseDir,
-    );
+    await handlePluginIpc({ action: 'install', source: srcRoot, requestId: 'req-2' }, responseDir);
     const res2 = readResponse('req-2');
     expect(res2.ok).toBe(true);
     expect(res2.result.skipped).toContain('idem');
@@ -146,36 +124,22 @@ describe('handlePluginIpc', () => {
     // Pre-seed install
     const srcRoot = path.join(tmpDir, 'src-uninst');
     fs.mkdirSync(srcRoot, { recursive: true });
-    fs.writeFileSync(
-      path.join(srcRoot, 'plugin.json'),
-      JSON.stringify({ name: 'rmme', version: '0.0.1' }),
-    );
-    await handlePluginIpc(
-      { action: 'install', source: srcRoot, requestId: 'pre' },
-      responseDir,
-    );
+    fs.writeFileSync(path.join(srcRoot, 'plugin.json'), JSON.stringify({ name: 'rmme', version: '0.0.1' }));
+    await handlePluginIpc({ action: 'install', source: srcRoot, requestId: 'pre' }, responseDir);
     expect(fs.existsSync(path.join(tmpDir, 'plugins', 'rmme'))).toBe(true);
 
     // Now uninstall
-    await handlePluginIpc(
-      { action: 'uninstall', name: 'rmme', requestId: 'unreq' },
-      responseDir,
-    );
+    await handlePluginIpc({ action: 'uninstall', name: 'rmme', requestId: 'unreq' }, responseDir);
     const res = readResponse('unreq');
     expect(res.ok).toBe(true);
     expect(res.name).toBe('rmme');
     expect(fs.existsSync(path.join(tmpDir, 'plugins', 'rmme'))).toBe(false);
     const config = loadConfig();
-    expect(
-      config.plugins?.enabledPlugins?.find((e) => e.name === 'rmme'),
-    ).toBeFalsy();
+    expect(config.plugins?.enabledPlugins?.find((e) => e.name === 'rmme')).toBeFalsy();
   });
 
   it('uninstall rejects missing name', async () => {
-    await handlePluginIpc(
-      { action: 'uninstall', requestId: 'badreq' },
-      responseDir,
-    );
+    await handlePluginIpc({ action: 'uninstall', requestId: 'badreq' }, responseDir);
     const res = readResponse('badreq');
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/name/i);
@@ -185,17 +149,12 @@ describe('handlePluginIpc', () => {
     const config = loadConfig();
     config.plugins = {
       enabledPlugins: [],
-      extraKnownMarketplaces: [
-        { name: 'acme', source: 'https://github.com/acme/marketplace' },
-      ],
+      extraKnownMarketplaces: [{ name: 'acme', source: 'https://github.com/acme/marketplace' }],
       directories: [],
     };
     saveConfig(config);
 
-    await handlePluginIpc(
-      { action: 'marketplace_list', requestId: 'mreq' },
-      responseDir,
-    );
+    await handlePluginIpc({ action: 'marketplace_list', requestId: 'mreq' }, responseDir);
     const res = readResponse('mreq');
     expect(res.ok).toBe(true);
     expect(res.marketplaces).toHaveLength(1);
@@ -220,10 +179,7 @@ describe('handlePluginIpc', () => {
   });
 
   it('returns error for unknown action', async () => {
-    await handlePluginIpc(
-      { action: 'frobnicate', requestId: 'unkreq' },
-      responseDir,
-    );
+    await handlePluginIpc({ action: 'frobnicate', requestId: 'unkreq' }, responseDir);
     const res = readResponse('unkreq');
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/unknown/i);
@@ -231,10 +187,7 @@ describe('handlePluginIpc', () => {
 });
 
 describe('sweepOrphanResponses', () => {
-  const tmpDir = path.join(
-    os.tmpdir(),
-    `nanoclaw-test-sweep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-  );
+  const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-sweep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 
   beforeEach(() => {
     fs.mkdirSync(tmpDir, { recursive: true });

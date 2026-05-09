@@ -26,17 +26,14 @@ import { join } from 'node:path';
 
 describe('dispatcher: bounded typing pulse after interim final-output', () => {
   const src = readFileSync(join(__dirname, 'index.ts'), 'utf-8');
+  const pulseSrc = readFileSync(join(__dirname, 'typing-pulse.ts'), 'utf-8');
 
   it('uses armTypingBounded (not raw traceSetTyping) for after-interim-final', () => {
     // The label must appear inside an armTypingBounded call, not a
     // traceSetTyping(..., true, 'after-interim-final').
-    expect(src).toMatch(
-      /armTypingBounded\([\s\S]{0,200}?'after-interim-final'/,
-    );
+    expect(src).toMatch(/armTypingBounded\([\s\S]{0,200}?'after-interim-final'/);
     // And NOT through the unbounded traceSetTyping path:
-    expect(src).not.toMatch(
-      /traceSetTyping\([\s\S]{0,200}?true[\s\S]{0,200}?'after-interim-final'/,
-    );
+    expect(src).not.toMatch(/traceSetTyping\([\s\S]{0,200}?true[\s\S]{0,200}?'after-interim-final'/);
   });
 
   it('defines a bounded TTL constant with a reasonable value (1s..30s)', () => {
@@ -47,15 +44,16 @@ describe('dispatcher: bounded typing pulse after interim final-output', () => {
     expect(ms).toBeLessThanOrEqual(30000);
   });
 
-  it('armTypingBounded installs an auto-clear timer that calls setTyping(false)', () => {
-    // The helper body must contain a setTimeout that fires setTyping(false).
-    const start = src.indexOf('async function armTypingBounded');
+  it('armTypingBounded helper (typing-pulse.ts) installs an auto-clear timer that calls setTyping(false)', () => {
+    // The real implementation now lives in typing-pulse.ts; src/index.ts
+    // wraps it. See typing-pulse.test.ts for the behavioral tests.
+    const start = pulseSrc.indexOf('export async function armTypingBounded');
     expect(start).toBeGreaterThan(-1);
-    const body = src.slice(start, start + 1500);
+    const body = pulseSrc.slice(start, start + 2000);
     expect(body).toMatch(/setTimeout\(/);
     expect(body).toMatch(/setTyping\([\s\S]{0,80}false\)/);
     // Stores the timer keyed by chatJid so we can cancel it later.
-    expect(body).toMatch(/boundedTypingTimers\.set\(/);
+    expect(body).toMatch(/state\.timers\.set\(/);
   });
 
   it('every traceSetTyping cancels any pending bounded auto-clear', () => {
@@ -68,11 +66,11 @@ describe('dispatcher: bounded typing pulse after interim final-output', () => {
     expect(body).toMatch(/cancelBoundedTypingClear\(chatJid\)/);
   });
 
-  it('cancelBoundedTypingClear clears + deletes the timer', () => {
-    const start = src.indexOf('function cancelBoundedTypingClear(');
+  it('cancelBoundedTypingClear (typing-pulse.ts) clears + deletes the timer', () => {
+    const start = pulseSrc.indexOf('export function cancelBoundedTypingClear(');
     expect(start).toBeGreaterThan(-1);
-    const body = src.slice(start, start + 400);
+    const body = pulseSrc.slice(start, start + 600);
     expect(body).toMatch(/clearTimeout\(/);
-    expect(body).toMatch(/boundedTypingTimers\.delete\(/);
+    expect(body).toMatch(/state\.timers\.delete\(/);
   });
 });

@@ -1,22 +1,11 @@
-import {
-  Client,
-  Events,
-  GatewayIntentBits,
-  Message,
-  TextChannel,
-} from 'discord.js';
+import { Client, Events, GatewayIntentBits, Message, TextChannel } from 'discord.js';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
-import { logger } from '../logger.js';
+import { logger } from '../log-extensions.js';
 import { sendWithRetry } from './send-with-retry.js';
 import { registerChannel, ChannelOpts } from './registry.js';
-import {
-  Channel,
-  OnChatMetadata,
-  OnInboundMessage,
-  RegisteredGroup,
-} from '../types.js';
+import { Channel, OnChatMetadata, OnInboundMessage, RegisteredGroup } from '../types-extensions.js';
 
 export interface DiscordChannelOpts {
   onMessage: OnInboundMessage;
@@ -54,10 +43,7 @@ export class DiscordChannel implements Channel {
       const chatJid = `dc:${channelId}`;
       let content = message.content;
       const timestamp = message.createdAt.toISOString();
-      const senderName =
-        message.member?.displayName ||
-        message.author.displayName ||
-        message.author.username;
+      const senderName = message.member?.displayName || message.author.displayName || message.author.username;
       const sender = message.author.id;
       const msgId = message.id;
 
@@ -77,15 +63,11 @@ export class DiscordChannel implements Channel {
       if (this.client?.user) {
         const botId = this.client.user.id;
         const isBotMentioned =
-          message.mentions.users.has(botId) ||
-          content.includes(`<@${botId}>`) ||
-          content.includes(`<@!${botId}>`);
+          message.mentions.users.has(botId) || content.includes(`<@${botId}>`) || content.includes(`<@!${botId}>`);
 
         if (isBotMentioned) {
           // Strip the <@botId> mention to avoid visual clutter
-          content = content
-            .replace(new RegExp(`<@!?${botId}>`, 'g'), '')
-            .trim();
+          content = content.replace(new RegExp(`<@!?${botId}>`, 'g'), '').trim();
           // Prepend trigger if not already present
           if (!TRIGGER_PATTERN.test(content)) {
             content = `@${ASSISTANT_NAME} ${content}`;
@@ -95,20 +77,18 @@ export class DiscordChannel implements Channel {
 
       // Handle attachments — store placeholders so the agent knows something was sent
       if (message.attachments.size > 0) {
-        const attachmentDescriptions = [...message.attachments.values()].map(
-          (att) => {
-            const contentType = att.contentType || '';
-            if (contentType.startsWith('image/')) {
-              return `[Image: ${att.name || 'image'}]`;
-            } else if (contentType.startsWith('video/')) {
-              return `[Video: ${att.name || 'video'}]`;
-            } else if (contentType.startsWith('audio/')) {
-              return `[Audio: ${att.name || 'audio'}]`;
-            } else {
-              return `[File: ${att.name || 'file'}]`;
-            }
-          },
-        );
+        const attachmentDescriptions = [...message.attachments.values()].map((att) => {
+          const contentType = att.contentType || '';
+          if (contentType.startsWith('image/')) {
+            return `[Image: ${att.name || 'image'}]`;
+          } else if (contentType.startsWith('video/')) {
+            return `[Video: ${att.name || 'video'}]`;
+          } else if (contentType.startsWith('audio/')) {
+            return `[Audio: ${att.name || 'audio'}]`;
+          } else {
+            return `[File: ${att.name || 'file'}]`;
+          }
+        });
         if (content) {
           content = `${content}\n${attachmentDescriptions.join('\n')}`;
         } else {
@@ -119,13 +99,9 @@ export class DiscordChannel implements Channel {
       // Handle reply context — include who the user is replying to
       if (message.reference?.messageId) {
         try {
-          const repliedTo = await message.channel.messages.fetch(
-            message.reference.messageId,
-          );
+          const repliedTo = await message.channel.messages.fetch(message.reference.messageId);
           const replyAuthor =
-            repliedTo.member?.displayName ||
-            repliedTo.author.displayName ||
-            repliedTo.author.username;
+            repliedTo.member?.displayName || repliedTo.author.displayName || repliedTo.author.username;
           content = `[Reply to ${replyAuthor}] ${content}`;
         } catch {
           // Referenced message may have been deleted
@@ -134,21 +110,12 @@ export class DiscordChannel implements Channel {
 
       // Store chat metadata for discovery
       const isGroup = message.guild !== null;
-      this.opts.onChatMetadata(
-        chatJid,
-        timestamp,
-        chatName,
-        'discord',
-        isGroup,
-      );
+      this.opts.onChatMetadata(chatJid, timestamp, chatName, 'discord', isGroup);
 
       // Only deliver full message for registered groups
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) {
-        logger.debug(
-          { chatJid, chatName },
-          'Message from unregistered Discord channel',
-        );
+        logger.debug({ chatJid, chatName }, 'Message from unregistered Discord channel');
         return;
       }
 
@@ -163,10 +130,7 @@ export class DiscordChannel implements Channel {
         is_from_me: false,
       });
 
-      logger.info(
-        { chatJid, chatName, sender: senderName },
-        'Discord message stored',
-      );
+      logger.info({ chatJid, chatName, sender: senderName }, 'Discord message stored');
     });
 
     // Handle errors gracefully
@@ -176,14 +140,9 @@ export class DiscordChannel implements Channel {
 
     return new Promise<void>((resolve) => {
       this.client!.once(Events.ClientReady, (readyClient) => {
-        logger.info(
-          { username: readyClient.user.tag, id: readyClient.user.id },
-          'Discord bot connected',
-        );
+        logger.info({ username: readyClient.user.tag, id: readyClient.user.id }, 'Discord bot connected');
         console.log(`\n  Discord bot: ${readyClient.user.tag}`);
-        console.log(
-          `  Use /chatid command or check channel IDs in Discord settings\n`,
-        );
+        console.log(`  Use /chatid command or check channel IDs in Discord settings\n`);
         resolve();
       });
 
@@ -228,15 +187,10 @@ export class DiscordChannel implements Channel {
       }
       logger.info({ jid, length: text.length }, 'Discord message sent');
     } catch (err: any) {
-      logger.error(
-        { jid, err: err?.message ?? String(err) },
-        'Discord sendMessage failed after retries',
-      );
+      logger.error({ jid, err: err?.message ?? String(err) }, 'Discord sendMessage failed after retries');
       // Best-effort user-visible notice — single attempt, no recursion.
       try {
-        await textChannel.send(
-          '⚠️ 上条回复未送达 (send failed after 3 retries — check logs)',
-        );
+        await textChannel.send('⚠️ 上条回复未送达 (send failed after 3 retries — check logs)');
       } catch {
         /* swallow — already failed once, don't loop */
       }
@@ -275,8 +229,7 @@ export class DiscordChannel implements Channel {
 
 registerChannel('discord', (opts: ChannelOpts) => {
   const envVars = readEnvFile(['DISCORD_BOT_TOKEN']);
-  const token =
-    process.env.DISCORD_BOT_TOKEN || envVars.DISCORD_BOT_TOKEN || '';
+  const token = process.env.DISCORD_BOT_TOKEN || envVars.DISCORD_BOT_TOKEN || '';
   if (!token) {
     logger.warn('Discord: DISCORD_BOT_TOKEN not set');
     return null;

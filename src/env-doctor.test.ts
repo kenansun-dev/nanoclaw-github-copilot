@@ -77,10 +77,7 @@ describe('readEnvFile', () => {
   });
 
   it('handles values with = signs', () => {
-    fs.writeFileSync(
-      path.join(tmpDir, '.env'),
-      'URL=https://example.com?a=1&b=2\n',
-    );
+    fs.writeFileSync(path.join(tmpDir, '.env'), 'URL=https://example.com?a=1&b=2\n');
     const result = readEnvFile(['URL']);
     expect(result.URL).toBe('https://example.com?a=1&b=2');
   });
@@ -106,9 +103,7 @@ describe('runDoctor', { timeout: 30_000 }, () => {
 
   it('checks Node.js version', () => {
     const results = runDoctor();
-    const nodeCheck = results.find((r) =>
-      r.name.toLowerCase().includes('node'),
-    );
+    const nodeCheck = results.find((r) => r.name.toLowerCase().includes('node'));
     expect(nodeCheck).toBeDefined();
     expect(nodeCheck!.status).toBe('ok');
   });
@@ -116,9 +111,7 @@ describe('runDoctor', { timeout: 30_000 }, () => {
   it('checks workspace exists', () => {
     const results = runDoctor();
     const wsCheck = results.find(
-      (r) =>
-        r.name.toLowerCase().includes('workspace') ||
-        r.name.toLowerCase().includes('config'),
+      (r) => r.name.toLowerCase().includes('workspace') || r.name.toLowerCase().includes('config'),
     );
     expect(wsCheck).toBeDefined();
   });

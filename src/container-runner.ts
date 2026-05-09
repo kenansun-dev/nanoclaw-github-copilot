@@ -33,16 +33,11 @@ import {
   PROVIDER_SESSION_DIR,
 } from './config-extensions.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
-import { logger } from './logger.js';
-import {
-  CONTAINER_RUNTIME_BIN,
-  hostGatewayArgs,
-  readonlyMountArgs,
-  stopContainer,
-} from './container-runtime.js';
+import { logger } from './log-extensions.js';
+import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, readonlyMountArgs, stopContainer } from './container-runtime.js';
 import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
-import { RegisteredGroup } from './types.js';
+import { RegisteredGroup } from './types-extensions.js';
 
 const onecli = new OneCLI({ url: ONECLI_URL, apiKey: ONECLI_API_KEY });
 
@@ -80,11 +75,24 @@ interface VolumeMount {
   readonly: boolean;
 }
 
-function buildVolumeMounts(
-  group: RegisteredGroup,
-  isMain: boolean,
-  chatJid?: string,
-): VolumeMount[] {
+/**
+ * Parse the host's `~/.copilot/config.json` file.
+ *
+ * The copilot CLI ships this file with a leading
+ * `// User settings belong in settings.json.` comment line, which breaks
+ * strict `JSON.parse`. Strip `^//` line comments first so we recover the
+ * `copilotTokens` field instead of silently writing an empty session
+ * config (which leaves the container CLI unauthenticated).
+ *
+ * Exported for unit testing.
+ */
+export function parseHostCopilotConfig(raw: string): Record<string, unknown> {
+  const stripped = raw.replace(/^[ \t]*\/\/.*$/gm, '');
+  const parsed = JSON.parse(stripped);
+  return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
+}
+
+function buildVolumeMounts(group: RegisteredGroup, isMain: boolean, chatJid?: string): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const sessionDir = resolveSessionDir(chatJid);
   const projectRoot = PACKAGE_ROOT;
@@ -161,12 +169,7 @@ function buildVolumeMounts(
   // Per-group sessions directory (isolated from other groups)
   // Each group gets their own session dir to prevent cross-group session access
   // CC uses .claude/, GHC uses .copilot/
-  const groupSessionsDir = path.join(
-    DATA_DIR,
-    'sessions',
-    group.folder,
-    sessionDir,
-  );
+  const groupSessionsDir = path.join(DATA_DIR, 'sessions', group.folder, sessionDir);
   fs.mkdirSync(groupSessionsDir, { recursive: true });
 
   if (IS_GHC_PROVIDER) {
@@ -182,7 +185,8 @@ function buildVolumeMounts(
       let baseConfig: Record<string, unknown> = {};
       if (fs.existsSync(hostCopilotConfig)) {
         try {
-          baseConfig = JSON.parse(fs.readFileSync(hostCopilotConfig, 'utf-8'));
+          const raw = fs.readFileSync(hostCopilotConfig, 'utf-8');
+          baseConfig = parseHostCopilotConfig(raw);
         } catch {
           // Ignore parse errors
         }
@@ -251,26 +255,15 @@ function buildVolumeMounts(
   // node engine uses compiled dist baked into the image
   const sandboxEngine = getConfig().sandbox?.engine || 'node';
   if (sandboxEngine === 'tsx') {
-    const agentRunnerSrc = path.join(
-      projectRoot,
-      'container',
-      resolveRunnerDir(chatJid),
-      'src',
-    );
-    const groupAgentRunnerDir = path.join(
-      DATA_DIR,
-      'sessions',
-      group.folder,
-      'agent-runner-src',
-    );
+    const agentRunnerSrc = path.join(projectRoot, 'container', resolveRunnerDir(chatJid), 'src');
+    const groupAgentRunnerDir = path.join(DATA_DIR, 'sessions', group.folder, 'agent-runner-src');
     if (fs.existsSync(agentRunnerSrc)) {
       const srcIndex = path.join(agentRunnerSrc, 'index.ts');
       const cachedIndex = path.join(groupAgentRunnerDir, 'index.ts');
       const needsCopy =
         !fs.existsSync(groupAgentRunnerDir) ||
         !fs.existsSync(cachedIndex) ||
-        (fs.existsSync(srcIndex) &&
-          fs.statSync(srcIndex).mtimeMs > fs.statSync(cachedIndex).mtimeMs);
+        (fs.existsSync(srcIndex) && fs.statSync(srcIndex).mtimeMs > fs.statSync(cachedIndex).mtimeMs);
       if (needsCopy) {
         fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
       }
@@ -284,22 +277,14 @@ function buildVolumeMounts(
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
-    const validatedMounts = validateAdditionalMounts(
-      group.containerConfig.additionalMounts,
-      group.name,
-      isMain,
-    );
+    const validatedMounts = validateAdditionalMounts(group.containerConfig.additionalMounts, group.name, isMain);
     mounts.push(...validatedMounts);
   }
 
   return mounts;
 }
 
-function buildContainerArgs(
-  mounts: VolumeMount[],
-  containerName: string,
-  chatJid?: string,
-): string[] {
+function buildContainerArgs(mounts: VolumeMount[], containerName: string, chatJid?: string): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
   const containerImage = resolveContainerImage(chatJid);
 
@@ -311,7 +296,7 @@ function buildContainerArgs(
   args.push('-e', `NANOCLAW_ENGINE=${engine}`);
 
   // Pass plugin directories as colon-separated env var for agent-runners
-  const ws = path.dirname(DATA_DIR); // ~/.nanoclaw
+  const ws = path.dirname(DATA_DIR); // resolved workspace root (v1: ~/.nanoclaw, v2: ~/.nanoclaw-v2)
   const pluginNames: string[] = [];
   const pluginSources = [
     path.join(ws, 'plugins'),
@@ -326,9 +311,7 @@ function buildContainerArgs(
             const pluginPath = path.join(src, entry.name);
             if (
               fs.existsSync(path.join(pluginPath, 'plugin.json')) ||
-              fs.existsSync(
-                path.join(pluginPath, '.claude-plugin', 'plugin.json'),
-              )
+              fs.existsSync(path.join(pluginPath, '.claude-plugin', 'plugin.json'))
             ) {
               pluginNames.push(entry.name);
             }
@@ -340,9 +323,7 @@ function buildContainerArgs(
     }
   }
   if (pluginNames.length > 0) {
-    const containerPluginDirs = [...new Set(pluginNames)]
-      .map((n) => `/workspace/plugins/${n}`)
-      .join(':');
+    const containerPluginDirs = [...new Set(pluginNames)].map((n) => `/workspace/plugins/${n}`).join(':');
     args.push('-e', `NANOCLAW_PLUGIN_DIRS=${containerPluginDirs}`);
   }
 
@@ -395,20 +376,13 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain, input.chatJid);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(
-    mounts,
-    containerName,
-    input.chatJid,
-  );
+  const containerArgs = buildContainerArgs(mounts, containerName, input.chatJid);
 
   logger.debug(
     {
       group: group.name,
       containerName,
-      mounts: mounts.map(
-        (m) =>
-          `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
-      ),
+      mounts: mounts.map((m) => `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`),
       containerArgs: containerArgs.join(' '),
     },
     'Container mount configuration',
@@ -456,10 +430,7 @@ export async function runContainerAgent(
         if (chunk.length > remaining) {
           stdout += chunk.slice(0, remaining);
           stdoutTruncated = true;
-          logger.warn(
-            { group: group.name, size: stdout.length },
-            'Container stdout truncated due to size limit',
-          );
+          logger.warn({ group: group.name, size: stdout.length }, 'Container stdout truncated due to size limit');
         } else {
           stdout += chunk;
         }
@@ -473,9 +444,7 @@ export async function runContainerAgent(
           const endIdx = parseBuffer.indexOf(OUTPUT_END_MARKER, startIdx);
           if (endIdx === -1) break; // Incomplete pair, wait for more data
 
-          const jsonStr = parseBuffer
-            .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
-            .trim();
+          const jsonStr = parseBuffer.slice(startIdx + OUTPUT_START_MARKER.length, endIdx).trim();
           parseBuffer = parseBuffer.slice(endIdx + OUTPUT_END_MARKER.length);
 
           try {
@@ -490,10 +459,7 @@ export async function runContainerAgent(
             // so idle timers start even for "silent" query completions.
             outputChain = outputChain.then(() => onOutput(parsed));
           } catch (err) {
-            logger.warn(
-              { group: group.name, error: err },
-              'Failed to parse streamed output chunk',
-            );
+            logger.warn({ group: group.name, error: err }, 'Failed to parse streamed output chunk');
           }
         }
       }
@@ -512,10 +478,7 @@ export async function runContainerAgent(
       if (chunk.length > remaining) {
         stderr += chunk.slice(0, remaining);
         stderrTruncated = true;
-        logger.warn(
-          { group: group.name, size: stderr.length },
-          'Container stderr truncated due to size limit',
-        );
+        logger.warn({ group: group.name, size: stderr.length }, 'Container stderr truncated due to size limit');
       } else {
         stderr += chunk;
       }
@@ -526,25 +489,16 @@ export async function runContainerAgent(
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
     // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
     // graceful _close sentinel has time to trigger before the hard kill fires.
-    const timeoutMs =
-      IDLE_TIMEOUT <= 0
-        ? configTimeout
-        : Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
+    const timeoutMs = IDLE_TIMEOUT <= 0 ? configTimeout : Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
     const killOnTimeout = () => {
       if (timedOut) return; // Guard against double-trigger
       timedOut = true;
-      logger.error(
-        { group: group.name, containerName },
-        'Container timeout, stopping gracefully',
-      );
+      logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
       try {
         stopContainer(containerName);
       } catch (err) {
-        logger.warn(
-          { group: group.name, containerName, err },
-          'Graceful stop failed, force killing',
-        );
+        logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
         container.kill('SIGKILL');
       }
     };
@@ -612,10 +566,7 @@ export async function runContainerAgent(
           return;
         }
 
-        logger.error(
-          { group: group.name, containerName, duration, code },
-          'Container timed out with no output',
-        );
+        logger.error({ group: group.name, containerName, duration, code }, 'Container timed out with no output');
 
         resolve({
           status: 'error',
@@ -627,8 +578,7 @@ export async function runContainerAgent(
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const logFile = path.join(logsDir, `container-${timestamp}.log`);
-      const isVerbose =
-        process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
+      const isVerbose = process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
 
       const logLines = [
         `=== Container Run Log ===`,
@@ -663,12 +613,7 @@ export async function runContainerAgent(
           containerArgs.join(' '),
           ``,
           `=== Mounts ===`,
-          mounts
-            .map(
-              (m) =>
-                `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
-            )
-            .join('\n'),
+          mounts.map((m) => `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`).join('\n'),
           ``,
           `=== Stderr${stderrTruncated ? ' (TRUNCATED)' : ''} ===`,
           stderr,
@@ -683,9 +628,7 @@ export async function runContainerAgent(
           `Session ID: ${input.sessionId || 'new'}`,
           ``,
           `=== Mounts ===`,
-          mounts
-            .map((m) => `${m.containerPath}${m.readonly ? ' (ro)' : ''}`)
-            .join('\n'),
+          mounts.map((m) => `${m.containerPath}${m.readonly ? ' (ro)' : ''}`).join('\n'),
           ``,
         );
       }
@@ -717,10 +660,7 @@ export async function runContainerAgent(
       // Streaming mode: wait for output chain to settle, return completion marker
       if (onOutput) {
         outputChain.then(() => {
-          logger.info(
-            { group: group.name, duration, newSessionId },
-            'Container completed (streaming mode)',
-          );
+          logger.info({ group: group.name, duration, newSessionId }, 'Container completed (streaming mode)');
           resolve({
             status: 'success',
             result: null,
@@ -738,9 +678,7 @@ export async function runContainerAgent(
 
         let jsonLine: string;
         if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-          jsonLine = stdout
-            .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
-            .trim();
+          jsonLine = stdout.slice(startIdx + OUTPUT_START_MARKER.length, endIdx).trim();
         } else {
           // Fallback: last non-empty line (backwards compatibility)
           const lines = stdout.trim().split('\n');
@@ -781,10 +719,7 @@ export async function runContainerAgent(
 
     container.on('error', (err) => {
       clearTimeout(timeout);
-      logger.error(
-        { group: group.name, containerName, error: err },
-        'Container spawn error',
-      );
+      logger.error({ group: group.name, containerName, error: err }, 'Container spawn error');
       resolve({
         status: 'error',
         result: null,
@@ -813,9 +748,7 @@ export function writeTasksSnapshot(
   fs.mkdirSync(groupIpcDir, { recursive: true });
 
   // Main sees all tasks, others only see their own
-  const filteredTasks = isMain
-    ? tasks
-    : tasks.filter((t) => t.groupFolder === groupFolder);
+  const filteredTasks = isMain ? tasks : tasks.filter((t) => t.groupFolder === groupFolder);
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
   fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
@@ -857,4 +790,53 @@ export function writeGroupsSnapshot(
       2,
     ),
   );
+}
+
+// ============================================================================
+// v2 stubs — placeholders for upstream-shaped exports so v2-merged code (router,
+// modules/permissions, modules/agent-to-agent, modules/scheduling, modules/
+// approvals, modules/interactive, modules/self-mod, host-sweep, host-core.test,
+// channel-approval/sender-approval tests) can type-check and build.
+//
+// These are NOT yet wired to fork's host-mode container lifecycle. B.5 dispatch-
+// er-cut phase will replace these stubs with bridges into the existing fork
+// runContainerAgent / spawn machinery (lines ~384+ above) or with the upstream
+// implementation lifted from upstream/feat/migrate-from-v1:src/container-runner.
+// Calling them today no-ops with a debug log and a thrown error for the build
+// path — the v2 startup that calls them isn't activated yet.
+// ============================================================================
+
+import type { Session, AgentGroup as _AgentGroup } from './types-extensions.js';
+import { logger as _v2StubLogger } from './log-extensions.js';
+
+/** v2 stub: returns whether a v2 container is currently running for a session. */
+export function isContainerRunning(_sessionId: string): boolean {
+  return false; // v2 spawn machinery not yet wired
+}
+
+/** v2 stub: wake (or spawn) a v2 container for a session.
+ *  Returns boolean to match upstream contract (false = transient spawn fail,
+ *  caller stops typing indicator). Stub always returns true for the no-op. */
+export function wakeContainer(session: Session): Promise<boolean> {
+  _v2StubLogger.debug(`[v2-stub] wakeContainer called for session ${session.id} (no-op until B.5 dispatcher cut)`);
+  return Promise.resolve(true);
+}
+
+/** v2 stub: kill a running v2 container for a session. */
+export function killContainer(sessionId: string, reason: string): void {
+  _v2StubLogger.debug(
+    `[v2-stub] killContainer called for session ${sessionId} reason=${reason} (no-op until B.5 dispatcher cut)`,
+  );
+}
+
+/** v2 stub: build the container image for an agent group. */
+export async function buildAgentGroupImage(agentGroupId: string): Promise<void> {
+  _v2StubLogger.debug(
+    `[v2-stub] buildAgentGroupImage called for agentGroupId=${agentGroupId} (no-op until B.5 dispatcher cut)`,
+  );
+}
+
+/** v2 stub: count of currently running v2 containers (for host-sweep diagnostics). */
+export function getActiveV2ContainerCount(): number {
+  return 0;
 }

@@ -47,9 +47,7 @@ vi.mock('./db.js', () => ({
 
 // ─── Mock context factory ────────────────────────────────────────────────────
 
-function makeCtx(
-  overrides: Partial<SlashCommandContext> = {},
-): SlashCommandContext {
+function makeCtx(overrides: Partial<SlashCommandContext> = {}): SlashCommandContext {
   return {
     chatJid: 'tg:123',
     groupFolder: 'test-group',
@@ -108,10 +106,7 @@ describe('handleSlashCommand', () => {
     const result = await handleSlashCommand('/new', ctx);
     expect(result.handled).toBe(true);
     expect(ctx.clearSession).toHaveBeenCalledWith('test-group');
-    expect(ctx.channel!.sendMessage).toHaveBeenCalledWith(
-      'tg:123',
-      expect.stringContaining('Session reset'),
-    );
+    expect(ctx.channel!.sendMessage).toHaveBeenCalledWith('tg:123', expect.stringContaining('Session reset'));
   });
 
   it('/reset is an alias for /new', async () => {
@@ -125,10 +120,7 @@ describe('handleSlashCommand', () => {
     const ctx = makeCtx();
     const result = await handleSlashCommand('/help', ctx);
     expect(result.handled).toBe(true);
-    expect(ctx.channel!.sendMessage).toHaveBeenCalledWith(
-      'tg:123',
-      expect.stringContaining('Available commands'),
-    );
+    expect(ctx.channel!.sendMessage).toHaveBeenCalledWith('tg:123', expect.stringContaining('Available commands'));
   });
 
   it('/think with level returns handled and sends confirmation', async () => {
@@ -138,9 +130,7 @@ describe('handleSlashCommand', () => {
     // Should send confirmation via sendMessage or sendCard
     const sendMsg = ctx.channel!.sendMessage as ReturnType<typeof vi.fn>;
     const sendCard = ctx.channel!.sendCard as ReturnType<typeof vi.fn>;
-    expect(
-      sendMsg.mock.calls.length + sendCard.mock.calls.length,
-    ).toBeGreaterThan(0);
+    expect(sendMsg.mock.calls.length + sendCard.mock.calls.length).toBeGreaterThan(0);
   });
 
   it('/think without level returns handled (shows selector)', async () => {
@@ -179,12 +169,7 @@ describe('handleSlashCommand', () => {
     (db.setSessionOverride as any).mockClear();
     const ctx = makeCtx();
     await handleSlashCommand('/reasoning flash', ctx);
-    expect(db.setSessionOverride).toHaveBeenCalledWith(
-      'test-group',
-      'show_thinking',
-      'flash',
-      expect.any(String),
-    );
+    expect(db.setSessionOverride).toHaveBeenCalledWith('test-group', 'show_thinking', 'flash', expect.any(String));
     const { loadConfig } = await import('./config-loader.js');
     // Global stays 'on' — per-session write does NOT touch nanoclaw.json.
     expect(loadConfig().agents?.defaults?.showThinking).toBe('on');
@@ -217,8 +202,7 @@ describe('handleSlashCommand', () => {
       const result = await handleSlashCommand('/status', ctx);
       expect(result.handled).toBe(true);
       expect(ctx.channel!.sendMessage).toHaveBeenCalledTimes(1);
-      const sentText = (ctx.channel!.sendMessage as any).mock
-        .calls[0][1] as string;
+      const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
       // Status text always starts with the version line and contains the
       // hard-coded section labels formatStatusText emits.
       expect(sentText).toContain('NanoClaw');
@@ -285,9 +269,7 @@ describe('parseTeamsCardSubmit', () => {
   });
 
   it('returns null for non-message activity', () => {
-    expect(
-      parseTeamsCardSubmit({ type: 'event', value: { command: 'new' } }),
-    ).toBeNull();
+    expect(parseTeamsCardSubmit({ type: 'event', value: { command: 'new' } })).toBeNull();
   });
 
   it('returns null for missing value', () => {
@@ -296,15 +278,11 @@ describe('parseTeamsCardSubmit', () => {
   });
 
   it('returns null for missing command in value', () => {
-    expect(
-      parseTeamsCardSubmit({ type: 'message', value: { foo: 'bar' } }),
-    ).toBeNull();
+    expect(parseTeamsCardSubmit({ type: 'message', value: { foo: 'bar' } })).toBeNull();
   });
 
   it('returns null for unknown command', () => {
-    expect(
-      parseTeamsCardSubmit({ type: 'message', value: { command: 'nope' } }),
-    ).toBeNull();
+    expect(parseTeamsCardSubmit({ type: 'message', value: { command: 'nope' } })).toBeNull();
   });
 });
 
@@ -451,10 +429,7 @@ describe('/model + /models', () => {
     // a 2-space indent).
     const lines = msg.split('\n');
     // Skip the "Current model: ..." header line; check the table row.
-    const overrideLine = lines.find(
-      (l: string) =>
-        l.includes('claude-opus-4.6') && !l.startsWith('Current model'),
-    );
+    const overrideLine = lines.find((l: string) => l.includes('claude-opus-4.6') && !l.startsWith('Current model'));
     expect(overrideLine).toBeDefined();
     expect(overrideLine!.trim().startsWith('▸')).toBe(true);
     // Header should also reflect the override, not the global default.
@@ -467,8 +442,7 @@ describe('/model + /models', () => {
     expect(res.handled).toBe(true);
     // Either sendCard or sendMessage will fire depending on channel caps.
     const calls =
-      (ctx.channel!.sendCard as any).mock.calls.length +
-      (ctx.channel!.sendMessage as any).mock.calls.length;
+      (ctx.channel!.sendCard as any).mock.calls.length + (ctx.channel!.sendMessage as any).mock.calls.length;
     expect(calls).toBeGreaterThanOrEqual(1);
   });
 
@@ -483,20 +457,12 @@ describe('/model + /models', () => {
     expect(msg).toContain('claude-opus-4.6');
     expect(msg).toMatch(/set to/i);
     // Session-scope write goes to db, NOT to global config.
-    expect(db.setSessionOverride).toHaveBeenCalledWith(
-      'test-group',
-      'model',
-      'claude-opus-4.6',
-      expect.any(String),
-    );
+    expect(db.setSessionOverride).toHaveBeenCalledWith('test-group', 'model', 'claude-opus-4.6', expect.any(String));
   });
 
   it('/model <valid-id> --default updates global config', async () => {
     const ctx = makeCtx();
-    const res = await handleSlashCommand(
-      '/model claude-opus-4.6 --default',
-      ctx,
-    );
+    const res = await handleSlashCommand('/model claude-opus-4.6 --default', ctx);
     expect(res.handled).toBe(true);
     const { loadConfig } = await import('./config-loader.js');
     const cfg = loadConfig();
@@ -524,10 +490,7 @@ describe('/model + /models', () => {
 
   it('/model accepts <provider>/<id> --default form and strips prefix on global write', async () => {
     const ctx = makeCtx();
-    const res = await handleSlashCommand(
-      '/model github-copilot/gpt-4.1 --default',
-      ctx,
-    );
+    const res = await handleSlashCommand('/model github-copilot/gpt-4.1 --default', ctx);
     expect(res.handled).toBe(true);
     const { loadConfig } = await import('./config-loader.js');
     const cfg = loadConfig();
@@ -540,9 +503,7 @@ describe('/model + /models', () => {
 
 describe('registerTelegramCommands', () => {
   it('calls Telegram setMyCommands API', async () => {
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
     vi.stubGlobal('fetch', mockFetch);
 
     const { registerTelegramCommands } = await import('./slash-commands.js');

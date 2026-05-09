@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  applyOnModeThinkingPrepend,
-  formatThinkingForChannel,
-} from './index.js';
+import { applyOnModeThinkingPrepend, formatThinkingForChannel } from './index.js';
 
 /**
  * Bug 2 (kenan TG repro 2026-04-25 18:06):
@@ -36,10 +33,7 @@ describe('applyOnModeThinkingPrepend (on-mode dedup)', () => {
   it('does NOT re-prepend on second final of same query (the bug)', () => {
     // Simulate: pre-tool final already prepended, post-tool final arrives
     // with the SDK's accumulated thinking (now longer).
-    const formatted = formatThinkingForChannel(
-      'reasoning step 1\nreasoning step 2 (after tool)',
-      tg,
-    );
+    const formatted = formatThinkingForChannel('reasoning step 1\nreasoning step 2 (after tool)', tg);
     const out = applyOnModeThinkingPrepend({
       thinking: 'reasoning step 1\nreasoning step 2 (after tool)',
       resultText: 'final answer text',

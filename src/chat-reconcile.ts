@@ -28,18 +28,9 @@
  * Pure-side: caller must `initDatabase()` before invoking.
  */
 
-import {
-  loadConfig,
-  saveConfig,
-  nextChatId,
-  type NanoclawConfig,
-} from './config-loader.js';
-import {
-  getAllRegisteredGroups,
-  setRegisteredGroup,
-  getAllChatIsGroup,
-} from './db.js';
-import { logger } from './logger.js';
+import { loadConfig, saveConfig, nextChatId, type NanoclawConfig } from './config-loader.js';
+import { getAllRegisteredGroups, setRegisteredGroup, getAllChatIsGroup } from './db.js';
+import { logger } from './log-extensions.js';
 
 export interface ReconcileResult {
   added: string[]; // jids newly inserted into config.chats
@@ -112,11 +103,7 @@ export function reconcileChatRegistry(): ReconcileResult {
   }
 
   // 4) Persist if anything changed.
-  if (
-    result.added.length > 0 ||
-    result.dedupedMains.length > 0 ||
-    result.mirroredToDb.length > 0
-  ) {
+  if (result.added.length > 0 || result.dedupedMains.length > 0 || result.mirroredToDb.length > 0) {
     saveConfig(config);
     logger.info(
       {
@@ -163,10 +150,7 @@ export function detectChatDrift(): ReconcileResult & { dirty: boolean } {
     chats: JSON.parse(JSON.stringify(config.chats)),
   };
   const r = _reconcilePure(clone, groups, isGroupByJid);
-  const dirty =
-    r.added.length > 0 ||
-    r.dedupedMains.length > 0 ||
-    r.mirroredToDb.length > 0;
+  const dirty = r.added.length > 0 || r.dedupedMains.length > 0 || r.mirroredToDb.length > 0;
   return {
     added: r.added,
     dedupedMains: r.dedupedMains,

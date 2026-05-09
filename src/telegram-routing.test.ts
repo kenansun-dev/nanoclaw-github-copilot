@@ -8,9 +8,7 @@ import { describe, it, expect } from 'vitest';
 
 // Test chatJid format helper logic (mirrors TelegramChannel.chatJid)
 function chatJid(accountId: string | undefined, chatId: number): string {
-  return accountId && accountId !== 'default'
-    ? `tg:${accountId}:${chatId}`
-    : `tg:${chatId}`;
+  return accountId && accountId !== 'default' ? `tg:${accountId}:${chatId}` : `tg:${chatId}`;
 }
 
 // Test ownsJid logic (mirrors TelegramChannel.ownsJid)
@@ -86,9 +84,7 @@ describe('multi-account Telegram routing', () => {
     it('two accounts never both own the same JID', () => {
       const jids = ['tg:123456', 'tg:daily:123456', 'tg:coder:123456'];
       for (const jid of jids) {
-        const owners = ['default', 'daily', 'coder'].filter((a) =>
-          ownsJid(a === 'default' ? undefined : a, jid),
-        );
+        const owners = ['default', 'daily', 'coder'].filter((a) => ownsJid(a === 'default' ? undefined : a, jid));
         expect(owners.length).toBeLessThanOrEqual(1);
       }
     });

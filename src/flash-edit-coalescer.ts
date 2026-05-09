@@ -29,8 +29,8 @@
  * caller's enqueue is responsible for kicking off the worker.
  */
 
-import type { Channel } from './types.js';
-import { logger } from './logger.js';
+import type { Channel } from './types-extensions.js';
+import { logger } from './log-extensions.js';
 
 export type FlashEditOpts = { parseMode?: 'HTML' | 'Markdown' };
 
@@ -76,12 +76,7 @@ export function createFlashEditCoalescer(args: {
       const snapshot = slot.latest;
       const snapshotOpts = slot.opts;
       try {
-        const editedId = await channel.editMessage(
-          chatJid,
-          msgId,
-          snapshot,
-          snapshotOpts,
-        );
+        const editedId = await channel.editMessage(chatJid, msgId, snapshot, snapshotOpts);
         if (typeof editedId === 'string' && editedId !== msgId) {
           // Orphan: silent fallback to sendMessage spawned a new bubble.
           if (channel.deleteMessage) {

@@ -77,9 +77,7 @@ describe('sendWithRetry', () => {
   });
 
   it('does NOT retry "chat not found" Telegram errors', async () => {
-    const fn = vi
-      .fn()
-      .mockRejectedValue(new Error('Bad Request: chat not found'));
+    const fn = vi.fn().mockRejectedValue(new Error('Bad Request: chat not found'));
     await expect(
       sendWithRetry(fn, {
         opName: 'tg.send',
