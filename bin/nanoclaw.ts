@@ -43,6 +43,19 @@ if (workspaceOverride) {
   process.env.NANOCLAW_WORKSPACE = workspaceOverride;
 }
 
+// Quiet info-level chatter from short-lived CLI subcommands. The daemon
+// (`start` / `dev`) keeps `info` so the log file stays useful; everything
+// else (stop/status/logs/config/etc.) raises threshold to `warn` so calls
+// like killAllAgentPids() in host-runner.ts don't leak info lines onto
+// the user's terminal stdout. User-set LOG_LEVEL always wins.
+// Regression fixed 2026-05-09 (kenan, Windows `nanoclaw stop`).
+if (!process.env.LOG_LEVEL) {
+  const NOISY_DAEMON_CMDS = new Set(['start', 'dev']);
+  if (command && !NOISY_DAEMON_CMDS.has(command)) {
+    process.env.LOG_LEVEL = 'warn';
+  }
+}
+
 // Version
 if (globalArgs.includes('--version') || globalArgs.includes('-v')) {
   try {
