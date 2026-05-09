@@ -6,6 +6,29 @@
  * Usage: nanoclaw <command> [options]
  */
 
+// IMPORTANT: must run before any import that pulls in ./log.js, because
+// src/log.ts captures `threshold` from process.env.LOG_LEVEL at module
+// load time. Short-lived CLI commands (anything except daemon `start` /
+// `start-foreground` / interactive `tui`) default to LOG_LEVEL=warn so
+// host-runner.killAllAgentPids() and friends don't spew INFO lines onto
+// the user's terminal stdout. User-set LOG_LEVEL always wins.
+// Regression fixed 2026-05-09 (kenan, Windows `nanoclaw stop`).
+{
+  const _argv = process.argv.slice(2);
+  let _ci = 0;
+  while (_ci < _argv.length) {
+    const a = _argv[_ci];
+    if (a === '--workspace' && _argv[_ci + 1]) { _ci += 2; continue; }
+    if (a === '--help' || a === '-h' || a === '--version' || a === '-v') { _ci += 1; continue; }
+    break;
+  }
+  const _cmd = _argv[_ci];
+  const NOISY_DAEMON = new Set(['start', 'start-foreground', 'dev', 'tui']);
+  if (!process.env.LOG_LEVEL && _cmd && !NOISY_DAEMON.has(_cmd)) {
+    process.env.LOG_LEVEL = 'warn';
+  }
+}
+
 import { resolve, dirname, join } from 'path';
 import path from 'path';
 import { fileURLToPath } from 'url';
