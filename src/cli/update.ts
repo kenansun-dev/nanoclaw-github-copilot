@@ -50,7 +50,10 @@ export async function runUpdate(args: string[]): Promise<void> {
   let packagePath: string | null = null;
   let source: 'npm' | 'github' | 'auto' = 'auto';
   let backupDirOverride: string | null = null;
-  let noBackup = false;
+  // Backups are now OPT-IN. Pass --backup to enable, or set NANOCLAW_BACKUP=1.
+  // Rationale: cross-platform `cp -a` shell-out broke Windows; most users
+  // don't use `nanoclaw rollback`. Default behaves like `--no-backup`.
+  let noBackup = !args.includes('--backup') && process.env.NANOCLAW_BACKUP !== '1';
 
   const pkgIdx = args.indexOf('--package');
   if (pkgIdx !== -1 && args[pkgIdx + 1]) {
@@ -66,6 +69,7 @@ export async function runUpdate(args: string[]): Promise<void> {
     backupDirOverride = path.resolve(args[bIdx + 1]);
   }
   if (args.includes('--no-backup')) noBackup = true;
+  if (args.includes('--backup')) noBackup = false;
 
   // ─── Pre-install: backup workspace + stash current binary ─────────────
   // Skipped only when the user explicitly passes --no-backup.

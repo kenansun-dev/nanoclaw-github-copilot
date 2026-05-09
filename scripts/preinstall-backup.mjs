@@ -145,9 +145,17 @@ function snapshotWorkspace(ws, backupDir) {
 }
 
 function main() {
-  // Allow opt-out for CI / fresh installs.
-  if (process.env.NANOCLAW_SKIP_PREINSTALL_BACKUP === '1') {
-    log('skipped (NANOCLAW_SKIP_PREINSTALL_BACKUP=1)');
+  // Default behavior: skip the workspace snapshot. Backups are now opt-in
+  // because (a) on Windows the v1 binary that triggered this hook
+  // historically shelled out to `cp -a` and crashed before npm could even
+  // hand control over here, and (b) most users keep their own backups /
+  // don't run `nanoclaw rollback`. Set NANOCLAW_BACKUP=1 to re-enable.
+  if (process.env.NANOCLAW_BACKUP !== '1') {
+    if (process.env.NANOCLAW_SKIP_PREINSTALL_BACKUP === '1') {
+      log('skipped (NANOCLAW_SKIP_PREINSTALL_BACKUP=1)');
+    } else {
+      log('skipped (default; set NANOCLAW_BACKUP=1 to enable workspace snapshot)');
+    }
     return;
   }
 
