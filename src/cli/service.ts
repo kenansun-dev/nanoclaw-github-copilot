@@ -21,16 +21,11 @@ function getNodePath(): string {
 
 function resolveNanoclawBin(): string {
   // Resolve from package installation path (works in service context where PATH may be limited)
-  const pkgBin = path.join(
-    path.dirname(path.dirname(fileURLToPath(import.meta.url))),
-    'bin',
-    'nanoclaw.js',
-  );
+  const pkgBin = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), 'bin', 'nanoclaw.js');
   if (fs.existsSync(pkgBin)) return `${getNodePath()} ${pkgBin}`;
   // Fallback to PATH
   try {
-    const cmd =
-      process.platform === 'win32' ? 'where nanoclaw' : 'which nanoclaw';
+    const cmd = process.platform === 'win32' ? 'where nanoclaw' : 'which nanoclaw';
     return execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] })
       .trim()
       .split('\n')[0];
@@ -41,11 +36,7 @@ function resolveNanoclawBin(): string {
 
 // ─── Linux: systemd user service ─────────────────────────────────────────────
 
-function systemdServiceContent(
-  description: string,
-  execStart: string,
-  ws: string,
-): string {
+function systemdServiceContent(description: string, execStart: string, ws: string): string {
   return `[Unit]
 Description=${description}
 After=network-online.target
@@ -71,11 +62,7 @@ async function installSystemd(ws: string, tunnelId?: string): Promise<void> {
 
   // NanoClaw service
   const nanoclawEntry = resolveNanoclawBin();
-  const nanoclawService = systemdServiceContent(
-    'NanoClaw AI Assistant',
-    `${nanoclawEntry} dev`,
-    ws,
-  );
+  const nanoclawService = systemdServiceContent('NanoClaw AI Assistant', `${nanoclawEntry} dev`, ws);
   const nanoclawPath = path.join(serviceDir, `${SERVICE_NAME}.service`);
   fs.writeFileSync(nanoclawPath, nanoclawService);
   console.log(`  Created: ${nanoclawPath}`);
@@ -90,10 +77,7 @@ async function installSystemd(ws: string, tunnelId?: string): Promise<void> {
       `${devtunnelBin} host ${tunnelId} --allow-anonymous`,
       ws,
     );
-    const devtunnelPath = path.join(
-      serviceDir,
-      `${DEVTUNNEL_SERVICE_NAME}.service`,
-    );
+    const devtunnelPath = path.join(serviceDir, `${DEVTUNNEL_SERVICE_NAME}.service`);
     fs.writeFileSync(devtunnelPath, devtunnelService);
     console.log(`  Created: ${devtunnelPath}`);
   }
@@ -111,9 +95,7 @@ async function installSystemd(ws: string, tunnelId?: string): Promise<void> {
     }).trim();
     console.log(`  ✅ ${SERVICE_NAME}: ${status}`);
   } catch {
-    console.log(
-      '  ⚠️  Service started but may not be healthy. Check: nanoclaw service status',
-    );
+    console.log('  ⚠️  Service started but may not be healthy. Check: nanoclaw service status');
   }
 
   if (tunnelId) {
@@ -196,11 +178,7 @@ function statusSystemd(): void {
  * Install a Windows auto-start entry via schtasks.
  * Uses /SC ONLOGON to run at user login.
  */
-export function installWindowsAutoStart(
-  name: string,
-  command: string,
-  _ws?: string,
-): 'task' | null {
+export function installWindowsAutoStart(name: string, command: string, _ws?: string): 'task' | null {
   try {
     const escaped = command.replace(/"/g, '\\"');
     execSync(`schtasks /Create /TN "${name}" /TR "${escaped}" /SC ONLOGON /F`, {
@@ -210,9 +188,7 @@ export function installWindowsAutoStart(
     return 'task' as const;
   } catch (err: any) {
     const msg = ((err.stderr || '') + (err.stdout || '')).toString().trim();
-    console.error(
-      `  ❌ Failed to create scheduled task: ${msg || err.message}`,
-    );
+    console.error(`  ❌ Failed to create scheduled task: ${msg || err.message}`);
     return null;
   }
 }
@@ -263,11 +239,7 @@ function statusWindows(): void {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
       }).trim();
-      const status = output.includes('Running')
-        ? 'running'
-        : output.includes('Ready')
-          ? 'ready'
-          : 'unknown';
+      const status = output.includes('Running') ? 'running' : output.includes('Ready') ? 'ready' : 'unknown';
       console.log(`  ${name}: ${status}`);
       continue;
     } catch {

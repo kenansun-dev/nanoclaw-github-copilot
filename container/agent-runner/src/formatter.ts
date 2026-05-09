@@ -66,6 +66,18 @@ export function isClearCommand(msg: MessageInRow): boolean {
   return text.toLowerCase().startsWith('/clear');
 }
 
+/**
+ * True for any chat that needs the outer loop's command path: /clear plus
+ * admin/passthrough slash commands the SDK can only dispatch when they are
+ * a query's first input. Used by the follow-up poller to bail out and let
+ * the outer loop reopen the query.
+ */
+export function isRunnerCommand(msg: MessageInRow): boolean {
+  if (msg.kind !== 'chat' && msg.kind !== 'chat-sdk') return false;
+  const cat = categorizeMessage(msg).category;
+  return cat === 'admin' || cat === 'passthrough';
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function extractSenderId(msg: MessageInRow, content: any): string | null {
   const raw: string | null = content?.senderId || content?.author?.userId || null;
@@ -181,7 +193,16 @@ function formatSingleChat(msg: MessageInRow): string {
 
 function formatTaskMessage(msg: MessageInRow): string {
   const content = parseContent(msg.content);
-  const parts = ['[SCHEDULED TASK]'];
+  const parts = [
+    '[SCHEDULED TASK]',
+    'This is an automated cron-triggered run. Strict output rules:',
+    '- Output ONLY the requested content (e.g. the summary, the report, the answer).',
+    '- Do NOT narrate work in progress (no "Let me check…", "Searching…", "I will now…").',
+    '- Do NOT add closing acknowledgments (no "Done", "Sent", "Hope this helps", "Let me know if…").',
+    '- No greetings, no sign-offs, no meta commentary about the task itself.',
+    '- If the task asks for a search/lookup, run the tool silently and reply with only the result.',
+    '- If you have nothing useful to report, reply with an empty string (the runner will skip it).',
+  ];
   if (content.scriptOutput) {
     parts.push('', 'Script output:', JSON.stringify(content.scriptOutput, null, 2));
   }

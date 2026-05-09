@@ -64,15 +64,26 @@ export interface StatusInfo {
 export async function collectStatus(chatJid?: string): Promise<StatusInfo> {
   const { resolveWorkspace } = await import('../workspace.js');
   const { loadConfig } = await import('../config-loader.js');
-  const { resolveGithubToken, isCopilotAuthenticated } =
-    await import('../config-extensions.js');
+  const { resolveGithubToken, isCopilotAuthenticated } = await import('../config-extensions.js');
 
   const ws = resolveWorkspace();
   const pidFile = join(ws, 'state', 'nanoclaw.pid');
   const logFile = join(ws, 'logs', 'nanoclaw.log');
 
   const cfg = loadConfig();
-  const agent = (cfg.agents?.defaults || {}) as any;
+  // Resolve the agent the way the runner does: per-chat binding (or chat.agentId)
+  // first, then fall back to agents.defaults. Without this, /status in a sandbox
+  // bot's chat shows the global default's mode/provider/model instead of the
+  // bot's actual config (kenan repro 2026-05-05: sandbox TG bot showed Mode: host).
+  let agent: any = cfg.agents?.defaults || {};
+  if (chatJid) {
+    try {
+      const { resolveAgentForChat } = await import('../config-extensions.js');
+      agent = resolveAgentForChat(chatJid) as any;
+    } catch {
+      /* fall back to defaults */
+    }
+  }
   const provider = agent.provider || 'github-copilot';
   let model = agent.model || 'default';
   const mode = agent.mode || 'host';
@@ -88,22 +99,15 @@ export async function collectStatus(chatJid?: string): Promise<StatusInfo> {
   const overrideFields: string[] = [];
   if (chatJid) {
     try {
-      const {
-        getEffectiveModel,
-        getEffectiveThinkLevel,
-        getEffectiveShowThinking,
-        resolveSessionScope,
-      } = await import('../session-overrides.js');
+      const { getEffectiveModel, getEffectiveThinkLevel, getEffectiveShowThinking, resolveSessionScope } =
+        await import('../session-overrides.js');
       const { getSessionOverrides } = await import('../db.js');
       const scope = resolveSessionScope(chatJid);
-      const ov = scope
-        ? getSessionOverrides(scope.groupFolder, scope.provider)
-        : {};
+      const ov = scope ? getSessionOverrides(scope.groupFolder, scope.provider) : {};
       const eModel = getEffectiveModel(chatJid);
       if (eModel) model = eModel;
       const eThink = getEffectiveThinkLevel(chatJid);
-      if (eThink !== undefined)
-        thinkLevel = eThink === 'off' ? undefined : eThink;
+      if (eThink !== undefined) thinkLevel = eThink === 'off' ? undefined : eThink;
       const eShow = getEffectiveShowThinking(chatJid);
       if (eShow !== undefined) showThinking = eShow;
       if (ov.model) overrideFields.push('model');
@@ -151,18 +155,11 @@ export async function collectStatus(chatJid?: string): Promise<StatusInfo> {
         const loggedIn = cc.loggedInUsers ?? cc.logged_in_users;
         const lastUser = cc.lastLoggedInUser ?? cc.last_logged_in_user;
         const tokenBag = cc.copilotTokens ?? cc.copilot_tokens;
-        const userPresent =
-          (Array.isArray(loggedIn) && loggedIn.length > 0) || !!lastUser;
-        const tokenPresent =
-          tokenBag &&
-          typeof tokenBag === 'object' &&
-          Object.keys(tokenBag).length > 0;
+        const userPresent = (Array.isArray(loggedIn) && loggedIn.length > 0) || !!lastUser;
+        const tokenPresent = tokenBag && typeof tokenBag === 'object' && Object.keys(tokenBag).length > 0;
         if (userPresent || tokenPresent) {
           hasAuth = true;
-          const user =
-            lastUser?.login ||
-            (Array.isArray(loggedIn) && loggedIn[0]?.login) ||
-            '';
+          const user = lastUser?.login || (Array.isArray(loggedIn) && loggedIn[0]?.login) || '';
           authLabel = `${provider} (CLI: ${user})`;
         }
       }
@@ -204,9 +201,7 @@ export async function collectStatus(chatJid?: string): Promise<StatusInfo> {
 
   let version = 'unknown';
   try {
-    const pkg = JSON.parse(
-      fs.readFileSync(join(PROJECT_ROOT, 'package.json'), 'utf-8'),
-    );
+    const pkg = JSON.parse(fs.readFileSync(join(PROJECT_ROOT, 'package.json'), 'utf-8'));
     version = pkg.version ?? 'unknown';
   } catch {
     /* ignore */
@@ -266,9 +261,7 @@ export function formatStatusText(s: StatusInfo): string {
   lines.push(`🛠️ Mode:      ${s.mode}`);
   lines.push(
     `${s.running ? '✅' : '❌'} Status:    ${
-      s.running
-        ? `running (pid: ${s.pid}, uptime: ${s.uptimeStr})`
-        : 'not running'
+      s.running ? `running (pid: ${s.pid}, uptime: ${s.uptimeStr})` : 'not running'
     }`,
   );
   lines.push(
@@ -278,22 +271,16 @@ export function formatStatusText(s: StatusInfo): string {
         : s.showThinking === true || s.showThinking === 'on'
           ? ' [reasoning visible]'
           : ''
-    } [${s.mode}]`,
+    }`,
   );
   if (s.hasSessionOverride) {
-    lines.push(
-      `🎯 Scope:     this chat (override: ${s.sessionOverrideFields!.join(', ')})`,
-    );
+    lines.push(`🎯 Scope:     this chat (override: ${s.sessionOverrideFields!.join(', ')})`);
   } else if (s.chatJid) {
     lines.push(`🎯 Scope:     this chat (using global default)`);
   }
   lines.push(`👤 Agent:     ${s.agentName} (${s.provider})`);
-  lines.push(
-    `🔑 Auth:      ${s.hasAuth ? `✅ ${s.authLabel}` : '❌ not configured'}`,
-  );
-  lines.push(
-    `📡 Channels:  ${s.channels.length > 0 ? s.channels.join(', ') : 'none'}`,
-  );
+  lines.push(`🔑 Auth:      ${s.hasAuth ? `✅ ${s.authLabel}` : '❌ not configured'}`);
+  lines.push(`📡 Channels:  ${s.channels.length > 0 ? s.channels.join(', ') : 'none'}`);
   lines.push(`💬 Chats:     ${s.chatCount} registered`);
   if (s.tunnelRunning) {
     lines.push(`🌐 Tunnel:    running`);

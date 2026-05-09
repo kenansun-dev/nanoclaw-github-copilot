@@ -25,13 +25,7 @@
 
 import { log } from '../log.js';
 import { readEnvFile } from '../env.js';
-import type {
-  ChannelAdapter,
-  ChannelRegistration,
-  ChannelSetup,
-  InboundMessage,
-  OutboundMessage,
-} from './adapter.js';
+import type { ChannelAdapter, ChannelRegistration, ChannelSetup, InboundMessage, OutboundMessage } from './adapter.js';
 import { registerChannelAdapter } from './channel-registry.js';
 import { TelegramChannel } from './telegram.js';
 import type { NewMessage, RegisteredGroup } from '../types-extensions.js';
@@ -127,11 +121,7 @@ class TelegramV2Adapter implements ChannelAdapter {
     return this.inner ? this.inner.isConnected() : false;
   }
 
-  async deliver(
-    platformId: string,
-    _threadId: string | null,
-    message: OutboundMessage,
-  ): Promise<string | undefined> {
+  async deliver(platformId: string, _threadId: string | null, message: OutboundMessage): Promise<string | undefined> {
     if (!this.inner) {
       log.warn('deliver called before setup', { channelType: CHANNEL_TYPE });
       return undefined;
@@ -144,18 +134,14 @@ class TelegramV2Adapter implements ChannelAdapter {
       });
       return undefined;
     }
-    const jid = this.accountId
-      ? `tg:${this.accountId}:${platformId}`
-      : `tg:${platformId}`;
+    const jid = this.accountId ? `tg:${this.accountId}:${platformId}` : `tg:${platformId}`;
     const sentId = await this.inner.sendMessage(jid, text);
     return typeof sentId === 'string' ? sentId : undefined;
   }
 
   async setTyping(platformId: string, _threadId: string | null): Promise<void> {
     if (!this.inner) return;
-    const jid = this.accountId
-      ? `tg:${this.accountId}:${platformId}`
-      : `tg:${platformId}`;
+    const jid = this.accountId ? `tg:${this.accountId}:${platformId}` : `tg:${platformId}`;
     await this.inner.setTyping(jid, true);
   }
 }
@@ -175,8 +161,7 @@ export function makeTelegramV2AdapterRegistration(): ChannelRegistration {
   return {
     factory: () => {
       const env = readEnvFile(['TELEGRAM_BOT_TOKEN']);
-      const token =
-        process.env.TELEGRAM_BOT_TOKEN || env.TELEGRAM_BOT_TOKEN || '';
+      const token = process.env.TELEGRAM_BOT_TOKEN || env.TELEGRAM_BOT_TOKEN || '';
       if (!token) {
         log.warn('Telegram v2 adapter: TELEGRAM_BOT_TOKEN not set, skipping');
         return null;

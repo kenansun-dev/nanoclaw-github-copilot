@@ -20,19 +20,13 @@ describe('container path validation', () => {
   // These tests verify the validation logic exists by checking the reason.
 
   it('rejects paths with .. in container path', () => {
-    const result = validateMount(
-      { hostPath: '/tmp', containerPath: '../escape' },
-      true,
-    );
+    const result = validateMount({ hostPath: '/tmp', containerPath: '../escape' }, true);
     expect(result.allowed).toBe(false);
     // Blocked either by 'no allowlist' or by container path validation
   });
 
   it('rejects absolute container paths', () => {
-    const result = validateMount(
-      { hostPath: '/tmp', containerPath: '/absolute/path' },
-      true,
-    );
+    const result = validateMount({ hostPath: '/tmp', containerPath: '/absolute/path' }, true);
     expect(result.allowed).toBe(false);
   });
 
@@ -42,10 +36,7 @@ describe('container path validation', () => {
   });
 
   it('rejects container paths with colons (Docker -v injection)', () => {
-    const result = validateMount(
-      { hostPath: '/tmp', containerPath: 'repo:rw' },
-      true,
-    );
+    const result = validateMount({ hostPath: '/tmp', containerPath: 'repo:rw' }, true);
     expect(result.allowed).toBe(false);
     // Blocked either by 'no allowlist' or by container path validation
   });
@@ -53,27 +44,18 @@ describe('container path validation', () => {
 
 describe('blocked patterns', () => {
   it('blocks .ssh paths', () => {
-    const result = validateMount(
-      { hostPath: path.join(os.homedir(), '.ssh') },
-      true,
-    );
+    const result = validateMount({ hostPath: path.join(os.homedir(), '.ssh') }, true);
     // Either blocked by pattern or by no allowlist — both are correct security behavior
     expect(result.allowed).toBe(false);
   });
 
   it('blocks .aws paths', () => {
-    const result = validateMount(
-      { hostPath: path.join(os.homedir(), '.aws') },
-      true,
-    );
+    const result = validateMount({ hostPath: path.join(os.homedir(), '.aws') }, true);
     expect(result.allowed).toBe(false);
   });
 
   it('blocks .env paths', () => {
-    const result = validateMount(
-      { hostPath: path.join(os.homedir(), '.env') },
-      true,
-    );
+    const result = validateMount({ hostPath: path.join(os.homedir(), '.env') }, true);
     expect(result.allowed).toBe(false);
   });
 
@@ -99,10 +81,7 @@ describe('no allowlist = all mounts blocked', () => {
 
 describe('mount validation edge cases', () => {
   it('rejects non-existent host paths', () => {
-    const result = validateMount(
-      { hostPath: '/nonexistent/path/that/does/not/exist' },
-      true,
-    );
+    const result = validateMount({ hostPath: '/nonexistent/path/that/does/not/exist' }, true);
     expect(result.allowed).toBe(false);
   });
 

@@ -1,11 +1,6 @@
 import fs from 'fs';
 import http from 'http';
-import {
-  BotFrameworkAdapter,
-  TurnContext,
-  Activity,
-  ConversationReference,
-} from 'botbuilder';
+import { BotFrameworkAdapter, TurnContext, Activity, ConversationReference } from 'botbuilder';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { loadConfig } from '../config-loader.js';
@@ -13,14 +8,9 @@ import { readEnvFile } from '../env.js';
 import { logger } from '../log-extensions.js';
 import { sendWithRetry } from './send-with-retry.js';
 import { registerChannel, ChannelOpts } from './registry.js';
-import {
-  Channel,
-  OnChatMetadata,
-  OnInboundMessage,
-  RegisteredGroup,
-  StreamHandle,
-} from '../types-extensions.js';
+import { Channel, OnChatMetadata, OnInboundMessage, RegisteredGroup, StreamHandle } from '../types-extensions.js';
 import { TeamsStreamingSession, makeAdapterSender } from './teams-streaming.js';
+import { expandHtmlLinks } from './teams-html.js';
 
 // ---------------------------------------------------------------------------
 // Teams Channel — implements the same Channel interface as Telegram
@@ -110,15 +100,12 @@ export class TeamsChannel implements Channel {
         client_secret: appPassword,
         scope: 'https://graph.microsoft.com/.default',
       });
-      const res = await fetch(
-        `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
-        { method: 'POST', body },
-      );
+      const res = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
+        method: 'POST',
+        body,
+      });
       if (!res.ok) {
-        logger.debug(
-          { status: res.status },
-          'Failed to get Graph token for reply context',
-        );
+        logger.debug({ status: res.status }, 'Failed to get Graph token for reply context');
         return null;
       }
       const data = (await res.json()) as any;
@@ -150,10 +137,7 @@ export class TeamsChannel implements Channel {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {
-        logger.debug(
-          { status: res.status, conversationId, messageId },
-          'Graph API reply fetch failed',
-        );
+        logger.debug({ status: res.status, conversationId, messageId }, 'Graph API reply fetch failed');
         return null;
       }
       const msg = (await res.json()) as any;
@@ -177,8 +161,7 @@ export class TeamsChannel implements Channel {
 
   /** Convert Adaptive Card submit (activity.value) to synthetic slash command text. */
   private async resolveCardSubmit(activity: any): Promise<boolean> {
-    if (activity.type !== 'message' || activity.text || !activity.value)
-      return false;
+    if (activity.type !== 'message' || activity.text || !activity.value) return false;
     try {
       const { parseTeamsCardSubmit } = await import('../slash-commands.js');
       const syntheticCmd = parseTeamsCardSubmit(activity);
@@ -219,10 +202,7 @@ export class TeamsChannel implements Channel {
         process.env.HOME || process.env.USERPROFILE || require('os').homedir(),
       );
       adapterSettings.certificateThumbprint = certThumbprint;
-      adapterSettings.certificatePrivateKey = fs.readFileSync(
-        resolvedPath,
-        'utf-8',
-      );
+      adapterSettings.certificatePrivateKey = fs.readFileSync(resolvedPath, 'utf-8');
       logger.info('Teams: certificate configured');
     }
 
@@ -246,9 +226,7 @@ export class TeamsChannel implements Channel {
       const msg = String(error?.message ?? error);
       const isBenignStreamingWireReject =
         // bare typing rejected because conversation is in stream-mode
-        msg.includes(
-          'Only start streaming and continue streaming types are allowed',
-        ) ||
+        msg.includes('Only start streaming and continue streaming types are allowed') ||
         // bare message rejected because conversation is in stream-mode
         msg.includes('Only end streaming type is allowed') ||
         // multiple informative bootstraps rejected
@@ -256,10 +234,7 @@ export class TeamsChannel implements Channel {
         // user paused / client disabled streaming mid-flight
         msg.includes('ContentStreamNotAllowed');
       if (isBenignStreamingWireReject) {
-        logger.warn(
-          { err: msg },
-          'Teams adapter turn error (streaming wire, suppressed user notice)',
-        );
+        logger.warn({ err: msg }, 'Teams adapter turn error (streaming wire, suppressed user notice)');
         return;
       }
       logger.error({ err: msg }, 'Teams adapter turn error');
@@ -300,10 +275,7 @@ export class TeamsChannel implements Channel {
             return;
           }
 
-          logger.debug(
-            { activityType: activity.type, from: activity.from?.name },
-            'Teams webhook received',
-          );
+          logger.debug({ activityType: activity.type, from: activity.from?.name }, 'Teams webhook received');
 
           // BotFrameworkAdapter expects Express-style req.body and res methods
           (req as any).body = activity;
@@ -325,15 +297,11 @@ export class TeamsChannel implements Channel {
           // TODO: Fix proper JWT validation for cross-tenant certificate auth.
           const useRawMode =
             process.env.MSTEAMS_RAW_MODE === 'true' ||
-            (!this.adapterSettings.appPassword &&
-              this.adapterSettings.certificateThumbprint);
+            (!this.adapterSettings.appPassword && this.adapterSettings.certificateThumbprint);
 
           if (useRawMode) {
             // Raw mode: skip adapter JWT validation entirely
-            logger.debug(
-              { activityType: activity.type },
-              'Teams: processing in raw mode (no JWT validation)',
-            );
+            logger.debug({ activityType: activity.type }, 'Teams: processing in raw mode (no JWT validation)');
             const invokeResp = await this.handleIncomingRaw(activity, req);
             if (activity.type === 'invoke') {
               // Teams requires a JSON invokeResponse body for invoke activities;
@@ -346,13 +314,9 @@ export class TeamsChannel implements Channel {
             }
           } else {
             try {
-              await this.adapter.processActivity(
-                req,
-                expressRes,
-                async (context: TurnContext) => {
-                  await this.handleIncoming(context);
-                },
-              );
+              await this.adapter.processActivity(req, expressRes, async (context: TurnContext) => {
+                await this.handleIncoming(context);
+              });
             } catch (err: any) {
               logger.error({ err: err.message }, 'Teams processActivity error');
               if (!res.headersSent) {
@@ -389,17 +353,11 @@ export class TeamsChannel implements Channel {
         const onError = (err: NodeJS.ErrnoException) => {
           this.server!.removeListener('listening', onListening);
           if (err.code === 'EADDRINUSE' && attempt < maxAttempts) {
-            logger.warn(
-              { port: this.port, attempt, maxAttempts },
-              'Teams webhook port busy (EADDRINUSE), retrying',
-            );
+            logger.warn({ port: this.port, attempt, maxAttempts }, 'Teams webhook port busy (EADDRINUSE), retrying');
             setTimeout(tryListen, 500);
             return;
           }
-          logger.error(
-            { err, port: this.port, attempt },
-            'Teams webhook server failed to start',
-          );
+          logger.error({ err, port: this.port, attempt }, 'Teams webhook server failed to start');
           console.error(
             `\n  Teams webhook FAILED on port ${this.port}: ${err.message}\n` +
               `  (Tried ${attempt} time${attempt === 1 ? '' : 's'}.)\n`,
@@ -409,12 +367,8 @@ export class TeamsChannel implements Channel {
         const onListening = () => {
           this.server!.removeListener('error', onError);
           logger.info({ port: this.port }, 'Teams webhook server listening');
-          console.log(
-            `\n  Teams webhook: http://0.0.0.0:${this.port}/api/messages`,
-          );
-          console.log(
-            `  Set your Azure Bot messaging endpoint to: <your-public-url>/api/messages\n`,
-          );
+          console.log(`\n  Teams webhook: http://0.0.0.0:${this.port}/api/messages`);
+          console.log(`  Set your Azure Bot messaging endpoint to: <your-public-url>/api/messages\n`);
           resolve();
         };
         this.server!.once('error', onError);
@@ -429,10 +383,7 @@ export class TeamsChannel implements Channel {
    * Handle incoming activity without adapter auth (dev/cross-tenant fallback).
    * WARNING: This bypasses JWT validation. Use only during development.
    */
-  private async handleIncomingRaw(
-    activity: any,
-    req: any,
-  ): Promise<{ status: number; body?: any } | void> {
+  private async handleIncomingRaw(activity: any, req: any): Promise<{ status: number; body?: any } | void> {
     const conversationId = activity.conversation?.id || '';
     const chatJid = `teams:${conversationId}`;
 
@@ -443,10 +394,7 @@ export class TeamsChannel implements Channel {
       for (const reaction of reactionsAdded) {
         const emoji = reaction.type || '';
         const targetMsgId = activity.replyToId || '';
-        logger.info(
-          { chatJid, sender, emoji, targetMsgId },
-          'Teams reaction received (not dispatched to agent)',
-        );
+        logger.info({ chatJid, sender, emoji, targetMsgId }, 'Teams reaction received (not dispatched to agent)');
       }
       // Do NOT forward to agent. Reactions/likes are passive ack signals;
       // dispatching them as messages caused the agent to reply on every
@@ -471,9 +419,7 @@ export class TeamsChannel implements Channel {
     // miss with no log trace.
     if (activity.type === 'message') {
       const attCount = activity.attachments?.length || 0;
-      const attTypes = (activity.attachments || []).map(
-        (a: any) => a.contentType,
-      );
+      const attTypes = (activity.attachments || []).map((a: any) => a.contentType);
       logger.info(
         {
           chatJid,
@@ -487,11 +433,7 @@ export class TeamsChannel implements Channel {
     }
 
     // Handle file attachments (download to group workspace)
-    if (
-      activity.type === 'message' &&
-      activity.attachments &&
-      activity.attachments.length > 0
-    ) {
+    if (activity.type === 'message' && activity.attachments && activity.attachments.length > 0) {
       await this.processIncomingAttachments(activity, chatJid);
     }
 
@@ -507,27 +449,22 @@ export class TeamsChannel implements Channel {
     };
     this.conversationRefs.set(chatJid, ref as any);
 
-    let content = activity.text;
-    // Teams sends HTML when textFormat is 'xml' — pass through as-is
-    // LLM can understand HTML; stripping loses links and formatting
-    const timestamp = activity.timestamp
-      ? new Date(activity.timestamp).toISOString()
-      : new Date().toISOString();
+        let content = expandHtmlLinks(activity.text);
+    // Teams sends HTML when textFormat is 'xml' — pass through as-is for
+    // formatting, but expand <a href=...> first so href is visible to LLMs
+    // that don't read raw HTML well (Copilot GHC path strips silently).
+    const timestamp = activity.timestamp ? new Date(activity.timestamp).toISOString() : new Date().toISOString();
     const senderName = activity.from?.name || activity.from?.id || 'Unknown';
     const sender = activity.from?.aadObjectId || activity.from?.id || '';
     const msgId = activity.id || Date.now().toString();
     const isGroup =
-      activity.conversation?.conversationType === 'groupChat' ||
-      activity.conversation?.conversationType === 'channel';
+      activity.conversation?.conversationType === 'groupChat' || activity.conversation?.conversationType === 'channel';
     const chatName = activity.conversation?.name || chatJid;
 
     // Handle @mention
     if (activity.entities) {
       for (const entity of activity.entities) {
-        if (
-          entity.type === 'mention' &&
-          entity.mentioned?.id === activity.recipient?.id
-        ) {
+        if (entity.type === 'mention' && entity.mentioned?.id === activity.recipient?.id) {
           const mentionText = entity.text || '';
           content = content.replace(mentionText, '').trim();
         }
@@ -535,8 +472,7 @@ export class TeamsChannel implements Channel {
     }
     if (isGroup && !TRIGGER_PATTERN.test(content)) {
       const wasMentioned = activity.entities?.some(
-        (e: any) =>
-          e.type === 'mention' && e.mentioned?.id === activity.recipient?.id,
+        (e: any) => e.type === 'mention' && e.mentioned?.id === activity.recipient?.id,
       );
       if (wasMentioned) {
         content = `@${ASSISTANT_NAME} ${content}`;
@@ -558,10 +494,7 @@ export class TeamsChannel implements Channel {
           // Fallback: try Graph API for messages not in local DB
           const convId = activity.conversation?.id;
           if (convId) {
-            const graphMsg = await this.fetchReplyViaGraph(
-              convId,
-              activity.replyToId,
-            );
+            const graphMsg = await this.fetchReplyViaGraph(convId, activity.replyToId);
             if (graphMsg) {
               const truncated = graphMsg.content.slice(0, 200);
               content = `[Replying to ${graphMsg.author}: ${truncated}]\n${content}`;
@@ -583,10 +516,7 @@ export class TeamsChannel implements Channel {
       is_from_me: false,
     });
 
-    logger.info(
-      { chatJid, chatName, sender: senderName },
-      'Teams message stored (raw mode)',
-    );
+    logger.info({ chatJid, chatName, sender: senderName }, 'Teams message stored (raw mode)');
   }
 
   /**
@@ -602,10 +532,7 @@ export class TeamsChannel implements Channel {
    * received 501 Not Implemented ("something went wrong, please try again").
    * Ported out to fix that. A test pins both wire paths.
    */
-  private async handleFileConsentInvoke(
-    activity: any,
-    chatJid: string,
-  ): Promise<{ status: number }> {
+  private async handleFileConsentInvoke(activity: any, chatJid: string): Promise<{ status: number }> {
     const value = activity.value;
     if (value?.action === 'decline') {
       logger.info({ jid: chatJid }, 'Teams file consent declined by user');
@@ -615,10 +542,7 @@ export class TeamsChannel implements Channel {
       const uploadUrl = value.uploadInfo?.uploadUrl;
       const filePath = value.context.filePath;
       if (!uploadUrl) {
-        logger.warn(
-          { jid: chatJid },
-          'Teams fileConsent accept without uploadUrl',
-        );
+        logger.warn({ jid: chatJid }, 'Teams fileConsent accept without uploadUrl');
         return { status: 200 };
       }
       try {
@@ -633,10 +557,7 @@ export class TeamsChannel implements Channel {
           body: fileBuffer,
         });
         if (uploadRes.ok) {
-          logger.info(
-            { jid: chatJid, file: value.context.filename },
-            'Teams file uploaded via FileConsent',
-          );
+          logger.info({ jid: chatJid, file: value.context.filename }, 'Teams file uploaded via FileConsent');
           // Respond to the invoke first (so Teams un-pends the conversation),
           // THEN send the file.info card asynchronously — fire-and-forget so
           // we don't block the invoke response path.
@@ -644,55 +565,41 @@ export class TeamsChannel implements Channel {
             const ref = this.conversationRefs.get(chatJid);
             if (!ref) return;
             this.adapter
-              .continueConversation(
-                ref as ConversationReference,
-                async (ctx: TurnContext) => {
-                  // FileInfoCard (file chiclet) requires `contentUrl` at the
-                  // attachment top level — Teams server-side renders the
-                  // chiclet by linking to the SharePoint URL where the file
-                  // landed during the PUT upload. Without contentUrl, the
-                  // server returns:
-                  //   "An exception occurred when converting file info card
-                  //    to file chiclet"
-                  // and the user sees a Skype "unsupported card" link plus a
-                  // "Sorry, something went wrong" toast (kenansun, 2026-04-22).
-                  //
-                  // Teams sends `contentUrl` in the fileConsent/invoke
-                  // payload's `value.uploadInfo.contentUrl` — same SharePoint
-                  // URL the bot just PUT to. Reuse it.
-                  // See https://learn.microsoft.com/en-us/microsoftteams/platform/bots/how-to/bots-filesv4#example-of-file-info-card
-                  await ctx.sendActivity({
-                    attachments: [
-                      {
-                        contentType:
-                          'application/vnd.microsoft.teams.card.file.info',
-                        contentUrl: value.uploadInfo?.contentUrl,
-                        name: value.uploadInfo?.name || value.context.filename,
-                        content: {
-                          uniqueId: value.uploadInfo?.uniqueId,
-                          fileType:
-                            value.uploadInfo?.fileType ||
-                            value.context.filename?.split('.').pop(),
-                        },
-                      } as any,
-                    ],
-                  } as Partial<Activity>);
-                },
-              )
-              .catch((err: any) =>
-                logger.warn(
-                  { err: err.message },
-                  'Teams file.info card send failed',
-                ),
-              );
+              .continueConversation(ref as ConversationReference, async (ctx: TurnContext) => {
+                // FileInfoCard (file chiclet) requires `contentUrl` at the
+                // attachment top level — Teams server-side renders the
+                // chiclet by linking to the SharePoint URL where the file
+                // landed during the PUT upload. Without contentUrl, the
+                // server returns:
+                //   "An exception occurred when converting file info card
+                //    to file chiclet"
+                // and the user sees a Skype "unsupported card" link plus a
+                // "Sorry, something went wrong" toast (kenansun, 2026-04-22).
+                //
+                // Teams sends `contentUrl` in the fileConsent/invoke
+                // payload's `value.uploadInfo.contentUrl` — same SharePoint
+                // URL the bot just PUT to. Reuse it.
+                // See https://learn.microsoft.com/en-us/microsoftteams/platform/bots/how-to/bots-filesv4#example-of-file-info-card
+                await ctx.sendActivity({
+                  attachments: [
+                    {
+                      contentType: 'application/vnd.microsoft.teams.card.file.info',
+                      contentUrl: value.uploadInfo?.contentUrl,
+                      name: value.uploadInfo?.name || value.context.filename,
+                      content: {
+                        uniqueId: value.uploadInfo?.uniqueId,
+                        fileType: value.uploadInfo?.fileType || value.context.filename?.split('.').pop(),
+                      },
+                    } as any,
+                  ],
+                } as Partial<Activity>);
+              })
+              .catch((err: any) => logger.warn({ err: err.message }, 'Teams file.info card send failed'));
           });
           return { status: 200 };
         } else {
           const errText = await uploadRes.text().catch(() => '');
-          logger.warn(
-            { status: uploadRes.status, errText },
-            'Teams file upload failed',
-          );
+          logger.warn({ status: uploadRes.status, errText }, 'Teams file upload failed');
           return { status: 502 };
         }
       } catch (err: any) {
@@ -717,10 +624,7 @@ export class TeamsChannel implements Channel {
    * "I can't see attachments". Ported out to fix. Same split-brain pattern
    * as fileConsent/invoke (both fixed in the same PR).
    */
-  private async processIncomingAttachments(
-    activity: any,
-    chatJid: string,
-  ): Promise<void> {
+  private async processIncomingAttachments(activity: any, chatJid: string): Promise<void> {
     for (const att of activity.attachments) {
       // Skip Adaptive Cards and other non-file attachments
       if (
@@ -743,29 +647,18 @@ export class TeamsChannel implements Channel {
       // Teams file attachments: real download URL is often
       // att.content.downloadUrl (pre-authenticated SharePoint URL, no bearer).
       // att.contentUrl is a non-authenticated reference. Prefer downloadUrl.
-      const isTeamsFileInfo =
-        att.contentType ===
-        'application/vnd.microsoft.teams.file.download.info';
-      const effectiveUrl = isTeamsFileInfo
-        ? att.content?.downloadUrl
-        : att.contentUrl;
+      const isTeamsFileInfo = att.contentType === 'application/vnd.microsoft.teams.file.download.info';
+      const effectiveUrl = isTeamsFileInfo ? att.content?.downloadUrl : att.contentUrl;
       if (!effectiveUrl) continue;
 
-      const fileName = (att.name || 'attachment')
-        .replace(/[\/\\:*?"<>|]/g, '_')
-        .replace(/\.\./g, '_');
+      const fileName = (att.name || 'attachment').replace(/[\/\\:*?"<>|]/g, '_').replace(/\.\./g, '_');
       const group = this.opts.registeredGroups()[chatJid];
       if (group) {
         try {
           const fs = await import('fs');
           const pathMod = await import('path');
           const { resolveWorkspace } = await import('../workspace.js');
-          const uploadsDir = pathMod.default.join(
-            resolveWorkspace(),
-            'groups',
-            group.folder,
-            'uploads',
-          );
+          const uploadsDir = pathMod.default.join(resolveWorkspace(), 'groups', group.folder, 'uploads');
           fs.default.mkdirSync(uploadsDir, { recursive: true });
           const localPath = pathMod.default.join(uploadsDir, fileName);
 
@@ -777,9 +670,7 @@ export class TeamsChannel implements Channel {
           const headers: Record<string, string> = {};
           if (!isTeamsFileInfo) {
             try {
-              const token = await (
-                this.adapter as any
-              ).credentialsFactory?.createCredentials?.();
+              const token = await (this.adapter as any).credentialsFactory?.createCredentials?.();
               if (token?.token) {
                 headers['Authorization'] = `Bearer ${token.token}`;
               }
@@ -791,10 +682,7 @@ export class TeamsChannel implements Channel {
           if (res.ok) {
             const buffer = Buffer.from(await res.arrayBuffer());
             fs.default.writeFileSync(localPath, buffer);
-            logger.info(
-              { jid: chatJid, file: fileName, path: localPath },
-              'Teams file downloaded',
-            );
+            logger.info({ jid: chatJid, file: fileName, path: localPath }, 'Teams file downloaded');
             // Append file info to message content
             const fileNote = `[Document: ${fileName}] (saved to ${localPath})`;
             if (activity.text) {
@@ -803,10 +691,7 @@ export class TeamsChannel implements Channel {
               activity.text = fileNote;
             }
           } else {
-            logger.warn(
-              { jid: chatJid, file: fileName, status: res.status },
-              'Teams file download failed',
-            );
+            logger.warn({ jid: chatJid, file: fileName, status: res.status }, 'Teams file download failed');
             // Surface failure to agent so it can apologize / ask user to retry
             // (instead of silently dropping → agent hallucinates "I can't see files").
             const failNote = `[Document: ${fileName}] (download failed: HTTP ${res.status})`;
@@ -817,10 +702,7 @@ export class TeamsChannel implements Channel {
             }
           }
         } catch (err: any) {
-          logger.error(
-            { err, file: fileName },
-            'Failed to download Teams file',
-          );
+          logger.error({ err, file: fileName }, 'Failed to download Teams file');
           // Surface error too — agent needs to know a file came in even if we
           // couldn't persist it.
           const errNote = `[Document: ${fileName}] (download error)`;
@@ -867,10 +749,7 @@ export class TeamsChannel implements Channel {
       const sender = activity.from?.name || activity.from?.id || 'unknown';
       for (const reaction of reactionsAdded) {
         const emoji = reaction.type || '';
-        logger.info(
-          { chatJid, sender, emoji },
-          'Teams reaction received (not dispatched to agent)',
-        );
+        logger.info({ chatJid, sender, emoji }, 'Teams reaction received (not dispatched to agent)');
       }
       // Do NOT forward to agent (see handleIncomingRaw above for rationale).
       return;
@@ -892,11 +771,7 @@ export class TeamsChannel implements Channel {
     // [Document: name] note so even text-less file drops survive the gate.
     // Ported from handleIncomingRaw 2026-04-21 (second half of the same
     // split-brain bug as fileConsent/invoke).
-    if (
-      activity.type === 'message' &&
-      activity.attachments &&
-      activity.attachments.length > 0
-    ) {
+    if (activity.type === 'message' && activity.attachments && activity.attachments.length > 0) {
       await this.processIncomingAttachments(activity, chatJid);
     }
 
@@ -904,12 +779,10 @@ export class TeamsChannel implements Channel {
 
     // Store conversation reference for proactive messaging later
     const ref = TurnContext.getConversationReference(activity);
-    this.conversationRefs.set(chatJid, ref);
+        this.conversationRefs.set(chatJid, ref);
 
-    let content = activity.text;
-    const timestamp = activity.timestamp
-      ? new Date(activity.timestamp).toISOString()
-      : new Date().toISOString();
+    let content = expandHtmlLinks(activity.text);
+    const timestamp = activity.timestamp ? new Date(activity.timestamp).toISOString() : new Date().toISOString();
 
     const senderName = activity.from?.name || activity.from?.id || 'Unknown';
     const sender = activity.from?.aadObjectId || activity.from?.id || '';
@@ -917,17 +790,13 @@ export class TeamsChannel implements Channel {
 
     // Determine chat context
     const isGroup =
-      activity.conversation?.conversationType === 'groupChat' ||
-      activity.conversation?.conversationType === 'channel';
+      activity.conversation?.conversationType === 'groupChat' || activity.conversation?.conversationType === 'channel';
     const chatName = activity.conversation?.name || chatJid;
 
     // Handle @mention: strip bot mention text and prepend trigger if needed
     if (activity.entities) {
       for (const entity of activity.entities) {
-        if (
-          entity.type === 'mention' &&
-          entity.mentioned?.id === activity.recipient?.id
-        ) {
+        if (entity.type === 'mention' && entity.mentioned?.id === activity.recipient?.id) {
           // Remove the mention text from content
           const mentionText = (entity as any).text || '';
           content = content.replace(mentionText, '').trim();
@@ -937,8 +806,7 @@ export class TeamsChannel implements Channel {
     // In group chats, prepend trigger if bot was mentioned but trigger pattern not present
     if (isGroup && !TRIGGER_PATTERN.test(content)) {
       const wasMentioned = activity.entities?.some(
-        (e: any) =>
-          e.type === 'mention' && e.mentioned?.id === activity.recipient?.id,
+        (e: any) => e.type === 'mention' && e.mentioned?.id === activity.recipient?.id,
       );
       if (wasMentioned) {
         content = `@${ASSISTANT_NAME} ${content}`;
@@ -961,10 +829,7 @@ export class TeamsChannel implements Channel {
           // Fallback: try Graph API for messages not in local DB
           const convId = activity.conversation?.id;
           if (convId) {
-            const graphMsg = await this.fetchReplyViaGraph(
-              convId,
-              activity.replyToId,
-            );
+            const graphMsg = await this.fetchReplyViaGraph(convId, activity.replyToId);
             if (graphMsg) {
               const truncated = graphMsg.content.slice(0, 200);
               content = `[Replying to ${graphMsg.author}: ${truncated}]\n${content}`;
@@ -987,102 +852,70 @@ export class TeamsChannel implements Channel {
       is_from_me: false,
     });
 
-    logger.info(
-      { chatJid, chatName, sender: senderName },
-      'Teams message stored',
-    );
+    logger.info({ chatJid, chatName, sender: senderName }, 'Teams message stored');
   }
 
   async sendMessage(jid: string, text: string): Promise<string | void> {
     const ref = this.conversationRefs.get(jid);
     if (!ref) {
-      logger.warn(
-        { jid },
-        'Teams: no conversation reference for JID, cannot send',
-      );
+      logger.warn({ jid }, 'Teams: no conversation reference for JID, cannot send');
       return;
     }
 
     let lastActivityId: string | undefined;
     const sendOnce = () =>
-      this.adapter.continueConversation(
-        ref as ConversationReference,
-        async (context: TurnContext) => {
-          const MAX_LENGTH = 25000;
-          if (text.length <= MAX_LENGTH) {
-            const res = await context.sendActivity(text);
+      this.adapter.continueConversation(ref as ConversationReference, async (context: TurnContext) => {
+        const MAX_LENGTH = 25000;
+        if (text.length <= MAX_LENGTH) {
+          const res = await context.sendActivity(text);
+          lastActivityId = res?.id;
+        } else {
+          for (let i = 0; i < text.length; i += MAX_LENGTH) {
+            const res = await context.sendActivity(text.slice(i, i + MAX_LENGTH));
             lastActivityId = res?.id;
-          } else {
-            for (let i = 0; i < text.length; i += MAX_LENGTH) {
-              const res = await context.sendActivity(
-                text.slice(i, i + MAX_LENGTH),
-              );
-              lastActivityId = res?.id;
-            }
           }
-        },
-      );
+        }
+      });
 
     try {
       await sendWithRetry(sendOnce, { opName: 'teams.send', jid });
       logger.info({ jid, length: text.length }, 'Teams message sent');
       return lastActivityId;
     } catch (err: any) {
-      logger.error(
-        { jid, err: err?.message ?? String(err) },
-        'Teams sendMessage failed after retries',
-      );
+      logger.error({ jid, err: err?.message ?? String(err) }, 'Teams sendMessage failed after retries');
       // Best-effort user-visible notice — single attempt, no recursion.
       try {
-        await this.adapter.continueConversation(
-          ref as ConversationReference,
-          async (context: TurnContext) => {
-            await context.sendActivity(
-              '⚠️ 上条回复未送达 (send failed after 3 retries — check logs)',
-            );
-          },
-        );
+        await this.adapter.continueConversation(ref as ConversationReference, async (context: TurnContext) => {
+          await context.sendActivity('⚠️ 上条回复未送达 (send failed after 3 retries — check logs)');
+        });
       } catch {
         /* swallow */
       }
     }
   }
 
-  async sendCard(
-    jid: string,
-    card: object,
-    fallbackText: string,
-  ): Promise<void> {
+  async sendCard(jid: string, card: object, fallbackText: string): Promise<void> {
     const ref = this.conversationRefs.get(jid);
     if (!ref) {
-      logger.warn(
-        { jid },
-        'No conversation reference for Teams card — falling back to text',
-      );
+      logger.warn({ jid }, 'No conversation reference for Teams card — falling back to text');
       await this.sendMessage(jid, fallbackText);
       return;
     }
 
     try {
-      await this.adapter.continueConversation(
-        ref as ConversationReference,
-        async (context: TurnContext) => {
-          await context.sendActivity({
-            attachments: [
-              {
-                contentType: 'application/vnd.microsoft.card.adaptive',
-                content: card,
-              },
-            ],
-          } as Partial<Activity>);
-        },
-      );
+      await this.adapter.continueConversation(ref as ConversationReference, async (context: TurnContext) => {
+        await context.sendActivity({
+          attachments: [
+            {
+              contentType: 'application/vnd.microsoft.card.adaptive',
+              content: card,
+            },
+          ],
+        } as Partial<Activity>);
+      });
       logger.info({ jid }, 'Teams Adaptive Card sent');
     } catch (err: any) {
-      logger.error(
-        { jid, err },
-        'Failed to send Teams card — falling back to text',
-      );
+      logger.error({ jid, err }, 'Failed to send Teams card — falling back to text');
       await this.sendMessage(jid, fallbackText);
     }
   }
@@ -1095,24 +928,17 @@ export class TeamsChannel implements Channel {
     return jid.startsWith('teams:');
   }
 
-  async editMessage(
-    jid: string,
-    messageId: string,
-    text: string,
-  ): Promise<string | void> {
+  async editMessage(jid: string, messageId: string, text: string): Promise<string | void> {
     const ref = this.conversationRefs.get(jid);
     if (!ref) return;
     try {
-      await this.adapter.continueConversation(
-        ref as ConversationReference,
-        async (context: TurnContext) => {
-          await context.updateActivity({
-            id: messageId,
-            type: 'message',
-            text,
-          } as Partial<Activity>);
-        },
-      );
+      await this.adapter.continueConversation(ref as ConversationReference, async (context: TurnContext) => {
+        await context.updateActivity({
+          id: messageId,
+          type: 'message',
+          text,
+        } as Partial<Activity>);
+      });
       return messageId;
     } catch (err: any) {
       // Was `logger.debug` — which is silenced in production log levels.
@@ -1120,10 +946,7 @@ export class TeamsChannel implements Channel {
       // code path meant failed edits (e.g. when the conversation is in a bad
       // state after a prior onTurnError) produced ZERO log output, making
       // outbound messages disappear invisibly. Log at warn so we can see it.
-      logger.warn(
-        { jid, messageId, err: err.message },
-        'Teams editMessage failed, falling back to new sendMessage',
-      );
+      logger.warn({ jid, messageId, err: err.message }, 'Teams editMessage failed, falling back to new sendMessage');
       // Fallback: send as a new message so the user at least sees the reply.
       // Note: this fallback path was the source of the partial+final
       // duplicate bug — streaming partials going through editMessage
@@ -1135,10 +958,7 @@ export class TeamsChannel implements Channel {
       try {
         return await this.sendMessage(jid, text);
       } catch (err2: any) {
-        logger.error(
-          { jid, err: err2.message },
-          'Teams editMessage fallback sendMessage also failed',
-        );
+        logger.error({ jid, err: err2.message }, 'Teams editMessage fallback sendMessage also failed');
       }
     }
   }
@@ -1166,10 +986,7 @@ export class TeamsChannel implements Channel {
       // Return a no-op handle so the dispatcher doesn't crash; the
       // missing-ref case is already logged elsewhere when sendMessage
       // is attempted on the same jid.
-      logger.warn(
-        { jid },
-        'Teams: no conversation reference for streamMessage; returning no-op handle',
-      );
+      logger.warn({ jid }, 'Teams: no conversation reference for streamMessage; returning no-op handle');
       return {
         chunk: async () => {},
         end: async () => {},
@@ -1238,11 +1055,7 @@ export class TeamsChannel implements Channel {
     return this.streamingActiveJids.has(jid);
   }
 
-  async sendFile(
-    jid: string,
-    filePath: string,
-    filename?: string,
-  ): Promise<void> {
+  async sendFile(jid: string, filePath: string, filename?: string): Promise<void> {
     const ref = this.conversationRefs.get(jid);
     if (!ref) {
       logger.warn({ jid }, 'Teams: no conversation ref for sendFile');
@@ -1260,53 +1073,44 @@ export class TeamsChannel implements Channel {
     const stat = fs.default.statSync(filePath);
 
     try {
-      await this.adapter.continueConversation(
-        ref as ConversationReference,
-        async (context: TurnContext) => {
-          // Use FileConsentCard for 1:1 chats
-          const isGroup =
-            (ref as any).conversation?.conversationType === 'groupChat' ||
-            (ref as any).conversation?.conversationType === 'channel';
+      await this.adapter.continueConversation(ref as ConversationReference, async (context: TurnContext) => {
+        // Use FileConsentCard for 1:1 chats
+        const isGroup =
+          (ref as any).conversation?.conversationType === 'groupChat' ||
+          (ref as any).conversation?.conversationType === 'channel';
 
-          if (!isGroup) {
-            // 1:1 DM: send FileConsentCard.
-            // CRITICAL: Attachment uses `contentType`, not `type`. Using `type`
-            // causes adapter error "ContentType of an attachment is not set"
-            // — FileConsentCard fails to render, user sees "Sorry, something
-            // went wrong", AND the bot conversation hangs because no
-            // fileConsent/invoke ever arrives back. Subsequent outbound sends
-            // on the same conversation also silently drop.
-            const consentCard = {
-              contentType: 'application/vnd.microsoft.teams.card.file.consent',
-              name,
-              content: {
-                description: `File from NanoClaw: ${name}`,
-                sizeInBytes: stat.size,
-                acceptContext: { filePath, filename: name },
-                declineContext: { filePath },
-              },
-            };
-            await context.sendActivity({
-              attachments: [consentCard as any],
-            } as Partial<Activity>);
-            logger.info(
-              { jid, filename: name },
-              'Teams FileConsentCard sent (DM)',
-            );
-          } else {
-            // Group/channel: send as text with file info
-            // Full SharePoint upload requires Graph API + more permissions
-            await context.sendActivity(
-              `📎 File ready: **${name}** (${(stat.size / 1024).toFixed(1)} KB). ` +
-                `File is available on the server at: ${filePath}`,
-            );
-            logger.info(
-              { jid, filename: name },
-              'Teams file notification sent (group)',
-            );
-          }
-        },
-      );
+        if (!isGroup) {
+          // 1:1 DM: send FileConsentCard.
+          // CRITICAL: Attachment uses `contentType`, not `type`. Using `type`
+          // causes adapter error "ContentType of an attachment is not set"
+          // — FileConsentCard fails to render, user sees "Sorry, something
+          // went wrong", AND the bot conversation hangs because no
+          // fileConsent/invoke ever arrives back. Subsequent outbound sends
+          // on the same conversation also silently drop.
+          const consentCard = {
+            contentType: 'application/vnd.microsoft.teams.card.file.consent',
+            name,
+            content: {
+              description: `File from NanoClaw: ${name}`,
+              sizeInBytes: stat.size,
+              acceptContext: { filePath, filename: name },
+              declineContext: { filePath },
+            },
+          };
+          await context.sendActivity({
+            attachments: [consentCard as any],
+          } as Partial<Activity>);
+          logger.info({ jid, filename: name }, 'Teams FileConsentCard sent (DM)');
+        } else {
+          // Group/channel: send as text with file info
+          // Full SharePoint upload requires Graph API + more permissions
+          await context.sendActivity(
+            `📎 File ready: **${name}** (${(stat.size / 1024).toFixed(1)} KB). ` +
+              `File is available on the server at: ${filePath}`,
+          );
+          logger.info({ jid, filename: name }, 'Teams file notification sent (group)');
+        }
+      });
     } catch (err: any) {
       logger.error({ jid, err, filePath }, 'Teams sendFile failed');
     }
@@ -1342,12 +1146,9 @@ export class TeamsChannel implements Channel {
 
     const sendAction = async () => {
       try {
-        await this.adapter.continueConversation(
-          ref as ConversationReference,
-          async (context: TurnContext) => {
-            await context.sendActivity({ type: 'typing' } as Partial<Activity>);
-          },
-        );
+        await this.adapter.continueConversation(ref as ConversationReference, async (context: TurnContext) => {
+          await context.sendActivity({ type: 'typing' } as Partial<Activity>);
+        });
       } catch {
         // ignore
       }
@@ -1393,18 +1194,11 @@ registerChannel('teams', (opts: ChannelOpts) => {
 
   // Fallback to .env if credentials not found in nanoclaw.json
   if (!appId) appId = process.env.MSTEAMS_APP_ID || '';
-  if (!appPassword)
-    appPassword =
-      process.env.MSTEAMS_APP_PASSWORD || process.env.MSTEAMS_APP_KEY || '';
+  if (!appPassword) appPassword = process.env.MSTEAMS_APP_PASSWORD || process.env.MSTEAMS_APP_KEY || '';
   if (!tenantId) tenantId = process.env.MSTEAMS_TENANT_ID;
-  if (!certThumbprint)
-    certThumbprint = process.env.MSTEAMS_CERT_THUMBPRINT || '';
-  if (!certPrivateKeyPath)
-    certPrivateKeyPath = process.env.MSTEAMS_CERT_PRIVATE_KEY_PATH || '';
-  if (!port)
-    port = process.env.MSTEAMS_WEBHOOK_PORT
-      ? parseInt(process.env.MSTEAMS_WEBHOOK_PORT, 10)
-      : 3978;
+  if (!certThumbprint) certThumbprint = process.env.MSTEAMS_CERT_THUMBPRINT || '';
+  if (!certPrivateKeyPath) certPrivateKeyPath = process.env.MSTEAMS_CERT_PRIVATE_KEY_PATH || '';
+  if (!port) port = process.env.MSTEAMS_WEBHOOK_PORT ? parseInt(process.env.MSTEAMS_WEBHOOK_PORT, 10) : 3978;
 
   const hasCert = !!(certThumbprint && certPrivateKeyPath);
 

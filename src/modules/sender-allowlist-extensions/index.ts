@@ -13,10 +13,7 @@
  * Per kenan 23:20 policy "全收 v2 features" we keep the fork allowlist
  * as a strict additional layer rather than replacing v2 permissions.
  */
-import {
-  isSenderAllowed,
-  loadSenderAllowlist,
-} from '../../sender-allowlist.js';
+import { isSenderAllowed, loadSenderAllowlist } from '../../sender-allowlist.js';
 import type { AccessGateResult } from '../../router.js';
 import { log } from '../../log.js';
 import type { MessagingGroup } from '../../types.js';
@@ -34,12 +31,7 @@ export const senderAllowlistFork = {
  * slot; the composer ANDs them so either denial blocks).
  */
 export function makeSenderAllowlistGate() {
-  return (
-    event: InboundEvent,
-    userId: string | null,
-    mg: MessagingGroup,
-    _agentGroupId: string,
-  ): AccessGateResult => {
+  return (event: InboundEvent, userId: string | null, mg: MessagingGroup, _agentGroupId: string): AccessGateResult => {
     // chatJid identifier the fork allowlist keys on. Fork's
     // sender-allowlist.json uses channel-native ids (whatsapp jid /
     // telegram chat id / discord channel id); MessagingGroup.platform_id

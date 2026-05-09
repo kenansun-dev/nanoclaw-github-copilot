@@ -17,22 +17,14 @@ const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
  */
 function findCopilotCli(): string | null {
   // Check in agent-runner-ghc node_modules
-  const localBin = path.join(
-    PROJECT_ROOT,
-    'container',
-    'agent-runner-ghc',
-    'node_modules',
-    '.bin',
-    'copilot',
-  );
+  const localBin = path.join(PROJECT_ROOT, 'container', 'agent-runner-ghc', 'node_modules', '.bin', 'copilot');
   const localBinCmd = localBin + (process.platform === 'win32' ? '.cmd' : '');
   if (fs.existsSync(localBinCmd)) return localBinCmd;
   if (fs.existsSync(localBin)) return localBin;
 
   // Check global
   try {
-    const cmd =
-      process.platform === 'win32' ? 'where copilot' : 'which copilot';
+    const cmd = process.platform === 'win32' ? 'where copilot' : 'which copilot';
     return execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] })
       .trim()
       .split('\n')[0];
@@ -57,11 +49,7 @@ function findCopilotCli(): string | null {
  */
 function isAuthenticated(): boolean {
   // Check env var
-  if (
-    process.env.COPILOT_GITHUB_TOKEN ||
-    process.env.GH_TOKEN ||
-    process.env.GITHUB_TOKEN
-  ) {
+  if (process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN) {
     return true;
   }
 
@@ -70,10 +58,7 @@ function isAuthenticated(): boolean {
   const envFile = path.join(ws, '.env');
   if (fs.existsSync(envFile)) {
     const content = fs.readFileSync(envFile, 'utf-8');
-    if (
-      content.includes('COPILOT_GITHUB_TOKEN=') &&
-      !content.includes('COPILOT_GITHUB_TOKEN=\n')
-    ) {
+    if (content.includes('COPILOT_GITHUB_TOKEN=') && !content.includes('COPILOT_GITHUB_TOKEN=\n')) {
       return true;
     }
   }
@@ -109,9 +94,7 @@ export async function runAuth(args: string[]): Promise<void> {
     case 'login': {
       if (isAuthenticated()) {
         console.log('✅ Already authenticated.');
-        console.log(
-          '   To re-authenticate, run: nanoclaw auth logout && nanoclaw auth login',
-        );
+        console.log('   To re-authenticate, run: nanoclaw auth logout && nanoclaw auth login');
         return;
       }
 
@@ -123,9 +106,7 @@ export async function runAuth(args: string[]): Promise<void> {
           input: process.stdin,
           output: process.stdout,
         });
-        const answer = await new Promise<string>((resolve) =>
-          rl.question('  Install it now? (Y/n): ', resolve),
-        );
+        const answer = await new Promise<string>((resolve) => rl.question('  Install it now? (Y/n): ', resolve));
         rl.close();
         if (answer.toLowerCase() !== 'n') {
           console.log('  Installing @github/copilot...');
@@ -146,9 +127,7 @@ export async function runAuth(args: string[]): Promise<void> {
               if (result2.status === 0) {
                 console.log('\n✅ Authentication successful!');
               } else {
-                console.error(
-                  '\n❌ Auth failed. Set COPILOT_GITHUB_TOKEN in ~/.nanoclaw/.env',
-                );
+                console.error('\n❌ Auth failed. Set COPILOT_GITHUB_TOKEN in ~/.nanoclaw/.env');
               }
               return;
             }
@@ -177,9 +156,7 @@ export async function runAuth(args: string[]): Promise<void> {
       } else {
         console.error('');
         console.error('❌ Authentication failed.');
-        console.error(
-          '   Alternative: set COPILOT_GITHUB_TOKEN=ghu_xxx in ~/.nanoclaw/.env',
-        );
+        console.error('   Alternative: set COPILOT_GITHUB_TOKEN=ghu_xxx in ~/.nanoclaw/.env');
         process.exit(1);
       }
       break;
@@ -204,10 +181,7 @@ export async function runAuth(args: string[]): Promise<void> {
         } else {
           const ws = resolveWorkspace();
           const envFile = path.join(ws, '.env');
-          if (
-            fs.existsSync(envFile) &&
-            fs.readFileSync(envFile, 'utf-8').includes('COPILOT_GITHUB_TOKEN=')
-          ) {
+          if (fs.existsSync(envFile) && fs.readFileSync(envFile, 'utf-8').includes('COPILOT_GITHUB_TOKEN=')) {
             console.log('   Method: ~/.nanoclaw/.env');
           } else {
             console.log('   Method: OpenClaw auth profile or GHC CLI');

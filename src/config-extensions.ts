@@ -11,12 +11,7 @@ import { execSync as execSyncFn } from 'child_process';
 import { CONTAINER_IMAGE } from './config.js';
 import { resolveWorkspace } from './workspace.js';
 import { resolveAgentIdFromBindings } from './config-loader.js';
-import {
-  loadConfig,
-  resolveAgent,
-  AgentConfig,
-  NanoclawConfig,
-} from './config-loader.js';
+import { loadConfig, resolveAgent, AgentConfig, NanoclawConfig } from './config-loader.js';
 
 // ─── Provider detection ──────────────────────────────────────────────────────
 
@@ -100,9 +95,7 @@ export function isGHCProvider(model?: string): boolean {
 const _provider = getProvider();
 export const IS_GHC_PROVIDER = _provider === 'github-copilot';
 export const PROVIDER_SESSION_DIR = IS_GHC_PROVIDER ? '.copilot' : '.claude';
-export const GHC_CONTAINER_IMAGE = IS_GHC_PROVIDER
-  ? 'nanoclaw-agent-ghc:latest'
-  : CONTAINER_IMAGE;
+export const GHC_CONTAINER_IMAGE = IS_GHC_PROVIDER ? 'nanoclaw-agent-ghc:latest' : CONTAINER_IMAGE;
 
 // ─── Agent resolution ────────────────────────────────────────────────────────
 
@@ -110,8 +103,7 @@ export function resolveAgentForChat(chatJid: string): AgentConfig {
   const config = loadConfig();
   const chat = config.chats[chatJid];
   // Check bindings first, then legacy chatConfig.agentId
-  const agentId =
-    resolveAgentIdFromBindings(config, chatJid, chat) || chat?.agentId;
+  const agentId = resolveAgentIdFromBindings(config, chatJid, chat) || chat?.agentId;
   return resolveAgent(config, agentId);
 }
 
@@ -157,11 +149,7 @@ import { resolveGithubToken } from './github-token-provider.js';
  */
 export function isCopilotAuthenticated(): boolean {
   // Try multiple CLI commands — different copilot versions use different subcommands
-  const commands = [
-    'copilot auth whoami',
-    'copilot auth status',
-    'copilot status',
-  ];
+  const commands = ['copilot auth whoami', 'copilot auth status', 'copilot status'];
   for (const cmd of commands) {
     try {
       const output = execSyncFn(cmd, {
@@ -199,9 +187,7 @@ export function buildProviderEnvArgs(
     if (ghToken) {
       args.push('-e', `COPILOT_GITHUB_TOKEN=${ghToken}`);
     }
-    const model = agent
-      ? getAgentModelName(agent)
-      : getModelName() || undefined;
+    const model = agent ? getAgentModelName(agent) : getModelName() || undefined;
     if (model) {
       args.push('-e', `COPILOT_MODEL=${model}`);
     }

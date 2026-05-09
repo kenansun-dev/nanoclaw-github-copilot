@@ -18,16 +18,13 @@ export function channelList(): void {
 
     // Show extra info per channel
     if (name === 'telegram' && enabled) {
-      const hasToken =
-        !!(ch as any).botToken || !!process.env.TELEGRAM_BOT_TOKEN;
+      const hasToken = !!(ch as any).botToken || !!process.env.TELEGRAM_BOT_TOKEN;
       console.log(`    Token: ${hasToken ? 'configured' : '❌ missing'}`);
     }
     if (name === 'teams' && enabled) {
       const hasAppId = !!(ch as any).appId || !!process.env.MSTEAMS_APP_ID;
-      const hasAuth =
-        !!(ch as any).appPassword || !!process.env.MSTEAMS_APP_PASSWORD;
-      const tenantId =
-        (ch as any).tenantId || process.env.MSTEAMS_TENANT_ID || 'common';
+      const hasAuth = !!(ch as any).appPassword || !!process.env.MSTEAMS_APP_PASSWORD;
+      const tenantId = (ch as any).tenantId || process.env.MSTEAMS_TENANT_ID || 'common';
       const port = (ch as any).webhookPort || 3978;
       console.log(`    App ID: ${hasAppId ? 'configured' : '❌ missing'}`);
       console.log(`    Auth: ${hasAuth ? 'configured' : '❌ missing'}`);
@@ -49,9 +46,7 @@ export async function channelTest(name: string): Promise<void> {
   }
 
   if (!channel.enabled) {
-    console.log(
-      `Channel "${name}" is disabled. Enable it in nanoclaw.json first.`,
-    );
+    console.log(`Channel "${name}" is disabled. Enable it in nanoclaw.json first.`);
     return;
   }
 
@@ -67,9 +62,7 @@ export async function channelTest(name: string): Promise<void> {
       const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
       const data = (await res.json()) as any;
       if (data.ok) {
-        console.log(
-          `✅ Telegram bot: @${data.result.username} (id: ${data.result.id})`,
-        );
+        console.log(`✅ Telegram bot: @${data.result.username} (id: ${data.result.id})`);
       } else {
         console.log(`❌ Telegram API error: ${data.description}`);
       }
@@ -84,23 +77,16 @@ export async function channelTest(name: string): Promise<void> {
       return;
     }
     try {
-      const res = await fetch(
-        'https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: `grant_type=client_credentials&client_id=${appId}&client_secret=${encodeURIComponent(appPassword)}&scope=https%3A%2F%2Fapi.botframework.com%2F.default`,
-        },
-      );
+      const res = await fetch('https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `grant_type=client_credentials&client_id=${appId}&client_secret=${encodeURIComponent(appPassword)}&scope=https%3A%2F%2Fapi.botframework.com%2F.default`,
+      });
       const data = (await res.json()) as any;
       if (data.access_token) {
-        console.log(
-          `✅ Teams auth: token acquired (expires in ${data.expires_in}s)`,
-        );
+        console.log(`✅ Teams auth: token acquired (expires in ${data.expires_in}s)`);
       } else {
-        console.log(
-          `❌ Teams auth failed: ${data.error_description || data.error}`,
-        );
+        console.log(`❌ Teams auth failed: ${data.error_description || data.error}`);
       }
     } catch (err: any) {
       console.log(`❌ Network error: ${err.message}`);

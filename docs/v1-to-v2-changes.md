@@ -1,6 +1,6 @@
 # NanoClaw v1 → v2 — what changed
 
-Big-picture differences between NanoClaw v1 (the `~/nanoclaw` checkout you've been running) and v2 (this rewrite). Not a migration guide — that's what `bash nanoclaw.sh` and the `/migrate-from-v1` skill are for. This doc is the **vocabulary**: when something has moved or been renamed, find it here.
+Big-picture differences between NanoClaw v1 (the `~/nanoclaw` checkout you've been running) and v2 (this rewrite). Not a migration guide — that's what `bash migrate-v2.sh` and the `/migrate-from-v1` skill are for. This doc is the **vocabulary**: when something has moved or been renamed, find it here.
 
 Read this before touching the migration code or porting customizations forward.
 
@@ -37,7 +37,7 @@ Consequences:
   - v1 `requires_trigger=0` or pattern was `.`/`.*` → v2 `engage_mode='pattern'`, `engage_pattern='.'` (the "always" flavor)
   - no pattern and requires a trigger → v2 `engage_mode='mention'`
   - `sender_scope` and `ignored_message_policy` are new; defaults `all` / `drop`
-- **JID decomposition.** v1's `jid` column stored `dc:12345` / `tg:67890`. v2 splits this into `channel_type` + `platform_id`. Concretely: `dc:12345` becomes `channel_type='discord'`, `platform_id='discord:12345'`. Prefix aliases (`dc` → `discord`, `tg` → `telegram`, `wa` → `whatsapp`) are in `setup/migrate-v1/shared.ts`.
+- **JID decomposition.** v1's `jid` column stored `dc:12345` / `tg:67890`. v2 splits this into `channel_type` + `platform_id`. Concretely: `dc:12345` becomes `channel_type='discord'`, `platform_id='discord:12345'`. Prefix aliases (`dc` → `discord`, `tg` → `telegram`, `wa` → `whatsapp`) are in `setup/migrate-v2/shared.ts`.
 - **`channel_name` was unreliable in v1.** Many rows had it empty; the actual channel had to be guessed from the JID prefix. v2's `channel_type` is always explicit.
 
 ---
@@ -99,7 +99,7 @@ Gotcha: auto-created agents default to `selective` secret mode — no secrets at
 
 Idempotent — re-running is a no-op. Pinned versions keep the supply chain honest. The automated migration detects which channels were wired in v1 (via distinct `channel_name` / JID prefix) and runs the matching `setup/install-<channel>.sh` for each. Channels in v1 that don't have a v2 skill (rare now, more common as v2 catches up) are recorded in the handoff file for the `/migrate-from-v1` skill to raise with the user.
 
-**Channel auth beyond `.env`.** Some channels store session state on disk (Baileys WhatsApp keystore, Matrix sync state, iMessage tokens). The `channel-auth` sub-step has a per-channel registry (`setup/migrate-v1/shared.ts: CHANNEL_AUTH_REGISTRY`) that knows which file globs to copy alongside env keys.
+**Channel auth beyond `.env`.** Some channels store session state on disk (Baileys WhatsApp keystore, Matrix sync state, iMessage tokens). The `channel-auth` step has a per-channel registry (`setup/migrate-v2/shared.ts: CHANNEL_AUTH_REGISTRY`) that knows which file globs to copy alongside env keys.
 
 ---
 
@@ -162,11 +162,11 @@ Lockfiles: host uses `pnpm-lock.yaml`, agent-runner uses `bun.lock`. `minimumRel
 
 ## Migration surface — where the code lives
 
-- `setup/migrate-v1.ts` — orchestrator called from `setup/auto.ts` between the timezone and channel steps.
-- `setup/migrate-v1/<sub-step>.ts` — registered in `setup/index.ts` STEPS; each runs under `runQuietStep`.
-- `logs/setup.log` — progression log. Each sub-step appends one entry.
-- `logs/setup-steps/NN-migrate-<x>.log` — raw per-sub-step stdout/stderr.
-- `logs/setup-migration/handoff.json` — summary of what was migrated, what failed, what was deferred. Read by the `/migrate-from-v1` skill.
-- `logs/setup-migration/schema-mismatch.json` — written only if `migrate-validate` finds a v1 DB that doesn't match the expected shape. The skill uses this to decide what to hand back to the user.
-- `logs/setup-migration/inactive-tasks.json` — completed or stopped v1 `scheduled_tasks`, exported for reference.
-- `.claude/skills/migrate-from-v1/SKILL.md` — tells Claude how to finish anything the automation couldn't and then interview the user about custom code changes.
+- `migrate-v2.sh` — entry point: `bash migrate-v2.sh` from the v2 checkout.
+- `setup/migrate-v2/*.ts` — individual migration steps (env, db, groups, sessions, tasks, channel-auth, select-channels, switchover-prompt).
+- `setup/migrate-v2/shared.ts` — JID parsing, trigger mapping, channel auth registry.
+- `logs/setup-migration/handoff.json` — written by `migrate-v2.sh`, read by the `/migrate-from-v1` skill.
+- `logs/migrate-steps/*.log` — raw per-step stdout.
+- `.claude/skills/migrate-from-v1/SKILL.md` — Claude skill for owner seeding, CLAUDE.md cleanup, container config validation, fork porting.
+- `migrate-v2-reset.sh` — development helper to wipe v2 state for re-testing.
+- See [docs/migration-dev.md](migration-dev.md) for the full development guide.

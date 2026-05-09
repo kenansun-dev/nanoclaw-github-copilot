@@ -33,9 +33,7 @@ function makeAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 
 describe('getProvider', () => {
   it('extracts provider from provider/model format', () => {
-    expect(getProvider('github-copilot/claude-sonnet-4.5')).toBe(
-      'github-copilot',
-    );
+    expect(getProvider('github-copilot/claude-sonnet-4.5')).toBe('github-copilot');
     expect(getProvider('anthropic/claude-opus-4')).toBe('anthropic');
     expect(getProvider('openai/gpt-5.3')).toBe('openai');
   });
@@ -54,9 +52,7 @@ describe('getProvider', () => {
 
 describe('getModelName', () => {
   it('extracts model name after slash', () => {
-    expect(getModelName('github-copilot/claude-sonnet-4.5')).toBe(
-      'claude-sonnet-4.5',
-    );
+    expect(getModelName('github-copilot/claude-sonnet-4.5')).toBe('claude-sonnet-4.5');
     expect(getModelName('openai/gpt-5.3')).toBe('gpt-5.3');
   });
 
@@ -84,15 +80,11 @@ describe('isGHCProvider', () => {
 
 describe('isAgentGHC', () => {
   it('returns true for GHC agent', () => {
-    expect(
-      isAgentGHC(makeAgent({ model: 'github-copilot/claude-sonnet-4.5' })),
-    ).toBe(true);
+    expect(isAgentGHC(makeAgent({ model: 'github-copilot/claude-sonnet-4.5' }))).toBe(true);
   });
 
   it('returns false for non-GHC agent', () => {
-    expect(isAgentGHC(makeAgent({ model: 'anthropic/claude-opus-4' }))).toBe(
-      false,
-    );
+    expect(isAgentGHC(makeAgent({ model: 'anthropic/claude-opus-4' }))).toBe(false);
   });
 });
 
@@ -100,17 +92,11 @@ describe('isAgentGHC', () => {
 
 describe('getAgentSessionDir', () => {
   it('returns .copilot for GHC agents', () => {
-    expect(
-      getAgentSessionDir(
-        makeAgent({ model: 'github-copilot/claude-sonnet-4.5' }),
-      ),
-    ).toBe('.copilot');
+    expect(getAgentSessionDir(makeAgent({ model: 'github-copilot/claude-sonnet-4.5' }))).toBe('.copilot');
   });
 
   it('returns .claude for CC agents', () => {
-    expect(
-      getAgentSessionDir(makeAgent({ model: 'anthropic/claude-opus-4' })),
-    ).toBe('.claude');
+    expect(getAgentSessionDir(makeAgent({ model: 'anthropic/claude-opus-4' }))).toBe('.claude');
   });
 });
 
@@ -120,15 +106,11 @@ describe('getAgentModelName', () => {
   it('normalizes GHC-format model name when agent provider is anthropic', () => {
     // The bug: kenan switched provider from github-copilot to anthropic but
     // model stayed 'claude-opus-4.6' (GHC format). CC SDK errors on this.
-    expect(
-      getAgentModelName(makeAgent({ model: 'anthropic/claude-opus-4.6' })),
-    ).toBe('claude-opus-4-6');
+    expect(getAgentModelName(makeAgent({ model: 'anthropic/claude-opus-4.6' }))).toBe('claude-opus-4-6');
   });
 
   it('normalizes CC-format model name when agent provider is github-copilot', () => {
-    expect(
-      getAgentModelName(makeAgent({ model: 'github-copilot/claude-opus-4-6' })),
-    ).toBe('claude-opus-4');
+    expect(getAgentModelName(makeAgent({ model: 'github-copilot/claude-opus-4-6' }))).toBe('claude-opus-4');
   });
 
   it('uses agent.provider field over model prefix when both present', () => {
@@ -143,23 +125,17 @@ describe('getAgentModelName', () => {
   });
 
   it('passes through unknown model names unchanged', () => {
-    expect(
-      getAgentModelName(makeAgent({ model: 'anthropic/some-future-model' })),
-    ).toBe('some-future-model');
+    expect(getAgentModelName(makeAgent({ model: 'anthropic/some-future-model' }))).toBe('some-future-model');
   });
 
   it('extracts model from agent config', () => {
-    expect(
-      getAgentModelName(makeAgent({ model: 'github-copilot/gpt-5.3' })),
-    ).toBe('gpt-5.3');
+    expect(getAgentModelName(makeAgent({ model: 'github-copilot/gpt-5.3' }))).toBe('gpt-5.3');
   });
 });
 
 describe('getAgentProvider', () => {
   it('extracts provider from agent config', () => {
-    expect(
-      getAgentProvider(makeAgent({ model: 'github-copilot/gpt-5.3' })),
-    ).toBe('github-copilot');
+    expect(getAgentProvider(makeAgent({ model: 'github-copilot/gpt-5.3' }))).toBe('github-copilot');
   });
 });
 
@@ -193,9 +169,7 @@ describe('buildProviderMounts', () => {
 
     try {
       const mounts = buildProviderMounts(undefined);
-      const mcpMount = mounts.find(
-        (m) => m.containerPath === '/workspace/mcp.json',
-      );
+      const mcpMount = mounts.find((m) => m.containerPath === '/workspace/mcp.json');
       expect(mcpMount).toBeDefined();
       expect(mcpMount?.readonly).toBe(true);
     } finally {
@@ -212,9 +186,7 @@ describe('buildProviderMounts', () => {
     const { buildProviderMounts } = await import('./config-extensions.js');
     const { setWorkspace } = await import('./workspace.js');
 
-    const tmpRoot = fs.mkdtempSync(
-      pathMod.join(os.tmpdir(), 'nanoclaw-mounts-'),
-    );
+    const tmpRoot = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'nanoclaw-mounts-'));
     const wsDir = pathMod.join(tmpRoot, 'ws');
     const homeDir = pathMod.join(tmpRoot, 'home');
     fs.mkdirSync(wsDir, { recursive: true });
@@ -223,18 +195,10 @@ describe('buildProviderMounts', () => {
     // Set up plugin in workspace plugins/ so it has a plugin.json
     const wsPluginDir = pathMod.join(wsDir, 'plugins', 'ws-plugin');
     fs.mkdirSync(wsPluginDir, { recursive: true });
-    fs.writeFileSync(
-      pathMod.join(wsPluginDir, 'plugin.json'),
-      JSON.stringify({ name: 'ws-plugin', version: '1.0.0' }),
-    );
+    fs.writeFileSync(pathMod.join(wsPluginDir, 'plugin.json'), JSON.stringify({ name: 'ws-plugin', version: '1.0.0' }));
 
     // Set up plugin in ~/.copilot/plugins/ (.claude-plugin layout)
-    const cpPluginDir = pathMod.join(
-      homeDir,
-      '.copilot',
-      'plugins',
-      'cp-plugin',
-    );
+    const cpPluginDir = pathMod.join(homeDir, '.copilot', 'plugins', 'cp-plugin');
     fs.mkdirSync(pathMod.join(cpPluginDir, '.claude-plugin'), {
       recursive: true,
     });
@@ -262,17 +226,10 @@ describe('buildProviderMounts', () => {
         .filter((m) => m.containerPath.startsWith('/workspace/plugins/'))
         .map((m) => m.containerPath)
         .sort();
-      expect(pluginPaths).toEqual([
-        '/workspace/plugins/cp-plugin',
-        '/workspace/plugins/ws-plugin',
-      ]);
+      expect(pluginPaths).toEqual(['/workspace/plugins/cp-plugin', '/workspace/plugins/ws-plugin']);
 
       // Empty manifest dir must be excluded
-      expect(
-        mounts.some(
-          (m) => m.containerPath === '/workspace/plugins/no-manifest',
-        ),
-      ).toBe(false);
+      expect(mounts.some((m) => m.containerPath === '/workspace/plugins/no-manifest')).toBe(false);
     } finally {
       if (origHome === undefined) delete process.env.HOME;
       else process.env.HOME = origHome;
@@ -289,9 +246,7 @@ describe('buildProviderMounts', () => {
     const { buildProviderMounts } = await import('./config-extensions.js');
     const { setWorkspace } = await import('./workspace.js');
 
-    const tmpRoot = fs.mkdtempSync(
-      pathMod.join(os.tmpdir(), 'nanoclaw-mounts-dedup-'),
-    );
+    const tmpRoot = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'nanoclaw-mounts-dedup-'));
     const wsDir = pathMod.join(tmpRoot, 'ws');
     const homeDir = pathMod.join(tmpRoot, 'home');
     fs.mkdirSync(wsDir, { recursive: true });
@@ -303,10 +258,7 @@ describe('buildProviderMounts', () => {
       pathMod.join(homeDir, '.claude', 'plugins', 'shared'),
     ]) {
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(
-        pathMod.join(dir, 'plugin.json'),
-        JSON.stringify({ name: 'shared', version: '1.0.0' }),
-      );
+      fs.writeFileSync(pathMod.join(dir, 'plugin.json'), JSON.stringify({ name: 'shared', version: '1.0.0' }));
     }
 
     const origHome = process.env.HOME;
@@ -317,14 +269,10 @@ describe('buildProviderMounts', () => {
 
     try {
       const mounts = buildProviderMounts(undefined);
-      const sharedMounts = mounts.filter(
-        (m) => m.containerPath === '/workspace/plugins/shared',
-      );
+      const sharedMounts = mounts.filter((m) => m.containerPath === '/workspace/plugins/shared');
       expect(sharedMounts).toHaveLength(1);
       // Workspace source wins
-      expect(sharedMounts[0].hostPath).toBe(
-        pathMod.join(wsDir, 'plugins', 'shared'),
-      );
+      expect(sharedMounts[0].hostPath).toBe(pathMod.join(wsDir, 'plugins', 'shared'));
     } finally {
       if (origHome === undefined) delete process.env.HOME;
       else process.env.HOME = origHome;

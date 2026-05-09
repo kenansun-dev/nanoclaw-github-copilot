@@ -81,16 +81,11 @@ export function getValidLevels(): readonly string[] {
 }
 
 /** Set log level at runtime. Fork-only — used by `nanoclaw loglevel`. */
-export function setLogLevel(
-  level: string,
-  opts?: { force?: boolean },
-): void {
+export function setLogLevel(level: string, opts?: { force?: boolean }): void {
   const normalized = (level ?? '').trim().toLowerCase();
   const valid = getValidLevels();
   if (!valid.includes(normalized)) {
-    throw new Error(
-      `Invalid log level: ${level}. Valid levels: ${valid.join(', ')}`,
-    );
+    throw new Error(`Invalid log level: ${level}. Valid levels: ${valid.join(', ')}`);
   }
   if (opts?.force) {
     envLocked = false;

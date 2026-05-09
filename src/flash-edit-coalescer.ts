@@ -76,12 +76,7 @@ export function createFlashEditCoalescer(args: {
       const snapshot = slot.latest;
       const snapshotOpts = slot.opts;
       try {
-        const editedId = await channel.editMessage(
-          chatJid,
-          msgId,
-          snapshot,
-          snapshotOpts,
-        );
+        const editedId = await channel.editMessage(chatJid, msgId, snapshot, snapshotOpts);
         if (typeof editedId === 'string' && editedId !== msgId) {
           // Orphan: silent fallback to sendMessage spawned a new bubble.
           if (channel.deleteMessage) {

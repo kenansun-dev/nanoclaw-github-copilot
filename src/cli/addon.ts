@@ -23,10 +23,7 @@ export interface Addon {
 
 // ─── CRUD ────────────────────────────────────────────────────────────────────
 
-export function registerAddon(
-  name: string,
-  addon: Omit<Addon, 'createdAt'>,
-): void {
+export function registerAddon(name: string, addon: Omit<Addon, 'createdAt'>): void {
   const config = loadConfig();
   if (!config.addons) config.addons = {};
   config.addons[name] = {
@@ -76,10 +73,7 @@ export function removeAddon(name: string): void {
       const rg = (addon.config.resourceGroup as string) || 'nanoclaw-rg';
       console.log(`Deleting Azure Bot ${addon.config.botName}...`);
       try {
-        execSync(
-          `az bot delete --resource-group "${rg}" --name "${addon.config.botName}"`,
-          { stdio: 'pipe' },
-        );
+        execSync(`az bot delete --resource-group "${rg}" --name "${addon.config.botName}"`, { stdio: 'pipe' });
         console.log('  ✅ Bot deleted');
       } catch {
         console.log('  ⚠️  Could not delete bot');
@@ -135,9 +129,7 @@ export function listAddons(): void {
       if (addon.config.url) console.log(`     URL: ${addon.config.url}`);
     }
     if (addon.type === 'azure-app' && addon.config.appId) {
-      console.log(
-        `     App ID: ${(addon.config.appId as string).substring(0, 8)}...`,
-      );
+      console.log(`     App ID: ${(addon.config.appId as string).substring(0, 8)}...`);
     }
     if (addon.type === 'azure-bot' && addon.config.botName) {
       console.log(`     Bot: ${addon.config.botName}`);

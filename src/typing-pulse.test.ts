@@ -95,9 +95,7 @@ describe('typing-pulse: bounded re-arm state machine', () => {
     await vi.advanceTimersByTimeAsync(70);
     // ON × 2 (each arm) + OFF × 1 (only the second timer fires).
     expect(ch.setTyping).toHaveBeenCalledTimes(3);
-    expect(ch.setTyping.mock.calls.filter((c) => c[1] === false)).toHaveLength(
-      1,
-    );
+    expect(ch.setTyping.mock.calls.filter((c) => c[1] === false)).toHaveLength(1);
   });
 
   it('isolates timers per chatJid (cancelling one does not defuse another)', async () => {

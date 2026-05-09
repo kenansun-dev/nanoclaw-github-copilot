@@ -13,16 +13,8 @@
  * add-on rather than replacing the v2 routing context — v2 routing
  * doesn't need the row, but dispatcher/container code does.
  */
-import {
-  getAllRegisteredGroups,
-  getRegisteredGroup,
-  setRegisteredGroup,
-  removeRegisteredGroup,
-} from '../../db.js';
-import {
-  setGroupResolver,
-  type GroupResolverFn,
-} from './router-hook.js';
+import { getAllRegisteredGroups, getRegisteredGroup, setRegisteredGroup, removeRegisteredGroup } from '../../db.js';
+import { setGroupResolver, type GroupResolverFn } from './router-hook.js';
 import { log } from '../../log.js';
 import type { MessagingGroup, RegisteredGroup } from '../../types-extensions.js';
 

@@ -42,13 +42,7 @@ const ABORT_TRIGGERS = new Set<string>([
 const TRAILING_PUNCT_RE = /[.!?…,，。;；:：'"''")\]}]+$/u;
 
 function normalize(text: string): string {
-  return text
-    .trim()
-    .toLowerCase()
-    .replace(/[''`]/g, "'")
-    .replace(/\s+/g, ' ')
-    .replace(TRAILING_PUNCT_RE, '')
-    .trim();
+  return text.trim().toLowerCase().replace(/[''`]/g, "'").replace(/\s+/g, ' ').replace(TRAILING_PUNCT_RE, '').trim();
 }
 
 /**

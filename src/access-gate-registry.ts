@@ -22,11 +22,7 @@
 
 export type AccessGateDecision = 'allow' | 'drop' | 'deny';
 
-export type AccessGate = (
-  chatJid: string,
-  sender: string,
-  content: string,
-) => AccessGateDecision;
+export type AccessGate = (chatJid: string, sender: string, content: string) => AccessGateDecision;
 
 const accessGates: AccessGate[] = [];
 
@@ -45,11 +41,7 @@ export function registerAccessGate(gate: AccessGate): void {
  * (including the empty-registry case, which is permissive by design
  * — gating is opt-in via registration).
  */
-export function runAccessGates(
-  chatJid: string,
-  sender: string,
-  content: string,
-): AccessGateDecision {
+export function runAccessGates(chatJid: string, sender: string, content: string): AccessGateDecision {
   for (const gate of accessGates) {
     const decision = gate(chatJid, sender, content);
     if (decision !== 'allow') return decision;

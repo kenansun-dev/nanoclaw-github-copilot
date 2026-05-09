@@ -50,10 +50,7 @@ export function buildTriggerPattern(trigger: string): RegExp {
 // ─── Paths ───────────────────────────────────────────────────────────────────
 
 // Package root — where nanoclaw is installed (for bundled assets like agent-runner)
-export const PACKAGE_ROOT = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '..',
-);
+export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HOME_DIR = process.env.HOME || os.homedir();
 
 // Security allowlists — in workspace
@@ -72,17 +69,13 @@ export const CONTAINER_IMAGE = _config.sandbox.image;
 
 export const CONTAINER_TIMEOUT = _config.sandbox.timeout;
 export const CONTAINER_MAX_OUTPUT_SIZE = _config.sandbox.maxOutputSize;
-export const MAX_CONCURRENT_CONTAINERS = Math.max(
-  1,
-  _config.sandbox.maxConcurrent,
-);
+export const MAX_CONCURRENT_CONTAINERS = Math.max(1, _config.sandbox.maxConcurrent);
 export const IDLE_TIMEOUT = _config.sandbox.idleTimeout;
 
 // ─── Agent Run Timeout ───────────────────────────────────────────────────────
 
 /** Absolute max agent run duration in ms (0 = no timeout). Applies to both host and sandbox modes. */
-export const AGENT_RUN_TIMEOUT_MS =
-  (_config.agents.defaults.timeoutSeconds ?? 600) * 1000;
+export const AGENT_RUN_TIMEOUT_MS = (_config.agents.defaults.timeoutSeconds ?? 600) * 1000;
 
 // ─── Credential Proxy ────────────────────────────────────────────────────────
 
@@ -96,10 +89,7 @@ export const TIMEZONE = _config.timezone;
 export const ONECLI_URL = process.env.ONECLI_URL || 'http://localhost:10254';
 export const ONECLI_API_KEY = process.env.ONECLI_API_KEY;
 
-export const MAX_MESSAGES_PER_PROMPT = Math.max(
-  parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10,
-  1,
-);
+export const MAX_MESSAGES_PER_PROMPT = Math.max(parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10, 1);
 export const DEFAULT_TRIGGER = `@${ASSISTANT_NAME}`;
 
 export function getTriggerPattern(trigger?: string): RegExp {

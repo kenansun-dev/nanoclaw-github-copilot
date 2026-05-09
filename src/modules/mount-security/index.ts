@@ -31,8 +31,4 @@ export {
   type MountValidationResult,
 } from '../../mount-security.js';
 
-export type {
-  AdditionalMount,
-  AllowedRoot,
-  MountAllowlist,
-} from '../../types-extensions.js';
+export type { AdditionalMount, AllowedRoot, MountAllowlist } from '../../types-extensions.js';

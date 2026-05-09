@@ -13,10 +13,7 @@
  * the registry stays dependency-free and tests inject mocks.
  */
 import { isAbortRequestText } from '../../abort-triggers.js';
-import {
-  registerAbortHandler,
-  type AbortMessage,
-} from '../../abort-handler-registry.js';
+import { registerAbortHandler, type AbortMessage } from '../../abort-handler-registry.js';
 import { log } from '../../log.js';
 
 export const abortFork = {

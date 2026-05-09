@@ -80,7 +80,7 @@ describe('plist generation', () => {
     const projectRoot = '/home/user/nanoclaw';
     const plist = generatePlist('/usr/local/bin/node', projectRoot, '/home/user');
     expect(plist).toContain(`<string>${getLaunchdLabel(projectRoot)}</string>`);
-    expect(plist).toMatch(/<string>com\.nanoclaw-v2-[0-9a-f]{8}<\/string>/);
+    expect(plist).toMatch(/<string>com\.nanoclaw-[0-9a-f]{8}<\/string>/);
   });
 
   it('uses the correct node path', () => {

@@ -13,8 +13,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 
 // Strip env LOG_LEVEL before importing so the module's lock-in starts fresh.
 delete process.env.LOG_LEVEL;
-const { getLogLevel, setLogLevel, applyConfigLogLevel, getValidLevels } =
-  await import('./log-extensions.js');
+const { getLogLevel, setLogLevel, applyConfigLogLevel, getValidLevels } = await import('./log-extensions.js');
 
 describe('logger runtime control', () => {
   beforeAll(() => {
@@ -24,13 +23,7 @@ describe('logger runtime control', () => {
   });
 
   it('exposes the canonical level set', () => {
-    expect(getValidLevels()).toEqual([
-      'debug',
-      'info',
-      'warn',
-      'error',
-      'fatal',
-    ]);
+    expect(getValidLevels()).toEqual(['debug', 'info', 'warn', 'error', 'fatal']);
   });
 
   it('starts at info when env LOG_LEVEL is unset', () => {

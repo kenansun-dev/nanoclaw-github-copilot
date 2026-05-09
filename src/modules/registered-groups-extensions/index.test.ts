@@ -4,10 +4,7 @@ import {
   makeRegisteredGroupsResolver,
   __resetRegisteredGroupsForkInstalledForTests,
 } from './index.js';
-import {
-  getResolvedGroup,
-  __resetGroupResolverForTests,
-} from './router-hook.js';
+import { getResolvedGroup, __resetGroupResolverForTests } from './router-hook.js';
 import type { MessagingGroup } from '../../types-extensions.js';
 import type { InboundEvent } from '../../channels/adapter.js';
 

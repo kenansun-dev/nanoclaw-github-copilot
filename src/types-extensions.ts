@@ -139,11 +139,7 @@ export interface StreamHandle {
 export interface Channel {
   name: string;
   connect(): Promise<void>;
-  sendMessage(
-    jid: string,
-    text: string,
-    options?: { parseMode?: 'HTML' | 'Markdown' },
-  ): Promise<string | void>;
+  sendMessage(jid: string, text: string, options?: { parseMode?: 'HTML' | 'Markdown' }): Promise<string | void>;
   /** Send a rich card (Adaptive Card on Teams, falls back to text on others) */
   sendCard?(jid: string, card: object, fallbackText: string): Promise<void>;
   /** Send a file to a chat */
@@ -211,15 +207,8 @@ export interface Channel {
    * underlying platform rejects streaming (e.g. emit a single `end`
    * message instead).
    */
-  streamMessage?(
-    jid: string,
-    options?: { parseMode?: 'HTML' | 'Markdown' },
-  ): Promise<StreamHandle>;
-  reactToMessage?(
-    jid: string,
-    emoji: string,
-    messageId?: string,
-  ): Promise<void>;
+  streamMessage?(jid: string, options?: { parseMode?: 'HTML' | 'Markdown' }): Promise<StreamHandle>;
+  reactToMessage?(jid: string, emoji: string, messageId?: string): Promise<void>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   disconnect(): Promise<void>;
@@ -248,4 +237,3 @@ export type OnChatMetadata = (
 // ScheduledTask, TaskRunLog, StreamHandle, Channel, OnInboundMessage,
 // OnChatMetadata. v2 dispatcher / module surface types follow.
 // ============================================================================
-

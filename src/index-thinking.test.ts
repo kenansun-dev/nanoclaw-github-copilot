@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  normalizeShowThinking,
-  formatThinkingForChannel,
-  formatThinkingForFlash,
-} from './index.js';
+import { normalizeShowThinking, formatThinkingForChannel, formatThinkingForFlash } from './index.js';
 
 describe('normalizeShowThinking', () => {
   it('returns "off" for undefined', () => {

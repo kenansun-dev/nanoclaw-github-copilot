@@ -53,10 +53,7 @@ export function parseChatJid(chatJid: string): JidParts | null {
  * anyway). Content shape matches `discord-adapter.ts` so router-side
  * `safeParseContent` extracts the text consistently.
  */
-export function toInboundEvent(
-  chatJid: string,
-  msg: NewMessage,
-): InboundEvent | null {
+export function toInboundEvent(chatJid: string, msg: NewMessage): InboundEvent | null {
   const parts = parseChatJid(chatJid);
   if (!parts) return null;
   const content = JSON.stringify({

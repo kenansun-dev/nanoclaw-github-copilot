@@ -22,10 +22,7 @@ const GITHUB_REPO = 'kenans/nanoclaw-github-copilot';
  * Wait for a PID to exit, with force kill fallback.
  * Returns when the process is gone or timeout is reached.
  */
-async function waitForProcessExit(
-  pid: number,
-  timeoutMs = 10000,
-): Promise<void> {
+async function waitForProcessExit(pid: number, timeoutMs = 10000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
@@ -131,9 +128,7 @@ export async function runUpdate(args: string[]): Promise<void> {
 
   // Show current version
   try {
-    const pkg = JSON.parse(
-      fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf-8'),
-    );
+    const pkg = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf-8'));
     console.log(`Current version: ${pkg.version}`);
   } catch {
     /* ignore */
@@ -225,6 +220,29 @@ export async function runUpdate(args: string[]): Promise<void> {
 
     console.log('');
 
+    // v1 → v2 in-place workspace migration. No-op if workspace already on v2
+    // schema or if no workspace exists yet (fresh install).
+    try {
+      const { runV1Migration } = await import('./migrate-v1.js');
+      const { resolveWorkspace } = await import('../workspace.js');
+      const ws = resolveWorkspace();
+      if (fs.existsSync(ws)) {
+        const result = runV1Migration(ws, PROJECT_ROOT);
+        if (result.status === 'failed') {
+          console.error('');
+          console.error(`❌ v1 migration failed: ${result.message}`);
+          if (result.backupDir) {
+            console.error(`   Backup retained at: ${result.backupDir}`);
+          }
+          console.error('   Aborting update; service NOT restarted.');
+          process.exit(1);
+        }
+      }
+    } catch (err: any) {
+      console.error(`❌ Migration step crashed: ${err?.message ?? err}`);
+      process.exit(1);
+    }
+
     // Re-run init in --sync mode to refresh templates / agent-runner deps
     // without re-prompting Telegram/Teams/auth (those were configured on
     // first install; `update` is a re-install, not first-time setup).
@@ -232,9 +250,7 @@ export async function runUpdate(args: string[]): Promise<void> {
     try {
       execSync('nanoclaw init --sync', { stdio: 'inherit', timeout: 30000 });
     } catch (err: any) {
-      console.log(
-        `  ⚠️  Workspace sync had issues: ${err?.message ?? err}. Run: nanoclaw init --sync`,
-      );
+      console.log(`  ⚠️  Workspace sync had issues: ${err?.message ?? err}. Run: nanoclaw init --sync`);
     }
 
     // Rebuild sandbox image if any agent uses sandbox mode
@@ -242,8 +258,7 @@ export async function runUpdate(args: string[]): Promise<void> {
       const { loadConfig } = await import('../config-loader.js');
       const config = loadConfig();
       const needsContainers =
-        config.agents?.list?.some((a: any) => a.mode === 'sandbox') ||
-        config.agents?.defaults?.mode !== 'host';
+        config.agents?.list?.some((a: any) => a.mode === 'sandbox') || config.agents?.defaults?.mode !== 'host';
       if (needsContainers) {
         console.log('  Rebuilding container image...');
         execSync('nanoclaw sandbox build', {
@@ -287,16 +302,12 @@ export async function runUpdate(args: string[]): Promise<void> {
       execSync('nanoclaw start', { stdio: 'inherit', timeout: 30000 });
       console.log('  ✅ NanoClaw restarted');
     } catch (err: any) {
-      console.log(
-        `  ⚠️  Could not auto-restart: ${err?.message ?? err}. Run: nanoclaw start`,
-      );
+      console.log(`  ⚠️  Could not auto-restart: ${err?.message ?? err}. Run: nanoclaw start`);
     }
 
     // Show new version
     try {
-      const newPkg = JSON.parse(
-        fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf-8'),
-      );
+      const newPkg = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf-8'));
       console.log('');
       console.log(`✅ Updated to ${newPkg.version}`);
     } catch {
@@ -326,10 +337,9 @@ async function installFromGitHub(): Promise<boolean> {
     });
     if (!res.ok) {
       // Try the "latest" tag if no release marked as latest
-      const tagRes = await fetch(
-        `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/latest`,
-        { headers: { Accept: 'application/vnd.github.v3+json' } },
-      );
+      const tagRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/tags/latest`, {
+        headers: { Accept: 'application/vnd.github.v3+json' },
+      });
       if (!tagRes.ok) return false;
       const release = (await tagRes.json()) as any;
       return await downloadAndInstall(release);

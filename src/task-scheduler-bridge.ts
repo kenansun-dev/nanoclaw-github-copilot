@@ -55,16 +55,11 @@ import type { ScheduledTask } from './types-extensions.js';
  *
  * Today: hook is `null`, fork v1 path runs unchanged.
  */
-export type SchedulerV2DispatchFn = (
-  task: ScheduledTask,
-  deps: SchedulerDependencies,
-) => Promise<void>;
+export type SchedulerV2DispatchFn = (task: ScheduledTask, deps: SchedulerDependencies) => Promise<void>;
 
 let v2DispatchHook: SchedulerV2DispatchFn | null = null;
 
-export function setSchedulerV2DispatchHook(
-  fn: SchedulerV2DispatchFn | null,
-): void {
+export function setSchedulerV2DispatchHook(fn: SchedulerV2DispatchFn | null): void {
   v2DispatchHook = fn;
 }
 
@@ -86,9 +81,5 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
 // is a drop-in for `./task-scheduler.js` everywhere. Index.ts only
 // needs `startSchedulerLoop` today; tests + future callers may want
 // the others.
-export {
-  computeNextRun,
-  MAX_CONSECUTIVE_GROUP_MISSING,
-  _resetSchedulerLoopForTests,
-};
+export { computeNextRun, MAX_CONSECUTIVE_GROUP_MISSING, _resetSchedulerLoopForTests };
 export type { SchedulerDependencies };

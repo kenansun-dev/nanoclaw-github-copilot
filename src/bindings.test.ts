@@ -63,22 +63,16 @@ describe('resolveAgentIdFromBindings', () => {
 
   it('returns chatConfig.agentId as legacy fallback', () => {
     const config = makeConfig();
-    expect(
-      resolveAgentIdFromBindings(config, 'tg:123', { agentId: 'coder' }),
-    ).toBe('coder');
+    expect(resolveAgentIdFromBindings(config, 'tg:123', { agentId: 'coder' })).toBe('coder');
   });
 
   it('matches binding by channel', () => {
-    const config = makeConfig([
-      { agentId: 'main', match: { channel: 'telegram' } },
-    ]);
+    const config = makeConfig([{ agentId: 'main', match: { channel: 'telegram' } }]);
     expect(resolveAgentIdFromBindings(config, 'tg:123')).toBe('main');
   });
 
   it('matches binding by channel — teams', () => {
-    const config = makeConfig([
-      { agentId: 'coder', match: { channel: 'teams' } },
-    ]);
+    const config = makeConfig([{ agentId: 'coder', match: { channel: 'teams' } }]);
     expect(resolveAgentIdFromBindings(config, 'teams:conv-abc')).toBe('coder');
   });
 
@@ -91,9 +85,7 @@ describe('resolveAgentIdFromBindings', () => {
   });
 
   it('skips non-matching channel', () => {
-    const config = makeConfig([
-      { agentId: 'coder', match: { channel: 'teams' } },
-    ]);
+    const config = makeConfig([{ agentId: 'coder', match: { channel: 'teams' } }]);
     expect(resolveAgentIdFromBindings(config, 'tg:123')).toBeUndefined();
   });
 
@@ -107,12 +99,8 @@ describe('resolveAgentIdFromBindings', () => {
   });
 
   it('bindings take precedence over chatConfig.agentId', () => {
-    const config = makeConfig([
-      { agentId: 'main', match: { channel: 'telegram' } },
-    ]);
-    expect(
-      resolveAgentIdFromBindings(config, 'tg:123', { agentId: 'coder' }),
-    ).toBe('main');
+    const config = makeConfig([{ agentId: 'main', match: { channel: 'telegram' } }]);
+    expect(resolveAgentIdFromBindings(config, 'tg:123', { agentId: 'coder' })).toBe('main');
   });
 
   // Multi-account routing tests (PR #166 bug fixes)
@@ -129,18 +117,14 @@ describe('resolveAgentIdFromBindings', () => {
   });
 
   it('accountId "default" matches 2-segment JIDs', () => {
-    const config = makeConfig([
-      { agentId: 'main', match: { channel: 'telegram', accountId: 'default' } },
-    ]);
+    const config = makeConfig([{ agentId: 'main', match: { channel: 'telegram', accountId: 'default' } }]);
     expect(resolveAgentIdFromBindings(config, 'tg:123')).toBe('main');
     // 3-segment JID should NOT match default
     expect(resolveAgentIdFromBindings(config, 'tg:daily:123')).toBeUndefined();
   });
 
   it('accountId in binding prevents cross-account routing', () => {
-    const config = makeConfig([
-      { agentId: 'coder', match: { channel: 'telegram', accountId: 'daily' } },
-    ]);
+    const config = makeConfig([{ agentId: 'coder', match: { channel: 'telegram', accountId: 'daily' } }]);
     // Default account JID should NOT match daily binding
     expect(resolveAgentIdFromBindings(config, 'tg:123')).toBeUndefined();
     // Daily account JID should match
@@ -148,9 +132,7 @@ describe('resolveAgentIdFromBindings', () => {
   });
 
   it('binding without accountId matches all accounts', () => {
-    const config = makeConfig([
-      { agentId: 'main', match: { channel: 'telegram' } },
-    ]);
+    const config = makeConfig([{ agentId: 'main', match: { channel: 'telegram' } }]);
     // Both default and non-default JIDs should match
     expect(resolveAgentIdFromBindings(config, 'tg:123')).toBe('main');
     expect(resolveAgentIdFromBindings(config, 'tg:daily:123')).toBe('main');
@@ -185,9 +167,7 @@ describe('resolveAgentIdFromBindings', () => {
   // But if it somehow appears, it should match accountId=default binding
   // since the JID extraction sees accountId='default' from parts[1].
   it('tg:default:123 matches accountId default (edge case)', () => {
-    const config = makeConfig([
-      { agentId: 'main', match: { channel: 'telegram', accountId: 'default' } },
-    ]);
+    const config = makeConfig([{ agentId: 'main', match: { channel: 'telegram', accountId: 'default' } }]);
     expect(resolveAgentIdFromBindings(config, 'tg:default:123')).toBe('main');
   });
 

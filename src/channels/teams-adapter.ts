@@ -32,13 +32,7 @@
 
 import { log } from '../log.js';
 import { readEnvFile } from '../env.js';
-import type {
-  ChannelAdapter,
-  ChannelRegistration,
-  ChannelSetup,
-  InboundMessage,
-  OutboundMessage,
-} from './adapter.js';
+import type { ChannelAdapter, ChannelRegistration, ChannelSetup, InboundMessage, OutboundMessage } from './adapter.js';
 import { registerChannelAdapter } from './channel-registry.js';
 import { TeamsChannel } from './teams.js';
 import type { NewMessage, RegisteredGroup } from '../types-extensions.js';
@@ -133,11 +127,7 @@ class TeamsV2Adapter implements ChannelAdapter {
     return this.inner ? this.inner.isConnected() : false;
   }
 
-  async deliver(
-    platformId: string,
-    _threadId: string | null,
-    message: OutboundMessage,
-  ): Promise<string | undefined> {
+  async deliver(platformId: string, _threadId: string | null, message: OutboundMessage): Promise<string | undefined> {
     if (!this.inner) {
       log.warn('deliver called before setup', { channelType: CHANNEL_TYPE });
       return undefined;
@@ -189,29 +179,19 @@ export function makeTeamsV2AdapterRegistration(): ChannelRegistration {
         log.warn('Teams v2 adapter: TEAMS_APP_ID not set, skipping');
         return null;
       }
-      const appPassword =
-        process.env.TEAMS_APP_PASSWORD || env.TEAMS_APP_PASSWORD || undefined;
-      const tenantId =
-        process.env.TEAMS_TENANT_ID || env.TEAMS_TENANT_ID || undefined;
-      const portRaw =
-        process.env.TEAMS_PORT || env.TEAMS_PORT || String(DEFAULT_PORT);
+      const appPassword = process.env.TEAMS_APP_PASSWORD || env.TEAMS_APP_PASSWORD || undefined;
+      const tenantId = process.env.TEAMS_TENANT_ID || env.TEAMS_TENANT_ID || undefined;
+      const portRaw = process.env.TEAMS_PORT || env.TEAMS_PORT || String(DEFAULT_PORT);
       const port = Number.parseInt(portRaw, 10) || DEFAULT_PORT;
-      const certThumbprint =
-        process.env.TEAMS_CERT_THUMBPRINT ||
-        env.TEAMS_CERT_THUMBPRINT ||
-        undefined;
+      const certThumbprint = process.env.TEAMS_CERT_THUMBPRINT || env.TEAMS_CERT_THUMBPRINT || undefined;
       const certPrivateKeyPath =
-        process.env.TEAMS_CERT_PRIVATE_KEY_PATH ||
-        env.TEAMS_CERT_PRIVATE_KEY_PATH ||
-        undefined;
+        process.env.TEAMS_CERT_PRIVATE_KEY_PATH || env.TEAMS_CERT_PRIVATE_KEY_PATH || undefined;
 
       // Need *either* an appPassword *or* a cert pair to authenticate
       // outbound. Without one of those Teams will reject the bot at
       // adapter init; warn and skip rather than crash.
       if (!appPassword && !(certThumbprint && certPrivateKeyPath)) {
-        log.warn(
-          'Teams v2 adapter: neither TEAMS_APP_PASSWORD nor cert pair set, skipping',
-        );
+        log.warn('Teams v2 adapter: neither TEAMS_APP_PASSWORD nor cert pair set, skipping');
         return null;
       }
 

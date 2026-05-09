@@ -475,9 +475,7 @@ describe('GroupQueue', () => {
     writeFileSync.mockClear();
     queue.notifyIdle('group1@g.us');
 
-    closeWrites = writeFileSync.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
-    );
+    closeWrites = writeFileSync.mock.calls.filter((call) => typeof call[0] === 'string' && call[0].endsWith('_close'));
     expect(closeWrites).toHaveLength(1);
 
     resolveProcess!();
@@ -494,12 +492,7 @@ describe('GroupQueue', () => {
     const queue = new GroupQueue();
     queue.setProcessMessagesFn(async () => true);
 
-    queue.registerProcess(
-      'group1@g.us',
-      { on: () => {}, exitCode: null, killed: false } as any,
-      'c1',
-      'folder1',
-    );
+    queue.registerProcess('group1@g.us', { on: () => {}, exitCode: null, killed: false } as any, 'c1', 'folder1');
     const state = (queue as any).getGroup('group1@g.us');
     state.active = true;
 
@@ -525,12 +518,7 @@ describe('GroupQueue', () => {
       return true;
     });
 
-    queue.registerProcess(
-      'group1@g.us',
-      { on: () => {}, exitCode: null, killed: false } as any,
-      'c1',
-      'folder1',
-    );
+    queue.registerProcess('group1@g.us', { on: () => {}, exitCode: null, killed: false } as any, 'c1', 'folder1');
     const state = (queue as any).getGroup('group1@g.us');
     state.active = true;
     state.idleWaiting = true;
@@ -616,10 +604,7 @@ describe('GroupQueue', () => {
      * process. Mirrors the production flow where runContainer's finally
      * block sees `processAlive && state.idleWaiting` and keeps state.active=true.
      */
-    async function spinUpIdleAgent(
-      groupJid: string,
-      pid: number,
-    ): Promise<{ proc: any }> {
+    async function spinUpIdleAgent(groupJid: string, pid: number): Promise<{ proc: any }> {
       const { EventEmitter } = await import('events');
       const proc = new EventEmitter() as any;
       proc.exitCode = null;
@@ -628,12 +613,7 @@ describe('GroupQueue', () => {
       const processMessages = vi.fn(async () => {
         // Production order: spawn process, register, then settle into
         // idle-waiting state once the agent emits its query-complete signal.
-        queue.registerProcess(
-          groupJid,
-          proc,
-          'container-' + pid,
-          'test-group-' + pid,
-        );
+        queue.registerProcess(groupJid, proc, 'container-' + pid, 'test-group-' + pid);
         queue.markIdle(groupJid);
         return true;
       });
@@ -651,11 +631,7 @@ describe('GroupQueue', () => {
 
       // Pipe a follow-up message through IPC with a rollback cursor
       // (the cursor that was active *before* index.ts advanced it)
-      const ok = queue.sendMessage(
-        'group1@g.us',
-        'follow-up question',
-        '2026-04-21T03:25:25.000Z',
-      );
+      const ok = queue.sendMessage('group1@g.us', 'follow-up question', '2026-04-21T03:25:25.000Z');
       expect(ok).toBe(true);
 
       // Now simulate the host process dying (SIGTERM, crash, etc.)
@@ -664,11 +640,7 @@ describe('GroupQueue', () => {
       proc.emit('exit');
 
       expect(callback).toHaveBeenCalledTimes(1);
-      expect(callback).toHaveBeenCalledWith(
-        'group1@g.us',
-        '2026-04-21T03:25:25.000Z',
-        143,
-      );
+      expect(callback).toHaveBeenCalledWith('group1@g.us', '2026-04-21T03:25:25.000Z', 143);
     });
 
     it('fires callback with null cursor + exit=0 when process exits cleanly after producing output', async () => {
@@ -721,11 +693,7 @@ describe('GroupQueue', () => {
       proc.emit('exit');
 
       expect(callback).toHaveBeenCalledTimes(1);
-      expect(callback).toHaveBeenCalledWith(
-        'group1@g.us',
-        '2026-04-21T01:00:00Z',
-        143,
-      );
+      expect(callback).toHaveBeenCalledWith('group1@g.us', '2026-04-21T01:00:00Z', 143);
     });
   });
 });

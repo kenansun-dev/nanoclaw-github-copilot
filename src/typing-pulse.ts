@@ -39,16 +39,11 @@ export interface TypingPulseState {
   logger: TypingPulseLogger;
 }
 
-export function createTypingPulseState(
-  logger: TypingPulseLogger = NOOP_LOGGER,
-): TypingPulseState {
+export function createTypingPulseState(logger: TypingPulseLogger = NOOP_LOGGER): TypingPulseState {
   return { timers: new Map(), logger };
 }
 
-export function cancelBoundedTypingClear(
-  state: TypingPulseState,
-  chatJid: string,
-): void {
+export function cancelBoundedTypingClear(state: TypingPulseState, chatJid: string): void {
   const t = state.timers.get(chatJid);
   if (t) {
     clearTimeout(t);
@@ -60,10 +55,7 @@ export function cancelBoundedTypingClear(
  * Returns true if a bounded pulse is currently armed for chatJid.
  * Test-only convenience; production code should not rely on this.
  */
-export function hasPendingTypingClear(
-  state: TypingPulseState,
-  chatJid: string,
-): boolean {
+export function hasPendingTypingClear(state: TypingPulseState, chatJid: string): boolean {
   return state.timers.has(chatJid);
 }
 
@@ -79,10 +71,7 @@ export async function armTypingBounded(
     try {
       await channel.setTyping(chatJid, true);
     } catch (err: any) {
-      state.logger.warn?.(
-        { chatJid, channel: channel.name, err: err?.message ?? err },
-        'bounded typing arm failed',
-      );
+      state.logger.warn?.({ chatJid, channel: channel.name, err: err?.message ?? err }, 'bounded typing arm failed');
     }
   }
   const t = setTimeout(() => {

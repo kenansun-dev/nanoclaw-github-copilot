@@ -56,12 +56,7 @@ if (!daemonCommands.has(command || '')) {
 // Version
 if (globalArgs.includes('--version') || globalArgs.includes('-v')) {
   try {
-    const pkg = JSON.parse(
-      (await import('fs')).readFileSync(
-        join(PROJECT_ROOT, 'package.json'),
-        'utf-8',
-      ),
-    );
+    const pkg = JSON.parse((await import('fs')).readFileSync(join(PROJECT_ROOT, 'package.json'), 'utf-8'));
     console.log(`nanoclaw v${pkg.version}`);
   } catch {
     console.log('nanoclaw (unknown version)');
@@ -219,13 +214,7 @@ async function runService(action: string) {
   // --- Detect service backend ---
   const hasSystemd = (() => {
     if (process.platform !== 'linux') return false;
-    const serviceFile = join(
-      os.homedir(),
-      '.config',
-      'systemd',
-      'user',
-      `${SERVICE_NAME}.service`,
-    );
+    const serviceFile = join(os.homedir(), '.config', 'systemd', 'user', `${SERVICE_NAME}.service`);
     return existsSync(serviceFile);
   })();
 
@@ -244,10 +233,7 @@ async function runService(action: string) {
   const hasWindowsAutoStart = (() => {
     if (process.platform !== 'win32') return false;
     try {
-      execSync(
-        'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "nanoclaw"',
-        { stdio: 'pipe' },
-      );
+      execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "nanoclaw"', { stdio: 'pipe' });
       return true;
     } catch {
       const startupDir = join(
@@ -260,10 +246,7 @@ async function runService(action: string) {
         'Programs',
         'Startup',
       );
-      return (
-        existsSync(join(startupDir, 'nanoclaw.vbs')) ||
-        existsSync(join(startupDir, 'nanoclaw.bat'))
-      );
+      return existsSync(join(startupDir, 'nanoclaw.vbs')) || existsSync(join(startupDir, 'nanoclaw.bat'));
     }
   })();
 
@@ -299,10 +282,10 @@ async function runService(action: string) {
           execSync(`systemctl --user start ${SERVICE_NAME}`, { stdio: 'pipe' });
           // Wait and check
           await new Promise((r) => setTimeout(r, 2000));
-          const status = execSync(
-            `systemctl --user is-active ${SERVICE_NAME}`,
-            { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-          ).trim();
+          const status = execSync(`systemctl --user is-active ${SERVICE_NAME}`, {
+            encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe'],
+          }).trim();
           console.log(`Started via systemd (${status})`);
           console.log(`Logs: journalctl --user -u ${SERVICE_NAME} -f`);
         } catch (err: any) {
@@ -333,9 +316,7 @@ async function runService(action: string) {
               stdio: ['pipe', 'pipe', 'pipe'],
               timeout: 10000,
             });
-            const tunnelLine = listOut
-              .split('\n')
-              .find((l: string) => l.toLowerCase().includes('nanoclaw'));
+            const tunnelLine = listOut.split('\n').find((l: string) => l.toLowerCase().includes('nanoclaw'));
             if (tunnelLine) {
               const idMatch = tunnelLine.match(/([a-zA-Z0-9._-]+)/);
               if (idMatch) {
@@ -350,14 +331,10 @@ async function runService(action: string) {
                 const hostCount = showOut.match(/Host connections\s*:\s*(\d+)/);
                 if (!hostCount || hostCount[1] === '0') {
                   console.log(`Starting devtunnel: ${tid}...`);
-                  const dtProc = sp(
-                    'devtunnel',
-                    ['host', tid, '--allow-anonymous'],
-                    {
-                      detached: true,
-                      stdio: 'ignore',
-                    },
-                  );
+                  const dtProc = sp('devtunnel', ['host', tid, '--allow-anonymous'], {
+                    detached: true,
+                    stdio: 'ignore',
+                  });
                   dtProc.unref();
                   // Save PID so nanoclaw stop can kill it
                   try {
@@ -418,9 +395,7 @@ async function runService(action: string) {
             const dtPid = parseInt(fs.readFileSync(dtPidFile, 'utf-8').trim());
             try {
               killProcess(dtPid);
-              console.log(
-                `[stop] cleaned up orphaned devtunnel (pid: ${dtPid})`,
-              );
+              console.log(`[stop] cleaned up orphaned devtunnel (pid: ${dtPid})`);
             } catch {
               /* already dead */
             }
@@ -429,9 +404,7 @@ async function runService(action: string) {
         } catch {
           /* */
         }
-        console.log(
-          'Not running (attempted cleanup of any tracked child pids)',
-        );
+        console.log('Not running (attempted cleanup of any tracked child pids)');
         return;
       }
       const pid = fs.readFileSync(pidFile, 'utf-8').trim();
@@ -492,13 +465,10 @@ async function runService(action: string) {
             stdio: 'pipe',
           });
           await new Promise((r) => setTimeout(r, 2000));
-          const status = execSync(
-            `systemctl --user is-active ${SERVICE_NAME}`,
-            {
-              encoding: 'utf-8',
-              stdio: ['pipe', 'pipe', 'pipe'],
-            },
-          ).trim();
+          const status = execSync(`systemctl --user is-active ${SERVICE_NAME}`, {
+            encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe'],
+          }).trim();
           console.log(`Restarted via systemd (${status})`);
         } catch {
           console.error('systemd restart failed. Trying stop + start...');
@@ -686,11 +656,7 @@ async function runProvider(args: string[]) {
           const { loadConfig } = await import('./config-loader.js');
           const cfg = loadConfig();
           const agent = cfg.agents?.defaults as any;
-          provider =
-            agent?.provider ||
-            (agent?.model?.includes('/')
-              ? agent.model.split('/')[0]
-              : 'github-copilot');
+          provider = agent?.provider || (agent?.model?.includes('/') ? agent.model.split('/')[0] : 'github-copilot');
         } catch {
           /* */
         }
@@ -704,9 +670,7 @@ async function runProvider(args: string[]) {
           execSync('copilot login', { stdio: 'inherit', timeout: 120000 });
           console.log('Login successful.');
         } catch {
-          console.error(
-            'Login failed. Make sure copilot CLI is installed: npm install -g @github/copilot',
-          );
+          console.error('Login failed. Make sure copilot CLI is installed: npm install -g @github/copilot');
         }
       } else if (provider === 'claude' || provider === 'anthropic') {
         console.log('Starting Claude Code login...');
@@ -726,21 +690,13 @@ async function runProvider(args: string[]) {
       break;
     }
     case 'status': {
-      const { runDoctor: _doc, formatDoctorResults: _fmt } =
-        await import('./doctor.js');
+      const { runDoctor: _doc, formatDoctorResults: _fmt } = await import('./doctor.js');
       // Quick auth check
       const os = await import('os');
       const fs = await import('fs');
       const path = await import('path');
-      const profilePath = path.join(
-        os.homedir(),
-        '.openclaw/agents/main/agent/auth-profiles.json',
-      );
-      if (
-        process.env.COPILOT_GITHUB_TOKEN ||
-        process.env.GH_TOKEN ||
-        process.env.GITHUB_TOKEN
-      ) {
+      const profilePath = path.join(os.homedir(), '.openclaw/agents/main/agent/auth-profiles.json');
+      if (process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN) {
         console.log('✅ github-copilot: authenticated (env token)');
       } else if (fs.existsSync(profilePath)) {
         try {
@@ -749,17 +705,13 @@ async function runProvider(args: string[]) {
             (p: any) => p.provider === 'github-copilot' && p.token,
           );
           console.log(
-            hasGhc
-              ? '✅ github-copilot: authenticated (OpenClaw profile)'
-              : '❌ github-copilot: not authenticated',
+            hasGhc ? '✅ github-copilot: authenticated (OpenClaw profile)' : '❌ github-copilot: not authenticated',
           );
         } catch {
           console.log('❌ github-copilot: not authenticated');
         }
       } else {
-        console.log(
-          '❌ github-copilot: not authenticated — run: nanoclaw provider login',
-        );
+        console.log('❌ github-copilot: not authenticated — run: nanoclaw provider login');
       }
       break;
     }
@@ -825,8 +777,7 @@ async function runChat(args: string[]) {
         `Reconciled: added ${r.added.length}, deduped main on ${r.dedupedMains.length}, mirrored to DB ${r.mirroredToDb.length}.`,
       );
       if (r.added.length > 0) console.log('  added: ' + r.added.join(', '));
-      if (r.dedupedMains.length > 0)
-        console.log('  cleared isMain: ' + r.dedupedMains.join(', '));
+      if (r.dedupedMains.length > 0) console.log('  cleared isMain: ' + r.dedupedMains.join(', '));
       if (r.keptMain) console.log('  kept main: ' + r.keptMain);
       break;
     }
@@ -834,9 +785,7 @@ async function runChat(args: string[]) {
       const { listChats } = await import('./chat-manager.js');
       const chats = listChats();
       if (chats.length === 0) {
-        console.log(
-          'No registered chats. Add one with: nanoclaw chat add <jid> <name>',
-        );
+        console.log('No registered chats. Add one with: nanoclaw chat add <jid> <name>');
       } else {
         console.log('  ID  | CHANNEL    | JID                       | NAME');
         console.log('  ----+------------+---------------------------+------');
@@ -872,9 +821,7 @@ async function runChat(args: string[]) {
       }
       const { addChat } = await import('./chat-manager.js');
       addChat(jid, name, { isMain });
-      console.log(
-        `Chat registered: ${jid} (${name})${isMain ? ' [main]' : ''}`,
-      );
+      console.log(`Chat registered: ${jid} (${name})${isMain ? ' [main]' : ''}`);
       break;
     }
     case 'add': {
@@ -887,9 +834,7 @@ async function runChat(args: string[]) {
       }
       const { addChat } = await import('./chat-manager.js');
       const { id } = addChat(jid, name, { isMain });
-      console.log(
-        `Chat registered: #${id} ${jid} (${name})${isMain ? ' [main]' : ''}`,
-      );
+      console.log(`Chat registered: #${id} ${jid} (${name})${isMain ? ' [main]' : ''}`);
       break;
     }
     case 'set-main': {
@@ -898,22 +843,17 @@ async function runChat(args: string[]) {
         console.error('Usage: nanoclaw chat set-main <id-or-jid>');
         process.exit(1);
       }
-      const { loadConfig, resolveChatHandle } =
-        await import('./config-loader.js');
+      const { loadConfig, resolveChatHandle } = await import('./config-loader.js');
       const { setMainChat } = await import('./chat-manager.js');
       const config = loadConfig();
       const jid = resolveChatHandle(config, handle);
       if (!jid) {
-        console.error(
-          `No chat matches "${handle}". Run \`nanoclaw chat list\` to see ids.`,
-        );
+        console.error(`No chat matches "${handle}". Run \`nanoclaw chat list\` to see ids.`);
         process.exit(1);
       }
       setMainChat(jid);
       const entry = config.chats[jid];
-      console.log(
-        `Main chat set: #${entry?.id ?? '?'} ${jid} (${entry?.name ?? '?'})`,
-      );
+      console.log(`Main chat set: #${entry?.id ?? '?'} ${jid} (${entry?.name ?? '?'})`);
       break;
     }
     case 'unset-main': {
@@ -928,21 +868,16 @@ async function runChat(args: string[]) {
         console.error('Usage: nanoclaw chat remove <id-or-jid>');
         process.exit(1);
       }
-      const { loadConfig, resolveChatHandle } =
-        await import('./config-loader.js');
+      const { loadConfig, resolveChatHandle } = await import('./config-loader.js');
       const { removeChat } = await import('./chat-manager.js');
       const config = loadConfig();
       const jid = resolveChatHandle(config, handle) ?? handle;
       const removed = removeChat(jid);
-      console.log(
-        removed ? `Chat removed: ${jid}` : `Chat not found: ${handle}`,
-      );
+      console.log(removed ? `Chat removed: ${jid}` : `Chat not found: ${handle}`);
       break;
     }
     default:
-      console.log(
-        'Usage: nanoclaw chat <list|pending|add|remove|set-main|unset-main> [args]',
-      );
+      console.log('Usage: nanoclaw chat <list|pending|add|remove|set-main|unset-main> [args]');
   }
 }
 
@@ -965,9 +900,7 @@ async function runSandbox(args: string[]) {
 
       // Determine which Dockerfile and image to build
       const dockerfile = isGHC ? 'Dockerfile.ghc' : 'Dockerfile';
-      const imageName = isGHC
-        ? 'nanoclaw-agent-ghc:latest'
-        : config.sandbox?.image || 'nanoclaw-agent:latest';
+      const imageName = isGHC ? 'nanoclaw-agent-ghc:latest' : config.sandbox?.image || 'nanoclaw-agent:latest';
       const contextDir = path.join(projectRoot, 'container');
       const dockerfilePath = path.join(contextDir, dockerfile);
 
@@ -985,10 +918,10 @@ async function runSandbox(args: string[]) {
       console.log('');
 
       try {
-        execSync(
-          `docker build -t ${imageName} -f ${dockerfilePath} ${contextDir}`,
-          { stdio: 'inherit', timeout: 600_000 },
-        );
+        execSync(`docker build -t ${imageName} -f ${dockerfilePath} ${contextDir}`, {
+          stdio: 'inherit',
+          timeout: 600_000,
+        });
         console.log(`\n✅ Image built: ${imageName}`);
       } catch (err: any) {
         console.error(`\n❌ Build failed. Is Docker running?`);
@@ -1104,11 +1037,9 @@ Sandbox
 Tunnel
 
 MCP
-  mcp auth <server|url>             Authenticate remote MCP server
   mcp list                          List configured MCP servers
   mcp add <name> <url>              Add remote MCP server
   mcp remove <name>                 Remove MCP server
-  mcp daemon <start|stop|status>    Manage mcporter daemon
 
 Global Options
   --workspace <path>                Workspace (default: ~/.nanoclaw)
@@ -1119,90 +1050,14 @@ Global Options
 
 async function runMcp(args: string[]) {
   const sub = args[0];
-  const { resolveWorkspace } = await import('./workspace.js');
-  const ws = resolveWorkspace();
-  const mcporterConfig = join(ws, 'mcporter', 'mcporter.json');
-  const { execSync, spawn: spawnChild } = await import('child_process');
-  const mcpBinExt = process.platform === 'win32' ? 'mcporter.cmd' : 'mcporter';
-  const localMcp = join(PROJECT_ROOT, 'node_modules', '.bin', mcpBinExt);
-  let mcpBin = '';
-  if (existsSync(localMcp)) {
-    mcpBin = localMcp;
-  } else {
-    // Try global
-    try {
-      const { execSync: es } = await import('child_process');
-      mcpBin = es(
-        process.platform === 'win32' ? 'where mcporter' : 'which mcporter',
-        {
-          encoding: 'utf-8',
-          stdio: ['pipe', 'pipe', 'pipe'],
-        },
-      )
-        .trim()
-        .split('\n')[0];
-    } catch {
-      mcpBin = 'mcporter'; // hope it's in PATH
-    }
-  }
-
-  // Ensure mcporter config exists and is synced from nanoclaw.json
-  const {
-    mkdirSync,
-    existsSync: fsExists,
-    writeFileSync,
-    readFileSync,
-  } = await import('fs');
-  mkdirSync(join(ws, 'mcporter'), { recursive: true });
-  if (!fsExists(mcporterConfig)) {
-    writeFileSync(mcporterConfig, JSON.stringify({ mcpServers: {} }, null, 2));
-  }
-  // Sync remote MCP servers from nanoclaw.json → mcporter config
-  try {
-    const { loadConfig: syncCfg } = await import('./config-loader.js');
-    const nc = syncCfg();
-    const mc = JSON.parse(readFileSync(mcporterConfig, 'utf-8'));
-    for (const [name, srv] of Object.entries(nc.mcp.servers)) {
-      const s = srv as any;
-      if (
-        (s.type === 'http' || s.type === 'sse') &&
-        s.url &&
-        !mc.mcpServers?.[name]
-      ) {
-        mc.mcpServers = mc.mcpServers || {};
-        mc.mcpServers[name] = { url: s.url };
-      }
-    }
-    writeFileSync(mcporterConfig, JSON.stringify(mc, null, 2));
-  } catch {
-    /* sync best-effort */
-  }
 
   switch (sub) {
-    case 'auth': {
-      const server = args[1];
-      if (!server) {
-        console.error('Usage: nanoclaw mcp auth <server-name | url>');
-        process.exit(1);
-      }
-      console.log(`Authenticating MCP server: ${server}`);
-      try {
-        execSync(`${mcpBin} auth ${server} --config ${mcporterConfig}`, {
-          stdio: 'inherit',
-          timeout: 120000,
-        });
-      } catch {
-        console.error('Auth failed. Is the server URL correct?');
-      }
-      break;
-    }
     case undefined:
     case 'list': {
       // Parity with `claude mcp` / `gh copilot mcp list` and the `/mcp`
-      // slash command. Pass `probe` to actively check auth state (~1-2s).
+      // slash command. File-only read, <50ms.
       const { getMcpText } = await import('./cli/mcp-text.js');
-      const probe = args.includes('probe');
-      const text = await getMcpText(probe);
+      const text = await getMcpText(false); // CLI: no code fence
       console.log(text);
       break;
     }
@@ -1218,18 +1073,6 @@ async function runMcp(args: string[]) {
       const cfg = loadConfig();
       cfg.mcp.servers[name] = { type: 'http', url, tools: ['*'] };
       saveConfig(cfg);
-      // Also sync to mcporter config so auth works
-      try {
-        execSync(
-          `${mcpBin} config add ${name} ${url} --config ${mcporterConfig}`,
-          {
-            stdio: 'pipe',
-            timeout: 15000,
-          },
-        );
-      } catch {
-        /* mcporter sync is best-effort */
-      }
       console.log(`Added MCP server: ${name} (saved to nanoclaw.json)`);
       // Ask running daemon to reload so the next agent turn sees the new
       // server without requiring `nanoclaw restart`.
@@ -1243,13 +1086,9 @@ async function runMcp(args: string[]) {
               : '  → daemon reloaded (live, no restart needed).',
           );
         } else if (r.noDaemon) {
-          console.log(
-            '  → daemon not running; will be picked up on next start.',
-          );
+          console.log('  → daemon not running; will be picked up on next start.');
         } else {
-          console.log(
-            `  → reload signal failed (${r.error || 'unknown'}); run \`nanoclaw restart\` to apply.`,
-          );
+          console.log(`  → reload signal failed (${r.error || 'unknown'}); run \`nanoclaw restart\` to apply.`);
         }
       } catch {
         /* reload is best-effort */
@@ -1263,20 +1102,10 @@ async function runMcp(args: string[]) {
         process.exit(1);
       }
       // Remove from nanoclaw.json
-      const { loadConfig: lc, saveConfig: sc } =
-        await import('./config-loader.js');
+      const { loadConfig: lc, saveConfig: sc } = await import('./config-loader.js');
       const c = lc();
       delete c.mcp.servers[name];
       sc(c);
-      // Also remove from mcporter
-      try {
-        execSync(`${mcpBin} config remove ${name} --config ${mcporterConfig}`, {
-          stdio: 'pipe',
-          timeout: 15000,
-        });
-      } catch {
-        /* best-effort */
-      }
       console.log(`Removed MCP server: ${name} (saved to nanoclaw.json)`);
       // Ask running daemon to reload so the removed server is dropped from
       // the next agent turn's mcp.json.
@@ -1290,35 +1119,19 @@ async function runMcp(args: string[]) {
               : '  → daemon reloaded (live, no restart needed).',
           );
         } else if (r.noDaemon) {
-          console.log(
-            '  → daemon not running; will be picked up on next start.',
-          );
+          console.log('  → daemon not running; will be picked up on next start.');
         }
       } catch {
         /* reload is best-effort */
       }
       break;
     }
-    case 'daemon': {
-      const action = args[1] || 'status';
-      try {
-        execSync(`${mcpBin} daemon ${action} --config ${mcporterConfig}`, {
-          stdio: 'inherit',
-          timeout: 15000,
-        });
-      } catch {
-        console.error(`Daemon ${action} failed.`);
-      }
-      break;
-    }
     default:
-      console.log(`Usage: nanoclaw mcp <auth|list|add|remove|daemon> [args]
+      console.log(`Usage: nanoclaw mcp <list|add|remove> [args]
 
 Commands:
-  auth <server|url>     Authenticate a remote MCP server (OAuth/PRM)
   list                  List configured MCP servers
   add <name> <url>      Add a remote MCP server
-  remove <name>         Remove an MCP server
-  daemon <start|stop|status>  Manage mcporter daemon`);
+  remove <name>         Remove an MCP server`);
   }
 }

@@ -25,10 +25,7 @@ import type { InboundEvent } from '../../channels/adapter.js';
  * resolver receives the event too so callers can pick whichever
  * id their store needs.
  */
-export type GroupResolverFn = (
-  mg: MessagingGroup,
-  event: InboundEvent,
-) => RegisteredGroup | null;
+export type GroupResolverFn = (mg: MessagingGroup, event: InboundEvent) => RegisteredGroup | null;
 
 let groupResolver: GroupResolverFn | null = null;
 
@@ -49,10 +46,7 @@ export function setGroupResolver(fn: GroupResolverFn): void {
  * threw. Callers coalesce null to default container/trigger config
  * (the v1 fallback path).
  */
-export function getResolvedGroup(
-  mg: MessagingGroup,
-  event: InboundEvent,
-): RegisteredGroup | null {
+export function getResolvedGroup(mg: MessagingGroup, event: InboundEvent): RegisteredGroup | null {
   if (!groupResolver) return null;
   try {
     return groupResolver(mg, event);
