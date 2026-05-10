@@ -12,7 +12,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { AGENT_RUN_TIMEOUT_MS, CONTAINER_TIMEOUT, TIMEZONE, getConfig } from './config.js';
+import { AGENT_RUN_TIMEOUT_MS, TIMEZONE, getConfig } from './config.js';
 import { resolveWorkspace, paths as wsPaths } from './workspace.js';
 import { resolveAgentForChat, isAgentGHC, resolveGithubToken } from './config-extensions.js';
 import { getEffectiveModel, getEffectiveThinkLevel } from './session-overrides.js';
@@ -491,11 +491,6 @@ export async function runHostAgent(
     // sandbox timeouts. Only AGENT_RUN_TIMEOUT_MS (per-query, default 10min)
     // applies — that's the canary that catches truly stuck queries / hung
     // MCP calls and triggers the kill path below (see win32 fix in bfe60ee).
-    //
-    // We keep `configTimeout` declared because the kill path uses CONTAINER_TIMEOUT
-    // semantics for log fields below; but no setTimeout is armed for it here.
-    const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
-    void configTimeout; // referenced via logger fields only — not used to arm a timer
     const neverTimeout = true; // host mode: always rely on per-query absoluteTimeout, never lifetime
     const timeoutMs = 0; // unused when neverTimeout=true (see line ~569)
 
