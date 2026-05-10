@@ -356,10 +356,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   logger.info({ group: group.name, messageCount: missedMessages.length }, 'Processing messages');
 
-  // Track idle timer for closing stdin when agent is idle
+  // Track idle timer for closing stdin when agent is idle.
+  // Only meaningful in container/sandbox mode — host mode is long-lived by
+  // design (no container to recycle), so closing stdin would just kill the
+  // node process for no benefit (per owner direction 2026-05-10: host mode
+  // ignores sandbox.idleTimeout). Resolve the agent's mode here and short-
+  // circuit when host so the per-message resetIdleTimer() calls below are
+  // cheap no-ops.
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const idleAgent = resolveAgentForChat(chatJid);
+  const idleHostMode = idleAgent.mode === 'host';
 
   const resetIdleTimer = () => {
+    if (idleHostMode) return; // host mode never closes stdin on idle
     if (IDLE_TIMEOUT <= 0) return; // 0 = never timeout
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {

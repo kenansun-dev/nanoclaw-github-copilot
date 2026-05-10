@@ -12,7 +12,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { AGENT_RUN_TIMEOUT_MS, CONTAINER_TIMEOUT, IDLE_TIMEOUT, TIMEZONE, getConfig } from './config.js';
+import { AGENT_RUN_TIMEOUT_MS, CONTAINER_TIMEOUT, TIMEZONE, getConfig } from './config.js';
 import { resolveWorkspace, paths as wsPaths } from './workspace.js';
 import { resolveAgentForChat, isAgentGHC, resolveGithubToken } from './config-extensions.js';
 import { getEffectiveModel, getEffectiveThinkLevel } from './session-overrides.js';
@@ -482,17 +482,22 @@ export async function runHostAgent(
     let timedOut = false;
     let hadStreamingOutput = false;
 
+    // Host mode is long-lived by design (no docker container to recycle, no
+    // image-rebuild cost, MCP servers keep their auth/session state in-process).
+    // sandbox.timeout / sandbox.idleTimeout are container-mode concepts —
+    // killing a host node every 30s/30min just costs spawn (1-3s) + MCP
+    // re-auth and gives nothing back (memory ~150MB is cheap on a personal
+    // host). Per owner direction (kenan, 2026-05-10): host mode IGNORES both
+    // sandbox timeouts. Only AGENT_RUN_TIMEOUT_MS (per-query, default 10min)
+    // applies — that's the canary that catches truly stuck queries / hung
+    // MCP calls and triggers the kill path below (see win32 fix in bfe60ee).
+    //
+    // We keep `configTimeout` declared because the kill path uses CONTAINER_TIMEOUT
+    // semantics for log fields below; but no setTimeout is armed for it here.
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
-    // Per-query timeout: agents.defaults.timeoutSeconds (default 300s = 5 min)
-    const queryTimeoutSec = getConfig().agents?.defaults?.timeoutSeconds ?? 300;
-    const queryTimeoutMs = queryTimeoutSec * 1000;
-
-    // Host mode with idleTimeout 0: no hard timeout for idle (agent stays alive between queries)
-    // But per-query timeout always applies to prevent stuck queries
-    const neverTimeout = IDLE_TIMEOUT <= 0;
-    const timeoutMs = neverTimeout
-      ? queryTimeoutMs // Use per-query timeout even in host mode
-      : Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
+    void configTimeout; // referenced via logger fields only — not used to arm a timer
+    const neverTimeout = true; // host mode: always rely on per-query absoluteTimeout, never lifetime
+    const timeoutMs = 0; // unused when neverTimeout=true (see line ~569)
 
     const killOnTimeout = () => {
       if (timedOut) return; // Guard against double-trigger from idle + absolute timeout
