@@ -510,6 +510,28 @@ export async function runHostAgent(
         } catch {
           if (!child.killed) child.kill('SIGKILL');
         }
+        // Watchdog: SIGKILL on a process group should produce a 'close'
+        // event on the parent within ~1s once stdio pipes drain. If we
+        // are still seeing the child as alive 30s after SIGKILL, the
+        // 'close' handler has not fired and GroupQueue.registerProcess()
+        // exit listener is also blocked — that chat is now permanently
+        // wedged (state.active stays true, all subsequent messages get
+        // queued behind a dead process). We do NOT have evidence this
+        // race has actually happened in production (grep across all
+        // daemon logs: 0 hits for 'host-runner SIGKILL stuck'). This is
+        // a diagnostic canary: if the error fires we now have ground
+        // truth + pid/processName to root-cause. Once we see one, we
+        // wire a forceRelease() call into GroupQueue. Until then this
+        // is logging-only by design — no bypass for an unproven bug.
+        setTimeout(() => {
+          const stillAlive = child.exitCode === null && (child as any).signalCode === null;
+          if (stillAlive) {
+            logger.error(
+              { group: group.name, processName, pid: child.pid },
+              'host-runner SIGKILL watchdog: child still alive 30s after SIGKILL — chat may be wedged, please capture daemon log around this entry',
+            );
+          }
+        }, 30_000).unref?.();
       }, 10_000);
     };
 
