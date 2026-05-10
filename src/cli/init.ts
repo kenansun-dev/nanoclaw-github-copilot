@@ -362,6 +362,11 @@ const DEFAULT_CONFIG = {
     // 30 min idle (matches config-loader default + upstream
     // upstream/main:src/config.ts:39).
     idleTimeout: 1_800_000,
+    // v2 host-sweep tunables. absoluteCeilingMs=0 disables the
+    // heartbeat-age throttle (owner directive 2026-05-10).
+    absoluteCeilingMs: 0,
+    claimStuckMs: 60_000,
+    sweepIntervalMs: 60_000,
   },
   credentialProxy: { port: 3001 },
   logLevel: 'info',
