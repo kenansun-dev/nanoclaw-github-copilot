@@ -498,7 +498,38 @@ export async function runHostAgent(
       if (timedOut) return; // Guard against double-trigger from idle + absolute timeout
       timedOut = true;
       logger.error({ group: group.name, processName }, 'Host agent timeout, killing');
-      // Kill the entire process group to avoid orphans
+      // Kill the entire process tree (agent + tsx + MCP subprocess descendants).
+      //
+      // BUG (kenan reported on Windows + slow MCP tools, 2026-05-10):
+      // Previously this branch unconditionally called `process.kill(-pid, ...)`.
+      // On Windows, Node's `process.kill()` IGNORES negative pids — only the
+      // root child gets the signal, MCP subprocess descendants survive holding
+      // stdio pipes open, the child's 'exit'/'close' event never fires,
+      // GroupQueue.state.active stays true forever, chat goes silent until
+      // daemon restart. Mirroring the same win32 branch we already have in
+      // killAllAgentPids() (line ~85) so per-query timeouts get tree-kill on
+      // Windows too.
+      if (process.platform === 'win32') {
+        try {
+          execSync(`taskkill /F /T /PID ${child.pid}`, { stdio: 'pipe' });
+          logger.warn({ pid: child.pid, group: group.name }, 'Host agent timeout: taskkill /F /T sent (tree kill)');
+        } catch (err: any) {
+          const msg = err?.stderr?.toString?.() ?? String(err);
+          logger.warn({ pid: child.pid, err: msg }, 'taskkill /F /T failed during timeout — falling back to child.kill');
+          if (!child.killed) child.kill('SIGKILL');
+        }
+        // Watchdog still useful on win32 to confirm taskkill reaped the tree.
+        setTimeout(() => {
+          const stillAlive = child.exitCode === null && (child as any).signalCode === null;
+          if (stillAlive) {
+            logger.error(
+              { group: group.name, processName, pid: child.pid },
+              'host-runner timeout watchdog (win32): child still alive 30s after taskkill /F /T — chat may be wedged',
+            );
+          }
+        }, 30_000).unref?.();
+        return;
+      }
       try {
         process.kill(-child.pid!, 'SIGTERM');
       } catch {
