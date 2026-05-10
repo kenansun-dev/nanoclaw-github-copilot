@@ -1495,9 +1495,36 @@ async function main(): Promise<void> {
 
   restoreRemoteControl();
 
+  // v2 host-sweep: heartbeat-based zombie detection (claim-stuck 60s default)
+  // + optional absolute-ceiling throttle (default disabled per owner directive
+  // 2026-05-10). Container mode only — host mode (sandbox.runtime is not
+  // 'docker'/'apple-container') has no per-session container, no claim/ack
+  // table writes, and no heartbeat writer; the sweep would be a no-op there.
+  // Skipping startup keeps the timer + DB scan off the host-mode hot path.
+  try {
+    const { loadConfig: lcSweep } = await import('./config-loader.js');
+    const { startHostSweep } = await import('./host-sweep.js');
+    const cfgSweep = lcSweep();
+    const runtime = cfgSweep.sandbox?.runtime;
+    if (runtime === 'docker' || runtime === 'apple-container') {
+      startHostSweep();
+      logger.info('Host sweep started (container mode)');
+    } else {
+      logger.debug('Host sweep skipped (host mode)');
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed to start host sweep');
+  }
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    try {
+      const { stopHostSweep } = await import('./host-sweep.js');
+      stopHostSweep();
+    } catch {
+      /* sweep may not have started */
+    }
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
