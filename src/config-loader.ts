@@ -273,10 +273,13 @@ const DEFAULTS: NanoclawConfig = {
     timeout: 1800000,
     maxOutputSize: 10485760,
     maxConcurrent: 5,
-    // 30s idle = container exits if no IPC activity for 30s. Defense-in-depth
-    // against orphaned long-lived containers (e.g. tui --ask leaks if the
-    // close-sentinel write is ever skipped). Set to 0 to disable.
-    idleTimeout: 30_000,
+    // 30 min idle = container exits if no IPC activity for 30 min. Aligns
+    // with upstream nanoclaw default (upstream/main:src/config.ts:39 default
+    // 1800000ms). Was tweaked to 30_000 in d3109c2 as a band-aid for a
+    // close-sentinel write race — but the real fix in that same commit
+    // (write close-sentinel after first sandbox output) is sufficient on
+    // its own. Set to 0 to disable idle-close entirely.
+    idleTimeout: 1_800_000,
     engine: 'node' as const,
   },
   chats: {},

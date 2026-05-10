@@ -359,9 +359,9 @@ const DEFAULT_CONFIG = {
     timeout: 1800000,
     maxOutputSize: 10485760,
     maxConcurrent: 5,
-    // 30s idle (matches config-loader default) — defense in depth against
-    // orphaned containers if a close-sentinel write is ever missed.
-    idleTimeout: 30_000,
+    // 30 min idle (matches config-loader default + upstream
+    // upstream/main:src/config.ts:39).
+    idleTimeout: 1_800_000,
   },
   credentialProxy: { port: 3001 },
   logLevel: 'info',
