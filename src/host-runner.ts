@@ -433,9 +433,10 @@ export async function runHostAgent(
   }
   const args = [runnerPath];
 
-  const processName = input.isScheduledTask && input.taskId
-    ? `nanoclaw-task-${input.taskId.replace(/[^a-zA-Z0-9-]/g, '-')}-${Date.now()}`
-    : `nanoclaw-host-${group.folder.replace(/[^a-zA-Z0-9-]/g, '-')}-${Date.now()}`;
+  const processName =
+    input.isScheduledTask && input.taskId
+      ? `nanoclaw-task-${input.taskId.replace(/[^a-zA-Z0-9-]/g, '-')}-${Date.now()}`
+      : `nanoclaw-host-${group.folder.replace(/[^a-zA-Z0-9-]/g, '-')}-${Date.now()}`;
 
   logger.info(
     {

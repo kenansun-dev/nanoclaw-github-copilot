@@ -769,10 +769,7 @@ export class GroupQueue {
       if (pendingTask) {
         this.waitingTaskFns.delete(nextSlot);
         this.runTask(nextSlot, pendingTask.groupJid, pendingTask).catch((err) =>
-          logger.error(
-            { slotKey: nextSlot, taskId: pendingTask.id, err },
-            'Unhandled error in runTask (waiting)',
-          ),
+          logger.error({ slotKey: nextSlot, taskId: pendingTask.id, err }, 'Unhandled error in runTask (waiting)'),
         );
         continue;
       }
