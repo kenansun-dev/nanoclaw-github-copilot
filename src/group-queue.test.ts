@@ -102,42 +102,46 @@ describe('GroupQueue', () => {
 
   // --- Tasks prioritized over messages ---
 
-  it('drains tasks before messages for same group', async () => {
-    const executionOrder: string[] = [];
-    let resolveFirst: () => void;
+  // --- Detached tasks (§4.1.A 2026-05-11) ---
 
-    const processMessages = vi.fn(async (groupJid: string) => {
-      if (executionOrder.length === 0) {
-        // First call: block until we release it
-        await new Promise<void>((resolve) => {
-          resolveFirst = resolve;
-        });
-      }
+  it('runs tasks in their own slot in parallel with chat messages', async () => {
+    // Detached task semantics: a task does NOT block / preempt the chat
+    // slot. Same chat can run user messages and a task concurrently as
+    // long as the global concurrency cap allows.
+    const executionOrder: string[] = [];
+    let resolveMessages: () => void;
+
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveMessages = resolve;
+      });
       executionOrder.push('messages');
       return true;
     });
 
     queue.setProcessMessagesFn(processMessages);
 
-    // Start processing messages (takes the active slot)
+    // Start chat container.
     queue.enqueueMessageCheck('group1@g.us');
     await vi.advanceTimersByTimeAsync(10);
 
-    // While active, enqueue both a task and pending messages
+    // Enqueue a task on the same chat — should run in parallel, not wait.
+    let taskRan = false;
     const taskFn = vi.fn(async () => {
       executionOrder.push('task');
+      taskRan = true;
     });
     queue.enqueueTask('group1@g.us', 'task-1', taskFn);
-    queue.enqueueMessageCheck('group1@g.us');
 
-    // Release the first processing
-    resolveFirst!();
+    // Give microtasks a chance.
     await vi.advanceTimersByTimeAsync(10);
+    expect(taskRan).toBe(true);
+    expect(executionOrder[0]).toBe('task');
 
-    // Task should have run before the second message check
-    expect(executionOrder[0]).toBe('messages'); // first call
-    expect(executionOrder[1]).toBe('task'); // task runs first in drain
-    // Messages would run after task completes
+    // Now release the chat-message processing.
+    resolveMessages!();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(executionOrder).toContain('messages');
   });
 
   // --- Retry with backoff on failure ---
@@ -322,7 +326,9 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
-  it('preempts idle container when task is enqueued', async () => {
+  it('detached task does not preempt the chat container', async () => {
+    // Detached design (§4.1.A 2026-05-11): task gets its own slot, so an
+    // active+idle chat container is never closed by an incoming task.
     const fs = await import('fs');
     let resolveProcess: () => void;
 
@@ -335,11 +341,9 @@ describe('GroupQueue', () => {
 
     queue.setProcessMessagesFn(processMessages);
 
-    // Start processing
     queue.enqueueMessageCheck('group1@g.us');
     await vi.advanceTimersByTimeAsync(10);
 
-    // Register process and mark idle
     queue.registerProcess(
       'group1@g.us',
       { on: () => {}, exitCode: null, killed: false } as any,
@@ -348,18 +352,18 @@ describe('GroupQueue', () => {
     );
     queue.notifyIdle('group1@g.us');
 
-    // Clear previous writes, then enqueue a task
     const writeFileSync = vi.mocked(fs.default.writeFileSync);
     writeFileSync.mockClear();
 
     const taskFn = vi.fn(async () => {});
     queue.enqueueTask('group1@g.us', 'task-1', taskFn);
+    await vi.advanceTimersByTimeAsync(10);
 
-    // _close SHOULD have been written (container is idle)
+    // No _close on the chat slot — chat container stays alive.
     const closeWrites = writeFileSync.mock.calls.filter(
       (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
     );
-    expect(closeWrites).toHaveLength(1);
+    expect(closeWrites).toHaveLength(0);
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
@@ -408,7 +412,9 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
-  it('sendMessage returns false for task containers so user messages queue up', async () => {
+  it('sendMessage to chat jid still works while a detached task runs on same chat', async () => {
+    // Detached semantics (§4.1.A): tasks live in their own slot, so user
+    // messages on the same chat are not blocked.
     let resolveTask: () => void;
 
     const taskFn = vi.fn(async () => {
@@ -417,25 +423,34 @@ describe('GroupQueue', () => {
       });
     });
 
-    // Start a task (sets isTaskContainer = true)
     queue.enqueueTask('group1@g.us', 'task-1', taskFn);
     await vi.advanceTimersByTimeAsync(10);
+    // Task runs in its own slot; chat slot is independent. We need an
+    // active chat container for sendMessage to be able to pipe IPC —
+    // simulate one being up.
     queue.registerProcess(
       'group1@g.us',
       { on: () => {}, exitCode: null, killed: false } as any,
-      'container-1',
+      'container-chat',
       'test-group',
     );
+    const chatState = (queue as any).getGroup('group1@g.us');
+    chatState.active = true;
 
-    // sendMessage should return false — user messages must not go to task containers
     const result = queue.sendMessage('group1@g.us', 'hello');
-    expect(result).toBe(false);
+    // Chat slot is alive — message goes through. Critical: it does NOT
+    // get rejected just because a task is also running for this chat.
+    expect(result).toBe(true);
 
     resolveTask!();
     await vi.advanceTimersByTimeAsync(10);
   });
 
-  it('preempts when idle arrives with pending tasks', async () => {
+  it('detached task does not affect chat slot pendingTasks (§4.1.A)', async () => {
+    // Replaces the legacy 'preempts when idle arrives with pending tasks'
+    // test. With detached tasks, pendingTasks on the chat slot stays empty
+    // — every enqueueTask creates a per-task slot. So an idle chat
+    // container has nothing to wake up for and stays idle (no _close).
     const fs = await import('fs');
     let resolveProcess: () => void;
 
@@ -448,11 +463,8 @@ describe('GroupQueue', () => {
 
     queue.setProcessMessagesFn(processMessages);
 
-    // Start processing
     queue.enqueueMessageCheck('group1@g.us');
     await vi.advanceTimersByTimeAsync(10);
-
-    // Register process and enqueue a task (no idle yet — no preemption)
     queue.registerProcess(
       'group1@g.us',
       { on: () => {}, exitCode: null, killed: false } as any,
@@ -465,18 +477,17 @@ describe('GroupQueue', () => {
 
     const taskFn = vi.fn(async () => {});
     queue.enqueueTask('group1@g.us', 'task-1', taskFn);
+    await vi.advanceTimersByTimeAsync(10);
 
-    let closeWrites = writeFileSync.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
-    );
-    expect(closeWrites).toHaveLength(0);
-
-    // Now container becomes idle — should preempt because task is pending
+    // Now mark chat container idle — should NOT close, no pending task
+    // on chat slot (the task is in its own slot).
     writeFileSync.mockClear();
     queue.notifyIdle('group1@g.us');
 
-    closeWrites = writeFileSync.mock.calls.filter((call) => typeof call[0] === 'string' && call[0].endsWith('_close'));
-    expect(closeWrites).toHaveLength(1);
+    const closeWrites = writeFileSync.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
+    );
+    expect(closeWrites).toHaveLength(0);
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);

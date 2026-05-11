@@ -15,7 +15,7 @@ import {
   updateTask,
   updateTaskAfterRun,
 } from './db.js';
-import { GroupQueue } from './group-queue.js';
+import { GroupQueue, taskSlotKey } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './log-extensions.js';
 import { RegisteredGroup, ScheduledTask } from './types-extensions.js';
@@ -205,7 +205,8 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
     if (closeTimer) return; // already scheduled
     closeTimer = setTimeout(() => {
       logger.debug({ taskId: task.id }, 'Closing task container after result');
-      deps.queue.closeStdin(task.chat_jid);
+      // Detached task lives on its own slot (§4.1.A) — close that, not chat.
+      deps.queue.closeTaskStdin(task.chat_jid, task.id);
     }, TASK_CLOSE_DELAY_MS);
   };
 
@@ -223,10 +224,12 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
         chatJid: task.chat_jid,
         isMain,
         isScheduledTask: true,
+        taskId: task.id,
         assistantName: agent.name || ASSISTANT_NAME,
         script: task.script || undefined,
       },
-      (proc, containerName) => deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
+      (proc, containerName) =>
+        deps.onProcess(taskSlotKey(task.chat_jid, task.id), proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           const text = streamedOutput.result;
@@ -254,7 +257,9 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
           }
         }
         if (streamedOutput.status === 'success') {
-          deps.queue.notifyIdle(task.chat_jid);
+          // Task always runs on its own slot (§4.1.A). context_mode
+          // only controls sessionId reuse (line ~196), not slot routing.
+          deps.queue.notifyTaskIdle(task.chat_jid, task.id);
           scheduleClose();
         }
         if (streamedOutput.status === 'error') {
@@ -319,6 +324,14 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
           continue;
         }
 
+        // §4.1.B: every task runs detached after §4.1.A landed.
+        // context_mode field still controls sessionId reuse semantics:
+        //   - 'isolated' (default): fresh agent session, no chat history
+        //   - 'group' (opt-in): inherit chat's current session id so the
+        //     task agent has access to ongoing conversation context
+        //     (≡ OpenClaw cron sessionTarget: 'current' for that group)
+        // Slot routing is uniform: enqueueTask always opens a per-task
+        // slot (`${chatJid}::task::${taskId}`); chat slot stays free.
         deps.queue.enqueueTask(currentTask.chat_jid, currentTask.id, () => runTask(currentTask, deps));
       }
     } catch (err) {
