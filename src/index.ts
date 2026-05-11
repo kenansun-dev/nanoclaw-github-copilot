@@ -11,7 +11,6 @@ import {
   getTriggerPattern,
   DATA_DIR,
   GROUPS_DIR,
-  IDLE_TIMEOUT,
   MAX_MESSAGES_PER_PROMPT,
   ONECLI_URL,
   POLL_INTERVAL,
@@ -356,18 +355,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   logger.info({ group: group.name, messageCount: missedMessages.length }, 'Processing messages');
 
-  // Track idle timer for closing stdin when agent is idle
-  let idleTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const resetIdleTimer = () => {
-    if (IDLE_TIMEOUT <= 0) return; // 0 = never timeout
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      logger.debug({ group: group.name }, 'Idle timeout, closing container stdin');
-      queue.closeStdin(chatJid);
-    }, IDLE_TIMEOUT);
-  };
-
+  // Container idle-close is now handled by host-sweep (heartbeat mtime +
+  // claim-stuck detection) rather than an in-process setTimeout. Host mode
+  // is long-lived by design. Aligns with upstream which has no IDLE_TIMEOUT.
   await traceSetTyping(channel, chatJid, true, 'turn-start');
   // Defense-in-depth: even if runAgent rejects (unhandled), an editMessage
   // throws, or any unexpected error escapes the try block, the typing
@@ -790,7 +780,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           await armTypingBounded(channel, chatJid, 'after-interim-final', INTERIM_TYPING_TTL_MS);
         }
         logger.info({ group: group.name, partial: !!result.partial }, `Agent output: ${raw.length} chars`);
-        resetIdleTimer();
       }
 
       if (result.status === 'success') {
@@ -803,7 +792,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     });
 
     await traceSetTyping(channel, chatJid, false, 'turn-end');
-    if (idleTimer) clearTimeout(idleTimer);
 
     if (output === 'error' || hadError) {
       // If we already sent output to the user, don't roll back the cursor —
@@ -824,12 +812,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
     return true;
   } finally {
-    // Safety net: always release typing + clear idle timer, even if anything
-    // above threw. traceSetTyping swallows its own errors; idleTimer cleanup
-    // is no-throw. The 'finally-guard' reason makes stuck-typing investigations
-    // greppable: if grep shows finally-guard right before a stuck-typing
-    // report, an exception escaped the happy path.
-    if (idleTimer) clearTimeout(idleTimer);
+    // Safety net: always release typing, even if anything above threw.
+    // traceSetTyping swallows its own errors. The 'finally-guard' reason
+    // makes stuck-typing investigations greppable: if grep shows finally-guard
+    // right before a stuck-typing report, an exception escaped the happy path.
     // Cancel any unfinished native stream so the channel can clean up its
     // queue / mark the stream bubble as ended on the user's client. cancel()
     // is idempotent; called even if a normal end() already fired (the second
@@ -1486,9 +1472,36 @@ async function main(): Promise<void> {
 
   restoreRemoteControl();
 
+  // v2 host-sweep: heartbeat-based zombie detection (claim-stuck 60s default)
+  // + optional absolute-ceiling throttle (default disabled per owner directive
+  // 2026-05-10). Container mode only — host mode (sandbox.runtime is not
+  // 'docker'/'apple-container') has no per-session container, no claim/ack
+  // table writes, and no heartbeat writer; the sweep would be a no-op there.
+  // Skipping startup keeps the timer + DB scan off the host-mode hot path.
+  try {
+    const { loadConfig: lcSweep } = await import('./config-loader.js');
+    const { startHostSweep } = await import('./host-sweep.js');
+    const cfgSweep = lcSweep();
+    const runtime = cfgSweep.sandbox?.runtime;
+    if (runtime === 'docker' || runtime === 'apple-container') {
+      startHostSweep();
+      logger.info('Host sweep started (container mode)');
+    } else {
+      logger.debug('Host sweep skipped (host mode)');
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed to start host sweep');
+  }
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    try {
+      const { stopHostSweep } = await import('./host-sweep.js');
+      stopHostSweep();
+    } catch {
+      /* sweep may not have started */
+    }
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);

@@ -17,7 +17,6 @@ import {
   DATA_DIR,
   getConfig,
   GROUPS_DIR,
-  IDLE_TIMEOUT,
   ONECLI_API_KEY,
   ONECLI_URL,
   PACKAGE_ROOT,
@@ -486,10 +485,11 @@ export async function runContainerAgent(
 
     let timedOut = false;
     let hadStreamingOutput = false;
-    const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
-    // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
-    // graceful _close sentinel has time to trigger before the hard kill fires.
-    const timeoutMs = IDLE_TIMEOUT <= 0 ? configTimeout : Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
+    // Container lifecycle is now driven entirely by host-sweep (heartbeat
+    // mtime + claim-stuck) rather than an in-process idle setTimeout, so the
+    // hard timeout is just the configured container timeout — no IDLE_TIMEOUT
+    // grace period needed. Aligns with upstream (no IDLE_TIMEOUT in upstream).
+    const timeoutMs = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
 
     const killOnTimeout = () => {
       if (timedOut) return; // Guard against double-trigger
@@ -571,7 +571,7 @@ export async function runContainerAgent(
         resolve({
           status: 'error',
           result: null,
-          error: `Container timed out after ${configTimeout}ms`,
+          error: `Container timed out after ${timeoutMs}ms`,
         });
         return;
       }

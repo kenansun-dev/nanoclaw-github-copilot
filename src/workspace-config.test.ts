@@ -1,16 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import path from 'path';
 import os from 'os';
-import {
-  WORKSPACE_DIR_NAME,
-  LEGACY_WORKSPACE_DIR_NAME,
-} from './workspace-config.js';
-import {
-  setWorkspace,
-  resolveWorkspace,
-  assertWorkspaceIsolation,
-  seedV2FromV1IfNeeded,
-} from './workspace.js';
+import { WORKSPACE_DIR_NAME, LEGACY_WORKSPACE_DIR_NAME } from './workspace-config.js';
+import { setWorkspace, resolveWorkspace, assertWorkspaceIsolation } from './workspace.js';
 
 describe('workspace-config (in-place upgrade defaults)', () => {
   afterEach(() => {
@@ -42,9 +34,5 @@ describe('workspace-config (in-place upgrade defaults)', () => {
     delete process.env.NANOCLAW_WORKSPACE;
     expect(() => assertWorkspaceIsolation()).not.toThrow();
     expect(assertWorkspaceIsolation()).toBe(resolveWorkspace());
-  });
-
-  it('seedV2FromV1IfNeeded is a no-op shim and returns false', () => {
-    expect(seedV2FromV1IfNeeded()).toBe(false);
   });
 });

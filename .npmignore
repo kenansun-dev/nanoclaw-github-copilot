@@ -36,3 +36,7 @@ Thumbs.db
 node_modules/
 .husky/
 coverage/
+
+# Sourcemaps + declaration maps are stripped from dist/ trees by
+# scripts/strip-sourcemaps.mjs (run from package.json `prepack`).
+# They live in .gitignore so the build pipeline regenerates them as needed.

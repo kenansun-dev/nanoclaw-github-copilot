@@ -90,7 +90,9 @@ export async function runUpdate(args: string[]): Promise<void> {
     const ws = resolveWorkspace();
 
     if (noBackup) {
-      console.log('  ⚠️  --no-backup: skipping workspace snapshot (rollback will be impossible without an external backup)');
+      console.log(
+        '  ⚠️  --no-backup: skipping workspace snapshot (rollback will be impossible without an external backup)',
+      );
     } else if (!fs.existsSync(ws)) {
       console.log(`  (no workspace at ${ws} yet — skipping backup)`);
     } else {
@@ -101,9 +103,7 @@ export async function runUpdate(args: string[]): Promise<void> {
       const wsSize = dirSizeBytes(ws);
       const free = freeBytesAt(backupDir);
       const need = Math.ceil(wsSize * 1.2);
-      console.log(
-        `  workspace=${humanBytes(wsSize)}, free@backup=${humanBytes(free)}, need≈${humanBytes(need)}`,
-      );
+      console.log(`  workspace=${humanBytes(wsSize)}, free@backup=${humanBytes(free)}, need≈${humanBytes(need)}`);
       if (free < need) {
         console.error(
           `❌ Not enough disk space at ${backupDir} for safe backup.\n` +
@@ -122,7 +122,9 @@ export async function runUpdate(args: string[]): Promise<void> {
       if (stashedBinary) {
         console.log(`  ✅ Previous install captured: ${stashedBinary}`);
       } else {
-        console.log('  ⚠️  Could not capture current install (cp -a failed); rollback will need a manual v1 tgz at <backup-dir>/nanoclaw-prev.tgz');
+        console.log(
+          '  ⚠️  Could not capture current install (cp -a failed); rollback will need a manual v1 tgz at <backup-dir>/nanoclaw-prev.tgz',
+        );
       }
     }
   } catch (err: any) {
@@ -157,7 +159,14 @@ export async function runUpdate(args: string[]): Promise<void> {
         /* */
       }
 
-      execSync('nanoclaw stop', { stdio: 'inherit', timeout: 15000 });
+      // 120s timeout: `nanoclaw stop` may need to taskkill many tracked
+      // agent pids (host mode accumulates them). On win32 each taskkill /F /T
+      // costs ~1s, so 100 pids = ~100s. Owner hit ETIMEDOUT at 15s with 46
+      // pids on 2026-05-11 — stop reported timeout, update raced ahead, then
+      // npm install -g failed with EBUSY because grandchildren still held
+      // container/agent-runner-ghc handles. See host-runner.ts parallel
+      // taskkill below; raising the timeout is belt + braces.
+      execSync('nanoclaw stop', { stdio: 'inherit', timeout: 120000 });
       console.log('  Stopped running instance');
 
       // Wait for process to fully release file locks (important on Windows)
@@ -168,6 +177,43 @@ export async function runUpdate(args: string[]): Promise<void> {
       } else {
         // No PID file — wait a fixed time for safety
         await new Promise((r) => setTimeout(r, 2000));
+      }
+
+      // 2026-05-11 belt-and-braces #3 on top of parallel taskkill +
+      // 120s stop timeout: even after the main pid exits, win32 taskkill
+      // children may still be settling on slow disks. Poll agent-pids.json
+      // until it's gone (cleared by killAllAgentPids on success) or empty,
+      // up to 30s. This is the surest signal that file handles in
+      // container/agent-runner-ghc have been released so the upcoming
+      // `npm install -g` rename won't EBUSY.
+      try {
+        const { resolveWorkspace } = await import('../workspace.js');
+        const ws = resolveWorkspace();
+        const pidsFile = path.join(ws, 'state', 'agent-pids.json');
+        const pollDeadline = Date.now() + 30000;
+        let cleared = false;
+        while (Date.now() < pollDeadline) {
+          if (!fs.existsSync(pidsFile)) {
+            cleared = true;
+            break;
+          }
+          try {
+            const raw = fs.readFileSync(pidsFile, 'utf-8');
+            const remaining: number[] = JSON.parse(raw);
+            if (!Array.isArray(remaining) || remaining.length === 0) {
+              cleared = true;
+              break;
+            }
+          } catch {
+            // Unparseable / mid-write — keep polling.
+          }
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        if (!cleared) {
+          console.log('  ⚠️  agent-pids.json still non-empty after 30s; npm install may EBUSY. Continuing.');
+        }
+      } catch {
+        /* best effort — don't block update on workspace lookup */
       }
     } catch (err: any) {
       // Not running is fine; surface other errors so they aren't silently lost.
@@ -224,28 +270,12 @@ export async function runUpdate(args: string[]): Promise<void> {
 
     console.log('');
 
-    // v1 → v2 in-place workspace migration. No-op if workspace already on v2
-    // schema or if no workspace exists yet (fresh install).
-    try {
-      const { runV1Migration } = await import('./migrate-v1.js');
-      const { resolveWorkspace } = await import('../workspace.js');
-      const ws = resolveWorkspace();
-      if (fs.existsSync(ws)) {
-        const result = runV1Migration(ws, PROJECT_ROOT);
-        if (result.status === 'failed') {
-          console.error('');
-          console.error(`❌ v1 migration failed: ${result.message}`);
-          if (result.backupDir) {
-            console.error(`   Backup retained at: ${result.backupDir}`);
-          }
-          console.error('   Aborting update; service NOT restarted.');
-          process.exit(1);
-        }
-      }
-    } catch (err: any) {
-      console.error(`❌ Migration step crashed: ${err?.message ?? err}`);
-      process.exit(1);
-    }
+    // v1 → v2 migration removed 2026-05-11 per owner directive
+    // ("不需要 v1 backup, 删掉"). v2 schema is backward-compatible with v1
+    // (5/6 WORKSPACE_DIR_NAME=.nanoclaw in-place upgrade). The migrate-v1
+    // call here was legacy from earlier v2-mergeback work and was creating
+    // Windows backups + tsx-spawn races (exit null on owner's host) for no
+    // benefit. migrate-v1.ts kept as orphan for emergency manual recovery.
 
     // Re-run init in --sync mode to refresh templates / agent-runner deps
     // without re-prompting Telegram/Teams/auth (those were configured on

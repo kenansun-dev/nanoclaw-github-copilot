@@ -32,17 +32,13 @@ export function resolveWorkspace(): string {
 }
 
 /**
- * Backward-compat shims. The v2-merge staging guard + seed copy logic
- * was removed once `WORKSPACE_DIR_NAME` defaulted back to `.nanoclaw`
- * (in-place upgrade with no path split). Kept as no-ops so existing
- * call sites in `index.ts` keep compiling without churn; will be
- * deleted in a future cleanup.
+ * Backward-compat shim. The v2-merge staging guard was removed once
+ * `WORKSPACE_DIR_NAME` defaulted back to `.nanoclaw` (in-place upgrade with
+ * no path split). Kept as a no-op so the existing call site in `index.ts`
+ * keeps compiling without churn; will be deleted in a future cleanup.
  */
 export function assertWorkspaceIsolation(): string {
   return resolveWorkspace();
-}
-export function seedV2FromV1IfNeeded(): boolean {
-  return false;
 }
 
 /**

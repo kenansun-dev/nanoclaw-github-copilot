@@ -6,13 +6,16 @@
  *
  * Used when agents.defaults.mode === 'host'.
  */
-import { ChildProcess, spawn, execSync } from 'child_process';
+import { ChildProcess, spawn, execSync, exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { AGENT_RUN_TIMEOUT_MS, CONTAINER_TIMEOUT, IDLE_TIMEOUT, TIMEZONE, getConfig } from './config.js';
+import { AGENT_RUN_TIMEOUT_MS, TIMEZONE, getConfig } from './config.js';
 import { resolveWorkspace, paths as wsPaths } from './workspace.js';
 import { resolveAgentForChat, isAgentGHC, resolveGithubToken } from './config-extensions.js';
 import { getEffectiveModel, getEffectiveThinkLevel } from './session-overrides.js';
@@ -81,29 +84,29 @@ export async function killAllAgentPids(): Promise<void> {
       { pids, platform: process.platform },
       `killAllAgentPids: attempting to kill ${pids.length} tracked agent pid(s)`,
     );
-    for (const pid of pids) {
-      if (process.platform === 'win32') {
-        // Windows: ALWAYS run taskkill /F /T unconditionally. /T walks the
-        // process tree, so even if the root (this pid) is already a zombie,
-        // live grandchildren (tsx, node, docker, mcp subprocesses) get reaped.
-        // Previously we gated on `process.kill(pid, 0)` which is unreliable
-        // on Windows (can return true for zombies AND false for legit-dead-
-        // but-children-alive). Kenan hit EBUSY on npm install because of
-        // orphaned grandchildren holding container/agent-runner-ghc handles.
-        // 2026-04-21.
-        try {
-          execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'pipe' });
-          logger.info({ pid }, 'taskkill /F /T succeeded (tree killed)');
-        } catch (err: any) {
-          // Exit code 128 = process not found; treat as success.
-          const msg = err?.stderr?.toString?.() ?? String(err);
-          if (/not found|不存在|找不到/i.test(msg)) {
-            logger.debug({ pid }, 'taskkill: process already gone');
-          } else {
-            logger.warn({ pid, err: msg }, 'taskkill /F /T failed');
+    if (process.platform === 'win32') {
+      // Windows: parallel taskkill /F /T. Serial was ~1s/pid (taskkill
+      // spawns cmd.exe + walks process tree); 46 pids on owner's host =
+      // 46s, blowing past update.ts 15s stop timeout and racing into
+      // npm install -g (EBUSY on container/agent-runner-ghc grandchildren).
+      // Parallel = ~2s for any reasonable pid count. 2026-05-11.
+      await Promise.all(
+        pids.map(async (pid) => {
+          try {
+            await execAsync(`taskkill /F /T /PID ${pid}`);
+            logger.info({ pid }, 'taskkill /F /T succeeded (tree killed)');
+          } catch (err: any) {
+            const msg = err?.stderr?.toString?.() ?? String(err);
+            if (/not found|不存在|找不到/i.test(msg)) {
+              logger.debug({ pid }, 'taskkill: process already gone');
+            } else {
+              logger.warn({ pid, err: msg }, 'taskkill /F /T failed');
+            }
           }
-        }
-      } else {
+        }),
+      );
+    } else {
+      for (const pid of pids) {
         // POSIX: try process-group kill first (negative pid), then fall back
         // to single-pid. Process-group kill reaches detached grandchildren
         // spawned with setsid/detached:true.
@@ -482,23 +485,57 @@ export async function runHostAgent(
     let timedOut = false;
     let hadStreamingOutput = false;
 
-    const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
-    // Per-query timeout: agents.defaults.timeoutSeconds (default 300s = 5 min)
-    const queryTimeoutSec = getConfig().agents?.defaults?.timeoutSeconds ?? 300;
-    const queryTimeoutMs = queryTimeoutSec * 1000;
-
-    // Host mode with idleTimeout 0: no hard timeout for idle (agent stays alive between queries)
-    // But per-query timeout always applies to prevent stuck queries
-    const neverTimeout = IDLE_TIMEOUT <= 0;
-    const timeoutMs = neverTimeout
-      ? queryTimeoutMs // Use per-query timeout even in host mode
-      : Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
+    // Host mode is long-lived by design (no docker container to recycle, no
+    // image-rebuild cost, MCP servers keep their auth/session state in-process).
+    // sandbox.timeout / sandbox.idleTimeout are container-mode concepts —
+    // killing a host node every 30s/30min just costs spawn (1-3s) + MCP
+    // re-auth and gives nothing back (memory ~150MB is cheap on a personal
+    // host). Per owner direction (kenan, 2026-05-10): host mode IGNORES both
+    // sandbox timeouts. Only AGENT_RUN_TIMEOUT_MS (per-query, default 10min)
+    // applies — that's the canary that catches truly stuck queries / hung
+    // MCP calls and triggers the kill path below (see win32 fix in bfe60ee).
+    const neverTimeout = true; // host mode: always rely on per-query absoluteTimeout, never lifetime
+    const timeoutMs = 0; // unused when neverTimeout=true (see line ~569)
 
     const killOnTimeout = () => {
       if (timedOut) return; // Guard against double-trigger from idle + absolute timeout
       timedOut = true;
       logger.error({ group: group.name, processName }, 'Host agent timeout, killing');
-      // Kill the entire process group to avoid orphans
+      // Kill the entire process tree (agent + tsx + MCP subprocess descendants).
+      //
+      // BUG (kenan reported on Windows + slow MCP tools, 2026-05-10):
+      // Previously this branch unconditionally called `process.kill(-pid, ...)`.
+      // On Windows, Node's `process.kill()` IGNORES negative pids — only the
+      // root child gets the signal, MCP subprocess descendants survive holding
+      // stdio pipes open, the child's 'exit'/'close' event never fires,
+      // GroupQueue.state.active stays true forever, chat goes silent until
+      // daemon restart. Mirroring the same win32 branch we already have in
+      // killAllAgentPids() (line ~85) so per-query timeouts get tree-kill on
+      // Windows too.
+      if (process.platform === 'win32') {
+        try {
+          execSync(`taskkill /F /T /PID ${child.pid}`, { stdio: 'pipe' });
+          logger.warn({ pid: child.pid, group: group.name }, 'Host agent timeout: taskkill /F /T sent (tree kill)');
+        } catch (err: any) {
+          const msg = err?.stderr?.toString?.() ?? String(err);
+          logger.warn(
+            { pid: child.pid, err: msg },
+            'taskkill /F /T failed during timeout — falling back to child.kill',
+          );
+          if (!child.killed) child.kill('SIGKILL');
+        }
+        // Watchdog still useful on win32 to confirm taskkill reaped the tree.
+        setTimeout(() => {
+          const stillAlive = child.exitCode === null && (child as any).signalCode === null;
+          if (stillAlive) {
+            logger.error(
+              { group: group.name, processName, pid: child.pid },
+              'host-runner timeout watchdog (win32): child still alive 30s after taskkill /F /T — chat may be wedged',
+            );
+          }
+        }, 30_000).unref?.();
+        return;
+      }
       try {
         process.kill(-child.pid!, 'SIGTERM');
       } catch {
@@ -510,6 +547,28 @@ export async function runHostAgent(
         } catch {
           if (!child.killed) child.kill('SIGKILL');
         }
+        // Watchdog: SIGKILL on a process group should produce a 'close'
+        // event on the parent within ~1s once stdio pipes drain. If we
+        // are still seeing the child as alive 30s after SIGKILL, the
+        // 'close' handler has not fired and GroupQueue.registerProcess()
+        // exit listener is also blocked — that chat is now permanently
+        // wedged (state.active stays true, all subsequent messages get
+        // queued behind a dead process). We do NOT have evidence this
+        // race has actually happened in production (grep across all
+        // daemon logs: 0 hits for 'host-runner SIGKILL stuck'). This is
+        // a diagnostic canary: if the error fires we now have ground
+        // truth + pid/processName to root-cause. Once we see one, we
+        // wire a forceRelease() call into GroupQueue. Until then this
+        // is logging-only by design — no bypass for an unproven bug.
+        setTimeout(() => {
+          const stillAlive = child.exitCode === null && (child as any).signalCode === null;
+          if (stillAlive) {
+            logger.error(
+              { group: group.name, processName, pid: child.pid },
+              'host-runner SIGKILL watchdog: child still alive 30s after SIGKILL — chat may be wedged, please capture daemon log around this entry',
+            );
+          }
+        }, 30_000).unref?.();
       }, 10_000);
     };
 

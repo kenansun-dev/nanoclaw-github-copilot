@@ -123,7 +123,24 @@ export interface NanoclawConfig {
     timeout: number;
     maxOutputSize: number;
     maxConcurrent: number;
-    idleTimeout: number;
+    /**
+     * v2 host-sweep absolute ceiling: kill the container if heartbeat mtime
+     * is older than this (ms). 0 = disabled (no heartbeat-based throttle).
+     * Default 0: do not throttle on heartbeat age. Container idle-close is
+     * now driven entirely by host-sweep (legacy IDLE_TIMEOUT setTimeout +
+     * sandbox.idleTimeout were removed to align with upstream).
+     */
+    absoluteCeilingMs?: number;
+    /**
+     * v2 host-sweep claim-stuck tolerance: if a session has a 'processing'
+     * row older than this (ms) AND the heartbeat hasn't ticked since the
+     * claim, kill the container and re-queue. 0 = disabled.
+     * Default 60_000 (60s): catches truly hung containers fast without
+     * killing legitimately slow LLM/tool work (LLM does not gate heartbeat).
+     */
+    claimStuckMs?: number;
+    /** v2 host-sweep poll interval (ms). Default 60_000. */
+    sweepIntervalMs?: number;
     engine?: 'node' | 'tsx'; // node = compiled dist (default), tsx = self-modifying
   };
   chats: Record<
@@ -273,10 +290,13 @@ const DEFAULTS: NanoclawConfig = {
     timeout: 1800000,
     maxOutputSize: 10485760,
     maxConcurrent: 5,
-    // 30s idle = container exits if no IPC activity for 30s. Defense-in-depth
-    // against orphaned long-lived containers (e.g. tui --ask leaks if the
-    // close-sentinel write is ever skipped). Set to 0 to disable.
-    idleTimeout: 30_000,
+    // v2 host-sweep tunables (see interface above for semantics).
+    // Defaults: absolute ceiling disabled (owner directive 2026-05-10:
+    // "don't kill idle containers to save resources"), claim-stuck enabled
+    // at 60s for fast zombie detection.
+    absoluteCeilingMs: 0,
+    claimStuckMs: 60_000,
+    sweepIntervalMs: 60_000,
     engine: 'node' as const,
   },
   chats: {},

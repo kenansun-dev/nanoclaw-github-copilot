@@ -18,8 +18,14 @@
   let _ci = 0;
   while (_ci < _argv.length) {
     const a = _argv[_ci];
-    if (a === '--workspace' && _argv[_ci + 1]) { _ci += 2; continue; }
-    if (a === '--help' || a === '-h' || a === '--version' || a === '-v') { _ci += 1; continue; }
+    if (a === '--workspace' && _argv[_ci + 1]) {
+      _ci += 2;
+      continue;
+    }
+    if (a === '--help' || a === '-h' || a === '--version' || a === '-v') {
+      _ci += 1;
+      continue;
+    }
     break;
   }
   const _cmd = _argv[_ci];
@@ -223,7 +229,7 @@ async function runDoctor(_args: string[]) {
 }
 
 async function runService(action: string) {
-    const { resolveWorkspace, paths: wsPaths } = await import('./workspace.js');
+  const { resolveWorkspace, paths: wsPaths } = await import('./workspace.js');
   const ws = resolveWorkspace();
   const os = await import('os');
   const fs = await import('fs');

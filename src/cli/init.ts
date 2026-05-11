@@ -359,9 +359,11 @@ const DEFAULT_CONFIG = {
     timeout: 1800000,
     maxOutputSize: 10485760,
     maxConcurrent: 5,
-    // 30s idle (matches config-loader default) — defense in depth against
-    // orphaned containers if a close-sentinel write is ever missed.
-    idleTimeout: 30_000,
+    // v2 host-sweep tunables. absoluteCeilingMs=0 disables the
+    // heartbeat-age throttle (owner directive 2026-05-10).
+    absoluteCeilingMs: 0,
+    claimStuckMs: 60_000,
+    sweepIntervalMs: 60_000,
   },
   credentialProxy: { port: 3001 },
   logLevel: 'info',

@@ -45,16 +45,40 @@ import {
 import { log } from './log.js';
 import { openInboundDb, openOutboundDb, openOutboundDbRw, inboundDbPath, heartbeatPath } from './session-manager.js';
 import { isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
+import { loadConfig } from './config-loader.js';
 import type { Session } from './types.js';
 
-const SWEEP_INTERVAL_MS = 60_000;
+const DEFAULT_SWEEP_INTERVAL_MS = 60_000;
 // Absolute idle ceiling for a running container. If the heartbeat file hasn't
 // been touched in this long, the container is either stuck or doing genuinely
 // nothing — kill and restart on the next inbound.
+// NOTE: kept as exported const for test stability + as the default when the
+// caller doesn't pass an override. Runtime value comes from
+// config.sandbox.absoluteCeilingMs (default 0 = disabled).
 export const ABSOLUTE_CEILING_MS = 30 * 60 * 1000;
 // Stuck tolerance window applied per 'processing' claim — "did we see any
 // signs of life since this message was claimed?"
+// Runtime value comes from config.sandbox.claimStuckMs (default 60_000).
 export const CLAIM_STUCK_MS = 60 * 1000;
+
+/** Resolve sweep tunables from config with safe fallbacks. */
+function sweepTunables(): { ceilingMs: number; claimStuckMs: number; sweepIntervalMs: number } {
+  try {
+    const cfg = loadConfig();
+    const sb = cfg.sandbox as {
+      absoluteCeilingMs?: number;
+      claimStuckMs?: number;
+      sweepIntervalMs?: number;
+    };
+    return {
+      ceilingMs: sb.absoluteCeilingMs ?? 0,
+      claimStuckMs: sb.claimStuckMs ?? CLAIM_STUCK_MS,
+      sweepIntervalMs: sb.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS,
+    };
+  } catch {
+    return { ceilingMs: 0, claimStuckMs: CLAIM_STUCK_MS, sweepIntervalMs: DEFAULT_SWEEP_INTERVAL_MS };
+  }
+}
 const MAX_TRIES = 5;
 const BACKOFF_BASE_MS = 5000;
 
@@ -73,11 +97,18 @@ export function decideStuckAction(args: {
   heartbeatMtimeMs: number; // 0 when heartbeat file absent
   containerState: ContainerState | null;
   claims: Array<{ message_id: string; status_changed: string }>;
+  /** Override absolute ceiling (ms). Defaults to ABSOLUTE_CEILING_MS. 0 = skip ceiling check. */
+  ceilingMs?: number;
+  /** Override claim-stuck tolerance (ms). Defaults to CLAIM_STUCK_MS. 0 = skip claim-stuck check. */
+  claimStuckMs?: number;
 }): StuckDecision {
   const { now, heartbeatMtimeMs, containerState, claims } = args;
+  const ceilingBase = args.ceilingMs ?? ABSOLUTE_CEILING_MS;
+  const claimStuckBase = args.claimStuckMs ?? CLAIM_STUCK_MS;
   const declaredBashMs = bashTimeoutMs(containerState);
 
-  // Ceiling check only applies when we have an actual heartbeat timestamp.
+  // Ceiling check only applies when we have an actual heartbeat timestamp
+  // AND the configured ceiling is > 0 (0 = disabled).
   // A freshly-spawned container hasn't had any SDK activity yet so no
   // heartbeat file exists — if we treated that as infinitely stale we'd
   // kill every container within seconds of spawn. Genuinely-dead containers
@@ -85,15 +116,16 @@ export function decideStuckAction(args: {
   // process not running" cleanup path, not here. If a fresh container is
   // hanging at the gate (claimed a message but never did anything) the
   // claim-stuck check below handles it.
-  if (heartbeatMtimeMs !== 0) {
+  if (heartbeatMtimeMs !== 0 && ceilingBase > 0) {
     const heartbeatAge = now - heartbeatMtimeMs;
-    const ceiling = Math.max(ABSOLUTE_CEILING_MS, declaredBashMs ?? 0);
+    const ceiling = Math.max(ceilingBase, declaredBashMs ?? 0);
     if (heartbeatAge > ceiling) {
       return { action: 'kill-ceiling', heartbeatAgeMs: heartbeatAge, ceilingMs: ceiling };
     }
   }
 
-  const tolerance = Math.max(CLAIM_STUCK_MS, declaredBashMs ?? 0);
+  if (claimStuckBase <= 0) return { action: 'ok' };
+  const tolerance = Math.max(claimStuckBase, declaredBashMs ?? 0);
   for (const claim of claims) {
     const claimedAt = Date.parse(claim.status_changed);
     if (Number.isNaN(claimedAt)) continue;
@@ -130,7 +162,7 @@ async function sweep(): Promise<void> {
     log.error('Host sweep error', { err });
   }
 
-  setTimeout(sweep, SWEEP_INTERVAL_MS);
+  setTimeout(sweep, sweepTunables().sweepIntervalMs);
 }
 
 async function sweepSession(session: Session): Promise<void> {
@@ -220,11 +252,14 @@ function enforceRunningContainerSla(
   session: Session,
   agentGroupId: string,
 ): void {
+  const tunables = sweepTunables();
   const decision = decideStuckAction({
     now: Date.now(),
     heartbeatMtimeMs: heartbeatMtimeMs(agentGroupId, session.id),
     containerState: getContainerState(outDb),
     claims: getProcessingClaims(outDb),
+    ceilingMs: tunables.ceilingMs,
+    claimStuckMs: tunables.claimStuckMs,
   });
 
   if (decision.action === 'ok') return;
