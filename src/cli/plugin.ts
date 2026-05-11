@@ -922,6 +922,93 @@ async function runMarketplaceCommand(args: string[]): Promise<void> {
   }
 }
 
+/**
+ * Programmatic API for marketplace registration. Used by both the CLI
+ * commands below and the IPC handler in src/ipc.ts (so the agent can
+ * register/browse/remove marketplaces from chat via `nanoclaw_plugin`).
+ *
+ * Returns a result object instead of writing to console — callers do their
+ * own formatting (CLI prints; IPC sends to agent as MCP tool result).
+ */
+export function marketplaceAddProgrammatic(
+  source: string,
+  explicitName?: string,
+): { ok: true; name: string; pluginCount: number } | { ok: false; error: string } {
+  const config = loadConfig();
+  const existingList = getExtraKnownMarketplaces(config);
+
+  let name = explicitName;
+  if (!name) {
+    if (/^[\w.-]+\/[\w.-]+$/.test(source)) {
+      name = source.split('/')[1];
+    } else if (/\/([\w.-]+?)(?:\.git)?\/?$/.test(source)) {
+      const m = source.match(/\/([\w.-]+?)(?:\.git)?\/?$/);
+      name = m?.[1];
+    } else {
+      name = path.basename(source.replace(/\.git$/, ''));
+    }
+  }
+  if (!name) {
+    return { ok: false, error: 'Could not derive marketplace name from source; pass `name`' };
+  }
+  const existing = existingList.find((m) => m.name === name);
+  if (existing) {
+    return { ok: false, error: `Marketplace '${name}' already registered (source: ${existing.source})` };
+  }
+  try {
+    const catalog = fetchMarketplaceCatalog(name, source);
+    setExtraKnownMarketplaces(config, [...existingList, { name, source }]);
+    saveConfig(config);
+    return { ok: true, name, pluginCount: catalog.plugins?.length ?? 0 };
+  } catch (err: any) {
+    return { ok: false, error: `Failed to fetch marketplace catalog: ${err.message ?? err}` };
+  }
+}
+
+export function marketplaceBrowseProgrammatic(name: string):
+  | {
+      ok: true;
+      name: string;
+      description?: string;
+      plugins: Array<{ name: string; version?: string; description?: string }>;
+    }
+  | { ok: false; error: string } {
+  const config = loadConfig();
+  const mp = getExtraKnownMarketplaces(config).find((m) => m.name === name);
+  if (!mp) {
+    return { ok: false, error: `Marketplace '${name}' not registered. Use marketplace_add first.` };
+  }
+  try {
+    const catalog = fetchMarketplaceCatalog(mp.name, mp.source);
+    return {
+      ok: true,
+      name: catalog.name || mp.name,
+      description: catalog.description,
+      plugins: (catalog.plugins ?? []).map((p) => ({
+        name: p.name,
+        version: p.version,
+        description: p.description,
+      })),
+    };
+  } catch (err: any) {
+    return { ok: false, error: err.message ?? String(err) };
+  }
+}
+
+export function marketplaceRemoveProgrammatic(name: string): { ok: true; name: string } | { ok: false; error: string } {
+  const config = loadConfig();
+  const list = getExtraKnownMarketplaces(config);
+  const filtered = list.filter((m) => m.name !== name);
+  if (filtered.length === list.length) {
+    return { ok: false, error: `Marketplace '${name}' not found` };
+  }
+  setExtraKnownMarketplaces(config, filtered);
+  saveConfig(config);
+  const cached = path.join(marketplaceCacheDir(), name);
+  if (fs.existsSync(cached)) fs.rmSync(cached, { recursive: true });
+  return { ok: true, name };
+}
+
 function marketplaceList(): void {
   const config = loadConfig();
   const list = getExtraKnownMarketplaces(config);
@@ -937,89 +1024,43 @@ function marketplaceList(): void {
 }
 
 function marketplaceAdd(source: string, explicitName?: string): void {
-  const config = loadConfig();
-  const existingList = getExtraKnownMarketplaces(config);
-
-  // Derive a default name from source if not provided.
-  let name = explicitName;
-  if (!name) {
-    if (/^[\w.-]+\/[\w.-]+$/.test(source)) {
-      // owner/repo → use repo part
-      name = source.split('/')[1];
-    } else if (/\/([\w.-]+?)(?:\.git)?\/?$/.test(source)) {
-      const m = source.match(/\/([\w.-]+?)(?:\.git)?\/?$/);
-      name = m?.[1];
-    } else {
-      name = path.basename(source.replace(/\.git$/, ''));
-    }
-  }
-  if (!name) {
-    console.error('❌ Could not derive marketplace name from source. Pass --name <name>.');
-    return;
-  }
-
-  const existing = existingList.find((m) => m.name === name);
-  if (existing) {
-    console.error(`❌ Marketplace '${name}' already registered (source: ${existing.source}).`);
-    return;
-  }
-
-  // Verify the catalog actually exists by fetching it once.
-  try {
-    const catalog = fetchMarketplaceCatalog(name, source);
-    setExtraKnownMarketplaces(config, [...existingList, { name, source }]);
-    saveConfig(config);
-    console.log(`✅ Registered marketplace '${name}' (${catalog.plugins?.length ?? 0} plugins available)`);
-  } catch (err: any) {
-    console.error(`❌ Failed to register marketplace: ${err.message}`);
+  const r = marketplaceAddProgrammatic(source, explicitName);
+  if (r.ok) {
+    console.log(`✅ Registered marketplace '${r.name}' (${r.pluginCount} plugins available)`);
+  } else {
+    console.error(`❌ ${r.error}`);
   }
 }
 
 function marketplaceBrowse(name: string): void {
-  const config = loadConfig();
-  const mp = getExtraKnownMarketplaces(config).find((m) => m.name === name);
-  if (!mp) {
-    console.error(`❌ Marketplace '${name}' not registered.`);
+  const r = marketplaceBrowseProgrammatic(name);
+  if (!r.ok) {
+    console.error(`❌ ${r.error}`);
     return;
   }
-  let catalog: MarketplaceCatalog;
-  try {
-    catalog = fetchMarketplaceCatalog(mp.name, mp.source);
-  } catch (err: any) {
-    console.error(`❌ ${err.message}`);
-    return;
-  }
-  console.log(`\n✨ Marketplace: ${catalog.name || mp.name}`);
-  if (catalog.description) console.log(`   ${catalog.description}`);
+  console.log(`\n✨ Marketplace: ${r.name}`);
+  if (r.description) console.log(`   ${r.description}`);
   console.log('');
-  if (!catalog.plugins || catalog.plugins.length === 0) {
+  if (r.plugins.length === 0) {
     console.log('  (no plugins in this marketplace)');
     return;
   }
-  for (const p of catalog.plugins) {
+  for (const p of r.plugins) {
     const ver = p.version ? ` v${p.version}` : '';
     console.log(`  📦 ${p.name}${ver}`);
     if (p.description) console.log(`     ${p.description}`);
-    console.log(`     install: \`nanoclaw plugin install ${p.name}@${mp.name}\``);
+    console.log(`     install: \`nanoclaw plugin install ${p.name}@${name}\``);
   }
   console.log('');
 }
 
 function marketplaceRemove(name: string): void {
-  const config = loadConfig();
-  const list = getExtraKnownMarketplaces(config);
-  const before = list.length;
-  const filtered = list.filter((m) => m.name !== name);
-  if (filtered.length === before) {
-    console.error(`❌ Marketplace '${name}' not found.`);
-    return;
+  const r = marketplaceRemoveProgrammatic(name);
+  if (r.ok) {
+    console.log(`✅ Unregistered marketplace: ${r.name}`);
+  } else {
+    console.error(`❌ ${r.error}`);
   }
-  setExtraKnownMarketplaces(config, filtered);
-  saveConfig(config);
-  // Also wipe the cached clone so a re-add re-fetches.
-  const cached = path.join(marketplaceCacheDir(), name);
-  if (fs.existsSync(cached)) fs.rmSync(cached, { recursive: true });
-  console.log(`✅ Unregistered marketplace: ${name}`);
 }
 
 // ─── Startup auto-install ────────────────────────────────────────────

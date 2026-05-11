@@ -105,10 +105,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 await handleControlIpc(data, deps);
               }
               // Handle nanoclaw_plugin IPC (list/install/uninstall/marketplace_*).
-              // Plugin reads are safe everywhere, but mutating actions are
-              // restricted to the main chat (same model as control).
+              // Read-only actions (list, marketplace_list, marketplace_browse) work
+              // anywhere; mutating actions (install, uninstall, marketplace_add,
+              // marketplace_remove) are restricted to the main chat for safety.
               if (data.type === 'plugin') {
-                if (['list', 'marketplace_list'].includes(data.action) || isMain) {
+                const readOnlyActions = ['list', 'marketplace_list', 'marketplace_browse'];
+                if (readOnlyActions.includes(data.action) || isMain) {
                   const responseDir = path.join(ipcBaseDir, sourceGroup, 'responses');
                   await handlePluginIpc(data, responseDir);
                 }
@@ -648,6 +650,37 @@ export async function handlePluginIpc(data: any, responseDir: string): Promise<v
           ok: true,
           marketplaces: getExtraKnownMarketplaces(config),
         });
+        break;
+      }
+      case 'marketplace_add': {
+        if (!data.source) {
+          writeResponse({ ok: false, error: 'marketplace_add requires `source` (owner/repo or git URL)' });
+          break;
+        }
+        const r = plugin.marketplaceAddProgrammatic(data.source, data.name);
+        if (r.ok) {
+          writeResponse({ ok: true, name: r.name, pluginCount: r.pluginCount });
+        } else {
+          writeResponse({ ok: false, error: r.error });
+        }
+        break;
+      }
+      case 'marketplace_browse': {
+        if (!data.name) {
+          writeResponse({ ok: false, error: 'marketplace_browse requires `name`' });
+          break;
+        }
+        const r = plugin.marketplaceBrowseProgrammatic(data.name);
+        writeResponse(r);
+        break;
+      }
+      case 'marketplace_remove': {
+        if (!data.name) {
+          writeResponse({ ok: false, error: 'marketplace_remove requires `name`' });
+          break;
+        }
+        const r = plugin.marketplaceRemoveProgrammatic(data.name);
+        writeResponse(r);
         break;
       }
       default:

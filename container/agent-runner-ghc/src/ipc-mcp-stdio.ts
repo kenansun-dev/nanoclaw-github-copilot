@@ -13,7 +13,7 @@ import { CronExpressionParser } from 'cron-parser';
 import { registerMemoryTools } from './memory-tools.js';
 
 const IPC_DIR = process.env.NANOCLAW_IPC_DIR
-  ? path.dirname(process.env.NANOCLAW_IPC_DIR)  // NANOCLAW_IPC_DIR points to input/, go up one level
+  ? path.dirname(process.env.NANOCLAW_IPC_DIR) // NANOCLAW_IPC_DIR points to input/, go up one level
   : '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
@@ -48,7 +48,12 @@ server.tool(
   "Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times.",
   {
     text: z.string().describe('The message text to send'),
-    sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
+    sender: z
+      .string()
+      .optional()
+      .describe(
+        'Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.',
+      ),
   },
   async (args) => {
     const data: Record<string, string | undefined> = {
@@ -90,11 +95,25 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 \u2022 interval: Milliseconds between runs (e.g., "300000" for 5 minutes, "3600000" for 1 hour)
 \u2022 once: Local time WITHOUT "Z" suffix (e.g., "2026-02-01T15:30:00"). Do NOT use UTC/Z suffix.`,
   {
-    prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
-    schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
-    schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
-    context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
-    target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
+    prompt: z
+      .string()
+      .describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
+    schedule_type: z
+      .enum(['cron', 'interval', 'once'])
+      .describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
+    schedule_value: z
+      .string()
+      .describe(
+        'cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)',
+      ),
+    context_mode: z
+      .enum(['group', 'isolated'])
+      .default('group')
+      .describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
+    target_group_jid: z
+      .string()
+      .optional()
+      .describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
   },
   async (args) => {
     // Validate schedule_value before writing IPC
@@ -103,7 +122,12 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
         CronExpressionParser.parse(args.schedule_value);
       } catch {
         return {
-          content: [{ type: 'text' as const, text: `Invalid cron: "${args.schedule_value}". Use format like "0 9 * * *" (daily 9am) or "*/5 * * * *" (every 5 min).` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `Invalid cron: "${args.schedule_value}". Use format like "0 9 * * *" (daily 9am) or "*/5 * * * *" (every 5 min).`,
+            },
+          ],
           isError: true,
         };
       }
@@ -111,21 +135,36 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       const ms = parseInt(args.schedule_value, 10);
       if (isNaN(ms) || ms <= 0) {
         return {
-          content: [{ type: 'text' as const, text: `Invalid interval: "${args.schedule_value}". Must be positive milliseconds (e.g., "300000" for 5 min).` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `Invalid interval: "${args.schedule_value}". Must be positive milliseconds (e.g., "300000" for 5 min).`,
+            },
+          ],
           isError: true,
         };
       }
     } else if (args.schedule_type === 'once') {
       if (/[Zz]$/.test(args.schedule_value) || /[+-]\d{2}:\d{2}$/.test(args.schedule_value)) {
         return {
-          content: [{ type: 'text' as const, text: `Timestamp must be local time without timezone suffix. Got "${args.schedule_value}" — use format like "2026-02-01T15:30:00".` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `Timestamp must be local time without timezone suffix. Got "${args.schedule_value}" — use format like "2026-02-01T15:30:00".`,
+            },
+          ],
           isError: true,
         };
       }
       const date = new Date(args.schedule_value);
       if (isNaN(date.getTime())) {
         return {
-          content: [{ type: 'text' as const, text: `Invalid timestamp: "${args.schedule_value}". Use local time format like "2026-02-01T15:30:00".` }],
+          content: [
+            {
+              type: 'text' as const,
+              text: `Invalid timestamp: "${args.schedule_value}". Use local time format like "2026-02-01T15:30:00".`,
+            },
+          ],
           isError: true,
         };
       }
@@ -151,7 +190,9 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     writeIpcFile(TASKS_DIR, data);
 
     return {
-      content: [{ type: 'text' as const, text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}` }],
+      content: [
+        { type: 'text' as const, text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}` },
+      ],
     };
   },
 );
@@ -170,9 +211,7 @@ server.tool(
 
       const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
 
-      const tasks = isMain
-        ? allTasks
-        : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
+      const tasks = isMain ? allTasks : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
 
       if (tasks.length === 0) {
         return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
@@ -180,7 +219,14 @@ server.tool(
 
       const formatted = tasks
         .map(
-          (t: { id: string; prompt: string; schedule_type: string; schedule_value: string; status: string; next_run: string }) =>
+          (t: {
+            id: string;
+            prompt: string;
+            schedule_type: string;
+            schedule_value: string;
+            status: string;
+            next_run: string;
+          }) =>
             `- [${t.id}] ${t.prompt.slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
         )
         .join('\n');
@@ -188,7 +234,9 @@ server.tool(
       return { content: [{ type: 'text' as const, text: `Scheduled tasks:\n${formatted}` }] };
     } catch (err) {
       return {
-        content: [{ type: 'text' as const, text: `Error reading tasks: ${err instanceof Error ? err.message : String(err)}` }],
+        content: [
+          { type: 'text' as const, text: `Error reading tasks: ${err instanceof Error ? err.message : String(err)}` },
+        ],
       };
     }
   },
@@ -307,7 +355,9 @@ server.tool(
 
 Use available_groups.json to find the JID for a group. The folder name must be channel-prefixed: "{channel}_{group-name}" (e.g., "whatsapp_family-chat", "telegram_dev-team", "discord_general"). Use lowercase with hyphens for the group name part.`,
   {
-    jid: z.string().describe('The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")'),
+    jid: z
+      .string()
+      .describe('The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")'),
     name: z.string().describe('Display name for the group'),
     folder: z.string().describe('Channel-prefixed folder name (e.g., "whatsapp_family-chat", "telegram_dev-team")'),
     trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
@@ -332,7 +382,12 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     writeIpcFile(TASKS_DIR, data);
 
     return {
-      content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
+      content: [
+        {
+          type: 'text' as const,
+          text: `Group "${args.name}" registered. It will start receiving messages immediately.`,
+        },
+      ],
     };
   },
 );
@@ -392,24 +447,23 @@ server.tool(
     'Only use `restart` for things that genuinely need it: channel auth tokens, port bindings, sandbox image rebuilds, or nanoclaw itself updates. ' +
     'When in doubt, prefer reload over restart. Only available in main chat.',
   {
-    action: z.enum(['restart', 'reload_config', 'set_config']).describe(
-      'Action to perform: restart (restart nanoclaw service), reload_config (reload nanoclaw.json without restart), set_config (change a config value)',
-    ),
-    config_path: z
-      .string()
-      .optional()
-      .describe('Config field path for set_config (e.g. "agents.defaults.model")'),
-    config_value: z
-      .string()
-      .optional()
-      .describe('New value for set_config (JSON string)'),
+    action: z
+      .enum(['restart', 'reload_config', 'set_config'])
+      .describe(
+        'Action to perform: restart (restart nanoclaw service), reload_config (reload nanoclaw.json without restart), set_config (change a config value)',
+      ),
+    config_path: z.string().optional().describe('Config field path for set_config (e.g. "agents.defaults.model")'),
+    config_value: z.string().optional().describe('New value for set_config (JSON string)'),
   },
   async (args) => {
     // Only main group can use control commands
     if (!isMain) {
       return {
         content: [
-          { type: 'text' as const, text: 'Error: nanoclaw_control is only available in the main chat. This chat is not the main chat, so control commands (restart, config changes) are not allowed.' },
+          {
+            type: 'text' as const,
+            text: 'Error: nanoclaw_control is only available in the main chat. This chat is not the main chat, so control commands (restart, config changes) are not allowed.',
+          },
         ],
       };
     }
@@ -422,14 +476,13 @@ server.tool(
     };
     writeIpcFile(MESSAGES_DIR, data);
     const messages: Record<string, string> = {
-      restart: 'Restart signal sent. NanoClaw will restart — your current session will end. Changes take effect on next message.',
+      restart:
+        'Restart signal sent. NanoClaw will restart — your current session will end. Changes take effect on next message.',
       reload_config: 'Config reload signal sent.',
       set_config: `Config update sent: ${args.config_path} = ${args.config_value}`,
     };
     return {
-      content: [
-        { type: 'text' as const, text: messages[args.action] || 'Control signal sent.' },
-      ],
+      content: [{ type: 'text' as const, text: messages[args.action] || 'Control signal sent.' }],
     };
   },
 );
@@ -440,28 +493,43 @@ registerMemoryTools(server);
 
 server.tool(
   'nanoclaw_plugin',
-  'List, install, or uninstall NanoClaw plugins. Plugins are bundles of skills + ' +
-    'MCP servers + agents that extend NanoClaw, declared in nanoclaw.json under ' +
-    '`plugins.enabled[]`. Source formats supported: `name@marketplace`, ' +
-    '`owner/repo[:subdir]`, full git URL, local path. ' +
-    'Read-only actions (list, marketplace_list) work everywhere; install/uninstall ' +
-    'are restricted to the main chat for safety. After install, restart the daemon ' +
-    'with nanoclaw_control(restart) for new MCP servers to load; pure-skill plugins ' +
-    'are picked up on the next agent invocation.',
+  'List, install, or uninstall NanoClaw plugins, and manage plugin marketplaces. ' +
+    'Plugins are bundles of skills + MCP servers + agents that extend NanoClaw, ' +
+    'declared in nanoclaw.json under `plugins.enabled[]`. ' +
+    'Source formats supported: `name@marketplace`, `owner/repo[:subdir]`, full git URL, local path. ' +
+    'Typical workflow for a marketplace plugin: (1) `marketplace_add` with the marketplace repo (e.g. `owner/marketplace-repo`), ' +
+    '(2) `marketplace_browse` to see available plugins, (3) `install` with `source: "plugin-name@marketplace-name"`. ' +
+    'Two marketplaces are auto-known and need no add: `copilot-plugins` and `awesome-copilot`. ' +
+    'Read-only actions (list, marketplace_list, marketplace_browse) work everywhere; ' +
+    'mutating actions (install, uninstall, marketplace_add, marketplace_remove) are restricted to the main chat for safety. ' +
+    'After installing a plugin that ships MCP servers, restart the daemon with nanoclaw_control(restart) so the new servers register; ' +
+    'pure-skill plugins are picked up on the next agent invocation.',
   {
     action: z
-      .enum(['list', 'install', 'uninstall', 'marketplace_list'])
+      .enum([
+        'list',
+        'install',
+        'uninstall',
+        'marketplace_list',
+        'marketplace_add',
+        'marketplace_browse',
+        'marketplace_remove',
+      ])
       .describe(
-        'list = enumerate installed plugins. install = add to plugins.enabled[] and fetch (requires source). uninstall = remove from plugins.enabled[] and delete plugin dir (requires name). marketplace_list = show registered marketplaces.',
+        'list = enumerate installed plugins. install = add to plugins.enabled[] and fetch (requires source). uninstall = remove from plugins.enabled[] and delete plugin dir (requires name). marketplace_list = show registered marketplaces. marketplace_add = register a new marketplace (requires source; name optional, derived from source). marketplace_browse = list plugins in a registered marketplace (requires name). marketplace_remove = unregister a marketplace (requires name).',
       ),
     name: z
       .string()
       .optional()
-      .describe('Plugin name (required for install when source is a URL/path with no obvious name; required for uninstall).'),
+      .describe(
+        'Plugin or marketplace name (required for uninstall, marketplace_browse, marketplace_remove; optional for install/marketplace_add when derivable from source).',
+      ),
     source: z
       .string()
       .optional()
-      .describe('Install spec: `name@marketplace`, `owner/repo[:subdir]`, git URL, or local path.'),
+      .describe(
+        'Install/registration spec: `name@marketplace`, `owner/repo[:subdir]`, git URL, or local path. Required for install and marketplace_add.',
+      ),
   },
   async (args) => {
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -526,7 +594,8 @@ server.tool(
           provider?: string;
         }>;
         if (plugins.length === 0) {
-          text = 'No plugins installed. Use `nanoclaw_plugin install` with a source to add one, or list marketplaces with `marketplace_list`.';
+          text =
+            'No plugins installed. Use `nanoclaw_plugin install` with a source to add one, or list marketplaces with `marketplace_list`.';
         } else {
           text =
             `Installed plugins (${plugins.length}):\n` +
@@ -548,9 +617,7 @@ server.tool(
         if (skipped.length) lines.push(`Already installed (skipped): ${skipped.join(', ')}`);
         if (failed.length) {
           lines.push(
-            `Failed:\n${failed
-              .map((f: { name: string; error: string }) => `  - ${f.name}: ${f.error}`)
-              .join('\n')}`,
+            `Failed:\n${failed.map((f: { name: string; error: string }) => `  - ${f.name}: ${f.error}`).join('\n')}`,
           );
         }
         if (lines.length === 0) lines.push('No changes (entry already declared, no new install).');
@@ -564,12 +631,37 @@ server.tool(
       case 'marketplace_list': {
         const ms = response.marketplaces ?? [];
         if (ms.length === 0) {
-          text = 'No marketplaces registered. Use `nanoclaw plugin marketplace add <source>` (CLI) to register one.';
+          text =
+            'No marketplaces registered. Use `marketplace_add` with `source: "owner/repo"` to register one (or use the auto-known `copilot-plugins` / `awesome-copilot` marketplaces directly).';
         } else {
           text =
-            `Registered marketplaces (${ms.length}):\n` +
-            ms.map((m: any) => `  - ${m.name}: ${m.source}`).join('\n');
+            `Registered marketplaces (${ms.length}):\n` + ms.map((m: any) => `  - ${m.name}: ${m.source}`).join('\n');
         }
+        break;
+      }
+      case 'marketplace_add': {
+        text = `Registered marketplace \`${response.name}\` (${response.pluginCount} plugins available). Use marketplace_browse to see them, then install with \`source: "<plugin>@${response.name}"\`.`;
+        break;
+      }
+      case 'marketplace_browse': {
+        const plugins = (response.plugins ?? []) as Array<{ name: string; version?: string; description?: string }>;
+        const header = `Marketplace: ${response.name}${response.description ? ` — ${response.description}` : ''}`;
+        if (plugins.length === 0) {
+          text = `${header}\n  (no plugins in this marketplace)`;
+        } else {
+          text =
+            `${header}\n` +
+            plugins
+              .map(
+                (p) =>
+                  `  📦 ${p.name}${p.version ? ` v${p.version}` : ''}${p.description ? `\n     ${p.description}` : ''}\n     install: source="${p.name}@${response.name}"`,
+              )
+              .join('\n');
+        }
+        break;
+      }
+      case 'marketplace_remove': {
+        text = `Unregistered marketplace \`${response.name}\`.`;
         break;
       }
       default:

@@ -28,10 +28,7 @@ server.tool(
       .describe(
         'Action to perform: restart (restart nanoclaw service), reload_config (reload nanoclaw.json without restart), set_config (change a config value)',
       ),
-    config_path: z
-      .string()
-      .optional()
-      .describe('Config field path for set_config (e.g. "agents.defaults.model")'),
+    config_path: z.string().optional().describe('Config field path for set_config (e.g. "agents.defaults.model")'),
     config_value: z.string().optional().describe('New value for set_config (JSON string)'),
   },
   async (args) => {
@@ -67,30 +64,43 @@ server.tool(
 
 server.tool(
   'nanoclaw_plugin',
-  'List, install, or uninstall NanoClaw plugins. Plugins are bundles of skills + ' +
-    'MCP servers + agents that extend NanoClaw, declared in nanoclaw.json under ' +
-    '`plugins.enabled[]`. Source formats supported: `name@marketplace`, ' +
-    '`owner/repo[:subdir]`, full git URL, local path. ' +
-    'Read-only actions (list, marketplace_list) work everywhere; install/uninstall ' +
-    'are restricted to the main chat for safety. After install, restart the daemon ' +
-    'with nanoclaw_control(restart) for new MCP servers to load; pure-skill plugins ' +
-    'are picked up on the next agent invocation.',
+  'List, install, or uninstall NanoClaw plugins, and manage plugin marketplaces. ' +
+    'Plugins are bundles of skills + MCP servers + agents that extend NanoClaw, ' +
+    'declared in nanoclaw.json under `plugins.enabled[]`. ' +
+    'Source formats supported: `name@marketplace`, `owner/repo[:subdir]`, full git URL, local path. ' +
+    'Typical workflow for a marketplace plugin: (1) `marketplace_add` with the marketplace repo (e.g. `owner/marketplace-repo`), ' +
+    '(2) `marketplace_browse` to see available plugins, (3) `install` with `source: "plugin-name@marketplace-name"`. ' +
+    'Two marketplaces are auto-known and need no add: `copilot-plugins` and `awesome-copilot`. ' +
+    'Read-only actions (list, marketplace_list, marketplace_browse) work everywhere; ' +
+    'mutating actions (install, uninstall, marketplace_add, marketplace_remove) are restricted to the main chat for safety. ' +
+    'After installing a plugin that ships MCP servers, restart the daemon with nanoclaw_control(restart) so the new servers register; ' +
+    'pure-skill plugins are picked up on the next agent invocation.',
   {
     action: z
-      .enum(['list', 'install', 'uninstall', 'marketplace_list'])
+      .enum([
+        'list',
+        'install',
+        'uninstall',
+        'marketplace_list',
+        'marketplace_add',
+        'marketplace_browse',
+        'marketplace_remove',
+      ])
       .describe(
-        'list = enumerate installed plugins. install = add to plugins.enabled[] and fetch (requires source). uninstall = remove from plugins.enabled[] and delete plugin dir (requires name). marketplace_list = show registered marketplaces.',
+        'list = enumerate installed plugins. install = add to plugins.enabled[] and fetch (requires source). uninstall = remove from plugins.enabled[] and delete plugin dir (requires name). marketplace_list = show registered marketplaces. marketplace_add = register a new marketplace (requires source; name optional, derived from source). marketplace_browse = list plugins in a registered marketplace (requires name). marketplace_remove = unregister a marketplace (requires name).',
       ),
     name: z
       .string()
       .optional()
       .describe(
-        'Plugin name (required for install when source is a URL/path with no obvious name; required for uninstall).',
+        'Plugin or marketplace name (required for uninstall, marketplace_browse, marketplace_remove; optional for install/marketplace_add when derivable from source).',
       ),
     source: z
       .string()
       .optional()
-      .describe('Install spec: `name@marketplace`, `owner/repo[:subdir]`, git URL, or local path.'),
+      .describe(
+        'Install/registration spec: `name@marketplace`, `owner/repo[:subdir]`, git URL, or local path. Required for install and marketplace_add.',
+      ),
   },
   async (args) => {
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -178,9 +188,7 @@ server.tool(
         if (skipped.length) lines.push(`Already installed (skipped): ${skipped.join(', ')}`);
         if (failed.length) {
           lines.push(
-            `Failed:\n${failed
-              .map((f: { name: string; error: string }) => `  - ${f.name}: ${f.error}`)
-              .join('\n')}`,
+            `Failed:\n${failed.map((f: { name: string; error: string }) => `  - ${f.name}: ${f.error}`).join('\n')}`,
           );
         }
         if (lines.length === 0) lines.push('No changes (entry already declared, no new install).');
@@ -195,12 +203,36 @@ server.tool(
         const ms = response.marketplaces ?? [];
         if (ms.length === 0) {
           text =
-            'No marketplaces registered. Use `nanoclaw plugin marketplace add <source>` (CLI) to register one.';
+            'No marketplaces registered. Use `marketplace_add` with `source: "owner/repo"` to register one (or use the auto-known `copilot-plugins` / `awesome-copilot` marketplaces directly).';
         } else {
           text =
-            `Registered marketplaces (${ms.length}):\n` +
-            ms.map((m: any) => `  - ${m.name}: ${m.source}`).join('\n');
+            `Registered marketplaces (${ms.length}):\n` + ms.map((m: any) => `  - ${m.name}: ${m.source}`).join('\n');
         }
+        break;
+      }
+      case 'marketplace_add': {
+        text = `Registered marketplace \`${response.name}\` (${response.pluginCount} plugins available). Use marketplace_browse to see them, then install with \`source: "<plugin>@${response.name}"\`.`;
+        break;
+      }
+      case 'marketplace_browse': {
+        const plugins = (response.plugins ?? []) as Array<{ name: string; version?: string; description?: string }>;
+        const header = `Marketplace: ${response.name}${response.description ? ` — ${response.description}` : ''}`;
+        if (plugins.length === 0) {
+          text = `${header}\n  (no plugins in this marketplace)`;
+        } else {
+          text =
+            `${header}\n` +
+            plugins
+              .map(
+                (p) =>
+                  `  📦 ${p.name}${p.version ? ` v${p.version}` : ''}${p.description ? `\n     ${p.description}` : ''}\n     install: source="${p.name}@${response.name}"`,
+              )
+              .join('\n');
+        }
+        break;
+      }
+      case 'marketplace_remove': {
+        text = `Unregistered marketplace \`${response.name}\`.`;
         break;
       }
       default:
