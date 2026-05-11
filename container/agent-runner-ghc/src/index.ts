@@ -50,7 +50,9 @@ async function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
     process.stdin.setEncoding('utf8');
-    process.stdin.on('data', chunk => { data += chunk; });
+    process.stdin.on('data', (chunk) => {
+      data += chunk;
+    });
     process.stdin.on('end', () => resolve(data));
     process.stdin.on('error', reject);
   });
@@ -80,10 +82,7 @@ const { shouldClose, drainIpcInput, waitForIpcMessage } = makeIpcHelpers({
 /**
  * Archive conversation transcript before it gets too long.
  */
-function archiveConversation(
-  messages: Array<{ role: string; content: string }>,
-  assistantName?: string,
-): void {
+function archiveConversation(messages: Array<{ role: string; content: string }>, assistantName?: string): void {
   try {
     if (messages.length === 0) return;
 
@@ -99,16 +98,16 @@ function archiveConversation(
     const lines: string[] = [];
     lines.push(`# Conversation`);
     lines.push('');
-    lines.push(`Archived: ${time.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}`);
+    lines.push(
+      `Archived: ${time.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}`,
+    );
     lines.push('');
     lines.push('---');
     lines.push('');
 
     for (const msg of messages) {
-      const sender = msg.role === 'user' ? 'User' : (assistantName || 'Assistant');
-      const content = msg.content.length > 2000
-        ? msg.content.slice(0, 2000) + '...'
-        : msg.content;
+      const sender = msg.role === 'user' ? 'User' : assistantName || 'Assistant';
+      const content = msg.content.length > 2000 ? msg.content.slice(0, 2000) + '...' : msg.content;
       lines.push(`**${sender}**: ${content}`);
       lines.push('');
     }
@@ -126,13 +125,17 @@ async function main(): Promise<void> {
   try {
     const stdinData = await readStdin();
     containerInput = JSON.parse(stdinData);
-    try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
+    try {
+      fs.unlinkSync('/tmp/input.json');
+    } catch {
+      /* may not exist */
+    }
     log(`Received input for group: ${containerInput.groupFolder}`);
   } catch (err) {
     writeOutput({
       status: 'error',
       result: null,
-      error: `Failed to parse input: ${err instanceof Error ? err.message : String(err)}`
+      error: `Failed to parse input: ${err instanceof Error ? err.message : String(err)}`,
     });
     process.exit(1);
   }
@@ -149,7 +152,11 @@ async function main(): Promise<void> {
   const mcpServerPath = fs.existsSync(localJs) ? localJs : distJs;
 
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
-  try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
+  try {
+    fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL);
+  } catch {
+    /* ignore */
+  }
 
   // Build initial prompt
   let prompt = containerInput.prompt;
@@ -207,7 +214,32 @@ async function main(): Promise<void> {
   if (containerInput.agentId) {
     runtimeLines.push(`- **Agent ID**: ${containerInput.agentId}`);
   }
-  runtimeLines.push(`- **Main chat**: ${containerInput.isMain ? 'Yes — you can use nanoclaw_control to change config and restart' : 'No — nanoclaw_control is not available (config changes require the main chat)'}`);
+  runtimeLines.push(
+    `- **Main chat**: ${containerInput.isMain ? 'Yes — you can use nanoclaw_control to change config and restart' : 'No — nanoclaw_control is not available (config changes require the main chat)'}`,
+  );
+
+  // Scheduled-tasks capability hint (kenan 2026-05-11): the SDK already
+  // exposes the `nanoclaw` MCP tools to the model via `tools[]`, but the
+  // tool descriptions alone weren't enough to reliably prompt task
+  // creation. Add an explicit cue so users asking "remind me…", "every
+  // morning…", "in N minutes…" reliably get a `schedule_task` call
+  // instead of an in-line answer the agent can't actually deliver later.
+  // Skip during scheduled-task runs themselves (the task agent doesn't
+  // need to recursively schedule from inside its own run).
+  if (!containerInput.isScheduledTask) {
+    runtimeLines.push('');
+    runtimeLines.push('## Scheduled tasks');
+    runtimeLines.push('You have MCP tools to schedule recurring or one-time work for this chat:');
+    runtimeLines.push('- `schedule_task` — create a task (cron / interval / once). Use when the user');
+    runtimeLines.push('  says "remind me…", "every day at…", "in N minutes", "daily summary", etc.');
+    runtimeLines.push('- `list_tasks` / `update_task` / `pause_task` / `resume_task` / `cancel_task` —');
+    runtimeLines.push('  inspect or change existing tasks for this chat.');
+    runtimeLines.push('Each task runs as a fresh agent invocation in its own container slot, in');
+    runtimeLines.push('parallel with normal chat (it will not block the chat). Pick `context_mode`');
+    runtimeLines.push('per the tool description: `isolated` for self-contained jobs, `group` when');
+    runtimeLines.push("the task needs the chat's ongoing conversation context.");
+  }
+
   const identityPrompt = runtimeLines.join('\n');
 
   // Load global agent prompt as additional system context
@@ -267,9 +299,7 @@ async function main(): Promise<void> {
   // Priority: env vars > useLoggedInUser (CLI managed auth).
   function resolveGithubToken(): string | undefined {
     // 1. Explicit env vars (highest priority)
-    const envToken = process.env.COPILOT_GITHUB_TOKEN
-      || process.env.GH_TOKEN
-      || process.env.GITHUB_TOKEN;
+    const envToken = process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
     if (envToken) {
       log('Using GitHub token from environment variable');
       return envToken;
@@ -397,19 +427,22 @@ async function main(): Promise<void> {
           },
           // GitHub MCP server (web_search, issues, PRs, code search, etc.)
           // Enabled via NANOCLAW_GITHUB_MCP=1 env var (set by host-runner/container-runner)
-          ...(process.env.NANOCLAW_GITHUB_MCP === '1' && githubToken ? {
-            'github-mcp-server': {
-              type: 'http' as const,
-              url: 'https://api.githubcopilot.com/mcp',
-              headers: {
-                'Authorization': `Bearer ${githubToken}`,
-                'X-MCP-Toolsets': 'repos,issues,users,pull_requests,code_security,secret_protection,actions,web_search',
-                'X-MCP-Host': 'copilot-cli',
-                'X-Initiator': 'agent',
-              },
-              tools: ['*'],
-            },
-          } : {}),
+          ...(process.env.NANOCLAW_GITHUB_MCP === '1' && githubToken
+            ? {
+                'github-mcp-server': {
+                  type: 'http' as const,
+                  url: 'https://api.githubcopilot.com/mcp',
+                  headers: {
+                    Authorization: `Bearer ${githubToken}`,
+                    'X-MCP-Toolsets':
+                      'repos,issues,users,pull_requests,code_security,secret_protection,actions,web_search',
+                    'X-MCP-Host': 'copilot-cli',
+                    'X-Initiator': 'agent',
+                  },
+                  tools: ['*'],
+                },
+              }
+            : {}),
           // Load additional MCP servers from /workspace/mcp.json (mounted from ~/.nanoclaw/mcp.json)
           ...(() => {
             const mcpConfigPath = process.env.NANOCLAW_MCP_CONFIG || '/workspace/mcp.json';
@@ -564,25 +597,35 @@ async function main(): Promise<void> {
 
       const idlePromise = new Promise<void>((resolve, reject) => {
         const cleanups: Array<() => void> = [];
-        const cleanupAll = () => { for (const fn of cleanups) fn(); cleanups.length = 0; };
+        const cleanupAll = () => {
+          for (const fn of cleanups) fn();
+          cleanups.length = 0;
+        };
 
-        cleanups.push(session.on('session.idle' as any, () => {
-          cleanupAll();
-          // Flush any remaining delta
-          if (deltaTimer) { clearTimeout(deltaTimer); deltaTimer = null; }
-          flushDelta();
-          deltaBuffer = '';
-          resolve();
-        }));
+        cleanups.push(
+          session.on('session.idle' as any, () => {
+            cleanupAll();
+            // Flush any remaining delta
+            if (deltaTimer) {
+              clearTimeout(deltaTimer);
+              deltaTimer = null;
+            }
+            flushDelta();
+            deltaBuffer = '';
+            resolve();
+          }),
+        );
 
         // Delta streaming: accumulate token-by-token output
-        cleanups.push(session.on('assistant.message_delta' as any, (event: any) => {
-          const delta = event.data?.deltaContent || event.data?.content || '';
-          if (delta) {
-            deltaBuffer += delta;
-            scheduleDeltaFlush();
-          }
-        }));
+        cleanups.push(
+          session.on('assistant.message_delta' as any, (event: any) => {
+            const delta = event.data?.deltaContent || event.data?.content || '';
+            if (delta) {
+              deltaBuffer += delta;
+              scheduleDeltaFlush();
+            }
+          }),
+        );
 
         // Reasoning events (SDK 0.2.2+) — stream thinking content
         let thinkingBuffer = '';
@@ -598,75 +641,94 @@ async function main(): Promise<void> {
             });
           }
         };
-        cleanups.push(session.on('assistant.reasoning_delta' as any, (event: any) => {
-          const delta = event.data?.content || event.data?.deltaContent || '';
-          if (delta) {
-            thinkingBuffer += delta;
-            // Throttle thinking delta output (every 500ms)
-            if (!thinkingDeltaTimer) {
-              thinkingDeltaTimer = setTimeout(() => {
-                thinkingDeltaTimer = null;
-                flushThinkingDelta();
-              }, 500);
-            }
-          }
-        }));
-
-        cleanups.push(session.on('assistant.reasoning' as any, (event: any) => {
-          const content = event.data?.content || '';
-          if (content) {
-            thinkingBuffer = content;
-          }
-          // Flush final thinking
-          if (thinkingDeltaTimer) { clearTimeout(thinkingDeltaTimer); thinkingDeltaTimer = null; }
-          flushThinkingDelta();
-          log(`Reasoning complete: ${thinkingBuffer.slice(0, 100)}...`);
-        }));
-
-        // Full message: send complete result (replaces any partial)
-        cleanups.push(session.on('assistant.message' as any, (event: any) => {
-          if (event.data?.content) {
-            lastContent = event.data.content;
-            // Cancel pending delta flush — full message supersedes it
-            if (deltaTimer) { clearTimeout(deltaTimer); deltaTimer = null; }
-            deltaBuffer = '';
-
-            // Extract thinking from multiple sources:
-            // 1. Reasoning events (thinkingBuffer)
-            // 2. assistant.message.reasoningText field
-            // 3. <thinking> tags in content
-            let thinking = thinkingBuffer || event.data.reasoningText || '';
-            let visibleContent = event.data.content;
-
-            // Parse <thinking> tags from content if no other source
-            if (!thinking) {
-              const tagMatch = visibleContent.match(
-                /^\s*<\s*(?:think(?:ing)?|thought)\s*>([\s\S]*?)<\s*\/\s*(?:think(?:ing)?|thought)\s*>/i
-              );
-              if (tagMatch) {
-                thinking = tagMatch[1].trim();
-                visibleContent = visibleContent.slice(tagMatch[0].length).trim();
+        cleanups.push(
+          session.on('assistant.reasoning_delta' as any, (event: any) => {
+            const delta = event.data?.content || event.data?.deltaContent || '';
+            if (delta) {
+              thinkingBuffer += delta;
+              // Throttle thinking delta output (every 500ms)
+              if (!thinkingDeltaTimer) {
+                thinkingDeltaTimer = setTimeout(() => {
+                  thinkingDeltaTimer = null;
+                  flushThinkingDelta();
+                }, 500);
               }
             }
+          }),
+        );
 
-            // Write final output with thinking separated
-            writeOutput({
-              status: 'success',
-              result: visibleContent,
-              newSessionId: sessionId,
-              ...(thinking ? { thinking } : {}),
-            });
-            thinkingBuffer = '';
-            streamedChunks++;
-            log(`Streamed result #${streamedChunks}: ${visibleContent.slice(0, 100)}...${thinking ? ` (thinking: ${thinking.slice(0, 50)}...)` : ''}`);
-          }
-        }));
+        cleanups.push(
+          session.on('assistant.reasoning' as any, (event: any) => {
+            const content = event.data?.content || '';
+            if (content) {
+              thinkingBuffer = content;
+            }
+            // Flush final thinking
+            if (thinkingDeltaTimer) {
+              clearTimeout(thinkingDeltaTimer);
+              thinkingDeltaTimer = null;
+            }
+            flushThinkingDelta();
+            log(`Reasoning complete: ${thinkingBuffer.slice(0, 100)}...`);
+          }),
+        );
 
-        cleanups.push(session.on('session.error' as any, (event: any) => {
-          cleanupAll();
-          if (deltaTimer) { clearTimeout(deltaTimer); deltaTimer = null; }
-          reject(new Error(event.data?.message || 'Session error'));
-        }));
+        // Full message: send complete result (replaces any partial)
+        cleanups.push(
+          session.on('assistant.message' as any, (event: any) => {
+            if (event.data?.content) {
+              lastContent = event.data.content;
+              // Cancel pending delta flush — full message supersedes it
+              if (deltaTimer) {
+                clearTimeout(deltaTimer);
+                deltaTimer = null;
+              }
+              deltaBuffer = '';
+
+              // Extract thinking from multiple sources:
+              // 1. Reasoning events (thinkingBuffer)
+              // 2. assistant.message.reasoningText field
+              // 3. <thinking> tags in content
+              let thinking = thinkingBuffer || event.data.reasoningText || '';
+              let visibleContent = event.data.content;
+
+              // Parse <thinking> tags from content if no other source
+              if (!thinking) {
+                const tagMatch = visibleContent.match(
+                  /^\s*<\s*(?:think(?:ing)?|thought)\s*>([\s\S]*?)<\s*\/\s*(?:think(?:ing)?|thought)\s*>/i,
+                );
+                if (tagMatch) {
+                  thinking = tagMatch[1].trim();
+                  visibleContent = visibleContent.slice(tagMatch[0].length).trim();
+                }
+              }
+
+              // Write final output with thinking separated
+              writeOutput({
+                status: 'success',
+                result: visibleContent,
+                newSessionId: sessionId,
+                ...(thinking ? { thinking } : {}),
+              });
+              thinkingBuffer = '';
+              streamedChunks++;
+              log(
+                `Streamed result #${streamedChunks}: ${visibleContent.slice(0, 100)}...${thinking ? ` (thinking: ${thinking.slice(0, 50)}...)` : ''}`,
+              );
+            }
+          }),
+        );
+
+        cleanups.push(
+          session.on('session.error' as any, (event: any) => {
+            cleanupAll();
+            if (deltaTimer) {
+              clearTimeout(deltaTimer);
+              deltaTimer = null;
+            }
+            reject(new Error(event.data?.message || 'Session error'));
+          }),
+        );
       });
 
       // Layer 2 of GHC session-recovery: catch mid-turn `Session not found`.
@@ -740,7 +802,11 @@ async function main(): Promise<void> {
       newSessionId: sessionId,
       error: errorMessage,
     });
-    try { await client.stop(); } catch { /* ignore */ }
+    try {
+      await client.stop();
+    } catch {
+      /* ignore */
+    }
     process.exit(1);
   }
 }
