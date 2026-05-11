@@ -11,10 +11,26 @@ interface QueuedTask {
   fn: () => Promise<void>;
 }
 
+/**
+ * Build the slot key used internally to address a per-task GroupState.
+ * Detached scheduled tasks (§4.1.A of docs/proposals/2026-05-11-detached-tasks.md)
+ * live in their own slot keyed by `${groupJid}::task::${taskId}` so they no
+ * longer share the chat slot — user messages on the same chat keep flowing
+ * to the chat container while the task runs in parallel (gated by the
+ * global MAX_CONCURRENT_CONTAINERS).
+ */
+export function taskSlotKey(groupJid: string, taskId: string): string {
+  return `${groupJid}::task::${taskId}`;
+}
+
 const MAX_RETRIES = 5;
 const BASE_RETRY_MS = 5000;
 
 interface GroupState {
+  /** chat the slot belongs to (used for outbound + drainWaiting routing) */
+  chatJid: string;
+  /** non-null on per-task slots; null on chat slots */
+  taskId: string | null;
   active: boolean;
   idleWaiting: boolean;
   isTaskContainer: boolean;
@@ -59,9 +75,20 @@ interface GroupState {
 }
 
 export class GroupQueue {
-  private groups = new Map<string, GroupState>();
+  /**
+   * Internal slot map keyed by slotKey:
+   *   - chat slot:  slotKey === groupJid
+   *   - task slot:  slotKey === taskSlotKey(groupJid, taskId)
+   *
+   * Chat slot is owner of inbound user messages; task slots are owners of
+   * a specific scheduled-task lifecycle. They never collide.
+   */
+  private slots = new Map<string, GroupState>();
   private activeCount = 0;
-  private waitingGroups: string[] = [];
+  /** slot keys waiting for a global concurrency slot. */
+  private waitingSlots: string[] = [];
+  /** Pending tasks that hit the global cap before a slot was even created. Keyed by slotKey. */
+  private waitingTaskFns = new Map<string, QueuedTask>();
   private processMessagesFn: ((groupJid: string) => Promise<boolean>) | null = null;
   private shuttingDown = false;
   /**
@@ -76,14 +103,22 @@ export class GroupQueue {
     | ((groupJid: string, rollbackTimestamp: string | null, exitCode: number | null) => void)
     | null = null;
 
-  private getGroup(groupJid: string): GroupState {
-    let state = this.groups.get(groupJid);
+  /**
+   * Get-or-create a slot. `chatJid` is the chat the slot belongs to;
+   * `taskId` is null for chat slots and non-null for per-task slots.
+   * The internal map key is `slotKey` (== chatJid for chat slots, or
+   * taskSlotKey(...) for task slots).
+   */
+  private getSlot(slotKey: string, chatJid: string, taskId: string | null): GroupState {
+    let state = this.slots.get(slotKey);
     if (!state) {
       state = {
+        chatJid,
+        taskId,
         active: false,
         idleWaiting: false,
-        isTaskContainer: false,
-        runningTaskId: null,
+        isTaskContainer: taskId !== null,
+        runningTaskId: taskId,
         pendingMessages: false,
         pendingTasks: [],
         process: null,
@@ -95,9 +130,24 @@ export class GroupQueue {
         inFlightCursorRollback: null,
         userTurnSeq: 0,
       };
-      this.groups.set(groupJid, state);
+      this.slots.set(slotKey, state);
     }
     return state;
+  }
+
+  /** Chat-slot accessor. Used by inbound message paths. */
+  private getGroup(groupJid: string): GroupState {
+    return this.getSlot(groupJid, groupJid, null);
+  }
+
+  /**
+   * Look up a slot by key without creating one. Returns undefined if
+   * the slot has not been allocated (e.g. the task already finished and
+   * cleared its slot). Used by registerProcess so a task call site can
+   * register on its own task slot.
+   */
+  private peekSlot(slotKey: string): GroupState | undefined {
+    return this.slots.get(slotKey);
   }
 
   setProcessMessagesFn(fn: (groupJid: string) => Promise<boolean>): void {
@@ -130,8 +180,8 @@ export class GroupQueue {
 
     if (this.activeCount >= MAX_CONCURRENT_CONTAINERS) {
       state.pendingMessages = true;
-      if (!this.waitingGroups.includes(groupJid)) {
-        this.waitingGroups.push(groupJid);
+      if (!this.waitingSlots.includes(groupJid)) {
+        this.waitingSlots.push(groupJid);
       }
       logger.debug({ groupJid, activeCount: this.activeCount }, 'At concurrency limit, message queued');
       return;
@@ -142,47 +192,68 @@ export class GroupQueue {
     );
   }
 
+  /**
+   * Enqueue a scheduled task in its own per-task slot (detached from the
+   * chat slot). Multiple tasks for the same chat run in parallel — only
+   * gated by the global MAX_CONCURRENT_CONTAINERS. User messages on the
+   * same chat are unaffected and continue to flow to the chat container.
+   *
+   * (§4.1.A of docs/proposals/2026-05-11-detached-tasks.md, 2026-05-11.)
+   */
   enqueueTask(groupJid: string, taskId: string, fn: () => Promise<void>): void {
     if (this.shuttingDown) return;
 
-    const state = this.getGroup(groupJid);
+    const slotKey = taskSlotKey(groupJid, taskId);
 
-    // Prevent double-queuing: check both pending and currently-running task
-    if (state.runningTaskId === taskId) {
+    // Dedupe: same taskId already running (slot active) or already waiting.
+    const existing = this.peekSlot(slotKey);
+    if (existing && existing.active) {
       logger.debug({ groupJid, taskId }, 'Task already running, skipping');
       return;
     }
-    if (state.pendingTasks.some((t) => t.id === taskId)) {
+    if (this.waitingTaskFns.has(slotKey)) {
       logger.debug({ groupJid, taskId }, 'Task already queued, skipping');
       return;
     }
 
-    if (state.active) {
-      state.pendingTasks.push({ id: taskId, groupJid, fn });
-      if (state.idleWaiting) {
-        this.closeStdin(groupJid);
-      }
-      logger.debug({ groupJid, taskId }, 'Container active, task queued');
-      return;
-    }
-
     if (this.activeCount >= MAX_CONCURRENT_CONTAINERS) {
-      state.pendingTasks.push({ id: taskId, groupJid, fn });
-      if (!this.waitingGroups.includes(groupJid)) {
-        this.waitingGroups.push(groupJid);
+      // Park in waiting list (slot not allocated yet to avoid orphan state).
+      this.waitingTaskFns.set(slotKey, { id: taskId, groupJid, fn });
+      if (!this.waitingSlots.includes(slotKey)) {
+        this.waitingSlots.push(slotKey);
       }
       logger.debug({ groupJid, taskId, activeCount: this.activeCount }, 'At concurrency limit, task queued');
       return;
     }
 
-    // Run immediately
-    this.runTask(groupJid, { id: taskId, groupJid, fn }).catch((err) =>
+    // Run immediately in its own slot — chat slot is untouched.
+    this.runTask(slotKey, groupJid, { id: taskId, groupJid, fn }).catch((err) =>
       logger.error({ groupJid, taskId, err }, 'Unhandled error in runTask'),
     );
   }
 
-  registerProcess(groupJid: string, proc: ChildProcess, containerName: string, groupFolder?: string): void {
-    const state = this.getGroup(groupJid);
+  /**
+   * Register the spawned child process on a slot. `slotKey` is the chat
+   * jid for normal chat containers, or `taskSlotKey(chatJid, taskId)`
+   * for per-task containers. The slot must already exist (created by
+   * enqueueMessageCheck / enqueueTask).
+   */
+  registerProcess(slotKey: string, proc: ChildProcess, containerName: string, groupFolder?: string): void {
+    let slot = this.peekSlot(slotKey);
+    if (!slot) {
+      // Auto-create for chat-slot back-compat (callers historically passed
+      // the chat jid here without ever going through enqueueMessageCheck
+      // first; tests rely on this). Task slots are always pre-created by
+      // enqueueTask→runTask, so this branch only fires for chat slots.
+      const isTaskKey = slotKey.includes('::task::');
+      if (isTaskKey) {
+        logger.warn({ slotKey }, 'registerProcess: task slot not found, ignoring');
+        return;
+      }
+      slot = this.getGroup(slotKey);
+    }
+    const state = slot;
+    const groupJid = state.chatJid;
     state.process = proc;
     state.containerName = containerName;
     if (groupFolder) state.groupFolder = groupFolder;
@@ -283,6 +354,11 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     state.idleWaiting = true;
     if (state.pendingTasks.length > 0) {
+      // Legacy path: pendingTasks on a chat slot used to drive a
+      // container handoff. Detached tasks no longer push here, so this
+      // branch is effectively dead unless a caller still uses the legacy
+      // 'group' context_mode (filled in by VM in §4.1.B). Kept for
+      // backwards compatibility.
       this.closeStdin(groupJid);
     }
   }
@@ -489,6 +565,33 @@ export class GroupQueue {
   }
 
   /**
+   * Mark a per-task slot as idle-waiting. (§4.1.A: detached tasks live
+   * on their own slot keyed by `taskSlotKey(chatJid, taskId)`. The chat
+   * slot is independent.)
+   */
+  notifyTaskIdle(chatJid: string, taskId: string): void {
+    const slot = this.peekSlot(taskSlotKey(chatJid, taskId));
+    if (slot) slot.idleWaiting = true;
+  }
+
+  /**
+   * Send the close sentinel to a per-task slot's IPC dir, asking the
+   * detached agent to wind down gracefully. No-op if the slot is gone
+   * or has no groupFolder yet.
+   */
+  closeTaskStdin(chatJid: string, taskId: string): void {
+    const slot = this.peekSlot(taskSlotKey(chatJid, taskId));
+    if (!slot || !slot.active || !slot.groupFolder) return;
+    const inputDir = path.join(DATA_DIR, 'ipc', slot.groupFolder, 'input');
+    try {
+      fs.mkdirSync(inputDir, { recursive: true });
+      fs.writeFileSync(path.join(inputDir, '_close'), '');
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
    * Signal the active container to wind down by writing a close sentinel.
    */
   closeStdin(groupJid: string): void {
@@ -547,20 +650,25 @@ export class GroupQueue {
     }
   }
 
-  private async runTask(groupJid: string, task: QueuedTask): Promise<void> {
-    const state = this.getGroup(groupJid);
+  /**
+   * Run a task in its own per-task slot. `slotKey` is taskSlotKey(...)
+   * (NOT the chat jid). The chat slot is untouched — this is the core
+   * detached-task behavior change (§4.1.A).
+   */
+  private async runTask(slotKey: string, chatJid: string, task: QueuedTask): Promise<void> {
+    const state = this.getSlot(slotKey, chatJid, task.id);
     state.active = true;
     state.idleWaiting = false;
     state.isTaskContainer = true;
     state.runningTaskId = task.id;
     this.activeCount++;
 
-    logger.debug({ groupJid, taskId: task.id, activeCount: this.activeCount }, 'Running queued task');
+    logger.debug({ slotKey, chatJid, taskId: task.id, activeCount: this.activeCount }, 'Running detached task');
 
     try {
       await task.fn();
     } catch (err) {
-      logger.error({ groupJid, taskId: task.id, err }, 'Error running task');
+      logger.error({ slotKey, chatJid, taskId: task.id, err }, 'Error running task');
     } finally {
       state.active = false;
       state.isTaskContainer = false;
@@ -569,7 +677,10 @@ export class GroupQueue {
       state.containerName = null;
       state.groupFolder = null;
       this.activeCount--;
-      this.drainGroup(groupJid);
+      // Per-task slots are throwaway — drop the slot so we don't leak entries.
+      this.slots.delete(slotKey);
+      // Try to schedule any waiting work (chat messages or queued tasks).
+      this.drainWaiting();
     }
   }
 
@@ -598,10 +709,12 @@ export class GroupQueue {
 
     const state = this.getGroup(groupJid);
 
-    // Tasks first (they won't be re-discovered from SQLite like messages)
+    // Legacy task path: chat-slot pendingTasks. Detached tasks no longer
+    // accumulate here, but VM's §4.1.B may keep a 'group' context_mode
+    // opt-out that does — preserve handling.
     if (state.pendingTasks.length > 0) {
       const task = state.pendingTasks.shift()!;
-      this.runTask(groupJid, task).catch((err) =>
+      this.runTask(taskSlotKey(groupJid, task.id), groupJid, task).catch((err) =>
         logger.error({ groupJid, taskId: task.id, err }, 'Unhandled error in runTask (drain)'),
       );
       return;
@@ -629,27 +742,40 @@ export class GroupQueue {
       return;
     }
 
-    // Nothing pending for this group; check if other groups are waiting for a slot
+    // Nothing pending for this group; check if other slots are waiting.
     this.drainWaiting();
   }
 
   private drainWaiting(): void {
-    while (this.waitingGroups.length > 0 && this.activeCount < MAX_CONCURRENT_CONTAINERS) {
-      const nextJid = this.waitingGroups.shift()!;
-      const state = this.getGroup(nextJid);
+    while (this.waitingSlots.length > 0 && this.activeCount < MAX_CONCURRENT_CONTAINERS) {
+      const nextSlot = this.waitingSlots.shift()!;
 
-      // Prioritize tasks over messages
+      // Detached task waiting?
+      const pendingTask = this.waitingTaskFns.get(nextSlot);
+      if (pendingTask) {
+        this.waitingTaskFns.delete(nextSlot);
+        this.runTask(nextSlot, pendingTask.groupJid, pendingTask).catch((err) =>
+          logger.error(
+            { slotKey: nextSlot, taskId: pendingTask.id, err },
+            'Unhandled error in runTask (waiting)',
+          ),
+        );
+        continue;
+      }
+
+      // Otherwise this is a chat slot waiting for messages / legacy tasks.
+      const state = this.getGroup(nextSlot);
       if (state.pendingTasks.length > 0) {
         const task = state.pendingTasks.shift()!;
-        this.runTask(nextJid, task).catch((err) =>
-          logger.error({ groupJid: nextJid, taskId: task.id, err }, 'Unhandled error in runTask (waiting)'),
+        this.runTask(taskSlotKey(nextSlot, task.id), nextSlot, task).catch((err) =>
+          logger.error({ groupJid: nextSlot, taskId: task.id, err }, 'Unhandled error in runTask (waiting)'),
         );
       } else if (state.pendingMessages) {
-        this.runForGroup(nextJid, 'drain').catch((err) =>
-          logger.error({ groupJid: nextJid, err }, 'Unhandled error in runForGroup (waiting)'),
+        this.runForGroup(nextSlot, 'drain').catch((err) =>
+          logger.error({ groupJid: nextSlot, err }, 'Unhandled error in runForGroup (waiting)'),
         );
       }
-      // If neither pending, skip this group
+      // If neither pending, skip this slot
     }
   }
 
@@ -664,9 +790,9 @@ export class GroupQueue {
     // Host-mode agents are spawned with detached:true, so they survive parent exit
     // unless explicitly killed. Without this, restart leaves orphaned agents.
     const killed: string[] = [];
-    for (const [jid, state] of this.groups) {
+    for (const [slotKey, state] of this.slots) {
       if (state.process && !state.process.killed) {
-        const name = state.containerName || jid;
+        const name = state.containerName || slotKey;
         try {
           this.killProcess(state.process, 'SIGTERM');
           killed.push(name);
@@ -679,7 +805,7 @@ export class GroupQueue {
     if (killed.length > 0) {
       // Give agents a moment to clean up, then force kill
       await new Promise((r) => setTimeout(r, Math.min(gracePeriodMs, 3000)));
-      for (const [, state] of this.groups) {
+      for (const [, state] of this.slots) {
         if (state.process && !state.process.killed) {
           try {
             this.killProcess(state.process, 'SIGKILL');

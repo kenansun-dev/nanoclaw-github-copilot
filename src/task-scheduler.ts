@@ -15,7 +15,7 @@ import {
   updateTask,
   updateTaskAfterRun,
 } from './db.js';
-import { GroupQueue } from './group-queue.js';
+import { GroupQueue, taskSlotKey } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './log-extensions.js';
 import { RegisteredGroup, ScheduledTask } from './types-extensions.js';
@@ -205,7 +205,8 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
     if (closeTimer) return; // already scheduled
     closeTimer = setTimeout(() => {
       logger.debug({ taskId: task.id }, 'Closing task container after result');
-      deps.queue.closeStdin(task.chat_jid);
+      // Detached task lives on its own slot (§4.1.A) — close that, not chat.
+      deps.queue.closeTaskStdin(task.chat_jid, task.id);
     }, TASK_CLOSE_DELAY_MS);
   };
 
@@ -226,7 +227,8 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
         assistantName: agent.name || ASSISTANT_NAME,
         script: task.script || undefined,
       },
-      (proc, containerName) => deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
+      (proc, containerName) =>
+        deps.onProcess(taskSlotKey(task.chat_jid, task.id), proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           const text = streamedOutput.result;
@@ -254,7 +256,8 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
           }
         }
         if (streamedOutput.status === 'success') {
-          deps.queue.notifyIdle(task.chat_jid);
+          // Detached task slot, not chat slot (§4.1.A).
+          deps.queue.notifyTaskIdle(task.chat_jid, task.id);
           scheduleClose();
         }
         if (streamedOutput.status === 'error') {
@@ -319,6 +322,11 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
           continue;
         }
 
+        // TODO(§4.1.B / VM 2026-05-11): branch on currentTask.context_mode
+        // ('isolated' default → detached, current code path; 'group' opt-in
+        // → legacy behavior of pushing pendingTasks onto chat slot). For now
+        // every task goes detached because enqueueTask always creates a
+        // per-task slot (§4.1.A landed in this commit).
         deps.queue.enqueueTask(currentTask.chat_jid, currentTask.id, () => runTask(currentTask, deps));
       }
     } catch (err) {
