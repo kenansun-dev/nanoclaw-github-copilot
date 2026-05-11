@@ -241,10 +241,12 @@ export class GroupQueue {
   registerProcess(slotKey: string, proc: ChildProcess, containerName: string, groupFolder?: string): void {
     let slot = this.peekSlot(slotKey);
     if (!slot) {
-      // Auto-create for chat-slot back-compat (callers historically passed
-      // the chat jid here without ever going through enqueueMessageCheck
-      // first; tests rely on this). Task slots are always pre-created by
-      // enqueueTask→runTask, so this branch only fires for chat slots.
+      // Auto-create for chat-slot back-compat: callers in index.ts and the
+      // test suite historically pass a chat jid here without first going
+      // through enqueueMessageCheck (e.g. when registering a recovered or
+      // rehydrated container). Per-task slots, by contrast, are always
+      // pre-allocated by enqueueTask→runTask, so a missing task slot here
+      // is a real error (race with task completion) and we just warn.
       const isTaskKey = slotKey.includes('::task::');
       if (isTaskKey) {
         logger.warn({ slotKey }, 'registerProcess: task slot not found, ignoring');
@@ -374,6 +376,10 @@ export class GroupQueue {
 
   sendMessage(groupJid: string, text: string, rollbackCursor?: string): boolean {
     const state = this.getGroup(groupJid);
+    // Note: chat slot's isTaskContainer is structurally always false post-§4.1.A
+    // (slot kind is fixed at creation and chat slots never run tasks). Kept
+    // in the guard as defense-in-depth in case a future refactor reuses
+    // chat slots for tasks.
     if (!state.active || !state.groupFolder || state.isTaskContainer) {
       logger.info(
         {
@@ -611,6 +617,9 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     state.active = true;
     state.idleWaiting = false;
+    // isTaskContainer is fixed at slot creation post-§4.1.A (chat slots are
+    // always false). The flip here is vestigial; keep it as a sanity reset
+    // for the chat slot.
     state.isTaskContainer = false;
     state.pendingMessages = false;
     state.pipedSinceOutput = 0;
@@ -659,6 +668,11 @@ export class GroupQueue {
     const state = this.getSlot(slotKey, chatJid, task.id);
     state.active = true;
     state.idleWaiting = false;
+    // isTaskContainer + runningTaskId are set by getSlot at slot creation
+    // (taskId !== null branch). The flips here are vestigial — kept only
+    // because runTask may also be called for a slot that was previously
+    // recycled. Safe to remove once we confirm slot keys are never reused
+    // across tasks (current design: per-task slot deleted in finally).
     state.isTaskContainer = true;
     state.runningTaskId = task.id;
     this.activeCount++;
