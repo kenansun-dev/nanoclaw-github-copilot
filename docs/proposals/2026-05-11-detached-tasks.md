@@ -1,6 +1,6 @@
 # Proposal: 让 scheduled task 不再占用主会话 (chat container)
 
-> Author: rpi5 + VM (collab) | Date: 2026-05-11 | Status: draft for owner review
+> Author: rpi5 (draft) + VM (root-cause analysis, blame verification) | Date: 2026-05-11 | Status: draft for owner review
 
 ## 1. 问题 (TL;DR)
 
@@ -9,9 +9,29 @@
 - 用户能看到 typing indicator 偶尔闪一下，但 agent 不回话——直到 task 终结、container 退出，新 container 起来才接用户消息
 - 表现：「主 session 被 task 占住，bot 不说话」
 
-## 2. 是上游行为吗？是。
+## 2. 是上游行为吗？是 (upstream design choice, 非 fork 改动)
 
-直接 grep `~/gitrepos/nanoclaw/src/group-queue.ts:162`：
+**Git blame 验证 (VM 提供, 2026-05-11)**:
+- `src/group-queue.ts` introduced upstream by gavrielc (commits `eac9a6a` / `ae17715`, upstream PR #111)
+- `src/task-scheduler.ts` introduced upstream by gavrielc (commit `17e7b46`)
+- `git diff upstream/main -- src/task-scheduler.ts src/group-queue.ts` = **0 行差异**
+- `git diff upstream/feat/migrate-from-v1-- ...` = 0 行差异
+- 我们 fork 没改这块（除 logger 重命名）
+
+**完整 occupation 路径有两层 lock，都是 upstream 设计**：
+
+### Layer 1: Per-chat_jid 单 slot serialization (root cause)
+
+`GroupQueue` 对每个 `chat_jid` 维护一个 `state`，**同一时间只能 1 个 active container**：
+- 用户消息 → `enqueueMessageCheck(chat_jid)` (`group-queue.ts:120`)
+- Scheduled task → `enqueueTask(task.chat_jid, ...)` (`task-scheduler.ts:322`)
+- **两者共享同一个 chat_jid 的 queue slot**
+- task 跑时 `state.active = true`，user 消息进 `pendingMessages`，等 task 跑完 `drainGroup` 才被处理
+- → 这才是「task 占主 session 不说话」的根本：scheduled task 用的就是目标 chat 的 chat_jid，task = main chat session 本人
+
+### Layer 2: isTaskContainer 拒收 IPC (symptom path)
+
+即便 task container 已经 spawn 起来在跑，user 想给它 IPC 一条 follow-up 也不行 (`group-queue.ts:162`):
 
 ```ts
 sendMessage(groupJid, text): boolean {
@@ -21,9 +41,9 @@ sendMessage(groupJid, text): boolean {
 }
 ```
 
-**上游和我们一字不差**。`isTaskContainer` flag 在 `runTask()` 里 set true，在 task 完成 callback 里 reset false。`MAX_CONCURRENT_CONTAINERS=5` 是全局并发上限，但**每个 chat 仍然只允许 1 个活跃 container**——这才是占用根因，不是全局限。
+`isTaskContainer` 在 `runTask()` set true，task 完成 callback reset false。`MAX_CONCURRENT_CONTAINERS=5` 是全局并发上限，但**每个 chat 仍然只允许 1 个 container** —— 不是全局限的问题，是 per-chat 设计的问题。
 
-我们 fork 没改这块逻辑（`git diff upstream/main -- src/group-queue.ts` 只有 logger 重命名差异）。
+**修方案要同时拆这两层**：让 task 用独立 key 离开 chat_jid 的 slot，user 那个 slot 永远空着接消息。
 
 ## 3. OpenClaw 怎么做？
 
