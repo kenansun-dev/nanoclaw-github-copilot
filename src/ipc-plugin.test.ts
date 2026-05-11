@@ -1,7 +1,7 @@
 /**
  * Tests for handlePluginIpc — the host-side handler for the
  * `nanoclaw_plugin` MCP tool. Verifies request → response round-trips for
- * list / install / uninstall / marketplace_list, plus failure cases.
+ * list / install / uninstall / marketplace_list / marketplace_add / marketplace_browse / marketplace_remove, plus failure cases.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
@@ -143,6 +143,121 @@ describe('handlePluginIpc', () => {
     const res = readResponse('badreq');
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/name/i);
+  });
+
+  it('marketplace_add registers a marketplace from a local catalog directory', async () => {
+    const fakeMarket = path.join(tmpDir, 'fake-marketplace');
+    fs.mkdirSync(path.join(fakeMarket, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeMarket, '.claude-plugin', 'marketplace.json'),
+      JSON.stringify({
+        name: 'fake',
+        description: 'fake market',
+        plugins: [{ name: 'demo', version: '0.0.1', description: 'demo plugin' }],
+      }),
+    );
+    await handlePluginIpc(
+      { action: 'marketplace_add', source: fakeMarket, name: 'fake', requestId: 'mAdd' },
+      responseDir,
+    );
+    const res = readResponse('mAdd');
+    expect(res.ok).toBe(true);
+    expect(res.name).toBe('fake');
+    expect(res.pluginCount).toBe(1);
+    const cfg = loadConfig();
+    expect(cfg.plugins?.extraKnownMarketplaces?.find((m) => m.name === 'fake')).toBeTruthy();
+  });
+
+  it('marketplace_add fails when source is missing', async () => {
+    await handlePluginIpc({ action: 'marketplace_add', requestId: 'mAddMiss' }, responseDir);
+    const res = readResponse('mAddMiss');
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/source/i);
+  });
+
+  it('marketplace_add rejects duplicate registration', async () => {
+    const fakeMarket = path.join(tmpDir, 'fake-marketplace-2');
+    fs.mkdirSync(path.join(fakeMarket, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeMarket, '.claude-plugin', 'marketplace.json'),
+      JSON.stringify({ name: 'dup', plugins: [] }),
+    );
+    await handlePluginIpc(
+      { action: 'marketplace_add', source: fakeMarket, name: 'dup', requestId: 'mDup1' },
+      responseDir,
+    );
+    expect(readResponse('mDup1').ok).toBe(true);
+    await handlePluginIpc(
+      { action: 'marketplace_add', source: fakeMarket, name: 'dup', requestId: 'mDup2' },
+      responseDir,
+    );
+    const res = readResponse('mDup2');
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/already registered/i);
+  });
+
+  it('marketplace_browse lists plugins in a registered marketplace', async () => {
+    const fakeMarket = path.join(tmpDir, 'fake-marketplace-browse');
+    fs.mkdirSync(path.join(fakeMarket, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeMarket, '.claude-plugin', 'marketplace.json'),
+      JSON.stringify({
+        name: 'browseme',
+        description: 'a browsable market',
+        plugins: [{ name: 'alpha', version: '1.0.0', description: 'alpha plugin' }, { name: 'beta' }],
+      }),
+    );
+    await handlePluginIpc(
+      { action: 'marketplace_add', source: fakeMarket, name: 'browseme', requestId: 'bAdd' },
+      responseDir,
+    );
+    expect(readResponse('bAdd').ok).toBe(true);
+
+    await handlePluginIpc({ action: 'marketplace_browse', name: 'browseme', requestId: 'bBrowse' }, responseDir);
+    const res = readResponse('bBrowse');
+    expect(res.ok).toBe(true);
+    expect(res.name).toBe('browseme');
+    expect(res.description).toBe('a browsable market');
+    expect(res.plugins).toHaveLength(2);
+    expect(res.plugins[0]).toMatchObject({ name: 'alpha', version: '1.0.0' });
+    expect(res.plugins[1]).toMatchObject({ name: 'beta' });
+  });
+
+  it('marketplace_browse fails for unregistered marketplace', async () => {
+    await handlePluginIpc({ action: 'marketplace_browse', name: 'nonexistent', requestId: 'bMiss' }, responseDir);
+    const res = readResponse('bMiss');
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/not registered/i);
+  });
+
+  it('marketplace_browse fails when name is missing', async () => {
+    await handlePluginIpc({ action: 'marketplace_browse', requestId: 'bNoName' }, responseDir);
+    const res = readResponse('bNoName');
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/name/i);
+  });
+
+  it('marketplace_remove unregisters a marketplace', async () => {
+    const config = loadConfig();
+    config.plugins = {
+      enabledPlugins: [],
+      extraKnownMarketplaces: [{ name: 'gone', source: 'https://example.com/gone' }],
+      directories: [],
+    };
+    saveConfig(config);
+    await handlePluginIpc({ action: 'marketplace_remove', name: 'gone', requestId: 'mRm' }, responseDir);
+    const res = readResponse('mRm');
+    expect(res.ok).toBe(true);
+    expect(res.name).toBe('gone');
+    const cfg = loadConfig();
+    expect(cfg.plugins?.extraKnownMarketplaces?.find((m) => m.name === 'gone')).toBeFalsy();
+  });
+
+  it('marketplace_remove fails for unknown marketplace', async () => {
+    await handlePluginIpc({ action: 'marketplace_remove', name: 'never-existed', requestId: 'mRmMiss' }, responseDir);
+    const res = readResponse('mRmMiss');
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/not found/i);
   });
 
   it('marketplace_list returns configured marketplaces', async () => {

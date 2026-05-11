@@ -1,6 +1,6 @@
 ---
 name: self-knowledge
-description: Understand your own configuration, capabilities, architecture, and how to help users configure you. Use when asked about how you work, what you can do, your settings, or when users want to change your configuration (self-bootstrapping).
+description: Understand your own configuration, capabilities, architecture, and how to help users configure or extend you. Use when asked about how you work, what you can do, your settings, plugins/marketplaces, installing/uninstalling plugins, or when users want to change your configuration (self-bootstrapping). Trigger keywords include: plugin, plugins, marketplace, install plugin, uninstall plugin, extend yourself, add capability, nanoclaw_plugin, nanoclaw_control, configure, restart daemon.
 ---
 
 # Self-Knowledge — Know Thyself
@@ -36,76 +36,76 @@ cat /workspace/project/nanoclaw.json 2>/dev/null
 
 ### Key config fields
 
-| Field | What it controls |
-|-------|-----------------|
-| `agents.defaults.provider` | LLM provider (e.g. `github-copilot`, `anthropic`) |
-| `agents.defaults.model` | Model name (e.g. `claude-sonnet-4.5`) |
-| `agents.defaults.name` | Your display name |
-| `agents.defaults.mode` | `host` (direct) or `sandbox` (Docker container) |
-| `agents.defaults.thinkLevel` | Reasoning effort: `low` / `medium` / `high` / `xhigh` |
-| `agents.defaults.showThinking` | Show reasoning in messages (default: false) |
-| `agents.defaults.githubMcp` | Enable GitHub MCP server (web_search, issues, PRs) |
-| `agents.list` | Per-agent overrides (model, mode, provider per chat) |
-| `channels.telegram.enabled` | Telegram channel on/off |
-| `channels.teams.enabled` | Teams channel on/off |
-| `channels.discord.enabled` | Discord channel on/off |
-| `sendErrorToUser` | Send error messages to user (default: false) |
-| `tui.mode` | TUI mode override |
-| `chats` | Registered chat groups (telegram/teams) |
-| `plugins` | Installed plugins |
-| `addons` | Registered addons (e.g. devtunnel) |
-| `configVersion` | Config migration version (current: 3) |
+| Field                          | What it controls                                      |
+| ------------------------------ | ----------------------------------------------------- |
+| `agents.defaults.provider`     | LLM provider (e.g. `github-copilot`, `anthropic`)     |
+| `agents.defaults.model`        | Model name (e.g. `claude-sonnet-4.5`)                 |
+| `agents.defaults.name`         | Your display name                                     |
+| `agents.defaults.mode`         | `host` (direct) or `sandbox` (Docker container)       |
+| `agents.defaults.thinkLevel`   | Reasoning effort: `low` / `medium` / `high` / `xhigh` |
+| `agents.defaults.showThinking` | Show reasoning in messages (default: false)           |
+| `agents.defaults.githubMcp`    | Enable GitHub MCP server (web_search, issues, PRs)    |
+| `agents.list`                  | Per-agent overrides (model, mode, provider per chat)  |
+| `channels.telegram.enabled`    | Telegram channel on/off                               |
+| `channels.teams.enabled`       | Teams channel on/off                                  |
+| `channels.discord.enabled`     | Discord channel on/off                                |
+| `sendErrorToUser`              | Send error messages to user (default: false)          |
+| `tui.mode`                     | TUI mode override                                     |
+| `chats`                        | Registered chat groups (telegram/teams)               |
+| `plugins`                      | Installed plugins                                     |
+| `addons`                       | Registered addons (e.g. devtunnel)                    |
+| `configVersion`                | Config migration version (current: 3)                 |
 
 ## Slash commands (in-chat)
 
-| Command | Description |
-|---------|-------------|
-| `/think [off\|low\|medium\|high\|xhigh]` | Set reasoning effort level |
-| `/reasoning [on\|off]` | Show or hide reasoning/thinking output in messages |
-| `/new` | Reset session — start fresh conversation |
-| `/status` | Show agent status and config |
-| `/capabilities` | Show available tools and skills |
-| `/tasks` | List scheduled tasks |
-| `/wiki [topic]` | Knowledge base — ingest, query, or maintain your wiki |
-| `/help` | Show available commands |
+| Command                                  | Description                                           |
+| ---------------------------------------- | ----------------------------------------------------- |
+| `/think [off\|low\|medium\|high\|xhigh]` | Set reasoning effort level                            |
+| `/reasoning [on\|off]`                   | Show or hide reasoning/thinking output in messages    |
+| `/new`                                   | Reset session — start fresh conversation              |
+| `/status`                                | Show agent status and config                          |
+| `/capabilities`                          | Show available tools and skills                       |
+| `/tasks`                                 | List scheduled tasks                                  |
+| `/wiki [topic]`                          | Knowledge base — ingest, query, or maintain your wiki |
+| `/help`                                  | Show available commands                               |
 
 ## CLI commands
 
-| Command | Description |
-|---------|-------------|
-| `nanoclaw init` | Initialize workspace and config |
-| `nanoclaw start` | Start nanoclaw (background daemon + devtunnel if configured) |
-| `nanoclaw stop` | Stop nanoclaw + devtunnel + agent children |
-| `nanoclaw restart` | Stop then start |
-| `nanoclaw status` | Show running status, service info, auth state |
-| `nanoclaw doctor` | Full health check |
-| `nanoclaw logs [-f]` | View logs (optionally follow) |
-| `nanoclaw tui` | Interactive terminal chat |
-| `nanoclaw tui --ask "question"` | Single query mode (non-interactive) |
-| `nanoclaw tui --ask "q" --model claude-opus-4.6 --think high` | With model/think overrides |
-| `nanoclaw channel add telegram` | Set up Telegram bot |
-| `nanoclaw channel add teams --setup-manifest` | Generate Teams App manifest zip |
-| `nanoclaw channel add teams --setup-manifest --account daily` | Generate manifest for specific account |
-| `nanoclaw channel list` | List configured channels |
-| `nanoclaw provider login` | Login to LLM provider |
-| `nanoclaw provider list` | List available providers |
-| `nanoclaw plugin install <spec>` | Install a plugin (spec: `name@marketplace`, `owner/repo[:subdir]`, git URL, or local path) |
-| `nanoclaw plugin list` | List installed plugins |
-| `nanoclaw plugin remove <name>` | Uninstall a plugin (removes from `plugins.enabled[]` + deletes dir) |
-| `nanoclaw plugin marketplace add <source>` | Register a plugin marketplace |
-| `nanoclaw plugin marketplace list` | List registered marketplaces |
-| `nanoclaw plugin marketplace browse [name]` | Browse plugins available in a marketplace |
-| `nanoclaw plugin marketplace remove <name>` | Unregister a marketplace |
-| `nanoclaw addon list` | List registered addons |
-| `nanoclaw config get [path]` | Read config value |
-| `nanoclaw config set <path> <value>` | Set config value |
-| `nanoclaw chat list` | List registered chats |
-| `nanoclaw pair` | Generate pairing code for mobile apps |
-| `nanoclaw mcp add <name> <url>` | Add an MCP server (auto-reloads daemon, **no restart needed**) |
-| `nanoclaw mcp remove <name>` | Remove an MCP server (auto-reloads daemon) |
-| `nanoclaw mcp list` | List configured MCP servers |
-| `nanoclaw reload` | Hot-reload `nanoclaw.json` / `mcp.json` without restart (SIGUSR2 on POSIX, trigger file on Windows) |
-| `nanoclaw update` | Update nanoclaw to latest version |
+| Command                                                       | Description                                                                                         |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `nanoclaw init`                                               | Initialize workspace and config                                                                     |
+| `nanoclaw start`                                              | Start nanoclaw (background daemon + devtunnel if configured)                                        |
+| `nanoclaw stop`                                               | Stop nanoclaw + devtunnel + agent children                                                          |
+| `nanoclaw restart`                                            | Stop then start                                                                                     |
+| `nanoclaw status`                                             | Show running status, service info, auth state                                                       |
+| `nanoclaw doctor`                                             | Full health check                                                                                   |
+| `nanoclaw logs [-f]`                                          | View logs (optionally follow)                                                                       |
+| `nanoclaw tui`                                                | Interactive terminal chat                                                                           |
+| `nanoclaw tui --ask "question"`                               | Single query mode (non-interactive)                                                                 |
+| `nanoclaw tui --ask "q" --model claude-opus-4.6 --think high` | With model/think overrides                                                                          |
+| `nanoclaw channel add telegram`                               | Set up Telegram bot                                                                                 |
+| `nanoclaw channel add teams --setup-manifest`                 | Generate Teams App manifest zip                                                                     |
+| `nanoclaw channel add teams --setup-manifest --account daily` | Generate manifest for specific account                                                              |
+| `nanoclaw channel list`                                       | List configured channels                                                                            |
+| `nanoclaw provider login`                                     | Login to LLM provider                                                                               |
+| `nanoclaw provider list`                                      | List available providers                                                                            |
+| `nanoclaw plugin install <spec>`                              | Install a plugin (spec: `name@marketplace`, `owner/repo[:subdir]`, git URL, or local path)          |
+| `nanoclaw plugin list`                                        | List installed plugins                                                                              |
+| `nanoclaw plugin remove <name>`                               | Uninstall a plugin (removes from `plugins.enabled[]` + deletes dir)                                 |
+| `nanoclaw plugin marketplace add <source>`                    | Register a plugin marketplace                                                                       |
+| `nanoclaw plugin marketplace list`                            | List registered marketplaces                                                                        |
+| `nanoclaw plugin marketplace browse [name]`                   | Browse plugins available in a marketplace                                                           |
+| `nanoclaw plugin marketplace remove <name>`                   | Unregister a marketplace                                                                            |
+| `nanoclaw addon list`                                         | List registered addons                                                                              |
+| `nanoclaw config get [path]`                                  | Read config value                                                                                   |
+| `nanoclaw config set <path> <value>`                          | Set config value                                                                                    |
+| `nanoclaw chat list`                                          | List registered chats                                                                               |
+| `nanoclaw pair`                                               | Generate pairing code for mobile apps                                                               |
+| `nanoclaw mcp add <name> <url>`                               | Add an MCP server (auto-reloads daemon, **no restart needed**)                                      |
+| `nanoclaw mcp remove <name>`                                  | Remove an MCP server (auto-reloads daemon)                                                          |
+| `nanoclaw mcp list`                                           | List configured MCP servers                                                                         |
+| `nanoclaw reload`                                             | Hot-reload `nanoclaw.json` / `mcp.json` without restart (SIGUSR2 on POSIX, trigger file on Windows) |
+| `nanoclaw update`                                             | Update nanoclaw to latest version                                                                   |
 
 ### MCP changes are hot — do not tell users to restart
 
@@ -173,21 +173,21 @@ User → Channel (Telegram/Teams) → Main process → Spawn agent-runner → CL
 
 These are your custom tools (provided by NanoClaw IPC MCP server):
 
-| Tool | What it does |
-|------|-------------|
-| `nanoclaw-send_message` | Send a text message to the user/group |
-| `nanoclaw-send_file` | Send a file to the user (Telegram: as document) |
-| `nanoclaw-schedule_task` | Schedule a recurring or one-time task |
-| `nanoclaw-list_tasks` | List all scheduled tasks |
-| `nanoclaw-pause_task` | Pause a scheduled task |
-| `nanoclaw-resume_task` | Resume a paused task |
-| `nanoclaw-cancel_task` | Cancel and delete a task |
-| `nanoclaw-update_task` | Update an existing task |
-| `nanoclaw-register_group` | Register a new chat/group (main only) |
-| `nanoclaw-react` | React to a message with an emoji |
-| `nanoclaw-pdf-read_pdf` | Extract text from a PDF file |
-| `nanoclaw_plugin` | List/install/uninstall plugins (mutating actions = main chat only) |
-| `nanoclaw_control` | Restart daemon, reload config, or set a config field (main chat only) |
+| Tool                      | What it does                                                          |
+| ------------------------- | --------------------------------------------------------------------- |
+| `nanoclaw-send_message`   | Send a text message to the user/group                                 |
+| `nanoclaw-send_file`      | Send a file to the user (Telegram: as document)                       |
+| `nanoclaw-schedule_task`  | Schedule a recurring or one-time task                                 |
+| `nanoclaw-list_tasks`     | List all scheduled tasks                                              |
+| `nanoclaw-pause_task`     | Pause a scheduled task                                                |
+| `nanoclaw-resume_task`    | Resume a paused task                                                  |
+| `nanoclaw-cancel_task`    | Cancel and delete a task                                              |
+| `nanoclaw-update_task`    | Update an existing task                                               |
+| `nanoclaw-register_group` | Register a new chat/group (main only)                                 |
+| `nanoclaw-react`          | React to a message with an emoji                                      |
+| `nanoclaw-pdf-read_pdf`   | Extract text from a PDF file                                          |
+| `nanoclaw_plugin`         | List/install/uninstall plugins (mutating actions = main chat only)    |
+| `nanoclaw_control`        | Restart daemon, reload config, or set a config field (main chat only) |
 
 Plus GitHub MCP tools (when `githubMcp` enabled): `web_search`, `web_fetch`, `issue_read`, `search_code`, etc.
 
@@ -196,6 +196,7 @@ Plus GitHub MCP tools (when `githubMcp` enabled): `web_search`, `web_fetch`, `is
 ## Authentication
 
 NanoClaw resolves GitHub tokens in this priority:
+
 1. Environment variables: `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`
 2. `~/.copilot/` file-based auth (copilot CLI config)
 3. SDK `useLoggedInUser` fallback (OS credential manager — Windows Credential Manager / macOS Keychain / Linux keyring)
@@ -236,9 +237,7 @@ via a `plugin.json` manifest (root or `.claude-plugin/plugin.json`).
       { "name": "workiq", "source": "microsoft/work-iq" },
       { "name": "local-tool", "source": "/abs/path/to/plugin", "autoInstall": false }
     ],
-    "marketplaces": [
-      { "name": "acme", "source": "https://github.com/acme/marketplace" }
-    ],
+    "marketplaces": [{ "name": "acme", "source": "https://github.com/acme/marketplace" }],
     "directories": ["~/.nanoclaw/plugins"]
   }
 }
@@ -378,15 +377,16 @@ cat ~/.nanoclaw/logs/nanoclaw.log | grep -i 'token\|auth\|license' | tail -10
 
 ### Common errors and fixes
 
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `Session was not created with authentication info` | Token not found / credential manager issue | `nanoclaw provider login` or set `GITHUB_TOKEN` env var |
-| `Model does not support reasoning effort` | thinkLevel set for incompatible model | `/think off` or remove from per-agent config |
-| `EADDRINUSE` | Port already in use (Teams webhook) | Kill old process: `lsof -i :3978` then kill |
-| `Not licensed to use Copilot` | GitHub account doesn't have Copilot subscription | Login with licensed account |
-| `Docker not running` | Container mode needs Docker | Switch to host mode in config |
+| Error                                              | Cause                                            | Fix                                                     |
+| -------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------- |
+| `Session was not created with authentication info` | Token not found / credential manager issue       | `nanoclaw provider login` or set `GITHUB_TOKEN` env var |
+| `Model does not support reasoning effort`          | thinkLevel set for incompatible model            | `/think off` or remove from per-agent config            |
+| `EADDRINUSE`                                       | Port already in use (Teams webhook)              | Kill old process: `lsof -i :3978` then kill             |
+| `Not licensed to use Copilot`                      | GitHub account doesn't have Copilot subscription | Login with licensed account                             |
+| `Docker not running`                               | Container mode needs Docker                      | Switch to host mode in config                           |
 
 ## What you CAN do
+
 - Run bash commands (host: permanent, container: temporary)
 - Read/write files in your workspace
 - Search the web (`web_search`, `web_fetch`)
@@ -397,11 +397,13 @@ cat ~/.nanoclaw/logs/nanoclaw.log | grep -i 'token\|auth\|license' | tail -10
 - Use slash commands (`/think`, `/reasoning`, `/new`, etc.)
 
 ## What you CANNOT do
+
 - Access other groups' workspaces (isolated per group)
 - Send messages to unregistered chats
 - Access host filesystem in container mode
 
 ## What requires caution
+
 - **Restarting yourself**: Tell the user to run `nanoclaw restart`. Do NOT try to restart from within the agent process.
 - **Config changes**: Always validate JSON before writing. Bad config = nanoclaw won't start.
 - **In container mode**: You cannot run nanoclaw CLI commands — only MCP tools work.

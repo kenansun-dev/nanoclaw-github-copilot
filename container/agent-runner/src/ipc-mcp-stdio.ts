@@ -95,14 +95,10 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
   {
     prompt: z
       .string()
-      .describe(
-        'What the agent should do when the task runs. For isolated mode, include all necessary context here.',
-      ),
+      .describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
     schedule_type: z
       .enum(['cron', 'interval', 'once'])
-      .describe(
-        'cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time',
-      ),
+      .describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
     schedule_value: z
       .string()
       .describe(
@@ -111,15 +107,11 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     context_mode: z
       .enum(['group', 'isolated'])
       .default('group')
-      .describe(
-        'group=runs with chat history and memory, isolated=fresh session (include context in prompt)',
-      ),
+      .describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
     target_group_jid: z
       .string()
       .optional()
-      .describe(
-        '(Main group only) JID of the group to schedule the task for. Defaults to the current group.',
-      ),
+      .describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
     script: z
       .string()
       .optional()
@@ -157,10 +149,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
         };
       }
     } else if (args.schedule_type === 'once') {
-      if (
-        /[Zz]$/.test(args.schedule_value) ||
-        /[+-]\d{2}:\d{2}$/.test(args.schedule_value)
-      ) {
+      if (/[Zz]$/.test(args.schedule_value) || /[+-]\d{2}:\d{2}$/.test(args.schedule_value)) {
         return {
           content: [
             {
@@ -186,8 +175,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     }
 
     // Non-main groups can only schedule for themselves
-    const targetJid =
-      isMain && args.target_group_jid ? args.target_group_jid : chatJid;
+    const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
 
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -227,25 +215,17 @@ server.tool(
     try {
       if (!fs.existsSync(tasksFile)) {
         return {
-          content: [
-            { type: 'text' as const, text: 'No scheduled tasks found.' },
-          ],
+          content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }],
         };
       }
 
       const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
 
-      const tasks = isMain
-        ? allTasks
-        : allTasks.filter(
-            (t: { groupFolder: string }) => t.groupFolder === groupFolder,
-          );
+      const tasks = isMain ? allTasks : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
 
       if (tasks.length === 0) {
         return {
-          content: [
-            { type: 'text' as const, text: 'No scheduled tasks found.' },
-          ],
+          content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }],
         };
       }
 
@@ -264,9 +244,7 @@ server.tool(
         .join('\n');
 
       return {
-        content: [
-          { type: 'text' as const, text: `Scheduled tasks:\n${formatted}` },
-        ],
+        content: [{ type: 'text' as const, text: `Scheduled tasks:\n${formatted}` }],
       };
     } catch (err) {
       return {
@@ -365,27 +343,13 @@ server.tool(
   {
     task_id: z.string().describe('The task ID to update'),
     prompt: z.string().optional().describe('New prompt for the task'),
-    schedule_type: z
-      .enum(['cron', 'interval', 'once'])
-      .optional()
-      .describe('New schedule type'),
-    schedule_value: z
-      .string()
-      .optional()
-      .describe('New schedule value (see schedule_task for format)'),
-    script: z
-      .string()
-      .optional()
-      .describe(
-        'New script for the task. Set to empty string to remove the script.',
-      ),
+    schedule_type: z.enum(['cron', 'interval', 'once']).optional().describe('New schedule type'),
+    schedule_value: z.string().optional().describe('New schedule value (see schedule_task for format)'),
+    script: z.string().optional().describe('New script for the task. Set to empty string to remove the script.'),
   },
   async (args) => {
     // Validate schedule_value if provided
-    if (
-      args.schedule_type === 'cron' ||
-      (!args.schedule_type && args.schedule_value)
-    ) {
+    if (args.schedule_type === 'cron' || (!args.schedule_type && args.schedule_value)) {
       if (args.schedule_value) {
         try {
           CronExpressionParser.parse(args.schedule_value);
@@ -426,10 +390,8 @@ server.tool(
     };
     if (args.prompt !== undefined) data.prompt = args.prompt;
     if (args.script !== undefined) data.script = args.script;
-    if (args.schedule_type !== undefined)
-      data.schedule_type = args.schedule_type;
-    if (args.schedule_value !== undefined)
-      data.schedule_value = args.schedule_value;
+    if (args.schedule_type !== undefined) data.schedule_type = args.schedule_type;
+    if (args.schedule_value !== undefined) data.schedule_value = args.schedule_value;
 
     writeIpcFile(TASKS_DIR, data);
 
@@ -452,15 +414,9 @@ Use available_groups.json to find the JID for a group. The folder name must be c
   {
     jid: z
       .string()
-      .describe(
-        'The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")',
-      ),
+      .describe('The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")'),
     name: z.string().describe('Display name for the group'),
-    folder: z
-      .string()
-      .describe(
-        'Channel-prefixed folder name (e.g., "whatsapp_family-chat", "telegram_dev-team")',
-      ),
+    folder: z.string().describe('Channel-prefixed folder name (e.g., "whatsapp_family-chat", "telegram_dev-team")'),
     trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
     requiresTrigger: z
       .boolean()
@@ -512,28 +468,43 @@ registerMemoryTools(server);
 
 server.tool(
   'nanoclaw_plugin',
-  'List, install, or uninstall NanoClaw plugins. Plugins are bundles of skills + ' +
-    'MCP servers + agents that extend NanoClaw, declared in nanoclaw.json under ' +
-    '`plugins.enabled[]`. Source formats supported: `name@marketplace`, ' +
-    '`owner/repo[:subdir]`, full git URL, local path. ' +
-    'Read-only actions (list, marketplace_list) work everywhere; install/uninstall ' +
-    'are restricted to the main chat for safety. After install, restart the daemon ' +
-    'with nanoclaw_control(restart) for new MCP servers to load; pure-skill plugins ' +
-    'are picked up on the next agent invocation.',
+  'List, install, or uninstall NanoClaw plugins, and manage plugin marketplaces. ' +
+    'Plugins are bundles of skills + MCP servers + agents that extend NanoClaw, ' +
+    'declared in nanoclaw.json under `plugins.enabled[]`. ' +
+    'Source formats supported: `name@marketplace`, `owner/repo[:subdir]`, full git URL, local path. ' +
+    'Typical workflow for a marketplace plugin: (1) `marketplace_add` with the marketplace repo (e.g. `owner/marketplace-repo`), ' +
+    '(2) `marketplace_browse` to see available plugins, (3) `install` with `source: "plugin-name@marketplace-name"`. ' +
+    'Two marketplaces are auto-known and need no add: `copilot-plugins` and `awesome-copilot`. ' +
+    'Read-only actions (list, marketplace_list, marketplace_browse) work everywhere; ' +
+    'mutating actions (install, uninstall, marketplace_add, marketplace_remove) are restricted to the main chat for safety. ' +
+    'After installing a plugin that ships MCP servers, restart the daemon with nanoclaw_control(restart) so the new servers register; ' +
+    'pure-skill plugins are picked up on the next agent invocation.',
   {
     action: z
-      .enum(['list', 'install', 'uninstall', 'marketplace_list'])
+      .enum([
+        'list',
+        'install',
+        'uninstall',
+        'marketplace_list',
+        'marketplace_add',
+        'marketplace_browse',
+        'marketplace_remove',
+      ])
       .describe(
-        'list = enumerate installed plugins. install = add to plugins.enabled[] and fetch (requires source). uninstall = remove from plugins.enabled[] and delete plugin dir (requires name). marketplace_list = show registered marketplaces.',
+        'list = enumerate installed plugins. install = add to plugins.enabled[] and fetch (requires source). uninstall = remove from plugins.enabled[] and delete plugin dir (requires name). marketplace_list = show registered marketplaces. marketplace_add = register a new marketplace (requires source; name optional, derived from source). marketplace_browse = list plugins in a registered marketplace (requires name). marketplace_remove = unregister a marketplace (requires name).',
       ),
     name: z
       .string()
       .optional()
-      .describe('Plugin name (required for install when source is a URL/path with no obvious name; required for uninstall).'),
+      .describe(
+        'Plugin or marketplace name (required for uninstall, marketplace_browse, marketplace_remove; optional for install/marketplace_add when derivable from source).',
+      ),
     source: z
       .string()
       .optional()
-      .describe('Install spec: `name@marketplace`, `owner/repo[:subdir]`, git URL, or local path.'),
+      .describe(
+        'Install/registration spec: `name@marketplace`, `owner/repo[:subdir]`, git URL, or local path. Required for install and marketplace_add.',
+      ),
   },
   async (args) => {
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -577,9 +548,7 @@ server.tool(
 
     if (!response.ok) {
       return {
-        content: [
-          { type: 'text' as const, text: `Error: ${response.error ?? 'unknown plugin operation failure'}` },
-        ],
+        content: [{ type: 'text' as const, text: `Error: ${response.error ?? 'unknown plugin operation failure'}` }],
       };
     }
 
@@ -593,7 +562,8 @@ server.tool(
           provider?: string;
         }>;
         if (plugins.length === 0) {
-          text = 'No plugins installed. Use `nanoclaw_plugin install` with a source to add one, or list marketplaces with `marketplace_list`.';
+          text =
+            'No plugins installed. Use `nanoclaw_plugin install` with a source to add one, or list marketplaces with `marketplace_list`.';
         } else {
           text =
             `Installed plugins (${plugins.length}):\n` +
@@ -615,9 +585,7 @@ server.tool(
         if (skipped.length) lines.push(`Already installed (skipped): ${skipped.join(', ')}`);
         if (failed.length) {
           lines.push(
-            `Failed:\n${failed
-              .map((f: { name: string; error: string }) => `  - ${f.name}: ${f.error}`)
-              .join('\n')}`,
+            `Failed:\n${failed.map((f: { name: string; error: string }) => `  - ${f.name}: ${f.error}`).join('\n')}`,
           );
         }
         if (lines.length === 0) lines.push('No changes (entry already declared, no new install).');
@@ -631,12 +599,37 @@ server.tool(
       case 'marketplace_list': {
         const ms = response.marketplaces ?? [];
         if (ms.length === 0) {
-          text = 'No marketplaces registered. Use `nanoclaw plugin marketplace add <source>` (CLI) to register one.';
+          text =
+            'No marketplaces registered. Use `marketplace_add` with `source: "owner/repo"` to register one (or use the auto-known `copilot-plugins` / `awesome-copilot` marketplaces directly).';
         } else {
           text =
-            `Registered marketplaces (${ms.length}):\n` +
-            ms.map((m: any) => `  - ${m.name}: ${m.source}`).join('\n');
+            `Registered marketplaces (${ms.length}):\n` + ms.map((m: any) => `  - ${m.name}: ${m.source}`).join('\n');
         }
+        break;
+      }
+      case 'marketplace_add': {
+        text = `Registered marketplace \`${response.name}\` (${response.pluginCount} plugins available). Use marketplace_browse to see them, then install with \`source: "<plugin>@${response.name}"\`.`;
+        break;
+      }
+      case 'marketplace_browse': {
+        const plugins = (response.plugins ?? []) as Array<{ name: string; version?: string; description?: string }>;
+        const header = `Marketplace: ${response.name}${response.description ? ` — ${response.description}` : ''}`;
+        if (plugins.length === 0) {
+          text = `${header}\n  (no plugins in this marketplace)`;
+        } else {
+          text =
+            `${header}\n` +
+            plugins
+              .map(
+                (p) =>
+                  `  📦 ${p.name}${p.version ? ` v${p.version}` : ''}${p.description ? `\n     ${p.description}` : ''}\n     install: source="${p.name}@${response.name}"`,
+              )
+              .join('\n');
+        }
+        break;
+      }
+      case 'marketplace_remove': {
+        text = `Unregistered marketplace \`${response.name}\`.`;
         break;
       }
       default:
