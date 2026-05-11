@@ -143,7 +143,11 @@ export function ensureDailySummaryTask(opts: { chatJid: string; groupFolder: str
         script: null,
         schedule_type: 'cron',
         schedule_value: config.cron,
-        context_mode: 'group',
+        // detached by default: daily-summary task should not occupy the
+        // chat slot. With slot-key indirection in GroupQueue (proposal
+        // §4.1.A), 'isolated' tasks run in a separate slot and the chat
+        // remains live for user messages while the summary runs.
+        context_mode: 'isolated',
         next_run: next,
         status: 'active',
         created_at: new Date().toISOString(),
