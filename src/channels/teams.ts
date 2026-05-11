@@ -449,7 +449,7 @@ export class TeamsChannel implements Channel {
     };
     this.conversationRefs.set(chatJid, ref as any);
 
-        let content = expandHtmlLinks(activity.text);
+    let content = expandHtmlLinks(activity.text);
     // Teams sends HTML when textFormat is 'xml' — pass through as-is for
     // formatting, but expand <a href=...> first so href is visible to LLMs
     // that don't read raw HTML well (Copilot GHC path strips silently).
@@ -779,7 +779,7 @@ export class TeamsChannel implements Channel {
 
     // Store conversation reference for proactive messaging later
     const ref = TurnContext.getConversationReference(activity);
-        this.conversationRefs.set(chatJid, ref);
+    this.conversationRefs.set(chatJid, ref);
 
     let content = expandHtmlLinks(activity.text);
     const timestamp = activity.timestamp ? new Date(activity.timestamp).toISOString() : new Date().toISOString();

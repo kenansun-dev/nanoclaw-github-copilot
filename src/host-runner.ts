@@ -515,7 +515,10 @@ export async function runHostAgent(
           logger.warn({ pid: child.pid, group: group.name }, 'Host agent timeout: taskkill /F /T sent (tree kill)');
         } catch (err: any) {
           const msg = err?.stderr?.toString?.() ?? String(err);
-          logger.warn({ pid: child.pid, err: msg }, 'taskkill /F /T failed during timeout — falling back to child.kill');
+          logger.warn(
+            { pid: child.pid, err: msg },
+            'taskkill /F /T failed during timeout — falling back to child.kill',
+          );
           if (!child.killed) child.kill('SIGKILL');
         }
         // Watchdog still useful on win32 to confirm taskkill reaped the tree.

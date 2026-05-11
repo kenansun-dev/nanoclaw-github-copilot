@@ -79,7 +79,8 @@ export function dirSizeBytes(dir: string): number {
 export function freeBytesAt(dir: string): number {
   let probe = fs.existsSync(dir) ? dir : path.dirname(dir);
   // Node ≥18.15 fs.statfsSync is cross-platform incl. Windows.
-  const statfs = (fs as unknown as { statfsSync?: (p: string) => { bavail: bigint | number; bsize: bigint | number } }).statfsSync;
+  const statfs = (fs as unknown as { statfsSync?: (p: string) => { bavail: bigint | number; bsize: bigint | number } })
+    .statfsSync;
   if (typeof statfs === 'function') {
     try {
       const s = statfs(probe);
@@ -201,9 +202,7 @@ export function stashCurrentBinary(backupDir: string): string | null {
     }
     return dest;
   } catch (err: any) {
-    process.stderr.write(
-      `  ⚠️  Capture of current install dir failed: ${err?.message ?? err}\n`,
-    );
+    process.stderr.write(`  ⚠️  Capture of current install dir failed: ${err?.message ?? err}\n`);
     return null;
   }
 }

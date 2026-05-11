@@ -25,17 +25,19 @@ let loaded = false;
 export function loadWorkspaceEnv(workspace?: string): void {
   if (loaded) return;
   loaded = true;
-  const ws = workspace || process.env.NANOCLAW_WORKSPACE || path.join(
-    process.env.HOME || process.env.USERPROFILE || '',
-    '.nanoclaw',
-  );
+  const ws =
+    workspace ||
+    process.env.NANOCLAW_WORKSPACE ||
+    path.join(process.env.HOME || process.env.USERPROFILE || '', '.nanoclaw');
   const envFile = path.join(ws, '.env');
   if (!fs.existsSync(envFile)) return;
 
   // Node 22.6+: process.loadEnvFile (no override of existing env vars).
-  const lef = (process as unknown as {
-    loadEnvFile?: (p: string) => void;
-  }).loadEnvFile;
+  const lef = (
+    process as unknown as {
+      loadEnvFile?: (p: string) => void;
+    }
+  ).loadEnvFile;
   if (typeof lef === 'function') {
     try {
       lef(envFile);
@@ -56,10 +58,7 @@ export function loadWorkspaceEnv(workspace?: string): void {
       const key = line.slice(0, eq).trim();
       let val = line.slice(eq + 1).trim();
       // strip surrounding quotes
-      if (
-        (val.startsWith('"') && val.endsWith('"')) ||
-        (val.startsWith("'") && val.endsWith("'"))
-      ) {
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
         val = val.slice(1, -1);
       }
       if (key && process.env[key] === undefined) {

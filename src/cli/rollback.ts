@@ -20,12 +20,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import {
-  defaultBackupDir,
-  listWorkspaceSnapshots,
-  PREV_BINARY_TGZ,
-  PREV_INSTALL_DIR,
-} from './backup.js';
+import { defaultBackupDir, listWorkspaceSnapshots, PREV_BINARY_TGZ, PREV_INSTALL_DIR } from './backup.js';
 
 interface Options {
   backupDir: string;
@@ -204,9 +199,7 @@ export async function runRollback(args: string[]): Promise<void> {
     execSync('nanoclaw start', { stdio: 'inherit', timeout: 30000 });
     console.log('  ✅ NanoClaw restarted on previous version');
   } catch (err: any) {
-    console.log(
-      `  ⚠️  Could not auto-restart: ${err?.message ?? err}. Run: nanoclaw start`,
-    );
+    console.log(`  ⚠️  Could not auto-restart: ${err?.message ?? err}. Run: nanoclaw start`);
   }
 
   console.log('');

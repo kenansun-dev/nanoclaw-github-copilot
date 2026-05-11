@@ -8,11 +8,8 @@ describe('expandHtmlLinks', () => {
   });
 
   it('expands a Word doc link with distinct label', () => {
-    const input =
-      'check this <a href="https://contoso.sharepoint.com/foo.docx">foo.docx</a> please';
-    expect(expandHtmlLinks(input)).toBe(
-      'check this foo.docx (https://contoso.sharepoint.com/foo.docx) please',
-    );
+    const input = 'check this <a href="https://contoso.sharepoint.com/foo.docx">foo.docx</a> please';
+    expect(expandHtmlLinks(input)).toBe('check this foo.docx (https://contoso.sharepoint.com/foo.docx) please');
   });
 
   it('keeps URL only when label === URL (avoid duplication)', () => {
@@ -21,14 +18,12 @@ describe('expandHtmlLinks', () => {
   });
 
   it('handles attrs around href + nested tags in label', () => {
-    const input =
-      '<a target="_blank" href="https://example.com/x?y=1" rel="noopener"><span>Click <b>me</b></span></a>';
+    const input = '<a target="_blank" href="https://example.com/x?y=1" rel="noopener"><span>Click <b>me</b></span></a>';
     expect(expandHtmlLinks(input)).toBe('Click me (https://example.com/x?y=1)');
   });
 
   it('handles multiple links in one message', () => {
-    const input =
-      '<a href="https://a.com">A</a> and <a href="https://b.com">B</a>';
+    const input = '<a href="https://a.com">A</a> and <a href="https://b.com">B</a>';
     expect(expandHtmlLinks(input)).toBe('A (https://a.com) and B (https://b.com)');
   });
 
@@ -37,9 +32,7 @@ describe('expandHtmlLinks', () => {
   });
 
   it('case-insensitive tag and attribute', () => {
-    expect(expandHtmlLinks('<A HREF="https://x.com">x</A>')).toBe(
-      'x (https://x.com)',
-    );
+    expect(expandHtmlLinks('<A HREF="https://x.com">x</A>')).toBe('x (https://x.com)');
   });
 
   it('skips fast when no <a tag present', () => {

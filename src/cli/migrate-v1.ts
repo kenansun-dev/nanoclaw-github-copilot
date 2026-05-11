@@ -38,9 +38,7 @@ export function detectV1Install(workspace: string): boolean {
   // Open v1 db and check for registered_groups
   try {
     const db = new Database(v1DbPath, { readonly: true, fileMustExist: true });
-    const row = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='registered_groups'")
-      .get();
+    const row = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='registered_groups'").get();
     db.close();
     return row != null;
   } catch {
@@ -131,16 +129,12 @@ export function runV1Migration(workspace: string, projectRoot: string): Migratio
 
   process.stderr.write('  🔄 Running schema migration (registered_groups → agent/messaging_groups)...\n');
   const env = { ...process.env, NANOCLAW_WORKSPACE: workspace };
-  const result = spawnSync(
-    'npx',
-    ['--yes', 'tsx', path.join(projectRoot, 'setup', 'migrate-v2', 'db.ts'), workspace],
-    {
-      cwd: projectRoot,
-      env,
-      stdio: 'inherit',
-      timeout: 120000,
-    },
-  );
+  const result = spawnSync('npx', ['--yes', 'tsx', path.join(projectRoot, 'setup', 'migrate-v2', 'db.ts'), workspace], {
+    cwd: projectRoot,
+    env,
+    stdio: 'inherit',
+    timeout: 120000,
+  });
 
   if (result.status !== 0) {
     process.stderr.write(`  ❌ Migration script failed (exit ${result.status}). Restoring backup...\n`);

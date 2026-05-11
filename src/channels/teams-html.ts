@@ -21,13 +21,10 @@
  */
 export function expandHtmlLinks(text: string): string {
   if (!text || !/<a\s/i.test(text)) return text;
-  return text.replace(
-    /<a\s+[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
-    (_match, href, inner) => {
-      const label = inner.replace(/<[^>]+>/g, '').trim();
-      if (!label) return href;
-      if (label === href) return href;
-      return `${label} (${href})`;
-    },
-  );
+  return text.replace(/<a\s+[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_match, href, inner) => {
+    const label = inner.replace(/<[^>]+>/g, '').trim();
+    if (!label) return href;
+    if (label === href) return href;
+    return `${label} (${href})`;
+  });
 }

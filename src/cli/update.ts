@@ -90,7 +90,9 @@ export async function runUpdate(args: string[]): Promise<void> {
     const ws = resolveWorkspace();
 
     if (noBackup) {
-      console.log('  ⚠️  --no-backup: skipping workspace snapshot (rollback will be impossible without an external backup)');
+      console.log(
+        '  ⚠️  --no-backup: skipping workspace snapshot (rollback will be impossible without an external backup)',
+      );
     } else if (!fs.existsSync(ws)) {
       console.log(`  (no workspace at ${ws} yet — skipping backup)`);
     } else {
@@ -101,9 +103,7 @@ export async function runUpdate(args: string[]): Promise<void> {
       const wsSize = dirSizeBytes(ws);
       const free = freeBytesAt(backupDir);
       const need = Math.ceil(wsSize * 1.2);
-      console.log(
-        `  workspace=${humanBytes(wsSize)}, free@backup=${humanBytes(free)}, need≈${humanBytes(need)}`,
-      );
+      console.log(`  workspace=${humanBytes(wsSize)}, free@backup=${humanBytes(free)}, need≈${humanBytes(need)}`);
       if (free < need) {
         console.error(
           `❌ Not enough disk space at ${backupDir} for safe backup.\n` +
@@ -122,7 +122,9 @@ export async function runUpdate(args: string[]): Promise<void> {
       if (stashedBinary) {
         console.log(`  ✅ Previous install captured: ${stashedBinary}`);
       } else {
-        console.log('  ⚠️  Could not capture current install (cp -a failed); rollback will need a manual v1 tgz at <backup-dir>/nanoclaw-prev.tgz');
+        console.log(
+          '  ⚠️  Could not capture current install (cp -a failed); rollback will need a manual v1 tgz at <backup-dir>/nanoclaw-prev.tgz',
+        );
       }
     }
   } catch (err: any) {
