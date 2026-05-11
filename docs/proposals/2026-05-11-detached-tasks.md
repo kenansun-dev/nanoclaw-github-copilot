@@ -80,13 +80,22 @@ OpenClaw 在 `src/tasks/` + `src/cron/` 下做了 detached background task runti
 - task container 退出时清掉自己的 `state` 条目，不影响 chat slot
 
 #### B. task-scheduler.ts + host-runner.ts (VM owns)
-- `enqueueTask(...)` 根据 `task.context_mode` 分流：
-  - `'isolated'` (默认): 走新 detached codepath，spawn 用 `taskContainerKey`，不抢 chat slot
-  - `'group'`: 旧行为，走 chat container（向后兼容）
+
+> **📢 Correction (2026-05-11 22:15, post-implementation)**: 原 v3 说
+> `context_mode` 控制 slot 路由 — 错。读代码后（`task-scheduler.ts:196`）发现
+> `context_mode` 其实控制**sessionId 复用**：`'group'` 让 task agent
+> 继承 chat 当前 session id（≡ OpenClaw cron `sessionTarget: 'current'`），
+> `'isolated'` 走全新 session。与 slot 路由无关。
+>
+> **实际设计**：§4.1.A 后所有 task 都 detached，`enqueueTask` 统一创建
+> `taskSlotKey(chatJid, taskId)` slot，不需要 `context_mode` 分流。
+
+- 不需要改 `enqueueTask`的 slot 路由（§4.1.A 已统一走 detached）
+- `context_mode` 保留作为 sessionId 复用开关，不动语义
 - VM 提到的 3 个 host-runner gap 一并修：
-  1. `ensureDailySummaryTask` 也走 detached codepath
-  2. host mode `processName` + `timeoutMs` 与 chat 拆开（task 自己的 timeout）
-  3. §553 chat-wedge race：detached 后 wedge 自然消失（chat slot 一直空）
+  1. `ensureDailySummaryTask` 默认 `context_mode='isolated'`（新 task 同 session 语义上跳出 chat）
+  2. host mode `processName` task-scoped：`nanoclaw-task-${taskId}-${ts}` vs chat 的 `nanoclaw-host-${groupFolder}-${ts}` — 方便运维 grep 区分
+  3. §553 chat-wedge race：detached 后 wedge 自然消失（chat slot 一直空），注释记录该 race 在 detached 岶构下不再 wedge user chat
 
 #### C. index.ts → outbound (VM 顺手)
 - task 的 agent 输出**走现有 `sendMessage` outbound 路径**，不引入新 IPC 协议
