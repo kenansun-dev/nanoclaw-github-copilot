@@ -178,6 +178,43 @@ export async function runUpdate(args: string[]): Promise<void> {
         // No PID file — wait a fixed time for safety
         await new Promise((r) => setTimeout(r, 2000));
       }
+
+      // 2026-05-11 belt-and-braces #3 on top of parallel taskkill +
+      // 120s stop timeout: even after the main pid exits, win32 taskkill
+      // children may still be settling on slow disks. Poll agent-pids.json
+      // until it's gone (cleared by killAllAgentPids on success) or empty,
+      // up to 30s. This is the surest signal that file handles in
+      // container/agent-runner-ghc have been released so the upcoming
+      // `npm install -g` rename won't EBUSY.
+      try {
+        const { resolveWorkspace } = await import('../workspace.js');
+        const ws = resolveWorkspace();
+        const pidsFile = path.join(ws, 'state', 'agent-pids.json');
+        const pollDeadline = Date.now() + 30000;
+        let cleared = false;
+        while (Date.now() < pollDeadline) {
+          if (!fs.existsSync(pidsFile)) {
+            cleared = true;
+            break;
+          }
+          try {
+            const raw = fs.readFileSync(pidsFile, 'utf-8');
+            const remaining: number[] = JSON.parse(raw);
+            if (!Array.isArray(remaining) || remaining.length === 0) {
+              cleared = true;
+              break;
+            }
+          } catch {
+            // Unparseable / mid-write — keep polling.
+          }
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        if (!cleared) {
+          console.log('  ⚠️  agent-pids.json still non-empty after 30s; npm install may EBUSY. Continuing.');
+        }
+      } catch {
+        /* best effort — don't block update on workspace lookup */
+      }
     } catch (err: any) {
       // Not running is fine; surface other errors so they aren't silently lost.
       const msg = String(err?.message ?? err);
