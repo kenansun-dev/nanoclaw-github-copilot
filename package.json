@@ -6,8 +6,8 @@
   "main": "dist/index.js",
   "scripts": {
     "prebuild": "node scripts/write-build-info.mjs",
-    "build": "tsc && bash container/shared/sync.sh && cd container/agent-runner-ghc && npx tsc && cd mcp-servers/pdf && npx tsc && cd ../../../.. && cd container/agent-runner && npx tsc",
-    "build:runners": "cd container/agent-runner-ghc && npx tsc && cd mcp-servers/pdf && npx tsc && cd ../../../.. && cd container/agent-runner && npx tsc",
+    "build": "tsc && bash container/shared/sync.sh && cd container/agent-runner-ghc && npm install --no-audit --no-fund && npx tsc && cd mcp-servers/pdf && npx tsc && cd ../../../.. && cd container/agent-runner && npm install --no-audit --no-fund && npx tsc",
+    "build:runners": "cd container/agent-runner-ghc && npm install --no-audit --no-fund && npx tsc && cd mcp-servers/pdf && npx tsc && cd ../../../.. && cd container/agent-runner && npm install --no-audit --no-fund && npx tsc",
     "prepack": "npm run build && npm run build:runners && node scripts/strip-sourcemaps.mjs",
     "postinstall": "node scripts/postinstall.mjs",
     "start": "node dist/index.js",
