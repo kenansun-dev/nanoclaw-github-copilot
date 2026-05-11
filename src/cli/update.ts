@@ -159,7 +159,14 @@ export async function runUpdate(args: string[]): Promise<void> {
         /* */
       }
 
-      execSync('nanoclaw stop', { stdio: 'inherit', timeout: 15000 });
+      // 120s timeout: `nanoclaw stop` may need to taskkill many tracked
+      // agent pids (host mode accumulates them). On win32 each taskkill /F /T
+      // costs ~1s, so 100 pids = ~100s. Owner hit ETIMEDOUT at 15s with 46
+      // pids on 2026-05-11 — stop reported timeout, update raced ahead, then
+      // npm install -g failed with EBUSY because grandchildren still held
+      // container/agent-runner-ghc handles. See host-runner.ts parallel
+      // taskkill below; raising the timeout is belt + braces.
+      execSync('nanoclaw stop', { stdio: 'inherit', timeout: 120000 });
       console.log('  Stopped running instance');
 
       // Wait for process to fully release file locks (important on Windows)

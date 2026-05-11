@@ -6,7 +6,10 @@
  *
  * Used when agents.defaults.mode === 'host'.
  */
-import { ChildProcess, spawn, execSync } from 'child_process';
+import { ChildProcess, spawn, execSync, exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -81,29 +84,29 @@ export async function killAllAgentPids(): Promise<void> {
       { pids, platform: process.platform },
       `killAllAgentPids: attempting to kill ${pids.length} tracked agent pid(s)`,
     );
-    for (const pid of pids) {
-      if (process.platform === 'win32') {
-        // Windows: ALWAYS run taskkill /F /T unconditionally. /T walks the
-        // process tree, so even if the root (this pid) is already a zombie,
-        // live grandchildren (tsx, node, docker, mcp subprocesses) get reaped.
-        // Previously we gated on `process.kill(pid, 0)` which is unreliable
-        // on Windows (can return true for zombies AND false for legit-dead-
-        // but-children-alive). Kenan hit EBUSY on npm install because of
-        // orphaned grandchildren holding container/agent-runner-ghc handles.
-        // 2026-04-21.
-        try {
-          execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'pipe' });
-          logger.info({ pid }, 'taskkill /F /T succeeded (tree killed)');
-        } catch (err: any) {
-          // Exit code 128 = process not found; treat as success.
-          const msg = err?.stderr?.toString?.() ?? String(err);
-          if (/not found|不存在|找不到/i.test(msg)) {
-            logger.debug({ pid }, 'taskkill: process already gone');
-          } else {
-            logger.warn({ pid, err: msg }, 'taskkill /F /T failed');
+    if (process.platform === 'win32') {
+      // Windows: parallel taskkill /F /T. Serial was ~1s/pid (taskkill
+      // spawns cmd.exe + walks process tree); 46 pids on owner's host =
+      // 46s, blowing past update.ts 15s stop timeout and racing into
+      // npm install -g (EBUSY on container/agent-runner-ghc grandchildren).
+      // Parallel = ~2s for any reasonable pid count. 2026-05-11.
+      await Promise.all(
+        pids.map(async (pid) => {
+          try {
+            await execAsync(`taskkill /F /T /PID ${pid}`);
+            logger.info({ pid }, 'taskkill /F /T succeeded (tree killed)');
+          } catch (err: any) {
+            const msg = err?.stderr?.toString?.() ?? String(err);
+            if (/not found|不存在|找不到/i.test(msg)) {
+              logger.debug({ pid }, 'taskkill: process already gone');
+            } else {
+              logger.warn({ pid, err: msg }, 'taskkill /F /T failed');
+            }
           }
-        }
-      } else {
+        }),
+      );
+    } else {
+      for (const pid of pids) {
         // POSIX: try process-group kill first (negative pid), then fall back
         // to single-pid. Process-group kill reaches detached grandchildren
         // spawned with setsid/detached:true.
