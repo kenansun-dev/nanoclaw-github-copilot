@@ -1,6 +1,19 @@
 # Proposal: 让 scheduled task 不再占用主会话 (chat container)
 
-> Author: rpi5 (draft) + VM (root-cause analysis, blame verification) | Date: 2026-05-11 | Status: draft for owner review
+> Author: rpi5 (draft) + VM (root-cause analysis, blame verification) | Date: 2026-05-11 | Status: **v3 — owner-aligned, scoped down to ~4-5h**
+
+## v3 Changelog (2026-05-11 21:35 GMT+8)
+
+owner kenansun 拍板 4 个方向，scope 收紧：
+
+1. **复用现有 `ScheduledTask.context_mode: 'group' | 'isolated'`** (`types-extensions.ts:89`，DB 已有列) — 不加新字段，不动 schema，不动 `nanoclaw.json` config
+2. **同 chat 多 task 并行** (跟 OpenClaw 对齐)，受全局 `MAX_CONCURRENT_CONTAINERS` 兜底 — 不再 per-chat 串行
+3. **不加 `📋` prefix，不强制格式** — task 输出什么发什么，跟现在保持一致
+4. **不引入新 `task-result/<id>.json` IPC 协议** — task 走现有 `sendMessage` outbound 路径
+
+OpenClaw 命名对齐：我们的 `context_mode: 'isolated'` ↔ OpenClaw cron `sessionTarget: "isolated"`。仅注释说明，不动 schema。
+
+工作量：~10h → **~4-5h**。
 
 ## 1. 问题 (TL;DR)
 
@@ -15,7 +28,6 @@
 - `src/group-queue.ts` introduced upstream by gavrielc (commits `eac9a6a` / `ae17715`, upstream PR #111)
 - `src/task-scheduler.ts` introduced upstream by gavrielc (commit `17e7b46`)
 - `git diff upstream/main -- src/task-scheduler.ts src/group-queue.ts` = **0 行差异**
-- `git diff upstream/feat/migrate-from-v1-- ...` = 0 行差异
 - 我们 fork 没改这块（除 logger 重命名）
 
 **完整 occupation 路径有两层 lock，都是 upstream 设计**：
@@ -25,7 +37,7 @@
 `GroupQueue` 对每个 `chat_jid` 维护一个 `state`，**同一时间只能 1 个 active container**：
 - 用户消息 → `enqueueMessageCheck(chat_jid)` (`group-queue.ts:120`)
 - Scheduled task → `enqueueTask(task.chat_jid, ...)` (`task-scheduler.ts:322`)
-- **两者共享同一个 chat_jid 的 queue slot**
+- 两者共享同一个 chat_jid 的 queue slot
 - task 跑时 `state.active = true`，user 消息进 `pendingMessages`，等 task 跑完 `drainGroup` 才被处理
 - → 这才是「task 占主 session 不说话」的根本：scheduled task 用的就是目标 chat 的 chat_jid，task = main chat session 本人
 
@@ -41,88 +53,100 @@ sendMessage(groupJid, text): boolean {
 }
 ```
 
-`isTaskContainer` 在 `runTask()` set true，task 完成 callback reset false。`MAX_CONCURRENT_CONTAINERS=5` 是全局并发上限，但**每个 chat 仍然只允许 1 个 container** —— 不是全局限的问题，是 per-chat 设计的问题。
-
-**修方案要同时拆这两层**：让 task 用独立 key 离开 chat_jid 的 slot，user 那个 slot 永远空着接消息。
+修方案要同时拆这两层：让 task 用独立 key 离开 chat_jid 的 slot，user 那个 slot 永远空着接消息。
 
 ## 3. OpenClaw 怎么做？
 
-OpenClaw 在 `src/tasks/` 下有完整的 **detached background task runtime**：
+OpenClaw 在 `src/tasks/` + `src/cron/` 下做了 detached background task runtime：
 
-- `task-registry.ts`：task 注册到独立 SQLite registry，有 own runId / status / lifecycle
-- `detached-task-runtime.ts`：task 跑在**独立 session** (isolated agent session)，不占用 main session
-- `task-executor-policy.ts`：task 终结时把 summary push 回 main session 当一条 system event (`Background task done: <title>. <summary>`)
-- 用户在 main session 里**永远能继续聊天**，task 进度通过事件 stream / 聚合状态查 (`openclaw tasks list`)
+- cron job 每条记录有 `sessionTarget: "main" | "isolated" | "current" | "session:<id>"` 字段，存在独立 state 文件 `~/.openclaw/cron/jobs.json`（**不在 config 里**），通过 `cron` tool 创建/管理
+- `detached-task-runtime.ts`：task 跑在独立 isolated agent session，不占用 main session
+- task 完成结果通过 delivery 配置（`announce` / `webhook`）push 回，可走 chat channel，也可不通知
 
-关键差异：OpenClaw 把 "scheduled work" 当成**与 user 平行的另一个 session**；NanoClaw 把它当成**user 那个 session 里的一次特殊 turn**。
+**关键 takeaway**：runtime state 在 DB / jsonl，**不污染 config**。我们应该完全照抄这个设计。
 
-## 4. 提议的方案
+## 4. 提议的方案 (v3 scoped)
 
-**核心思路**：把 scheduled task 从「占用主 chat 的 container」改成「跑在 chat 之外的 detached task container」，task 完成后把结果作为一条**普通 outbound message** 送回 chat。
+**核心思路**：把 scheduled task 从「占用主 chat 的 container」改成「跑在 chat 之外的 detached task container」，task 完成后照旧通过 `sendMessage` 把结果送回 chat。
 
 ### 4.1 改动
 
-#### A. group-queue.ts
+#### A. group-queue.ts (rpi5 owns)
 - 引入 `taskContainerKey = "${groupJid}::task::${taskId}"`，task container 用这个 key 而不是 `groupJid`
 - `state` map 用 `taskContainerKey` 索引，**不与 groupJid 冲突**
 - 主 chat 的 `state.isTaskContainer` 永远不再被 set true
 - `sendMessage(groupJid, ...)` 永远 route 到 chat container（不再被 task 借走）
-- `MAX_CONCURRENT_CONTAINERS` 同时限制 chat + task 总数（保留全局压舱石）
+- 同 chat 多个 task 并行允许，受全局 `MAX_CONCURRENT_CONTAINERS` 闸门
+- task container 退出时清掉自己的 `state` 条目，不影响 chat slot
 
-#### B. task-scheduler.ts → enqueueTask
-- 改为 `enqueueDetachedTask(groupJid, taskId, fn)`
-- 走新 codepath：spawn container 时用 `taskContainerKey`，给 agent 注入 metadata `{ taskId, taskName, groupJid, postBackChannel }`
-- agent 完成后，结果不通过 `output.txt` 走 chat 流，而通过新 IPC `task-result/<taskId>.json`
+#### B. task-scheduler.ts + host-runner.ts (VM owns)
+- `enqueueTask(...)` 根据 `task.context_mode` 分流：
+  - `'isolated'` (默认): 走新 detached codepath，spawn 用 `taskContainerKey`，不抢 chat slot
+  - `'group'`: 旧行为，走 chat container（向后兼容）
+- VM 提到的 3 个 host-runner gap 一并修：
+  1. `ensureDailySummaryTask` 也走 detached codepath
+  2. host mode `processName` + `timeoutMs` 与 chat 拆开（task 自己的 timeout）
+  3. §553 chat-wedge race：detached 后 wedge 自然消失（chat slot 一直空）
 
-#### C. index.ts
-- 监听 `task-result/*.json`：把 result 当成 **outbound message** 发到 task 配置的 `chatJid`，**不是 chat container 的 reply**
-- 在 chat 中显示成 `📋 Task <name> done: <summary>`（带 task icon 标记，用户看一眼知道是 scheduled task 自动出的，不是 reply）
-- 失败/超时同样格式化（`❌ Task <name> failed: <error>`）
+#### C. index.ts → outbound (VM 顺手)
+- task 的 agent 输出**走现有 `sendMessage` outbound 路径**，不引入新 IPC 协议
+- 输出格式跟现在一致，**不加 prefix、不加 footer**
 
-#### D. config
-- 新增 `sandbox.tasksMaxConcurrent`（默认 = `maxConcurrent`，可独立调）
-- 新增 feature flag `tasks.detached`（默认 true，可临时回退到旧行为）
+#### D. config / schema
+- ❌ **不动** `nanoclaw.json` config — 没有新字段
+- ❌ **不动** DB schema — `context_mode` 列已存在 (`types-extensions.ts:89`)
+- ✅ task 创建/管理路径（CLI 或 API）默认 `context_mode='isolated'`，用户/agent 想要旧行为显式传 `'group'`
 
 #### E. CLI
-- `nanoclaw tasks list` 显示 task container 状态独立于 chat
+- `nanoclaw tasks list` 区分 task container 与 chat container
 - `nanoclaw tasks kill <taskId>` 只杀 task，不影响 chat
 
-### 4.2 何时同 chat 多个 task 撞车
+### 4.2 同 chat 多 task 撞车
 
-旧行为下不可能（chat container 只能跑一个）。新行为下要决策：
-- **方案 A（保守）**：同一 chat 串行——`task-queue.<groupJid>` FIFO，跑完一个起下一个
-- **方案 B（激进）**：完全并行，受 `tasksMaxConcurrent` 全局限
-
-**默认选 A**——避免 task 之间共享 workspace 写冲突，符合用户心智模型「这个 chat 的 task 一个一个跑」。B 留作未来 opt-in。
+**v3 决定：并行**（owner 拍板，跟 OpenClaw 对齐）。
+- 每个 detached task 有自己的 `taskContainerKey` slot，互不挡
+- 共享 `groupFolder` 写冲突？group folder 现在就是 mtime-based 自然 pick up，task 之间也通过同样机制收敛。真有 race 那是 task 实现 bug，不该用串行兜底
+- 全局 `MAX_CONCURRENT_CONTAINERS=5` 仍然兜底，不会爆
 
 ## 5. 兼容/迁移
 
-- 不改 v2 schema、不改 IPC 协议（只新增一个 `task-result/` 目录）
-- Feature flag 默认开，撞 bug 可一键关回旧行为
-- 已 scheduled 的 tasks 自动走新 codepath，无需用户操作
+- 不动 v2 schema、不动 IPC 协议、不动 config
+- 默认 `context_mode='isolated'` (新行为)，老 task 在 DB 里还是默认值，自动走新 codepath
+- 撞 bug：单 task 改 `context_mode='group'` 临时回退，或全局 env (`NANOCLAW_TASKS_FORCE_GROUP=1`) 一键回退到旧行为
 
 ## 6. 风险
 
 | 风险 | 缓解 |
 |---|---|
-| Task container 抢占 docker / RAM | `tasksMaxConcurrent` + 全局 `MAX_CONCURRENT_CONTAINERS` 双闸门 |
-| Task 写 group folder 与 chat container 冲突 | 现有 group folder 写就是 mtime-based，task 完成 → flush → chat 下次 spawn 自然 pick up；同 chat 串行(方案 A) 更安全 |
-| Task 想"问用户后续"的 (interactive) 现在变 outbound | 提案里所有 task 默认 non-interactive；要 interactive 的 task → 写 task config 时 fall back 到旧行为 (`task.requireMainSession: true`) |
-| 上游有人想 merge 上去 | 整改在 fork-only `src/tasks-extensions.ts` + 最小 patch 上游文件，便于未来 PR upstream |
+| Task container 抢占 docker / RAM | 全局 `MAX_CONCURRENT_CONTAINERS` 闸门已存在 |
+| Task 写 group folder 与 chat container 冲突 | 现有 mtime-based 收敛机制，与今天 chat container 之间 spawn/exit 共享同一 folder 是同样问题，没新增 |
+| Task 想"问用户后续"的 (interactive) | 写 task 时设 `context_mode='group'` fall back 到旧行为 |
+| Host mode 怎么办 | 锁不在 docker 那层，是在 `GroupQueue`；host mode 与 container mode 受益相同，detached 后 chat slot 都解放 |
+| §553 chat-wedge race | detached 后 chat slot 永不被 task 占，wedge 自然消失（VM PR comment 标注） |
 
-## 7. 工作量估计
+## 7. 工作量估计 (v3)
 
-- group-queue 改造：~3 小时
-- task-scheduler / IPC：~2 小时
-- index.ts outbound 渲染：~1 小时
-- 测试：~3 小时（unit + 一个 e2e Telegram task case）
-- 文档 + flag：~1 小时
+- group-queue 改造（rpi5）：~1.5 小时
+- task-scheduler `context_mode` 分流（VM）：~1 小时
+- 3 host-runner gap（VM）：~1 小时
+- 测试：~1.5 小时（unit + e2e detached task 跑过）
 
-**总计 ~10 小时**。一个 daily PR 能完成。
+**总计 ~4-5 小时**。一个 daily PR `chore/2026-05-11-detached-tasks` 完成。
 
-## 8. Open questions for owner
+## 8. Decisions locked (owner-confirmed 2026-05-11 21:35)
 
-1. **方案 A vs B**（同 chat task 串行 vs 并行）默认选 A 你 OK？
-2. Task 完成后的渲染：`📋 Task <name> done: <summary>` 这个格式 vs 你想要别的（例如 quoted reply / embed / silent log）？
-3. 旧行为完全删掉 vs 保留 `task.requireMainSession: true` 作 fallback？我倾向**保留**（少数 task 可能确实想抢 chat session），你拍板。
-4. 下个 daily PR 装这个，还是优先级再排？
+| # | 决策 | 状态 |
+|---|---|---|
+| 1 | 默认 `context_mode='isolated'`，`'group'` 留作 opt-in fallback | ✅ owner |
+| 2 | 同 chat 多 task **并行**（不串行） | ✅ owner |
+| 3 | task 输出**不加 prefix、不限格式**，跟现在一致 | ✅ owner |
+| 4 | **不动 config，不动 schema**，复用现有 `context_mode` 列 | ✅ owner + VM |
+| 5 | 不引入新 IPC 协议，task 走现有 `sendMessage` | ✅ VM |
+| 6 | OpenClaw 命名对齐（`isolated` ↔ cron `sessionTarget: isolated`）仅注释 | ✅ VM |
+
+## 9. 分工
+
+- **rpi5**: §4.1.A group-queue + 这份 doc 维护
+- **VM**: §4.1.B task-scheduler + §4.1.C outbound 路径 + 3 host-runner gap
+
+一个 daily PR：`chore/2026-05-11-detached-tasks` (branch 已开，HEAD = main `75dcfb7`)。
