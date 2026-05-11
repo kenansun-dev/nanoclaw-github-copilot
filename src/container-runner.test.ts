@@ -43,7 +43,6 @@ vi.mock('./config.js', () => ({
   DATA_DIR: '/tmp/nanoclaw-test-data',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   PACKAGE_ROOT: '/tmp/nanoclaw-test-pkg',
-  IDLE_TIMEOUT: 1800000, // 30min
   AGENT_RUN_TIMEOUT_MS: 600000, // 10min
   IS_GHC_PROVIDER: false,
   PROVIDER_SESSION_DIR: '.claude',
@@ -189,7 +188,7 @@ describe('container-runner timeout behavior', () => {
     // Let output processing settle
     await vi.advanceTimersByTimeAsync(10);
 
-    // Fire the hard timeout (IDLE_TIMEOUT + 30s = 1830000ms)
+    // Fire the hard timeout (configTimeout = 1800000ms)
     await vi.advanceTimersByTimeAsync(1830000);
 
     // Emit close event (as if container was stopped by the timeout)

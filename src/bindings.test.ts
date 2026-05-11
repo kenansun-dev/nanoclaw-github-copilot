@@ -44,7 +44,6 @@ function makeConfig(bindings?: any[], chats?: any): NanoclawConfig {
       timeout: 300000,
       maxOutputSize: 1048576,
       maxConcurrent: 1,
-      idleTimeout: 0,
     },
     chats: chats || {},
     pairing: { mode: 'disabled' },

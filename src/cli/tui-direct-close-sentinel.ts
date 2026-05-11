@@ -8,7 +8,7 @@
  *
  * Co-authored: VM lane authored the helper module + 12 mutation-verified
  * tests; rpi5 lane authored the original inline fix in tui-direct.ts +
- * the idleTimeout default change. This file is VM's contribution adopted
+ * the host-sweep migration (IDLE_TIMEOUT removal). This file is VM's contribution adopted
  * via cross-agent collation (see commit message).
  */
 

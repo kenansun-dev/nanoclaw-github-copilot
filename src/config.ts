@@ -70,7 +70,6 @@ export const CONTAINER_IMAGE = _config.sandbox.image;
 export const CONTAINER_TIMEOUT = _config.sandbox.timeout;
 export const CONTAINER_MAX_OUTPUT_SIZE = _config.sandbox.maxOutputSize;
 export const MAX_CONCURRENT_CONTAINERS = Math.max(1, _config.sandbox.maxConcurrent);
-export const IDLE_TIMEOUT = _config.sandbox.idleTimeout;
 
 // ─── Agent Run Timeout ───────────────────────────────────────────────────────
 

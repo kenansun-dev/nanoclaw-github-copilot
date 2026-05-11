@@ -359,9 +359,6 @@ const DEFAULT_CONFIG = {
     timeout: 1800000,
     maxOutputSize: 10485760,
     maxConcurrent: 5,
-    // 30 min idle (matches config-loader default + upstream
-    // upstream/main:src/config.ts:39).
-    idleTimeout: 1_800_000,
     // v2 host-sweep tunables. absoluteCeilingMs=0 disables the
     // heartbeat-age throttle (owner directive 2026-05-10).
     absoluteCeilingMs: 0,

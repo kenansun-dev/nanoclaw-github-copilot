@@ -123,13 +123,12 @@ export interface NanoclawConfig {
     timeout: number;
     maxOutputSize: number;
     maxConcurrent: number;
-    idleTimeout: number;
     /**
      * v2 host-sweep absolute ceiling: kill the container if heartbeat mtime
      * is older than this (ms). 0 = disabled (no heartbeat-based throttle).
-     * Default 0: do not throttle on heartbeat age. The legacy idleTimeout
-     * setTimeout path in container-runner.ts still handles container-side
-     * idle-close until v1 cleanup lands in a follow-up PR.
+     * Default 0: do not throttle on heartbeat age. Container idle-close is
+     * now driven entirely by host-sweep (legacy IDLE_TIMEOUT setTimeout +
+     * sandbox.idleTimeout were removed to align with upstream).
      */
     absoluteCeilingMs?: number;
     /**
@@ -291,13 +290,6 @@ const DEFAULTS: NanoclawConfig = {
     timeout: 1800000,
     maxOutputSize: 10485760,
     maxConcurrent: 5,
-    // 30 min idle = container exits if no IPC activity for 30 min. Aligns
-    // with upstream nanoclaw default (upstream/main:src/config.ts:39 default
-    // 1800000ms). Was tweaked to 30_000 in d3109c2 as a band-aid for a
-    // close-sentinel write race — but the real fix in that same commit
-    // (write close-sentinel after first sandbox output) is sufficient on
-    // its own. Set to 0 to disable idle-close entirely.
-    idleTimeout: 1_800_000,
     // v2 host-sweep tunables (see interface above for semantics).
     // Defaults: absolute ceiling disabled (owner directive 2026-05-10:
     // "don't kill idle containers to save resources"), claim-stuck enabled
