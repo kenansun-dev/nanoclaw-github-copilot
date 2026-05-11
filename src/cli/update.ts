@@ -270,28 +270,12 @@ export async function runUpdate(args: string[]): Promise<void> {
 
     console.log('');
 
-    // v1 → v2 in-place workspace migration. No-op if workspace already on v2
-    // schema or if no workspace exists yet (fresh install).
-    try {
-      const { runV1Migration } = await import('./migrate-v1.js');
-      const { resolveWorkspace } = await import('../workspace.js');
-      const ws = resolveWorkspace();
-      if (fs.existsSync(ws)) {
-        const result = runV1Migration(ws, PROJECT_ROOT);
-        if (result.status === 'failed') {
-          console.error('');
-          console.error(`❌ v1 migration failed: ${result.message}`);
-          if (result.backupDir) {
-            console.error(`   Backup retained at: ${result.backupDir}`);
-          }
-          console.error('   Aborting update; service NOT restarted.');
-          process.exit(1);
-        }
-      }
-    } catch (err: any) {
-      console.error(`❌ Migration step crashed: ${err?.message ?? err}`);
-      process.exit(1);
-    }
+    // v1 → v2 migration removed 2026-05-11 per owner directive
+    // ("不需要 v1 backup, 删掉"). v2 schema is backward-compatible with v1
+    // (5/6 WORKSPACE_DIR_NAME=.nanoclaw in-place upgrade). The migrate-v1
+    // call here was legacy from earlier v2-mergeback work and was creating
+    // Windows backups + tsx-spawn races (exit null on owner's host) for no
+    // benefit. migrate-v1.ts kept as orphan for emergency manual recovery.
 
     // Re-run init in --sync mode to refresh templates / agent-runner deps
     // without re-prompting Telegram/Teams/auth (those were configured on
