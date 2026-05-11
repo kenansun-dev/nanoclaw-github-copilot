@@ -128,9 +128,25 @@ Migration `104-fork-task-workspace-mode.ts`. No backfill needed.
 ## 7. Cleanup
 
 `${groupFolder}/.tasks/<taskId>/` accumulates per-run directories.
-Sweep via existing `host-sweep.ts` cycle (add a new cleaner that
-removes `.tasks/<id>/` older than `cleanupAfterDays`). Not in scope of
-the implementation PR — can land alongside.
+Three-layer policy:
+
+1. **Per-run scratch** (when isolated mode actually creates a new dir per
+   run, not per task) — delete on run completion if `last_result` is
+   `success`. Keep on `error` for post-mortem.
+2. **Per-task TTL** — sweep via existing `host-sweep.ts` cycle. Add a
+   new cleaner that removes `.tasks/<id>/` for tasks whose `status` is
+   `completed` and whose `last_run` is older than `cleanupAfterDays`
+   (reuse the same knob already used elsewhere in the sweep).
+3. **Manual** — `nanoclaw task gc` CLI (host-side): scan `.tasks/`
+   directories that have no matching row in `scheduled_tasks` (orphans
+   from cancelled tasks) and remove them. Also accept `--id <taskId>`
+   for targeted cleanup. Implements alongside the schema migration so
+   admins have a recovery tool from day one.
+
+All three are cheap to add together with the implementation PR; not
+blocking on the schema decision but worth committing to before kenan
+signs off so we don't ship Option C and immediately need a hot-fix for
+unbounded scratch growth.
 
 ## 8. Open questions for kenan
 
@@ -141,8 +157,9 @@ the implementation PR — can land alongside.
    (`/workspace/group-ro`) acceptable?
 3. **`script` tasks** (rare path that sets `task.script`) — same
    workspace_mode semantics, or always shared?
-4. **Cleanup policy** — delete old `.tasks/<id>/` after run, after N
-   days, or never (user's responsibility)?
+4. **Cleanup policy** — §7 above proposes the three-layer default
+   (per-run on success, sweep on completed-and-old, `nanoclaw task gc`
+   for orphans). Sound, or different defaults?
 
 ## 9. Out of scope (later, if needed)
 

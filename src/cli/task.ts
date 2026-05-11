@@ -305,19 +305,31 @@ async function addTask(opts: AddTaskOpts): Promise<void> {
 
   const id = opts.customId || `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  createTask({
-    id,
-    group_folder: group.folder,
-    chat_jid: opts.chat as string,
-    prompt: opts.prompt as string,
-    script: null,
-    schedule_type: scheduleType,
-    schedule_value: scheduleValue,
-    context_mode: contextMode as 'group' | 'isolated',
-    next_run: nextRun,
-    status: 'active',
-    created_at: new Date().toISOString(),
-  });
+  try {
+    createTask({
+      id,
+      group_folder: group.folder,
+      chat_jid: opts.chat as string,
+      prompt: opts.prompt as string,
+      script: null,
+      schedule_type: scheduleType,
+      schedule_value: scheduleValue,
+      context_mode: contextMode as 'group' | 'isolated',
+      next_run: nextRun,
+      status: 'active',
+      created_at: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    // Most likely a duplicate primary key when --id was supplied.
+    // Surface a clean message instead of a raw SQLite stack trace.
+    if (err && typeof err.code === 'string' && err.code.startsWith('SQLITE_CONSTRAINT')) {
+      console.error(`Task id already exists: ${id}`);
+      console.error('Pick a different --id, or omit --id to auto-generate.');
+      process.exitCode = 1;
+      return;
+    }
+    throw err;
+  }
 
   if (opts.json) {
     console.log(JSON.stringify({ id, next_run: nextRun, status: 'active' }, null, 2));
@@ -346,7 +358,9 @@ function printUsage(): void {
   console.log('       --chat <jid>            Required: target chat_jid (must be a registered group)');
   console.log('       --prompt <text>         Required: what the agent should do when the task fires');
   console.log('       --schedule-type <t>     Required: cron | interval | once');
-  console.log('       --schedule-value <v>    Required: cron expr | interval ms | local ISO timestamp (no Z)');
+  console.log(
+    '       --schedule-value <v>    Required: cron expr | interval ms | local ISO timestamp (no Z; e.g. 2026-02-01T15:30:00)',
+  );
   console.log('       --context-mode <m>      Optional: group | isolated (default: isolated)');
   console.log('       --id <custom-id>        Optional: custom task id (default: task-<ts>-<rand>)');
   console.log('       --json                  Emit JSON (id + next_run) instead of human format');

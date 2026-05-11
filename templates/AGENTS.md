@@ -66,3 +66,20 @@ Common flows:
 After installing a plugin that ships **MCP servers**, restart the daemon so the new
 servers register: `nanoclaw_control({ action: "restart" })`. Pure-skill plugins are
 picked up on the next agent invocation — no restart needed.
+
+## Scheduled tasks (extending yourself across time)
+
+Pair with plugins above: plugins extend **what you can do**, scheduled tasks extend
+**when you do it**. Use the `nanoclaw` MCP server's task tools — available in every
+chat (host + container).
+
+- Create: `schedule_task({ prompt, schedule_type: "cron"|"interval"|"once", schedule_value, context_mode: "group"|"isolated" })`
+  - cron: `"0 9 * * *"` (daily 9am LOCAL), `"*/5 * * * *"` (every 5 min)
+  - interval: `"300000"` (every 5 min, in ms)
+  - once: `"2026-02-01T15:30:00"` (LOCAL time, no `Z` suffix)
+- Inspect: `list_tasks` / `update_task` / `pause_task` / `resume_task` / `cancel_task`
+- `context_mode: "isolated"` for self-contained jobs (recommended default — include all
+  context in `prompt`); `"group"` when the task needs the chat's ongoing conversation context.
+
+Reach for these on intents like _"remind me…"_, _"every morning…"_, _"in N minutes…"_,
+_"daily summary…"_ — the task runs as a fresh agent in its own slot and won't block chat.

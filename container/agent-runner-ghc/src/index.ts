@@ -228,7 +228,7 @@ async function main(): Promise<void> {
   // need to recursively schedule from inside its own run).
   if (!containerInput.isScheduledTask) {
     runtimeLines.push('');
-    runtimeLines.push('## Scheduled tasks');
+    runtimeLines.push('## Available scheduling tools');
     runtimeLines.push('You have MCP tools to schedule recurring or one-time work for this chat:');
     runtimeLines.push('- `schedule_task` — create a task (cron / interval / once). Use when the user');
     runtimeLines.push('  says "remind me…", "every day at…", "in N minutes", "daily summary", etc.');
