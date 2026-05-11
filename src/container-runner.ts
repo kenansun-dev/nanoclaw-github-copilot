@@ -51,6 +51,8 @@ export interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  /** When isScheduledTask=true, the scheduled task id for processName formatting. */
+  taskId?: string;
   assistantName?: string;
   model?: string;
   script?: string;

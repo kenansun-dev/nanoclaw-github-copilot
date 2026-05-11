@@ -433,7 +433,9 @@ export async function runHostAgent(
   }
   const args = [runnerPath];
 
-  const processName = `nanoclaw-host-${group.folder.replace(/[^a-zA-Z0-9-]/g, '-')}-${Date.now()}`;
+  const processName = input.isScheduledTask && input.taskId
+    ? `nanoclaw-task-${input.taskId.replace(/[^a-zA-Z0-9-]/g, '-')}-${Date.now()}`
+    : `nanoclaw-host-${group.folder.replace(/[^a-zA-Z0-9-]/g, '-')}-${Date.now()}`;
 
   logger.info(
     {
@@ -551,15 +553,20 @@ export async function runHostAgent(
         // event on the parent within ~1s once stdio pipes drain. If we
         // are still seeing the child as alive 30s after SIGKILL, the
         // 'close' handler has not fired and GroupQueue.registerProcess()
-        // exit listener is also blocked — that chat is now permanently
-        // wedged (state.active stays true, all subsequent messages get
-        // queued behind a dead process). We do NOT have evidence this
+        // exit listener is also blocked — historically this would wedge
+        // the chat (state.active stays true on chat slot, all subsequent
+        // user messages queued behind a dead process). After detached
+        // tasks landed (proposal §4.1.A), this race no longer wedges
+        // user chat: scheduled tasks run on their own slot key
+        // (`${chatJid}::task::${taskId}`), so a stuck task slot leaves
+        // the chat slot completely free. The watchdog still fires for
+        // diagnostics on host-mode chat slots and gives ground truth
+        // (pid/processName) when it does. We do NOT have evidence this
         // race has actually happened in production (grep across all
-        // daemon logs: 0 hits for 'host-runner SIGKILL stuck'). This is
-        // a diagnostic canary: if the error fires we now have ground
-        // truth + pid/processName to root-cause. Once we see one, we
-        // wire a forceRelease() call into GroupQueue. Until then this
-        // is logging-only by design — no bypass for an unproven bug.
+        // daemon logs: 0 hits for 'host-runner SIGKILL stuck'). Once we
+        // see one, we wire a forceRelease() call into GroupQueue. Until
+        // then this is logging-only by design — no bypass for an
+        // unproven bug.
         setTimeout(() => {
           const stillAlive = child.exitCode === null && (child as any).signalCode === null;
           if (stillAlive) {
