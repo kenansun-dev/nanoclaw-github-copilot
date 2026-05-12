@@ -18,6 +18,7 @@ import { fileURLToPath } from 'url';
 import { AGENT_RUN_TIMEOUT_MS, TIMEZONE, getConfig } from './config.js';
 import { resolveWorkspace, paths as wsPaths } from './workspace.js';
 import { resolveAgentForChat, isAgentGHC, resolveGithubToken } from './config-extensions.js';
+import { parseJsonc } from './jsonc.js';
 import { getEffectiveModel, getEffectiveThinkLevel } from './session-overrides.js';
 import type { AgentConfig } from './config-loader.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
@@ -226,7 +227,12 @@ export async function runHostAgent(
       let baseConfig: Record<string, unknown> = {};
       if (fs.existsSync(hostCopilotConfig)) {
         try {
-          baseConfig = JSON.parse(fs.readFileSync(hostCopilotConfig, 'utf-8'));
+          // JSONC-tolerant: Copilot CLI writes a `// banner` at the top.
+          // Bare JSON.parse silently drops the user's loggedInUsers /
+          // copilotTokens into the container config (PR #47, 2026-05-12).
+          baseConfig = parseJsonc<Record<string, unknown>>(
+            fs.readFileSync(hostCopilotConfig, 'utf-8'),
+          );
         } catch {
           // Ignore parse errors
         }

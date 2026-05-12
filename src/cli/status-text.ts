@@ -21,6 +21,7 @@ import fs, { existsSync } from 'fs';
 import path, { dirname, join } from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import { parseJsonc } from '../jsonc.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -158,7 +159,12 @@ export async function collectStatus(chatJid?: string): Promise<StatusInfo> {
     try {
       const copilotConfig = path.join(os.homedir(), '.copilot', 'config.json');
       if (fs.existsSync(copilotConfig)) {
-        const cc = JSON.parse(fs.readFileSync(copilotConfig, 'utf-8'));
+        // Copilot CLI writes a `// banner` at the top of config.json,
+        // so we must use a JSONC-tolerant parser. Bare `JSON.parse` was
+        // throwing → catch swallowed → status falsely showed `❌ not
+        // configured` even when copilot was logged in. (PR #46 fix,
+        // 2026-05-12.)
+        const cc = parseJsonc<any>(fs.readFileSync(copilotConfig, 'utf-8'));
         // Schema compat: snake_case (older CLI) + camelCase (newer CLI,
         // confirmed on rpi5 2026-04-24). Both shapes coexist in the wild
         // depending on which copilot CLI version provisioned the file.
