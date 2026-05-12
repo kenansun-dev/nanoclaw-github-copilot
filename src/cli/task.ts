@@ -138,7 +138,7 @@ async function infoTask(id: string, opts: { json?: boolean }): Promise<void> {
   console.log(`  last_run:      ${task.last_run ?? '—'}${task.last_run ? ' (' + fmtRel(task.last_run) + ')' : ''}`);
   console.log(`  chat_jid:      ${task.chat_jid}`);
   console.log(`  group_folder:  ${task.group_folder}`);
-  console.log(`  context_mode:  ${task.context_mode} (${modeLabel(task.context_mode)})`);
+  console.log(`  context_mode:  ${task.context_mode} (${modeLabel(task.context_mode)}, deprecated)`);
   console.log(`  created_at:    ${task.created_at}`);
   if (task.consecutive_group_missing && task.consecutive_group_missing > 0) {
     console.log(`  ⚠ group missing ticks: ${task.consecutive_group_missing}`);
@@ -214,12 +214,22 @@ async function addTask(opts: AddTaskOpts): Promise<void> {
     return;
   }
 
-  const contextMode = opts.contextMode || 'isolated';
-  if (contextMode !== 'group' && contextMode !== 'isolated') {
-    console.error(`Invalid --context-mode: ${contextMode}. Must be group|isolated.`);
+  // context_mode is DEPRECATED (PR #46, 2026-05-12). Accept the flag
+  // for back-compat with old scripts/cron entries that still pass
+  // --context-mode, but warn and force isolated. Validation kept so
+  // garbage values still error out instead of silently being ignored.
+  const requestedMode = opts.contextMode || 'isolated';
+  if (requestedMode !== 'group' && requestedMode !== 'isolated') {
+    console.error(`Invalid --context-mode: ${requestedMode}. Must be group|isolated.`);
     process.exitCode = 1;
     return;
   }
+  if (requestedMode !== 'isolated') {
+    console.error(
+      `⚠  --context-mode=${requestedMode} is deprecated and ignored; tasks always run isolated.`,
+    );
+  }
+  const contextMode: 'isolated' = 'isolated';
 
   const group = getRegisteredGroup(opts.chat as string);
   if (!group) {
@@ -283,7 +293,7 @@ async function addTask(opts: AddTaskOpts): Promise<void> {
       script: null,
       schedule_type: scheduleType,
       schedule_value: scheduleValue,
-      context_mode: contextMode as 'group' | 'isolated',
+      context_mode: contextMode,
       next_run: nextRun,
       status: 'active',
       created_at: new Date().toISOString(),

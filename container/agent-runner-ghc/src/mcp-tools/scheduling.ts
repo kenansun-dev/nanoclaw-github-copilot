@@ -27,15 +27,7 @@ server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
 
-CONTEXT MODE - Choose based on task type. Default is "isolated" (surfaced as "standalone"). Pick "group" only when the task genuinely needs ongoing chat context.
-\u2022 "isolated" (DEFAULT, surfaced as "standalone"): Task runs in a fresh session with no conversation history. Use for independent tasks. Include all necessary context in the prompt itself.
-\u2022 "group" (surfaced as "attached"): Task runs in the group's conversation context, with access to chat history. Use only when the task needs ongoing discussion context, user preferences from chat, or recent interactions.
-
-If unsure, default to isolated. Examples:
-- "Remind me about our discussion" \u2192 group (needs conversation context)
-- "Check the weather every morning" \u2192 isolated (self-contained task)
-- "Follow up on my request" \u2192 group (needs to know what was requested)
-- "Generate a daily report" \u2192 isolated (just needs instructions in prompt)
+CONTEXT MODE - DEPRECATED. All tasks now run in an isolated fresh session on a dedicated detached slot, so they never block or pollute the chat session. The context_mode argument is accepted for back-compat with older prompts but is ignored at runtime. Do not pass it in new prompts.
 
 MESSAGING BEHAVIOR - The task agent's output is sent to the user or group. It can also use send_message for immediate delivery, or wrap output in <internal> tags to suppress it. Include guidance in the prompt about whether the agent should:
 \u2022 Always send a message (e.g., reminders, daily briefings)
@@ -64,9 +56,9 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       ),
     context_mode: z
       .enum(['group', 'isolated'])
-      .default('isolated')
+      .optional()
       .describe(
-        'isolated=fresh session (default, "standalone"); group=runs with chat history and memory ("attached", opt-in)',
+        'DEPRECATED. Tasks always run isolated (fresh session, dedicated detached slot). Argument accepted for back-compat with older agent prompts and ignored at runtime.',
       ),
     target_group_jid: z
       .string()
@@ -135,13 +127,16 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+    // context_mode is DEPRECATED (PR #46, 2026-05-12). Always force
+    // 'isolated' regardless of input. The host IPC handler also
+    // logs a deprecation warning if the agent passed 'group'.
     const data = {
       type: 'schedule_task',
       taskId,
       prompt: args.prompt,
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
-      context_mode: args.context_mode || 'isolated',
+      context_mode: 'isolated',
       targetJid,
       createdBy: groupFolder,
       timestamp: new Date().toISOString(),

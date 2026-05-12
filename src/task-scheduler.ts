@@ -3,7 +3,7 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
-import { runAgentForChat, resolveAgentForChat, getAgentProvider } from './config-extensions.js';
+import { runAgentForChat, resolveAgentForChat } from './config-extensions.js';
 import { ContainerOutput, runContainerAgent, writeTasksSnapshot } from './container-runner.js';
 import {
   clearConsecutiveGroupMissing,
@@ -194,11 +194,16 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
   let result: string | null = null;
   let error: string | null = null;
 
-  // For group context mode, use the group's current session for THIS provider
-  const sessions = deps.getSessions();
+  // context_mode behavior is DEPRECATED (PR #46, 2026-05-12). Upstream
+  // v2 (`modules/scheduling/`) dropped the field entirely; we've followed
+  // suit. All scheduled tasks now run in their own fresh session
+  // (`sessionId = undefined`) on a dedicated detached slot (§4.1.A), so
+  // they never block or pollute the chat session. The stored
+  // `task.context_mode` field is ignored at the runtime layer; CLI/MCP
+  // still accept it for back-compat (deprecated warn), and the DB
+  // column lingers for SELECT * compatibility.
   const taskAgent = resolveAgentForChat(task.chat_jid);
-  const taskProvider = getAgentProvider(taskAgent);
-  const sessionId = task.context_mode === 'group' ? sessions[task.group_folder]?.[taskProvider] : undefined;
+  const sessionId: string | undefined = undefined;
 
   // After the task produces a result, close the container promptly.
   // Tasks are single-turn — no need to wait for host-sweep's claim-stuck
@@ -262,8 +267,9 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
           }
         }
         if (streamedOutput.status === 'success') {
-          // Task always runs on its own slot (§4.1.A). context_mode
-          // only controls sessionId reuse (line ~196), not slot routing.
+          // Task always runs on its own slot (§4.1.A). context_mode is
+          // deprecated (PR #46): all tasks are isolated, slot routing
+          // unchanged.
           deps.queue.notifyTaskIdle(task.chat_jid, task.id);
           scheduleClose();
         }
@@ -330,13 +336,12 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
         }
 
         // §4.1.B: every task runs detached after §4.1.A landed.
-        // context_mode field still controls sessionId reuse semantics:
-        //   - 'isolated' (default): fresh agent session, no chat history
-        //   - 'group' (opt-in): inherit chat's current session id so the
-        //     task agent has access to ongoing conversation context
-        //     (≡ OpenClaw cron sessionTarget: 'current' for that group)
-        // Slot routing is uniform: enqueueTask always opens a per-task
-        // slot (`${chatJid}::task::${taskId}`); chat slot stays free.
+        // context_mode is DEPRECATED (PR #46, 2026-05-12): all tasks
+        // run in a fresh isolated session regardless of stored value.
+        // Upstream v2 dropped the field entirely; we kept the column
+        // for SELECT *  back-compat. Slot routing is uniform:
+        // enqueueTask always opens a per-task slot
+        // (`${chatJid}::task::${taskId}`); chat slot stays free.
         deps.queue.enqueueTask(currentTask.chat_jid, currentTask.id, () => runTask(currentTask, deps));
       }
     } catch (err) {

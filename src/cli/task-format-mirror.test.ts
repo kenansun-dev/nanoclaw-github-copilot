@@ -17,10 +17,7 @@ const repoRoot = path.resolve(__dirname, '..', '..');
 
 describe('task-format mirror parity', () => {
   it('host src/cli/task-format.ts === container cli-shared/task-format.ts', () => {
-    const host = fs.readFileSync(
-      path.join(repoRoot, 'src', 'cli', 'task-format.ts'),
-      'utf-8',
-    );
+    const host = fs.readFileSync(path.join(repoRoot, 'src', 'cli', 'task-format.ts'), 'utf-8');
     const container = fs.readFileSync(
       path.join(repoRoot, 'container', 'agent-runner-ghc', 'src', 'cli-shared', 'task-format.ts'),
       'utf-8',

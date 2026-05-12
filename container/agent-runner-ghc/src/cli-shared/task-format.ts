@@ -45,14 +45,17 @@ export interface FormatOpts {
   filterDesc?: string;
 }
 
-/** Translate internal `context_mode` to the user-facing label. */
-export function modeLabel(contextMode: string | null | undefined): string {
-  // Forward-compat: anything not 'group' is treated as standalone (the
-  // current default). 'group' \u2192 attached. Unknown values are reported
-  // as-is so we surface drift instead of hiding it.
-  if (!contextMode || contextMode === 'isolated') return 'standalone';
-  if (contextMode === 'group') return 'attached';
-  return contextMode;
+/**
+ * Translate internal `context_mode` to the user-facing label.
+ *
+ * DEPRECATED (PR #46, 2026-05-12): the runtime always treats tasks as
+ * isolated regardless of stored value (matching upstream v2 which
+ * removed the field). The label always returns 'standalone' so users
+ * see the consistent effective behavior; the raw stored value is still
+ * inspectable via `nanoclaw task info`.
+ */
+export function modeLabel(_contextMode: string | null | undefined): string {
+  return 'standalone';
 }
 
 function fmtRel(iso: string | null | undefined): string {
