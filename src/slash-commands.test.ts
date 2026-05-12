@@ -43,6 +43,7 @@ vi.mock('./db.js', () => ({
   getSessionOverrides: vi.fn(() => ({})),
   setSessionOverride: vi.fn(),
   getRegisteredGroup: vi.fn(() => undefined),
+  getAllTasks: vi.fn(() => []),
 }));
 
 // ─── Mock context factory ────────────────────────────────────────────────────
@@ -214,11 +215,55 @@ describe('handleSlashCommand', () => {
     },
   );
 
-  it('/tasks returns handled: false (passthrough to agent)', async () => {
+  it('/tasks returns handled: true and sends formatted task list directly (no LLM round-trip)', async () => {
+    // Regression for kenan request 2026-05-12: /tasks was previously
+    // passed to the agent which made it ~5-15s per invocation. We now
+    // render task list directly in the slash handler via formatTasksText
+    // (mirrors `/status` short-circuit pattern). PR #48.
     const ctx = makeCtx();
     const result = await handleSlashCommand('/tasks', ctx);
-    expect(result.handled).toBe(false);
-    expect(ctx.channel!.sendMessage).not.toHaveBeenCalled();
+    expect(result.handled).toBe(true);
+    expect(ctx.channel!.sendMessage).toHaveBeenCalledTimes(1);
+    const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    // Code-fenced like /status so column alignment renders on Telegram/Discord/Teams.
+    // Body either lists tasks (code-fenced) or, on an empty DB, the
+    // "No scheduled tasks" plain-text message. Either way it must be
+    // rendered host-side, not the agent's prose.
+    expect(sentText).toMatch(/No scheduled tasks|^```/);
+  });
+
+  it('/tasks scopes by group_folder for non-main chats (parity with old MCP list_tasks)', async () => {
+    const db = await import('./db.js');
+    // 3 fixtures across 2 group folders, none main. Caller is
+    // group-A; should only see group-A tasks (1 of 3), even though
+    // task-c shares the same chat_jid (collapse-on-read scenario).
+    const fixtures = [
+      { id: 'task-a', group_folder: 'group-A', chat_jid: 'tg:A1', prompt: 'a', schedule_type: 'cron', schedule_value: '0 * * * *', next_run: null, status: 'active' },
+      { id: 'task-b', group_folder: 'group-B', chat_jid: 'tg:B1', prompt: 'b', schedule_type: 'cron', schedule_value: '0 * * * *', next_run: null, status: 'active' },
+      { id: 'task-c', group_folder: 'group-B', chat_jid: 'tg:A1', prompt: 'c', schedule_type: 'cron', schedule_value: '0 * * * *', next_run: null, status: 'active' },
+    ];
+    (db.getAllTasks as any).mockReturnValueOnce(fixtures);
+    (db.getRegisteredGroup as any).mockReturnValueOnce(undefined); // not main
+    const ctx = makeCtx({ chatJid: 'tg:A1', groupFolder: 'group-A' });
+    await handleSlashCommand('/tasks', ctx);    const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    expect(sentText).toContain('task-a');
+    expect(sentText).not.toContain('task-b');
+    expect(sentText).not.toContain('task-c'); // would slip in with chat_jid filter
+  });
+
+  it('/tasks from main chat shows ALL groups (parity with old MCP isMain branch)', async () => {
+    const db = await import('./db.js');
+    const fixtures = [
+      { id: 'task-a', group_folder: 'group-A', chat_jid: 'tg:A1', prompt: 'a', schedule_type: 'cron', schedule_value: '0 * * * *', next_run: null, status: 'active' },
+      { id: 'task-b', group_folder: 'group-B', chat_jid: 'tg:B1', prompt: 'b', schedule_type: 'cron', schedule_value: '0 * * * *', next_run: null, status: 'active' },
+    ];
+    (db.getAllTasks as any).mockReturnValueOnce(fixtures);
+    (db.getRegisteredGroup as any).mockReturnValueOnce({ jid: 'tg:main', name: 'main', folder: 'main', isMain: true } as any);
+    const ctx = makeCtx({ chatJid: 'tg:main', groupFolder: 'main' });
+    await handleSlashCommand('/tasks', ctx);
+    const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    expect(sentText).toContain('task-a');
+    expect(sentText).toContain('task-b');
   });
 
   it('/capabilities returns handled: false (passthrough to agent)', async () => {

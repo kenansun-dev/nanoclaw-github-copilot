@@ -271,10 +271,52 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
     return { handled: true };
   }
 
-  // /tasks, /capabilities, /wiki — pass to agent as prompts
+  // /tasks — render scheduled task list directly from DB (no LLM round-trip).
+  // Previously this was passed to the agent which made it ~5-15s per
+  // invocation (full agent turn + container spin + MCP `list_tasks` call).
+  // Now it returns in <100ms — same short-circuit pattern as `/status`
+  // (slash-commands.ts:214) and `/models`/`/mcp`. The agent path remains
+  // available via natural-language requests like "show my tasks".
+  // (kenan request 2026-05-12, PR #48.)
+  if (input === '/tasks') {
+    if (ctx.channel) {
+      try {
+        const [{ getAllTasks, getRegisteredGroup }, { formatTasksText }] = await Promise.all([
+          import('./db.js'),
+          import('./cli/task-format.js'),
+        ]);
+        // Parity with the prior MCP `list_tasks` (container/.../mcp-tools/scheduling.ts:174):
+        //   * Filter by `group_folder` (NOT `chat_jid`) so isMain DMs that
+        //     collapse onto a shared session see all of their sibling DM
+        //     tasks (db.ts:51-86 collapse-on-read).
+        //   * Main chat sees ALL groups' tasks (operator view).
+        const isMain = !!getRegisteredGroup(ctx.chatJid)?.isMain;
+        const all = getAllTasks();
+        const rows = (isMain ? all : all.filter((t) => t.group_folder === ctx.groupFolder))
+          .slice()
+          .sort((a, b) => {
+            if (a.status !== b.status) return a.status < b.status ? -1 : 1;
+            const an = a.next_run ? new Date(a.next_run).getTime() : Infinity;
+            const bn = b.next_run ? new Date(b.next_run).getTime() : Infinity;
+            return an - bn;
+          });
+        const text = formatTasksText(rows, {
+          // Compact for non-main (chat-scoped); verbose for main (multi-group view).
+          compact: !isMain,
+          filterDesc: isMain ? 'all groups' : `group=${ctx.groupFolder}`,
+        });
+        await ctx.channel.sendMessage(ctx.chatJid, '```\n' + text.trim() + '\n```');
+      } catch (err: any) {
+        await ctx.channel.sendMessage(ctx.chatJid, `Failed to list tasks: ${err?.message ?? err}`);
+      }
+    }
+    return { handled: true };
+  }
+
+  // /capabilities, /wiki — pass to agent as prompts
   // These are handled by the agent using its tools/skills, not by nanoclaw directly.
   // Returning handled: false lets them flow through to the agent.
-  if (input === '/tasks' || input === '/capabilities') {
+  if (input === '/capabilities') {
     return { handled: false };
   }
 
