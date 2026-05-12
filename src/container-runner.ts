@@ -33,6 +33,7 @@ import {
 } from './config-extensions.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './log-extensions.js';
+import { parseJsonc } from './jsonc.js';
 import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, readonlyMountArgs, stopContainer } from './container-runtime.js';
 import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -79,17 +80,16 @@ interface VolumeMount {
 /**
  * Parse the host's `~/.copilot/config.json` file.
  *
- * The copilot CLI ships this file with a leading
- * `// User settings belong in settings.json.` comment line, which breaks
- * strict `JSON.parse`. Strip `^//` line comments first so we recover the
- * `copilotTokens` field instead of silently writing an empty session
- * config (which leaves the container CLI unauthenticated).
+ * Delegates to the shared {@link parseJsonc} helper so all read sites
+ * for this file behave identically. Copilot CLI writes a leading
+ * `// User settings belong in settings.json.` banner; strict JSON.parse
+ * rejects it and silently produces an empty config, leaving the
+ * container CLI unauthenticated. (PR #47, 2026-05-12.)
  *
  * Exported for unit testing.
  */
 export function parseHostCopilotConfig(raw: string): Record<string, unknown> {
-  const stripped = raw.replace(/^[ \t]*\/\/.*$/gm, '');
-  const parsed = JSON.parse(stripped);
+  const parsed = parseJsonc<unknown>(raw);
   return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
 }
 
