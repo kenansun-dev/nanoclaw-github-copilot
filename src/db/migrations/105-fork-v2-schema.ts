@@ -12,11 +12,17 @@
  *   platform_id)` constraint blocks the same chat from being seen under two
  *   different accounts of the same protocol.
  *
- * This migration:
- *   1. Adds `messaging_groups.account_key TEXT NOT NULL DEFAULT 'default'`
- *      (idempotent; existing rows backfill to `'default'`).
- *   2. Replaces the unique constraint with `(channel_type, account_key,
- *      platform_id)` via SQLite's table-rebuild idiom.
+ * Schema delta:
+ *   1. ALTER TABLE messaging_groups ADD COLUMN account_key (idempotent)
+ *   2. Rebuild messaging_groups to swap UNIQUE(channel_type, platform_id)
+ *      for UNIQUE(channel_type, account_key, platform_id).
+ *
+ * The rebuild touches FK references (messaging_group_agents,
+ * dm_channel_for_user, sessions, ...). SQLite silently ignores
+ * `PRAGMA foreign_keys` inside an open transaction, so this migration
+ * sets `requiresForeignKeysOff: true` to make the runner toggle FK
+ * enforcement *outside* the implicit migration transaction. Migration
+ * 011's comment documents the historical incident this avoids.
  *
  * No data is migrated from the legacy `chats[]` config or the fork-only
  * `chats` table here. That work belongs to PR-B (config-shape-v2 runtime
@@ -31,29 +37,29 @@ import type { Migration } from './index.js';
 export const migration105ForkV2Schema: Migration = {
   version: 105,
   name: '105-fork-v2-schema',
+  requiresForeignKeysOff: true,
   up: (db: Database.Database) => {
-    // 1. add account_key column if missing
+    // Sanity: refuse to proceed if the runner forgot to honor the flag.
+    // SQLite would otherwise silently corrupt FK invariants on DBs that
+    // boot with `PRAGMA foreign_keys = ON` (prod connection.ts default).
+    const fkOn = db.pragma('foreign_keys', { simple: true }) as 0 | 1;
+    if (fkOn) {
+      throw new Error(
+        'migration 105: PRAGMA foreign_keys is ON inside the migration. ' +
+          'The runner must call PRAGMA foreign_keys = OFF before opening the tx ' +
+          'when requiresForeignKeysOff=true.',
+      );
+    }
+
+    // 1. add account_key column if missing (idempotent on partial runs)
     const cols = db.prepare("PRAGMA table_info('messaging_groups')").all() as Array<{
       name: string;
     }>;
-    const hasAccountKey = cols.some((c) => c.name === 'account_key');
-    if (!hasAccountKey) {
+    if (!cols.some((c) => c.name === 'account_key')) {
       db.exec(`ALTER TABLE messaging_groups ADD COLUMN account_key TEXT NOT NULL DEFAULT 'default'`);
     }
 
-    // 2. replace the (channel_type, platform_id) UNIQUE with a 3-tuple.
-    //    Table rebuild is the SQLite-native way; FKs are preserved because
-    //    referencing tables (messaging_group_agents, dm_channel_for_user,
-    //    sessions, etc.) reference messaging_groups.id which we keep intact.
-    //
-    //    PRAGMA foreign_keys=OFF is set transactionally by the caller of the
-    //    migration runner; better-sqlite3 default is OFF anyway. We re-enable
-    //    in case the runner ever flips it.
-    const fkPrev = (
-      db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number } | undefined
-    )?.foreign_keys;
-    if (fkPrev) db.exec('PRAGMA foreign_keys=OFF');
-
+    // 2. table-rebuild to swap the UNIQUE constraint
     db.exec(`
       CREATE TABLE messaging_groups_new (
         id                    TEXT PRIMARY KEY,
@@ -81,11 +87,10 @@ export const migration105ForkV2Schema: Migration = {
 
       DROP TABLE messaging_groups;
       ALTER TABLE messaging_groups_new RENAME TO messaging_groups;
-
-      CREATE INDEX IF NOT EXISTS idx_messaging_groups_lookup
-        ON messaging_groups(channel_type, account_key, platform_id);
     `);
 
-    if (fkPrev) db.exec('PRAGMA foreign_keys=ON');
+    // Note: dropped the explicit `CREATE INDEX idx_messaging_groups_lookup`
+    // — UNIQUE(channel_type, account_key, platform_id) auto-creates an
+    // equivalent covering index. Per Rpi5 review nit on PR #49.
   },
 };

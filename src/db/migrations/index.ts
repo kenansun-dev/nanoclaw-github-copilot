@@ -17,6 +17,17 @@ import { moduleApprovalsTitleOptions } from './module-approvals-title-options.js
 export interface Migration {
   version: number;
   name: string;
+  /**
+   * If true, the runner toggles `PRAGMA foreign_keys = OFF` **before** the
+   * implicit migration transaction (and restores it after). Required for
+   * any migration that does a table rebuild on a table with FK references,
+   * because `PRAGMA foreign_keys` is silently a no-op inside a transaction
+   * (see https://www.sqlite.org/pragma.html#pragma_foreign_keys).
+   *
+   * Migration 011 documents the historical incident; migration 105 is the
+   * first to use this flag.
+   */
+  requiresForeignKeysOff?: boolean;
   up: (db: Database.Database) => void;
 }
 
@@ -60,16 +71,27 @@ export function runMigrations(db: Database.Database): void {
   log.info('Running migrations', { count: pending.length });
 
   for (const m of pending) {
-    db.transaction(() => {
-      m.up(db);
-      const next = (db.prepare('SELECT COALESCE(MAX(version), 0) + 1 AS v FROM schema_version').get() as { v: number })
-        .v;
-      db.prepare('INSERT INTO schema_version (version, name, applied) VALUES (?, ?, ?)').run(
-        next,
-        m.name,
-        new Date().toISOString(),
-      );
-    })();
+    // PRAGMA foreign_keys must be toggled OUTSIDE the transaction; inside
+    // it is silently ignored by SQLite. Migrations that rebuild tables
+    // holding FK references must opt in via `requiresForeignKeysOff`.
+    const fkBefore = m.requiresForeignKeysOff
+      ? (db.pragma('foreign_keys', { simple: true }) as 0 | 1)
+      : 0;
+    if (m.requiresForeignKeysOff && fkBefore) db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        m.up(db);
+        const next = (db.prepare('SELECT COALESCE(MAX(version), 0) + 1 AS v FROM schema_version').get() as { v: number })
+          .v;
+        db.prepare('INSERT INTO schema_version (version, name, applied) VALUES (?, ?, ?)').run(
+          next,
+          m.name,
+          new Date().toISOString(),
+        );
+      })();
+    } finally {
+      if (m.requiresForeignKeysOff && fkBefore) db.pragma('foreign_keys = ON');
+    }
     log.info('Migration applied', { name: m.name });
   }
 }
