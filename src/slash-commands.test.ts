@@ -43,6 +43,7 @@ vi.mock('./db.js', () => ({
   getSessionOverrides: vi.fn(() => ({})),
   setSessionOverride: vi.fn(),
   getRegisteredGroup: vi.fn(() => undefined),
+  getAllTasks: vi.fn(() => []),
 }));
 
 // ─── Mock context factory ────────────────────────────────────────────────────
@@ -214,11 +215,21 @@ describe('handleSlashCommand', () => {
     },
   );
 
-  it('/tasks returns handled: false (passthrough to agent)', async () => {
+  it('/tasks returns handled: true and sends formatted task list directly (no LLM round-trip)', async () => {
+    // Regression for kenan request 2026-05-12: /tasks was previously
+    // passed to the agent which made it ~5-15s per invocation. We now
+    // render task list directly in the slash handler via formatTasksText
+    // (mirrors `/status` short-circuit pattern). PR #48.
     const ctx = makeCtx();
     const result = await handleSlashCommand('/tasks', ctx);
-    expect(result.handled).toBe(false);
-    expect(ctx.channel!.sendMessage).not.toHaveBeenCalled();
+    expect(result.handled).toBe(true);
+    expect(ctx.channel!.sendMessage).toHaveBeenCalledTimes(1);
+    const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    // Code-fenced like /status so column alignment renders on Telegram/Discord/Teams.
+    // Body either lists tasks (code-fenced) or, on an empty DB, the
+    // "No scheduled tasks" plain-text message. Either way it must be
+    // rendered host-side, not the agent's prose.
+    expect(sentText).toMatch(/No scheduled tasks|^```/);
   });
 
   it('/capabilities returns handled: false (passthrough to agent)', async () => {
