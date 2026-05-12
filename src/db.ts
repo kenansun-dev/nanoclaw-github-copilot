@@ -163,7 +163,13 @@ function createSchema(database: Database.Database): void {
     );
   `);
 
-  // Add context_mode column if it doesn't exist (migration for existing DBs)
+  // Add context_mode column if it doesn't exist (migration for existing DBs).
+  // NOTE (2026-05-12, PR #46): context_mode is DEPRECATED. Upstream v2
+  // dropped the field entirely (`modules/scheduling/`) and we've followed
+  // suit at the runtime level: task-scheduler.ts always treats tasks as
+  // isolated regardless of stored value. The column is preserved here so
+  // SELECT * keeps working and downgrades survive; a future
+  // fork-cleanup migration may drop it. New rows still default 'isolated'.
   try {
     database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`);
   } catch {

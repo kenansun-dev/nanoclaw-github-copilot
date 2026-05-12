@@ -737,12 +737,17 @@ export function writeTasksSnapshot(
   tasks: Array<{
     id: string;
     groupFolder: string;
+    chat_jid?: string;
     prompt: string;
     script?: string | null;
     schedule_type: string;
     schedule_value: string;
     status: string;
     next_run: string | null;
+    last_run?: string | null;
+    last_result?: string | null;
+    context_mode?: string | null;
+    consecutive_group_missing?: number | null;
   }>,
 ): void {
   // Write filtered tasks to the group's IPC directory

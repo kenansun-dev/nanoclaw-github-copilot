@@ -86,6 +86,11 @@ export interface ScheduledTask {
   script?: string | null;
   schedule_type: 'cron' | 'interval' | 'once';
   schedule_value: string;
+  /**
+   * @deprecated PR #46 (2026-05-12). Runtime ignores this field; tasks
+   *   always run isolated. Column kept in DB for SELECT * back-compat.
+   *   New writes always store 'isolated'.
+   */
   context_mode: 'group' | 'isolated';
   next_run: string | null;
   last_run: string | null;

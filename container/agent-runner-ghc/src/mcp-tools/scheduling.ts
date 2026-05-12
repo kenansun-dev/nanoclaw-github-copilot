@@ -19,6 +19,7 @@ import {
   groupFolder,
   isMain,
 } from './server.js';
+import { formatTasksText, type TaskRow } from '../cli-shared/task-format.js';
 
 const server = getServer();
 
@@ -26,15 +27,7 @@ server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
 
-CONTEXT MODE - Choose based on task type:
-\u2022 "group": Task runs in the group's conversation context, with access to chat history. Use for tasks that need context about ongoing discussions, user preferences, or recent interactions.
-\u2022 "isolated": Task runs in a fresh session with no conversation history. Use for independent tasks that don't need prior context. When using isolated mode, include all necessary context in the prompt itself.
-
-If unsure which mode to use, you can ask the user. Examples:
-- "Remind me about our discussion" \u2192 group (needs conversation context)
-- "Check the weather every morning" \u2192 isolated (self-contained task)
-- "Follow up on my request" \u2192 group (needs to know what was requested)
-- "Generate a daily report" \u2192 isolated (just needs instructions in prompt)
+CONTEXT MODE - DEPRECATED. All tasks now run in an isolated fresh session on a dedicated detached slot, so they never block or pollute the chat session. The context_mode argument is accepted for back-compat with older prompts but is ignored at runtime. Do not pass it in new prompts.
 
 MESSAGING BEHAVIOR - The task agent's output is sent to the user or group. It can also use send_message for immediate delivery, or wrap output in <internal> tags to suppress it. Include guidance in the prompt about whether the agent should:
 \u2022 Always send a message (e.g., reminders, daily briefings)
@@ -63,9 +56,9 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       ),
     context_mode: z
       .enum(['group', 'isolated'])
-      .default('group')
+      .optional()
       .describe(
-        'group=runs with chat history and memory, isolated=fresh session (include context in prompt)',
+        'DEPRECATED. Tasks always run isolated (fresh session, dedicated detached slot). Argument accepted for back-compat with older agent prompts and ignored at runtime.',
       ),
     target_group_jid: z
       .string()
@@ -134,13 +127,16 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+    // context_mode is DEPRECATED (PR #46, 2026-05-12). Always force
+    // 'isolated' regardless of input. The host IPC handler also
+    // logs a deprecation warning if the agent passed 'group'.
     const data = {
       type: 'schedule_task',
       taskId,
       prompt: args.prompt,
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
-      context_mode: args.context_mode || 'group',
+      context_mode: 'isolated',
       targetJid,
       createdBy: groupFolder,
       timestamp: new Date().toISOString(),
@@ -161,7 +157,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 
 server.tool(
   'list_tasks',
-  "List all scheduled tasks. From main: shows all tasks. From other groups: shows only that group's tasks.",
+  "List all scheduled tasks. From main: shows all tasks. From other groups: shows only that group's tasks. Each row includes mode (standalone/attached) so you can show it in user-facing summaries.",
   {},
   async () => {
     const tasksFile = path.join(IPC_DIR, 'current_tasks.json');
@@ -171,33 +167,38 @@ server.tool(
         return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
       }
 
-      const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
+      const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8')) as Array<
+        Record<string, unknown>
+      >;
 
-      const tasks = isMain
+      const filtered = isMain
         ? allTasks
-        : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
+        : allTasks.filter((t) => (t as { groupFolder?: string }).groupFolder === groupFolder);
 
-      if (tasks.length === 0) {
-        return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
-      }
+      // Snapshot uses `groupFolder` (camel) but TaskRow expects `group_folder`.
+      // Map and provide safe fallbacks for older snapshots that may not yet
+      // include context_mode / chat_jid.
+      const rows: TaskRow[] = filtered.map((t) => {
+        const r = t as Record<string, unknown>;
+        return {
+          id: String(r.id ?? ''),
+          group_folder: String(r.groupFolder ?? r.group_folder ?? ''),
+          chat_jid: String(r.chat_jid ?? ''),
+          prompt: String(r.prompt ?? ''),
+          schedule_type: String(r.schedule_type ?? ''),
+          schedule_value: String(r.schedule_value ?? ''),
+          next_run: (r.next_run as string | null) ?? null,
+          last_run: (r.last_run as string | null | undefined) ?? null,
+          last_result: (r.last_result as string | null | undefined) ?? null,
+          status: String(r.status ?? 'unknown'),
+          context_mode: (r.context_mode as string | null | undefined) ?? null,
+          consecutive_group_missing:
+            (r.consecutive_group_missing as number | null | undefined) ?? null,
+        };
+      });
 
-      const formatted = tasks
-        .map(
-          (t: {
-            id: string;
-            prompt: string;
-            schedule_type: string;
-            schedule_value: string;
-            status: string;
-            next_run: string;
-          }) =>
-            `- [${t.id}] ${t.prompt.slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
-        )
-        .join('\n');
-
-      return {
-        content: [{ type: 'text' as const, text: `Scheduled tasks:\n${formatted}` }],
-      };
+      const text = formatTasksText(rows, { compact: !isMain });
+      return { content: [{ type: 'text' as const, text }] };
     } catch (err) {
       return {
         content: [

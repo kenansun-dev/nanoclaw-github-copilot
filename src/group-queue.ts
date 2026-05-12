@@ -358,9 +358,10 @@ export class GroupQueue {
     if (state.pendingTasks.length > 0) {
       // Legacy path: pendingTasks on a chat slot used to drive a
       // container handoff. Detached tasks no longer push here, so this
-      // branch is effectively dead unless a caller still uses the legacy
-      // 'group' context_mode (filled in by VM in §4.1.B). Kept for
-      // backwards compatibility.
+      // branch is effectively dead. context_mode is also deprecated as of
+      // PR #46 (2026-05-12) so the 'group' opt-out it referenced no
+      // longer exists either. Kept for back-compat with any in-flight
+      // queue state from a previous binary across restart.
       this.closeStdin(groupJid);
     }
   }
@@ -724,8 +725,9 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
 
     // Legacy task path: chat-slot pendingTasks. Detached tasks no longer
-    // accumulate here, but VM's §4.1.B may keep a 'group' context_mode
-    // opt-out that does — preserve handling.
+    // accumulate here. context_mode 'group' opt-out is also gone
+    // (PR #46, 2026-05-12). Kept for back-compat with any in-flight
+    // queue state from a previous binary across restart.
     if (state.pendingTasks.length > 0) {
       const task = state.pendingTasks.shift()!;
       this.runTask(taskSlotKey(groupJid, task.id), groupJid, task).catch((err) =>

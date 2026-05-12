@@ -1068,6 +1068,13 @@ Tasks
        --status <s>                 Filter by status (active|paused|completed)
        --json                       Emit JSON
   task info <id>                    Show task details + recent run logs
+  task add                          Create a scheduled task (host-side)
+       --chat <jid>                 Required: target chat_jid (must be registered)
+       --prompt <text>              Required: what the agent should do
+       --schedule-type <t>          Required: cron|interval|once
+       --schedule-value <v>         Required: cron expr | interval ms | local ISO ts
+       --context-mode <m>           Optional: group|isolated (default: isolated)
+       --id <id>                    Optional: custom task id
 
 Sandbox
 

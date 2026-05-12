@@ -22,8 +22,18 @@
  * filters to the calling chat (that's the right default for end users).
  */
 
-import { getAllTasks, getTaskById, getTaskRunLogs, initDatabase } from '../db.js';
+import {
+  getAllTasks,
+  getTaskById,
+  getTaskRunLogs,
+  initDatabase,
+  createTask,
+  getRegisteredGroup,
+  getAllRegisteredGroups,
+} from '../db.js';
 import { ScheduledTask } from '../types-extensions.js';
+import { CronExpressionParser } from 'cron-parser';
+import { formatTasksText, modeLabel } from './task-format.js';
 
 interface TaskRunLog {
   id: number;
@@ -96,47 +106,15 @@ async function listTasks(opts: { chat?: string; status?: string; json?: boolean 
     return;
   }
 
-  if (rows.length === 0) {
-    const filterBits: string[] = [];
-    if (opts.chat) filterBits.push(`chat=${opts.chat}`);
-    if (opts.status) filterBits.push(`status=${opts.status}`);
-    const filter = filterBits.length ? ` (${filterBits.join(', ')})` : '';
-    console.log(`No scheduled tasks${filter}.`);
-    return;
-  }
-
-  // Header summary
-  const counts = rows.reduce<Record<string, number>>((acc, t) => {
-    acc[t.status] = (acc[t.status] || 0) + 1;
-    return acc;
-  }, {});
-  const summary = Object.entries(counts)
-    .map(([k, v]) => `${k}=${v}`)
-    .join(' ');
-  console.log(`${rows.length} task${rows.length === 1 ? '' : 's'} (${summary})`);
-  console.log('');
-
-  for (const t of rows) {
-    const lines: string[] = [];
-    lines.push(`• ${t.id}`);
-    lines.push(
-      `    ${t.status.padEnd(9)} ${fmtSchedule(t).padEnd(22)} next: ${t.next_run ?? '—'} (${fmtRel(t.next_run)})`,
-    );
-    lines.push(`    chat:${t.chat_jid}  group:${t.group_folder}  ctx:${t.context_mode}`);
-    if (t.last_run) {
-      lines.push(
-        `    last: ${t.last_run} (${fmtRel(t.last_run)})${
-          t.last_result ? '  — ' + previewPrompt(t.last_result, 50) : ''
-        }`,
-      );
-    }
-    if (t.consecutive_group_missing && t.consecutive_group_missing > 0) {
-      lines.push(`    ⚠ group missing for ${t.consecutive_group_missing} tick(s)`);
-    }
-    lines.push(`    prompt: ${previewPrompt(t.prompt, 80)}`);
-    console.log(lines.join('\n'));
-    console.log('');
-  }
+  const filterBits: string[] = [];
+  if (opts.chat) filterBits.push(`chat=${opts.chat}`);
+  if (opts.status) filterBits.push(`status=${opts.status}`);
+  console.log(
+    formatTasksText(rows, {
+      compact: false,
+      filterDesc: filterBits.join(', ') || undefined,
+    }),
+  );
 }
 
 async function infoTask(id: string, opts: { json?: boolean }): Promise<void> {
@@ -160,7 +138,7 @@ async function infoTask(id: string, opts: { json?: boolean }): Promise<void> {
   console.log(`  last_run:      ${task.last_run ?? '—'}${task.last_run ? ' (' + fmtRel(task.last_run) + ')' : ''}`);
   console.log(`  chat_jid:      ${task.chat_jid}`);
   console.log(`  group_folder:  ${task.group_folder}`);
-  console.log(`  context_mode:  ${task.context_mode}`);
+  console.log(`  context_mode:  ${task.context_mode} (${modeLabel(task.context_mode)}, deprecated)`);
   console.log(`  created_at:    ${task.created_at}`);
   if (task.consecutive_group_missing && task.consecutive_group_missing > 0) {
     console.log(`  ⚠ group missing ticks: ${task.consecutive_group_missing}`);
@@ -191,8 +169,162 @@ async function infoTask(id: string, opts: { json?: boolean }): Promise<void> {
   }
 }
 
+interface AddTaskOpts {
+  chat?: string;
+  prompt?: string;
+  scheduleType?: string;
+  scheduleValue?: string;
+  contextMode?: string;
+  customId?: string;
+  json: boolean;
+}
+
+/**
+ * `nanoclaw task add` — host-side task creation, no chat needed.
+ *
+ * Mirrors the validation in `container/agent-runner-{ghc,}/src/mcp-tools/
+ * scheduling.ts` (`schedule_task` MCP tool) so admin-driven creation has
+ * exactly the same guarantees as agent-driven creation:
+ *   - cron expressions parse with cron-parser
+ *   - interval is a positive integer (ms)
+ *   - once is a parseable local timestamp (no Z suffix)
+ *   - chat_jid must resolve to a registered group
+ *
+ * Picked up by the running daemon's scheduler loop on the next tick
+ * (~10s). Same DB row, same lifecycle as MCP-created tasks.
+ */
+async function addTask(opts: AddTaskOpts): Promise<void> {
+  const errors: string[] = [];
+  if (!opts.chat) errors.push('--chat <jid> is required');
+  if (!opts.prompt) errors.push('--prompt <text> is required');
+  if (!opts.scheduleType) errors.push('--schedule-type <cron|interval|once> is required');
+  if (!opts.scheduleValue) errors.push('--schedule-value <v> is required');
+  if (errors.length) {
+    for (const e of errors) console.error(e);
+    console.error('');
+    console.error("Run 'nanoclaw task --help' for full usage.");
+    process.exitCode = 1;
+    return;
+  }
+
+  const scheduleType = opts.scheduleType as string;
+  if (scheduleType !== 'cron' && scheduleType !== 'interval' && scheduleType !== 'once') {
+    console.error(`Invalid --schedule-type: ${scheduleType}. Must be cron|interval|once.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  // context_mode is DEPRECATED (PR #46, 2026-05-12). Accept the flag
+  // for back-compat with old scripts/cron entries that still pass
+  // --context-mode, but warn and force isolated. Validation kept so
+  // garbage values still error out instead of silently being ignored.
+  const requestedMode = opts.contextMode || 'isolated';
+  if (requestedMode !== 'group' && requestedMode !== 'isolated') {
+    console.error(`Invalid --context-mode: ${requestedMode}. Must be group|isolated.`);
+    process.exitCode = 1;
+    return;
+  }
+  if (requestedMode !== 'isolated') {
+    console.error(
+      `⚠  --context-mode=${requestedMode} is deprecated and ignored; tasks always run isolated.`,
+    );
+  }
+  const contextMode: 'isolated' = 'isolated';
+
+  const group = getRegisteredGroup(opts.chat as string);
+  if (!group) {
+    console.error(`No registered group found for chat_jid: ${opts.chat}`);
+    console.error('');
+    console.error('Registered groups:');
+    const all = getAllRegisteredGroups();
+    for (const [jid, g] of Object.entries(all)) {
+      console.error(`  ${jid}  folder=${g.folder}`);
+    }
+    if (Object.keys(all).length === 0) {
+      console.error('  (none) — register a chat first via the daemon (chat must say something).');
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  let nextRun: string | null = null;
+  const scheduleValue = opts.scheduleValue as string;
+  if (scheduleType === 'cron') {
+    try {
+      const it = CronExpressionParser.parse(scheduleValue);
+      nextRun = it.next().toISOString();
+    } catch {
+      console.error(`Invalid cron expression: "${scheduleValue}".`);
+      console.error("  Examples: '0 9 * * *' (daily 9am), '*/5 * * * *' (every 5 min).");
+      process.exitCode = 1;
+      return;
+    }
+  } else if (scheduleType === 'interval') {
+    const ms = parseInt(scheduleValue, 10);
+    if (!Number.isFinite(ms) || ms <= 0) {
+      console.error(`Invalid interval: "${scheduleValue}". Must be a positive integer (milliseconds).`);
+      process.exitCode = 1;
+      return;
+    }
+    nextRun = new Date(Date.now() + ms).toISOString();
+  } else {
+    if (scheduleValue.endsWith('Z')) {
+      console.error(`Invalid once timestamp: "${scheduleValue}". Drop the trailing Z — use local time.`);
+      process.exitCode = 1;
+      return;
+    }
+    const date = new Date(scheduleValue);
+    if (isNaN(date.getTime())) {
+      console.error(`Invalid once timestamp: "${scheduleValue}". Use format like '2026-02-01T15:30:00'.`);
+      process.exitCode = 1;
+      return;
+    }
+    nextRun = date.toISOString();
+  }
+
+  const id = opts.customId || `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  try {
+    createTask({
+      id,
+      group_folder: group.folder,
+      chat_jid: opts.chat as string,
+      prompt: opts.prompt as string,
+      script: null,
+      schedule_type: scheduleType,
+      schedule_value: scheduleValue,
+      context_mode: contextMode,
+      next_run: nextRun,
+      status: 'active',
+      created_at: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    // Most likely a duplicate primary key when --id was supplied.
+    // Surface a clean message instead of a raw SQLite stack trace.
+    if (err && typeof err.code === 'string' && err.code.startsWith('SQLITE_CONSTRAINT')) {
+      console.error(`Task id already exists: ${id}`);
+      console.error('Pick a different --id, or omit --id to auto-generate.');
+      process.exitCode = 1;
+      return;
+    }
+    throw err;
+  }
+
+  if (opts.json) {
+    console.log(JSON.stringify({ id, next_run: nextRun, status: 'active' }, null, 2));
+  } else {
+    console.log(`✅ Created task ${id}`);
+    console.log(`   chat:   ${opts.chat}  (folder: ${group.folder})`);
+    console.log(`   schedule: ${scheduleType}=${scheduleValue}`);
+    console.log(`   context_mode: ${contextMode}`);
+    console.log(`   next_run: ${nextRun || '(none)'}`);
+    console.log('');
+    console.log('   The running daemon will pick it up on the next scheduler tick (~10s).');
+  }
+}
+
 function printUsage(): void {
-  console.log('Usage: nanoclaw task <list|info> [args]');
+  console.log('Usage: nanoclaw task <list|info|add> [args]');
   console.log('');
   console.log('Commands:');
   console.log('  list                       List all scheduled tasks');
@@ -201,10 +333,24 @@ function printUsage(): void {
   console.log('       --json                  Emit JSON instead of human format');
   console.log('  info <id>                  Show full task + recent run logs');
   console.log('       --json                  Emit JSON instead of human format');
+  console.log('  add                        Create a new scheduled task (host-side, no chat needed)');
+  console.log('       --chat <jid>            Required: target chat_jid (must be a registered group)');
+  console.log('       --prompt <text>         Required: what the agent should do when the task fires');
+  console.log('       --schedule-type <t>     Required: cron | interval | once');
+  console.log(
+    '       --schedule-value <v>    Required: cron expr | interval ms | local ISO timestamp (no Z; e.g. 2026-02-01T15:30:00)',
+  );
+  console.log('       --context-mode <m>      Optional: group | isolated (default: isolated)');
+  console.log('       --id <custom-id>        Optional: custom task id (default: task-<ts>-<rand>)');
+  console.log('       --json                  Emit JSON (id + next_run) instead of human format');
   console.log('');
   console.log('Notes:');
   console.log('  - `list` defaults to *all* tasks across every chat.');
   console.log('    The in-chat `/tasks` slash still filters to the calling chat.');
+  console.log('  - `add` writes directly to the SQLite store. Picked up on the next');
+  console.log('    scheduler tick (~10s). For agent-driven creation prefer the');
+  console.log('    `schedule_task` MCP tool from inside chat — same DB row, same');
+  console.log('    validation, plus access to chat context.');
 }
 
 function parseFlags(args: string[]): {
@@ -259,6 +405,18 @@ export async function runTaskCommand(args: string[]): Promise<void> {
         return;
       }
       await infoTask(positional[0], { json: flags.json === true });
+      return;
+    case 'add':
+    case 'create':
+      await addTask({
+        chat: typeof flags.chat === 'string' ? flags.chat : undefined,
+        prompt: typeof flags.prompt === 'string' ? flags.prompt : undefined,
+        scheduleType: typeof flags['schedule-type'] === 'string' ? (flags['schedule-type'] as string) : undefined,
+        scheduleValue: typeof flags['schedule-value'] === 'string' ? (flags['schedule-value'] as string) : undefined,
+        contextMode: typeof flags['context-mode'] === 'string' ? (flags['context-mode'] as string) : undefined,
+        customId: typeof flags.id === 'string' ? (flags.id as string) : undefined,
+        json: flags.json === true,
+      });
       return;
     default:
       console.error(`Unknown subcommand: ${sub}`);

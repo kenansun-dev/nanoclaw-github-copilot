@@ -108,8 +108,8 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       ),
     context_mode: z
       .enum(['group', 'isolated'])
-      .default('group')
-      .describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
+      .optional()
+      .describe('DEPRECATED. Tasks always run isolated; argument accepted for back-compat and ignored at runtime.'),
     target_group_jid: z
       .string()
       .optional()
@@ -181,7 +181,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       prompt: args.prompt,
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
-      context_mode: args.context_mode || 'group',
+      context_mode: 'isolated',
       targetJid,
       createdBy: groupFolder,
       timestamp: new Date().toISOString(),

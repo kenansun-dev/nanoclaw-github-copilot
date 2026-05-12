@@ -273,8 +273,17 @@ export async function processTaskIpc(
         }
 
         const taskId = data.taskId || `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const contextMode =
-          data.context_mode === 'group' || data.context_mode === 'isolated' ? data.context_mode : 'isolated';
+        // context_mode is DEPRECATED (PR #46, 2026-05-12). Accept the
+        // input for back-compat with old MCP / agent prompts that still
+        // pass it; warn if the deprecated 'group' value comes in; always
+        // store 'isolated'. Runtime ignores the value entirely.
+        if (data.context_mode && data.context_mode !== 'isolated') {
+          logger.warn(
+            { taskId, requested: data.context_mode },
+            'context_mode is deprecated; tasks always run isolated. Storing as isolated.',
+          );
+        }
+        const contextMode = 'isolated';
         createTask({
           id: taskId,
           group_folder: targetFolder,
