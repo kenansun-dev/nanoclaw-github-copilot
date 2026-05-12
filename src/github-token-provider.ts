@@ -17,6 +17,7 @@ import path from 'path';
 import os from 'os';
 
 import { logger } from './log-extensions.js';
+import { parseJsonc } from './jsonc.js';
 
 /**
  * Resolve a GitHub token from available sources.
@@ -45,7 +46,9 @@ export function resolveGithubToken(): string | undefined {
   for (const configFile of copilotConfigPaths) {
     try {
       if (!fs.existsSync(configFile)) continue;
-      const config = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
+      // JSONC-tolerant: Copilot CLI writes a `// banner` at the top.
+      // (PR #46 fix, 2026-05-12.)
+      const config = parseJsonc<any>(fs.readFileSync(configFile, 'utf-8'));
       const tokenBag = config.copilotTokens ?? config.copilot_tokens;
       if (tokenBag && typeof tokenBag === 'object') {
         for (const [, token] of Object.entries(tokenBag)) {
@@ -79,7 +82,7 @@ function readWindowsCredential(): string | null {
     const configPath = path.join(os.homedir(), '.copilot', 'config.json');
     try {
       if (fs.existsSync(configPath)) {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        const config = parseJsonc<any>(fs.readFileSync(configPath, 'utf-8'));
         preferredUser = config.lastLoggedInUser?.login || config.last_logged_in_user?.login || null;
       }
     } catch {
