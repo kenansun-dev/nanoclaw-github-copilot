@@ -281,16 +281,18 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
   if (input === '/tasks') {
     if (ctx.channel) {
       try {
-        const [{ getAllTasks }, { formatTasksText }] = await Promise.all([
+        const [{ getAllTasks, getRegisteredGroup }, { formatTasksText }] = await Promise.all([
           import('./db.js'),
           import('./cli/task-format.js'),
         ]);
+        // Parity with the prior MCP `list_tasks` (container/.../mcp-tools/scheduling.ts:174):
+        //   * Filter by `group_folder` (NOT `chat_jid`) so isMain DMs that
+        //     collapse onto a shared session see all of their sibling DM
+        //     tasks (db.ts:51-86 collapse-on-read).
+        //   * Main chat sees ALL groups' tasks (operator view).
+        const isMain = !!getRegisteredGroup(ctx.chatJid)?.isMain;
         const all = getAllTasks();
-        // Filter to the calling chat — keeps parity with the previous
-        // agent-mediated behavior, where `list_tasks` MCP scoped to the
-        // group_folder it was invoked from.
-        const rows = all
-          .filter((t) => t.chat_jid === ctx.chatJid)
+        const rows = (isMain ? all : all.filter((t) => t.group_folder === ctx.groupFolder))
           .slice()
           .sort((a, b) => {
             if (a.status !== b.status) return a.status < b.status ? -1 : 1;
@@ -299,8 +301,9 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
             return an - bn;
           });
         const text = formatTasksText(rows, {
-          compact: true,
-          filterDesc: `chat=${ctx.chatJid}`,
+          // Compact for non-main (chat-scoped); verbose for main (multi-group view).
+          compact: !isMain,
+          filterDesc: isMain ? 'all groups' : `group=${ctx.groupFolder}`,
         });
         await ctx.channel.sendMessage(ctx.chatJid, '```\n' + text.trim() + '\n```');
       } catch (err: any) {
