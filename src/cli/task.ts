@@ -33,6 +33,7 @@ import {
 } from '../db.js';
 import { ScheduledTask } from '../types-extensions.js';
 import { CronExpressionParser } from 'cron-parser';
+import { formatTasksText, modeLabel } from './task-format.js';
 
 interface TaskRunLog {
   id: number;
@@ -105,47 +106,15 @@ async function listTasks(opts: { chat?: string; status?: string; json?: boolean 
     return;
   }
 
-  if (rows.length === 0) {
-    const filterBits: string[] = [];
-    if (opts.chat) filterBits.push(`chat=${opts.chat}`);
-    if (opts.status) filterBits.push(`status=${opts.status}`);
-    const filter = filterBits.length ? ` (${filterBits.join(', ')})` : '';
-    console.log(`No scheduled tasks${filter}.`);
-    return;
-  }
-
-  // Header summary
-  const counts = rows.reduce<Record<string, number>>((acc, t) => {
-    acc[t.status] = (acc[t.status] || 0) + 1;
-    return acc;
-  }, {});
-  const summary = Object.entries(counts)
-    .map(([k, v]) => `${k}=${v}`)
-    .join(' ');
-  console.log(`${rows.length} task${rows.length === 1 ? '' : 's'} (${summary})`);
-  console.log('');
-
-  for (const t of rows) {
-    const lines: string[] = [];
-    lines.push(`• ${t.id}`);
-    lines.push(
-      `    ${t.status.padEnd(9)} ${fmtSchedule(t).padEnd(22)} next: ${t.next_run ?? '—'} (${fmtRel(t.next_run)})`,
-    );
-    lines.push(`    chat:${t.chat_jid}  group:${t.group_folder}  ctx:${t.context_mode}`);
-    if (t.last_run) {
-      lines.push(
-        `    last: ${t.last_run} (${fmtRel(t.last_run)})${
-          t.last_result ? '  — ' + previewPrompt(t.last_result, 50) : ''
-        }`,
-      );
-    }
-    if (t.consecutive_group_missing && t.consecutive_group_missing > 0) {
-      lines.push(`    ⚠ group missing for ${t.consecutive_group_missing} tick(s)`);
-    }
-    lines.push(`    prompt: ${previewPrompt(t.prompt, 80)}`);
-    console.log(lines.join('\n'));
-    console.log('');
-  }
+  const filterBits: string[] = [];
+  if (opts.chat) filterBits.push(`chat=${opts.chat}`);
+  if (opts.status) filterBits.push(`status=${opts.status}`);
+  console.log(
+    formatTasksText(rows, {
+      compact: false,
+      filterDesc: filterBits.join(', ') || undefined,
+    }),
+  );
 }
 
 async function infoTask(id: string, opts: { json?: boolean }): Promise<void> {
@@ -169,7 +138,7 @@ async function infoTask(id: string, opts: { json?: boolean }): Promise<void> {
   console.log(`  last_run:      ${task.last_run ?? '—'}${task.last_run ? ' (' + fmtRel(task.last_run) + ')' : ''}`);
   console.log(`  chat_jid:      ${task.chat_jid}`);
   console.log(`  group_folder:  ${task.group_folder}`);
-  console.log(`  context_mode:  ${task.context_mode}`);
+  console.log(`  context_mode:  ${task.context_mode} (${modeLabel(task.context_mode)})`);
   console.log(`  created_at:    ${task.created_at}`);
   if (task.consecutive_group_missing && task.consecutive_group_missing > 0) {
     console.log(`  ⚠ group missing ticks: ${task.consecutive_group_missing}`);

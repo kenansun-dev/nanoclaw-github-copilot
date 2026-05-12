@@ -177,12 +177,17 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
     tasks.map((t) => ({
       id: t.id,
       groupFolder: t.group_folder,
+      chat_jid: t.chat_jid,
       prompt: t.prompt,
       script: t.script,
       schedule_type: t.schedule_type,
       schedule_value: t.schedule_value,
       status: t.status,
       next_run: t.next_run,
+      last_run: t.last_run,
+      last_result: t.last_result,
+      context_mode: t.context_mode,
+      consecutive_group_missing: t.consecutive_group_missing,
     })),
   );
 

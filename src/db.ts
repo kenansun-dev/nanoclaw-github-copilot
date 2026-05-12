@@ -170,6 +170,51 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // fork_meta table — tracks one-shot fork-side migrations that don't fit
+  // the regular schema-version scheme (e.g. data backfills that run once
+  // per existing deploy, see PR #46 standalone-by-default migration).
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS fork_meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      ts    TEXT NOT NULL
+    );
+  `);
+
+  // One-shot migration (PR #46, 2026-05-12): standardize all existing
+  // scheduled_tasks to context_mode='isolated' (renamed externally to
+  // "standalone"). Before this migration, context_mode was ad-hoc — some
+  // rows were 'group' (attached to chat session) by accident-of-defaults
+  // rather than by user intent. From now on:
+  //   • new tasks default to 'isolated' (schema DEFAULT, plus
+  //     scheduling.ts agent-prompt + `nanoclaw task add` CLI default)
+  //   • existing 'group' rows on every deploy that hits this migration
+  //     get reset to 'isolated' once. If the user really wants 'group'
+  //     for a task (rare — daily summaries that need chat context), they
+  //     re-set it explicitly via update_task / `task update --mode group`.
+  // Guarded by a fork_meta key so it only runs once per DB.
+  try {
+    const flag = database
+      .prepare(`SELECT value FROM fork_meta WHERE key = ?`)
+      .get('migration:context-mode-isolated-v1') as { value: string } | undefined;
+    if (!flag) {
+      const info = database
+        .prepare(`UPDATE scheduled_tasks SET context_mode = 'isolated' WHERE context_mode != 'isolated'`)
+        .run();
+      database
+        .prepare(`INSERT INTO fork_meta (key, value, ts) VALUES (?, ?, ?)`)
+        .run(
+          'migration:context-mode-isolated-v1',
+          String(info.changes ?? 0),
+          new Date().toISOString(),
+        );
+    }
+  } catch (err) {
+    // Non-fatal: log and continue. Worst case the migration runs twice,
+    // which is idempotent (UPDATE is a no-op if everything is already isolated).
+    void err;
+  }
+
   // Migration: sessions table from (group_folder PK) to (group_folder, provider PK)
   // Old rows are assumed to be 'anthropic' since CC was the original default.
   // Existing GHC sessions in old schema get tagged 'anthropic' which may cause
