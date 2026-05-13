@@ -9,10 +9,14 @@
  *     - snapshot nanoclaw.json → <path>.pre-v2.bak
  *     - for each chats[jid=<proto>:<rawId>]:
  *         · resolve channelKey (`tg` → `telegram`), pick `default` account
- *         · if group: ensureGroupEntry in accounts.<key>.groups (requireMention=false)
+ *         · if group: ensureGroupEntry in accounts.<key>.groups (requireMention=true,
+ *                    mirroring the legacy trigger-only default; users opt into
+ *                    all-message replies post-migration)
  *         · if DM:   pushUnique accounts.<key>.allowFrom
  *                    if entry.isMain → pushUnique commands.ownerAllowFrom
  *                                       + bootstrap users + user_roles(role='owner', agent_group_id=NULL)
+ *         · if entry.agentId is set: push `{ agentId, match: { channel, accountId: 'default' } }`
+ *                    onto top-level `config.bindings[]` (deduped by tuple)
  *     - delete config.chats
  *     - saveConfig
  *
@@ -190,11 +194,14 @@ export function migrateChatsToV2(
 
           if (isGroup) {
             acc.groups ??= {};
-            // Banner-warn on requireMention default flip (proposal note).
+            // Default mirrors legacy trigger-only behavior: groups only react
+            // when the bot is @mentioned / trigger-worded. Users opt into
+            // all-message replies by setting `requireMention: false`
+            // explicitly on the per-group entry post-migration.
             if (acc.groups[rawId] === undefined) {
-              acc.groups[rawId] = { requireMention: false };
+              acc.groups[rawId] = { requireMention: true };
               log.info(
-                `🪧  v2 migrate: group ${jid} → accounts.${channelKey}.default.groups['${rawId}'] (requireMention=false; legacy default was trigger-on-mention)`,
+                `🪧  v2 migrate: group ${jid} → accounts.${channelKey}.default.groups['${rawId}'] (requireMention=true; legacy trigger-only default preserved)`,
               );
             }
             summary.groups.push(jid);
@@ -212,6 +219,27 @@ export function migrateChatsToV2(
                 summary.ownersBootstrapped.push(ownerId);
                 ownerIdsAdded.push(ownerId);
               }
+            }
+          }
+
+          // Bindings (Flag 3): if the chat entry carries an agentId hint,
+          // surface it as a top-level `bindings[]` rule on the same channel/
+          // account so the new router has an authoritative routing source.
+          // Dedupe by (agentId, channel, accountId='default').
+          if (entry.agentId) {
+            const bindings = ((config as { bindings?: import('../config-loader.js').Binding[] }).bindings ??= []);
+            const dup = bindings.some(
+              (b) =>
+                b.agentId === entry.agentId &&
+                b.match?.channel === channelKey &&
+                (b.match?.accountId ?? 'default') === 'default' &&
+                !b.match?.peer?.id,
+            );
+            if (!dup) {
+              bindings.push({
+                agentId: entry.agentId,
+                match: { channel: channelKey, accountId: 'default' },
+              });
             }
           }
         }
@@ -266,8 +294,13 @@ export function migrateChatsToV2(
             const folder = String(r.folder ?? '');
             const name = String(r.name ?? folder);
             if (!folder) continue;
-            // Synthetic id from folder; deterministic so re-runs match.
-            const agId = `ag:legacy:${folder}`;
+            // Use `folder` as the agent_groups.id directly so this row aligns
+            // with reconcileConfigToDb's id space (which uses raw
+            // `config.agents.list[].id`, set equal to folder). Without this
+            // unification we'd insert `ag:legacy:<folder>` here and then
+            // reconcile's plain INSERT for the same folder would hit the
+            // UNIQUE(folder) constraint.
+            const agId = folder;
             const info = insertAg.run(agId, name, folder, null, now);
             if (info.changes > 0) summary.legacyRegisteredGroupsMigrated++;
           }

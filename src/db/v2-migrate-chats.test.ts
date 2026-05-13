@@ -4,7 +4,7 @@
  * Covers:
  *   - DM with isMain → allowFrom + ownerAllowFrom + users + user_roles
  *   - DM without isMain → allowFrom only
- *   - group → groups[<id>].requireMention=false
+ *   - group → groups[<id>].requireMention=true (legacy trigger-only preserved)
  *   - idempotency (re-run with no config.chats and no legacy rows = no-op)
  *   - mixed config + DB legacy rows in a single call
  *   - snapshot file is created
@@ -120,7 +120,7 @@ describe('migrateChatsToV2 — config side', () => {
     expect(role.c).toBe(0);
   });
 
-  it('group → groups[<id>].requireMention=false (banner-warn)', () => {
+  it('group → groups[<id>].requireMention=true (preserves legacy trigger-only default)', () => {
     const db = open();
     const cfg = makeConfig({
       chats: {
@@ -132,7 +132,7 @@ describe('migrateChatsToV2 — config side', () => {
     expect(summary.groups).toEqual(['telegram:-1001crew']);
     expect(summary.dms).toEqual([]);
     const groups = cfg.channels.telegram.accounts!.default.groups!;
-    expect(groups['-1001crew']).toEqual({ requireMention: false });
+    expect(groups['-1001crew']).toEqual({ requireMention: true });
     // isMain on a group does NOT promote to owner (owners are DM-rooted)
     expect((cfg as unknown as { commands: { ownerAllowFrom: string[] } }).commands.ownerAllowFrom).toEqual([]);
   });
@@ -270,5 +270,96 @@ describe('migrateChatsToV2 — DB side (legacy tables → v2)', () => {
     expect(summary2.legacyChatsMigrated).toBe(0);
     expect(summary2.legacyRegisteredGroupsMigrated).toBe(0);
     expect(summary2.noop).toBe(true);
+  });
+
+  it('agent_groups id-space unification: migrate then reconcile leaves a single row per folder', async () => {
+    const { reconcileConfigToDb } = await import('./v2-reconcile.js');
+    const db = open();
+    // Seed legacy registered_groups so migrate creates (id='main', folder='main').
+    db.exec(`CREATE TABLE registered_groups (
+      jid TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      folder TEXT NOT NULL UNIQUE,
+      trigger_pattern TEXT NOT NULL,
+      added_at TEXT NOT NULL,
+      container_config TEXT,
+      requires_trigger INTEGER DEFAULT 1
+    )`);
+    db.prepare(
+      `INSERT INTO registered_groups (jid, name, folder, trigger_pattern, added_at) VALUES (?, ?, ?, ?, ?)`,
+    ).run('telegram:-100crew', 'Legacy Crew', 'main', '@bot', new Date().toISOString());
+
+    migrateChatsToV2(makeConfig({}), db, { skipSaveConfig: true, skipSnapshot: true });
+
+    // Now run reconcile with config.agents.list[].id='main' (same folder).
+    const cfg = makeConfig({
+      agents: {
+        defaults: makeConfig().agents.defaults,
+        list: [
+          { id: 'main', model: 'm', name: 'Main', triggerWord: '@m', hasOwnNumber: false, mode: 'host' },
+        ],
+      },
+    });
+    expect(() => reconcileConfigToDb(cfg, db)).not.toThrow();
+
+    const rows = db.prepare(`SELECT id, name, folder FROM agent_groups`).all() as Array<{
+      id: string;
+      name: string;
+      folder: string;
+    }>;
+    expect(rows.length).toBe(1);
+    expect(rows[0].id).toBe('main');
+    expect(rows[0].folder).toBe('main');
+    // Reconcile UPDATE semantics overwrite the legacy name with the declared one.
+    expect(rows[0].name).toBe('Main');
+  });
+});
+
+describe('migrateChatsToV2 — bindings emission (Flag 3)', () => {
+  it('emits a binding for each chat with an explicit agentId', () => {
+    const db = open();
+    const cfg = makeConfig({
+      chats: {
+        'telegram:8731': { name: 'Owner DM', isMain: true, agentId: 'main' },
+        'telegram:42': { name: 'Friend DM', agentId: 'work' },
+      },
+    });
+    migrateChatsToV2(cfg, db, { skipSaveConfig: true, skipSnapshot: true });
+    const bindings = (cfg.bindings ?? []).map((b) => ({
+      agentId: b.agentId,
+      channel: b.match?.channel,
+      accountId: b.match?.accountId,
+    }));
+    expect(bindings).toEqual([
+      { agentId: 'main', channel: 'telegram', accountId: 'default' },
+      { agentId: 'work', channel: 'telegram', accountId: 'default' },
+    ]);
+  });
+
+  it('dedupes bindings when multiple chats share the same (agentId, channel, account)', () => {
+    const db = open();
+    const cfg = makeConfig({
+      chats: {
+        'telegram:8731': { name: 'Owner DM', isMain: true, agentId: 'main' },
+        'telegram:-100crew': { name: 'Crew group', agentId: 'main' },
+      },
+    });
+    migrateChatsToV2(cfg, db, { skipSaveConfig: true, skipSnapshot: true });
+    expect(cfg.bindings).toHaveLength(1);
+    expect(cfg.bindings![0]).toEqual({
+      agentId: 'main',
+      match: { channel: 'telegram', accountId: 'default' },
+    });
+  });
+
+  it('chats without agentId do not produce any binding', () => {
+    const db = open();
+    const cfg = makeConfig({
+      chats: {
+        'telegram:8731': { name: 'Owner DM', isMain: true },
+      },
+    });
+    migrateChatsToV2(cfg, db, { skipSaveConfig: true, skipSnapshot: true });
+    expect(cfg.bindings ?? []).toEqual([]);
   });
 });
