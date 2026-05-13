@@ -1419,7 +1419,20 @@ async function main(): Promise<void> {
   // systemd-restart-with-error is more visible than a half-dead process.
   try {
     const { initAndReconcileV2 } = await import('./db/v2-boot.js');
-    const { dbPath, summary } = initAndReconcileV2();
+    const { dbPath, migrate, summary } = initAndReconcileV2();
+    if (!migrate.noop) {
+      logger.info(
+        {
+          snapshot: migrate.snapshotPath,
+          dms: migrate.dms.length,
+          groups: migrate.groups.length,
+          ownersBootstrapped: migrate.ownersBootstrapped.length,
+          legacyChatsMigrated: migrate.legacyChatsMigrated,
+          legacyRegisteredGroupsMigrated: migrate.legacyRegisteredGroupsMigrated,
+        },
+        'v1 → v2 config auto-migrated',
+      );
+    }
     logger.info(
       {
         path: dbPath,

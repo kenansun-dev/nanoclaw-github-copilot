@@ -15,10 +15,12 @@ import { loadConfig } from '../config-loader.js';
 import { workspacePath } from '../workspace.js';
 import { initDb } from './connection.js';
 import { runMigrations } from './migrations/index.js';
+import { migrateChatsToV2 } from './v2-migrate-chats.js';
 import { reconcileConfigToDb } from './v2-reconcile.js';
 
 export interface V2BootResult {
   dbPath: string;
+  migrate: ReturnType<typeof migrateChatsToV2>;
   summary: ReturnType<typeof reconcileConfigToDb>;
 }
 
@@ -37,7 +39,14 @@ export function initAndReconcileV2(): V2BootResult {
   const dbPath = workspacePath('store', 'v2.db');
   const db = initDb(dbPath);
   runMigrations(db, dbPath);
-  const cfg = loadConfig();
+  // Auto-migrate legacy v1 config (chats[]) → v2 shape (bindings[],
+  // accounts.<k>.allowFrom, commands.ownerAllowFrom). Idempotent: no-op
+  // when config has no `chats[]`. Snapshots nanoclaw.json before mutating.
+  const cfgForMigrate = loadConfig();
+  const migrate = migrateChatsToV2(cfgForMigrate, db);
+  // Re-load after migrate so reconcile sees the updated config (saveConfig
+  // writes to disk during migrate).
+  const cfg = migrate.noop ? cfgForMigrate : loadConfig();
   const summary = reconcileConfigToDb(cfg, db);
-  return { dbPath, summary };
+  return { dbPath, migrate, summary };
 }

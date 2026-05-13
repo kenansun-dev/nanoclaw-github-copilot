@@ -159,4 +159,69 @@ describe('initAndReconcileV2 — boot smoke', () => {
       .get() as { user_id: string; role: string } | undefined;
     expect(role).toBeDefined();
   });
+
+  it('auto-migrates legacy chats[] config: DM → allowFrom + bindings, group → accounts.<k>.groups', () => {
+    // Legacy v1-shape config with chats[]; expect migrate side to translate
+    // it into v2 shape (allowFrom + bindings + accounts.<k>.groups), then
+    // reconcile to project the new fields into v2 tables.
+    writeConfig({
+      agents: {
+        defaults: {
+          provider: 'github-copilot',
+          model: 'm',
+          name: 'D',
+          triggerWord: '@d',
+          hasOwnNumber: false,
+          mode: 'host',
+        },
+        list: [{ id: 'main', model: 'm', name: 'Main', triggerWord: '@m', hasOwnNumber: false, mode: 'host' }],
+      },
+      channels: {
+        telegram: { enabled: true, accounts: { default: { botToken: 'x' } } },
+      },
+      chats: {
+        'tg:8731187021': { name: 'kenan-dm', isMain: true, agentId: 'main' },
+      },
+    });
+
+    const { migrate, summary } = initAndReconcileV2();
+
+    // Migrator ran (not a no-op).
+    expect(migrate.noop).toBe(false);
+    expect(migrate.dms).toContain('tg:8731187021');
+    expect(migrate.ownersBootstrapped).toContain('telegram:8731187021');
+
+    // Snapshot of pre-migration nanoclaw.json was taken.
+    expect(migrate.snapshotPath).toBeTruthy();
+    expect(fs.existsSync(migrate.snapshotPath!)).toBe(true);
+
+    // Migrator already inserted the owner user + role inside its own tx,
+    // so reconcile sees them as pre-existing (INSERT OR IGNORE → not in
+    // summary.inserted). Verify final DB state instead.
+    const db = getDb();
+    const ownerUser = db
+      .prepare('SELECT id FROM users WHERE id = ?')
+      .get('telegram:8731187021') as { id: string } | undefined;
+    expect(ownerUser?.id).toBe('telegram:8731187021');
+    const ownerRole = db
+      .prepare(`SELECT user_id FROM user_roles WHERE user_id = ? AND role = 'owner'`)
+      .get('telegram:8731187021') as { user_id: string } | undefined;
+    expect(ownerRole?.user_id).toBe('telegram:8731187021');
+    void summary;
+
+    // Verify on-disk config now has v2 fields and `chats` is gone.
+    const writtenCfg = JSON.parse(fs.readFileSync(path.join(wsDir, 'nanoclaw.json'), 'utf-8'));
+    expect(writtenCfg.chats).toBeUndefined();
+    // Migrator writes under channelKey ('tg' from the jid prefix), not channelType ('telegram').
+    expect(writtenCfg.channels.tg.accounts.default.allowFrom).toContain('8731187021');
+    expect(writtenCfg.commands?.ownerAllowFrom).toContain('telegram:8731187021');
+    expect(writtenCfg.bindings ?? []).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          agentId: 'main',
+          match: expect.objectContaining({ channel: 'tg', accountId: 'default' }),
+        }),
+      ]),
+    );
+  });
 });
