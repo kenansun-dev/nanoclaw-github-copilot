@@ -21,9 +21,9 @@
  *
  * agent_groups removal: agents listed only in DB but not in config are
  * **archived** rather than deleted, to protect FK references from
- * `sessions` / `scheduled_tasks`. Archival is recorded in
- * `agent_provider='archived'` until a proper `archived` column lands
- * (TODO once that schema change is needed).
+ * `sessions` / `scheduled_tasks`. Archival is recorded in the dedicated
+ * `archived_at` column (migration 107). Re-declaration of a previously
+ * archived agent clears `archived_at` back to NULL.
  *
  * Sender id format note: per-account `allowFrom` entries are raw
  * platform ids (e.g. `8731187021`); `commands.ownerAllowFrom` entries
@@ -121,10 +121,13 @@ export function reconcileConfigToDb(config: NanoclawConfig, db: Database.Databas
     const declaredAgents = (config.agents?.list ?? []).filter((a) => a.id);
     const declaredById = new Map(declaredAgents.map((a) => [a.id!, a]));
 
-    const existingAgents = db.prepare('SELECT id, name, agent_provider FROM agent_groups').all() as Array<{
+    const existingAgents = db
+      .prepare('SELECT id, name, agent_provider, archived_at FROM agent_groups')
+      .all() as Array<{
       id: string;
       name: string;
       agent_provider: string | null;
+      archived_at: string | null;
     }>;
     const existingById = new Map(existingAgents.map((r) => [r.id, r]));
 
@@ -133,6 +136,7 @@ export function reconcileConfigToDb(config: NanoclawConfig, db: Database.Databas
        VALUES (?, ?, ?, ?, ?)`,
     );
     const updateAgent = db.prepare(`UPDATE agent_groups SET name = ?, agent_provider = ? WHERE id = ?`);
+    const unarchiveAgent = db.prepare(`UPDATE agent_groups SET archived_at = NULL WHERE id = ?`);
 
     for (const agent of declaredAgents) {
       const id = agent.id!;
@@ -142,17 +146,24 @@ export function reconcileConfigToDb(config: NanoclawConfig, db: Database.Databas
       if (!existing) {
         insertAgent.run(id, name, id, provider, now);
         summary.agentGroups.inserted.push(id);
-      } else if (existing.name !== name || existing.agent_provider !== provider) {
-        updateAgent.run(name, provider, id);
-        summary.agentGroups.updated.push(id);
+      } else {
+        if (existing.name !== name || existing.agent_provider !== provider) {
+          updateAgent.run(name, provider, id);
+          summary.agentGroups.updated.push(id);
+        }
+        // Unarchive-on-reappearance: a previously archived agent that
+        // shows up again in declared config should be considered live.
+        if (existing.archived_at !== null) {
+          unarchiveAgent.run(id);
+        }
       }
     }
     // Archive (do not delete): agents present in DB but no longer in
-    // config. Tag via agent_provider='archived' until a real archived
-    // column lands. Skip already-archived rows.
+    // config. Recorded in the dedicated `archived_at` column (migration
+    // 107); skip rows that are already archived.
     for (const r of existingAgents) {
-      if (!declaredById.has(r.id) && r.agent_provider !== 'archived') {
-        db.prepare(`UPDATE agent_groups SET agent_provider = 'archived' WHERE id = ?`).run(r.id);
+      if (!declaredById.has(r.id) && r.archived_at === null) {
+        db.prepare(`UPDATE agent_groups SET archived_at = datetime('now') WHERE id = ?`).run(r.id);
         summary.agentGroups.archived.push(r.id);
       }
     }

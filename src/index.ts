@@ -1606,6 +1606,9 @@ async function main(): Promise<void> {
       // and skips delivery polls — so v1 stays authoritative and the
       // user-visible path is unchanged. Used to validate the v2 path
       // on real traffic before the full swap.
+      //
+      // Semantics (#49 step 9.5): only '2' enables shadow. v2 dispatch
+      // wiring itself is on by default — see installV2DispatcherHooks.
       if (process.env.NANOCLAW_V2_DISPATCHER === '2') {
         shadowRoute(chatJid, msg);
       }
@@ -1746,14 +1749,22 @@ async function main(): Promise<void> {
     },
   });
 
-  // ─── B.5.3 v2 dispatcher wiring (env-gated, default off) ──────────
+  // ─── B.5.3 v2 dispatcher wiring (v2-default since fixup #49 step 9.5) ─
   // Implementation extracted to src/v2-dispatcher-wiring.ts so it has
   // dedicated unit tests (see src/v2-dispatcher-wiring.test.ts). Modes:
-  //   unset / 0  → fork v1 only (default).
-  //   '1'        → wiring only (gates + resolvers installed).
-  //   '2'        → wiring + shadow inbound (see src/shadow-inbound.ts).
+  //   unset / '1' / any other value  → v2 path (default).
+  //   '2'                            → v2 + shadow inbound dispatch.
+  //   '0' / 'legacy'                 → fork v1 only (emergency rollback).
+  const v2ModeRaw = process.env.NANOCLAW_V2_DISPATCHER;
+  const v2Enabled = !(v2ModeRaw === '0' || v2ModeRaw === 'legacy');
+  // eslint-disable-next-line no-console
+  console.info(
+    v2Enabled
+      ? '[v2] dispatcher: v2 (set NANOCLAW_V2_DISPATCHER=0 to fall back to legacy)'
+      : '[v2] dispatcher: legacy (NANOCLAW_V2_DISPATCHER=' + v2ModeRaw + ')',
+  );
   const { installV2DispatcherHooks } = await import('./v2-dispatcher-wiring.js');
-  await installV2DispatcherHooks(process.env.NANOCLAW_V2_DISPATCHER, {
+  await installV2DispatcherHooks(v2ModeRaw, {
     killActive: (jid: string) => queue.killActive(jid),
     sendAck: async (jid: string, text: string) => {
       const channel = findChannel(channels, jid);

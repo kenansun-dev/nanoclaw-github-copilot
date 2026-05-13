@@ -31,6 +31,20 @@ import type { AbortForkDeps } from './modules/abort-extensions/index.js';
 
 export type V2Mode = string | undefined;
 
+/**
+ * Env-var semantics (fixup #49 step 9.5 — flipped to v2-default).
+ *
+ *   unset / '1' / '2' / anything else → v2 path (hooks installed).
+ *   '0' / 'legacy'                    → legacy fork v1 path only.
+ *
+ * '2' additionally turns on shadow inbound dispatch in src/index.ts.
+ * The opt-out alias 'legacy' exists so emergency rollback reads
+ * naturally on a CLI.
+ */
+export function isV2Enabled(v2Mode: V2Mode): boolean {
+  return !(v2Mode === '0' || v2Mode === 'legacy');
+}
+
 export interface V2WiringDeps {
   /** Kill the active agent for this chat. Return true iff something was killed. */
   killActive: AbortForkDeps['killActive'];
@@ -83,9 +97,14 @@ export async function installV2DispatcherHooks(
   deps: V2WiringDeps,
   loaders: V2WiringLoaders = {},
 ): Promise<V2WiringOutcome> {
-  if (v2Mode !== '1' && v2Mode !== '2') {
+  // Flipped semantics (#49 step 9.5): v2 is the default. Only the
+  // explicit opt-out values disable wiring. `installed.mode` is
+  // normalized to '1' (regular) or '2' (shadow) so existing callers
+  // / log consumers keep working.
+  if (!isV2Enabled(v2Mode)) {
     return { kind: 'disabled', mode: v2Mode };
   }
+  const effectiveMode: '1' | '2' = v2Mode === '2' ? '2' : '1';
   const ld = { ...defaultLoaders, ...loaders };
 
   try {
@@ -109,8 +128,8 @@ export async function installV2DispatcherHooks(
 
     const outcome: V2WiringOutcome = {
       kind: 'installed',
-      mode: v2Mode,
-      shadow: v2Mode === '2',
+      mode: effectiveMode,
+      shadow: effectiveMode === '2',
       gates: ['sender-allowlist'],
       abortHandler: 'fork',
       groupResolver: 'registered-groups-extensions',
@@ -123,7 +142,7 @@ export async function installV2DispatcherHooks(
         mode: outcome.mode,
         shadow: outcome.shadow,
       },
-      'v2 dispatcher hooks installed (NANOCLAW_V2_DISPATCHER=' + v2Mode + ')',
+      'v2 dispatcher hooks installed (NANOCLAW_V2_DISPATCHER=' + (v2Mode || 'unset') + ')',
     );
     return outcome;
   } catch (err) {

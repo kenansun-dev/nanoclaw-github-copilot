@@ -79,8 +79,8 @@ function makeLoaders(
 }
 
 describe('installV2DispatcherHooks', () => {
-  it.each(['undefined', '0', '', 'foo'])('mode=%s → disabled, no loaders called', async (modeKey) => {
-    const mode = modeKey === 'undefined' ? undefined : modeKey;
+  // #49 step 9.5: v2 is the DEFAULT. Only '0' / 'legacy' opt out.
+  it.each(['0', 'legacy'])('mode=%s → disabled, no loaders called', async (mode) => {
     const deps = makeDeps();
     const { loaders, spies, calls } = makeLoaders();
     const out = await installV2DispatcherHooks(mode, deps, loaders);
@@ -92,15 +92,37 @@ describe('installV2DispatcherHooks', () => {
     expect(deps.logger.info).not.toHaveBeenCalled();
   });
 
-  it.each(['1', '2'] as const)('mode=%s → installed, all 3 hooks fire in documented order', async (mode) => {
+  it('default (env unset) installs v2 hooks (regression: v2-default)', async () => {
+    const deps = makeDeps();
+    const { loaders, spies, calls } = makeLoaders();
+    const out = await installV2DispatcherHooks(undefined, deps, loaders);
+    expect(out.kind).toBe('installed');
+    if (out.kind === 'installed') {
+      expect(out.mode).toBe('1');
+      expect(out.shadow).toBe(false);
+    }
+    expect(calls).toEqual([
+      'loadRouter',
+      'loadSenderAllowlist',
+      'loadAbortFork',
+      'loadRegisteredGroupsFork',
+      'loadModulesBarrel',
+    ]);
+    expect(spies.setAccessGate).toHaveBeenCalledTimes(1);
+    expect(spies.installAbortFork).toHaveBeenCalledTimes(1);
+    expect(spies.installRegisteredGroupsFork).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['1', '2', '', 'foo'] as const)('mode=%s → installed (v2 default path)', async (mode) => {
     const deps = makeDeps();
     const { loaders, spies, calls } = makeLoaders();
     const out = await installV2DispatcherHooks(mode, deps, loaders);
 
+    const expectedMode = mode === '2' ? '2' : '1';
     expect(out).toEqual({
       kind: 'installed',
-      mode,
-      shadow: mode === '2',
+      mode: expectedMode,
+      shadow: expectedMode === '2',
       gates: ['sender-allowlist'],
       abortHandler: 'fork',
       groupResolver: 'registered-groups-extensions',
@@ -140,11 +162,11 @@ describe('installV2DispatcherHooks', () => {
         gates: ['sender-allowlist'],
         abortHandler: 'fork',
         groupResolver: 'registered-groups-extensions',
-        mode,
-        shadow: mode === '2',
+        mode: expectedMode,
+        shadow: expectedMode === '2',
       }),
     );
-    expect(logMsg).toContain('NANOCLAW_V2_DISPATCHER=' + mode);
+    expect(logMsg).toContain('NANOCLAW_V2_DISPATCHER=' + (mode || 'unset'));
   });
 
   it('shadow flag is true iff mode is "2" (regression: order matters)', async () => {

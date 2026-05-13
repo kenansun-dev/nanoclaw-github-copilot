@@ -157,12 +157,57 @@ describe('reconcileConfigToDb — agent_groups', () => {
     });
     const s = reconcileConfigToDb(cfg2, db);
     expect(s.agentGroups.archived).toEqual(['old']);
-    const row = db.prepare('SELECT agent_provider FROM agent_groups WHERE id = ?').get('old') as {
-      agent_provider: string;
+    const row = db.prepare('SELECT agent_provider, archived_at FROM agent_groups WHERE id = ?').get('old') as {
+      agent_provider: string | null;
+      archived_at: string | null;
     };
-    expect(row.agent_provider).toBe('archived');
+    // archived_at column carries the archival timestamp; agent_provider
+    // is no longer used as a sentinel (fixup #49 step 9.5).
+    expect(row.archived_at).not.toBeNull();
+    expect(row.agent_provider).not.toBe('archived');
     // Row preserved (not deleted)
     expect(db.prepare('SELECT COUNT(*) AS c FROM agent_groups').get()).toEqual({ c: 2 });
+  });
+
+  it('unarchives a previously archived agent when it reappears in config', () => {
+    const db = open();
+    const cfg1 = makeConfig({
+      agents: {
+        defaults: makeConfig().agents.defaults,
+        list: [
+          { id: 'main', model: 'm', name: 'Main', triggerWord: '@m', hasOwnNumber: false, mode: 'host' },
+          { id: 'old', model: 'm', name: 'Old', triggerWord: '@o', hasOwnNumber: false, mode: 'host' },
+        ],
+      },
+    });
+    reconcileConfigToDb(cfg1, db);
+    // Drop 'old' → archived.
+    const cfg2 = makeConfig({
+      agents: {
+        defaults: makeConfig().agents.defaults,
+        list: [{ id: 'main', model: 'm', name: 'Main', triggerWord: '@m', hasOwnNumber: false, mode: 'host' }],
+      },
+    });
+    reconcileConfigToDb(cfg2, db);
+    const archivedRow = db.prepare('SELECT archived_at FROM agent_groups WHERE id = ?').get('old') as {
+      archived_at: string | null;
+    };
+    expect(archivedRow.archived_at).not.toBeNull();
+    // Re-declare 'old' → archived_at should be cleared.
+    const cfg3 = makeConfig({
+      agents: {
+        defaults: makeConfig().agents.defaults,
+        list: [
+          { id: 'main', model: 'm', name: 'Main', triggerWord: '@m', hasOwnNumber: false, mode: 'host' },
+          { id: 'old', model: 'm', name: 'Old', triggerWord: '@o', hasOwnNumber: false, mode: 'host' },
+        ],
+      },
+    });
+    reconcileConfigToDb(cfg3, db);
+    const unarchivedRow = db.prepare('SELECT archived_at FROM agent_groups WHERE id = ?').get('old') as {
+      archived_at: string | null;
+    };
+    expect(unarchivedRow.archived_at).toBeNull();
   });
 });
 
