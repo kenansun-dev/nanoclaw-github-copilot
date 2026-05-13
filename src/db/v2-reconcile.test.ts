@@ -375,3 +375,94 @@ describe('reconcileConfigToDb — user_roles (owner sync)', () => {
     expect(mainRow.agent_provider).toBeNull();
   });
 });
+
+describe('reconcileConfigToDb — agent_group_members projection (PR-D)', () => {
+  it('projects allowFrom users into agent_group_members on every live agent', () => {
+    const db = open();
+    const cfg = makeConfig({
+      agents: {
+        defaults: {
+          model: 'm',
+          name: 'D',
+          triggerWord: '@d',
+          hasOwnNumber: false,
+          mode: 'host',
+        },
+        list: [{ id: 'a1', name: 'A1' }, { id: 'a2', name: 'A2' }],
+      },
+      channels: {
+        telegram: {
+          enabled: false,
+          accounts: { default: { allowFrom: ['user-X', 'user-Y'] } },
+        },
+      } as NanoclawConfig['channels'],
+    });
+    const summary = reconcileConfigToDb(cfg, db);
+    // 2 users × 2 agent_groups = 4 inserts
+    expect(summary.agentGroupMembers.inserted).toBe(4);
+    const rows = db
+      .prepare(`SELECT user_id, agent_group_id FROM agent_group_members ORDER BY user_id, agent_group_id`)
+      .all() as Array<{ user_id: string; agent_group_id: string }>;
+    expect(rows).toEqual([
+      { user_id: 'telegram:user-X', agent_group_id: 'a1' },
+      { user_id: 'telegram:user-X', agent_group_id: 'a2' },
+      { user_id: 'telegram:user-Y', agent_group_id: 'a1' },
+      { user_id: 'telegram:user-Y', agent_group_id: 'a2' },
+    ]);
+  });
+
+  it('skips owners (implicit member via user_roles)', () => {
+    const db = open();
+    const cfg = makeConfig({
+      agents: {
+        defaults: {
+          model: 'm',
+          name: 'D',
+          triggerWord: '@d',
+          hasOwnNumber: false,
+          mode: 'host',
+        },
+        list: [{ id: 'a1', name: 'A1' }],
+      },
+      channels: {
+        telegram: {
+          enabled: false,
+          accounts: { default: { allowFrom: ['user-X'] } },
+        },
+      } as NanoclawConfig['channels'],
+      commands: { ownerAllowFrom: ['telegram:user-X'] },
+    } as Partial<NanoclawConfig>);
+    const summary = reconcileConfigToDb(cfg, db);
+    // user-X is owner — no member row
+    expect(summary.agentGroupMembers.inserted).toBe(0);
+    const memberRows = db.prepare(`SELECT count(*) as n FROM agent_group_members`).get() as { n: number };
+    expect(memberRows.n).toBe(0);
+    const ownerRows = db.prepare(`SELECT count(*) as n FROM user_roles WHERE role='owner'`).get() as { n: number };
+    expect(ownerRows.n).toBe(1);
+  });
+
+  it('idempotent: re-run with same config inserts 0 new rows', () => {
+    const db = open();
+    const cfg = makeConfig({
+      agents: {
+        defaults: {
+          model: 'm',
+          name: 'D',
+          triggerWord: '@d',
+          hasOwnNumber: false,
+          mode: 'host',
+        },
+        list: [{ id: 'a1', name: 'A1' }],
+      },
+      channels: {
+        telegram: {
+          enabled: false,
+          accounts: { default: { allowFrom: ['user-X'] } },
+        },
+      } as NanoclawConfig['channels'],
+    });
+    reconcileConfigToDb(cfg, db);
+    const second = reconcileConfigToDb(cfg, db);
+    expect(second.agentGroupMembers.inserted).toBe(0);
+  });
+});

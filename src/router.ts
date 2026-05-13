@@ -34,8 +34,6 @@ import { wakeContainer } from './container-runner.js';
 import { getSession } from './db/sessions.js';
 import type { AgentGroup, MessagingGroup, MessagingGroupAgent } from './types.js';
 import type { InboundEvent } from './channels/adapter.js';
-import { checkInboundAccess, holdMessageForPairing } from './v2-access.js';
-import { loadConfig } from './config-loader.js';
 import { getDb } from './db/connection.js';
 
 function generateId(): string {
@@ -185,114 +183,6 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
 
   const isMention = event.message.isMention === true;
 
-  // 0b. v2 access gate: account-level dmPolicy / allowFrom / groupPolicy /
-  //     requireMention checks driven by config (see v2-access.ts). Permissive
-  //     when channel has no `accounts` map (legacy config). Step 7 will wire
-  //     `hold-pairing` to a real pending-message store.
-  try {
-    const preParsed = safeParseContent(event.message.content);
-    const access = checkInboundAccess(loadConfig(), tryGetDb(), {
-      channelType: event.channelType,
-      // TODO(v2-multi-account): short-term assumes a single bot per channel;
-      // steps 9–12 should derive accountKey from the inbound event (adapter
-      // already knows which account received the message).
-      accountKey: 'default',
-      platformId: event.platformId,
-      isGroup: event.message.isGroup === true,
-      senderRawId: preParsed.senderId ?? null,
-      isMention,
-      text: preParsed.text ?? '',
-    });
-    if (access.action === 'deny') {
-      log.debug('v2 access gate: deny', {
-        channelType: event.channelType,
-        platformId: event.platformId,
-        reason: access.reason,
-      });
-      return;
-    }
-    if (access.action === 'hold-pairing') {
-      const heldDb = tryGetDb();
-      if (heldDb) {
-        try {
-          const senderRaw = preParsed.senderId ?? event.platformId;
-          const result = holdMessageForPairing(heldDb, event.channelType, 'default', senderRaw, {
-            text: preParsed.text ?? '',
-            senderName: null,
-            raw: { platformId: event.platformId, threadId: event.threadId, content: event.message.content },
-          });
-          // Only DM the stranger when this hold minted a fresh code —
-          // subsequent retries queue silently so we don't spam them.
-          if (result.newCode) {
-            try {
-              const adapter2 = getChannelAdapter(event.channelType);
-              if (adapter2) {
-                await adapter2.deliver(event.platformId, event.threadId, {
-                  kind: 'chat',
-                  content: {
-                    text:
-                      `🔐 Your message is pending owner approval.\n` +
-                      `Pairing code: ${result.codeShown}\n` +
-                      `Ask the owner to run \`/pair-approve ${result.codeShown}\` to approve. ` +
-                      `Code expires in 24h.`,
-                  },
-                });
-              }
-            } catch (notifyErr) {
-              log.warn('hold-pairing notice deliver failed', {
-                channelType: event.channelType,
-                platformId: event.platformId,
-                err: (notifyErr as Error)?.message ?? String(notifyErr),
-              });
-            }
-          }
-        } catch (holdErr) {
-          log.warn('holdMessageForPairing persist failed', {
-            channelType: event.channelType,
-            platformId: event.platformId,
-            err: (holdErr as Error)?.message ?? String(holdErr),
-          });
-        }
-      } else {
-        log.warn('hold-pairing: no DB available, dropping inbound', {
-          channelType: event.channelType,
-          platformId: event.platformId,
-        });
-      }
-      return;
-    }
-  } catch (err) {
-    // Gate failures should never strand inbound messages — log, audit, and
-    // fall through to legacy behaviour.
-    const errMsg = (err as Error)?.message ?? String(err);
-    log.warn('v2 access gate threw — falling through to legacy routing', {
-      channelType: event.channelType,
-      platformId: event.platformId,
-      err: errMsg,
-    });
-    // Audit the fail-open so we can spot regressions. recordDroppedMessage
-    // hits the DB; if it also throws (e.g. db not initialised in tests),
-    // fall back to a structured console.warn tag.
-    try {
-      recordDroppedMessage({
-        channel_type: event.channelType,
-        platform_id: event.platformId,
-        user_id: null,
-        sender_name: null,
-        reason: `v2-gate-error-fallback: ${errMsg}`,
-        messaging_group_id: null,
-        agent_group_id: null,
-      });
-    } catch (auditErr) {
-      console.warn('[v2-gate-error] fail-open audit could not be recorded', {
-        channelType: event.channelType,
-        platformId: event.platformId,
-        gateErr: errMsg,
-        auditErr: (auditErr as Error)?.stack ?? String(auditErr),
-      });
-    }
-  }
-
   // 1. Combined lookup: messaging_group row + count of wired agents in a
   //    single query. Cheap short-circuit for the common "unwired channel"
   //    case — one DB read and we're out, no auto-create, no sender
@@ -313,7 +203,11 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
       platform_id: event.platformId,
       name: null,
       is_group: event.message.isGroup ? 1 : 0,
-      unknown_sender_policy: 'request_approval',
+      // TODO(approval-opt-in): future config field accounts.<k>.approveUnknown
+      // will toggle this to 'request_approval'. Owner directive 2026-05-13:
+      // pair flow + config (allowFrom/groupAllowFrom) is the source of truth
+      // for now; unknown senders are dropped silently, no DM card.
+      unknown_sender_policy: 'strict',
       denied_at: null,
       created_at: new Date().toISOString(),
     };

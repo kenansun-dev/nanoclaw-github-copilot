@@ -13,6 +13,14 @@
  *      accounts.*.groupAllowFrom      → users
  *      accounts.*.groups.*.allowFrom  → users
  *   3. commands.ownerAllowFrom        → user_roles (role='owner')
+ *   4. all allowFrom users            → agent_group_members on every
+ *                                       declared (non-archived) agent_group.
+ *                                       This wires the upstream access gate
+ *                                       (`canAccessAgentGroup`) so config-
+ *                                       declared users are "known" without
+ *                                       needing the upstream sender-approval
+ *                                       flow. Owner is implicitly a member
+ *                                       via `user_roles` and skipped here.
  *
  * Explicitly NOT in scope (lazy / grows on demand):
  *
@@ -38,6 +46,7 @@ interface ReconcileSummary {
   agentGroups: { inserted: string[]; archived: string[]; updated: string[] };
   users: { inserted: string[] };
   userRoles: { inserted: string[]; deleted: string[] };
+  agentGroupMembers: { inserted: number };
 }
 
 function nowIso(): string {
@@ -112,6 +121,7 @@ export function reconcileConfigToDb(config: NanoclawConfig, db: Database.Databas
     agentGroups: { inserted: [], archived: [], updated: [] },
     users: { inserted: [] },
     userRoles: { inserted: [], deleted: [] },
+    agentGroupMembers: { inserted: 0 },
   };
 
   const tx = db.transaction(() => {
@@ -215,6 +225,30 @@ export function reconcileConfigToDb(config: NanoclawConfig, db: Database.Databas
       if (!declaredOwnerSet.has(existing)) {
         deleteOwnerRole.run(existing);
         summary.userRoles.deleted.push(existing);
+      }
+    }
+
+    // ── 4. agent_group_members: project allowFrom → membership ────────
+    // Make every config-declared user a "known" member of every live
+    // agent_group. Upstream `canAccessAgentGroup(userId, agentGroupId)`
+    // (src/modules/permissions/access.ts) then accepts them automatically
+    // and the upstream sender-approval flow is bypassed for known users.
+    // Owners are implicitly members via `user_roles` and need no row.
+    const liveAgentGroupIds = db
+      .prepare(`SELECT id FROM agent_groups WHERE archived_at IS NULL`)
+      .all() as Array<{ id: string }>;
+
+    const insertMember = db.prepare(
+      `INSERT OR IGNORE INTO agent_group_members (user_id, agent_group_id, added_by, added_at)
+       VALUES (?, ?, NULL, ?)`,
+    );
+
+    const ownerSet = new Set(ownerIds);
+    for (const [userId] of users) {
+      if (ownerSet.has(userId)) continue;
+      for (const ag of liveAgentGroupIds) {
+        const info = insertMember.run(userId, ag.id, now);
+        if (info.changes > 0) summary.agentGroupMembers.inserted += 1;
       }
     }
   });
