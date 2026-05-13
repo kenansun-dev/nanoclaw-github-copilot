@@ -90,11 +90,7 @@ describe('installV2DispatcherHooks', () => {
       expect(out.mode).toBe('1');
       expect(out.shadow).toBe(false);
     }
-    expect(calls).toEqual([
-      'loadAbortFork',
-      'loadRegisteredGroupsFork',
-      'loadModulesBarrel',
-    ]);
+    expect(calls).toEqual(['loadAbortFork', 'loadRegisteredGroupsFork', 'loadModulesBarrel']);
     expect(spies.installAbortFork).toHaveBeenCalledTimes(1);
     expect(spies.installRegisteredGroupsFork).toHaveBeenCalledTimes(1);
   });
@@ -118,11 +114,7 @@ describe('installV2DispatcherHooks', () => {
     // modules barrel last (per docs/v2-migration-inventory.md
     // "Side-effect import order"). The barrel registers the upstream
     // permissions access gate as a side effect of import.
-    expect(calls).toEqual([
-      'loadAbortFork',
-      'loadRegisteredGroupsFork',
-      'loadModulesBarrel',
-    ]);
+    expect(calls).toEqual(['loadAbortFork', 'loadRegisteredGroupsFork', 'loadModulesBarrel']);
 
     // Each install*() called exactly once.
     expect(spies.installAbortFork).toHaveBeenCalledTimes(1);

@@ -19,10 +19,13 @@
  */
 import { getChannelAdapter } from './channels/channel-registry.js';
 import { gateCommand } from './command-gate.js';
+import { loadConfig } from './config-loader.js';
+import type { Binding } from './config-loader.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { recordDroppedMessage } from './db/dropped-messages.js';
 import {
   createMessagingGroup,
+  createMessagingGroupAgent,
   getMessagingGroupAgents,
   getMessagingGroupWithAgentCount,
 } from './db/messaging-groups.js';
@@ -217,7 +220,61 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
       channelType: event.channelType,
       platformId: event.platformId,
     });
-    agentCount = 0;
+    // Auto-wire agents from config.bindings. Without this, agentCount
+    // stays 0 forever and every inbound on a fresh chat falls through
+    // to the no-agent-wired drop path — the symptom Rpi5 caught
+    // 2026-05-13 after PR-D removed the fork access gate.
+    let wiredCount = 0;
+    try {
+      const cfg = loadConfig();
+      const matches: Binding[] = (cfg.bindings ?? []).filter((b) => {
+        const m = b.match;
+        if (m.channel && m.channel !== event.channelType) return false;
+        if (m.peer?.kind === 'direct' && event.message.isGroup) return false;
+        if (m.peer?.kind === 'group' && !event.message.isGroup) return false;
+        if (m.peer?.id && !event.platformId.includes(m.peer.id)) return false;
+        return true;
+      });
+      const seenAgents = new Set<string>();
+      for (const b of matches) {
+        if (!b.agentId || seenAgents.has(b.agentId)) continue;
+        seenAgents.add(b.agentId);
+        const isDm = !event.message.isGroup;
+        try {
+          createMessagingGroupAgent({
+            id: `mga-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            messaging_group_id: mgId,
+            agent_group_id: b.agentId,
+            engage_mode: isDm ? 'pattern' : 'mention-sticky',
+            engage_pattern: isDm ? '.' : null,
+            sender_scope: 'all',
+            ignored_message_policy: 'drop',
+            session_mode: 'shared',
+            priority: 0,
+            created_at: new Date().toISOString(),
+          });
+          wiredCount++;
+        } catch (wireErr) {
+          log.warn('Auto-wire mga failed', {
+            mgId,
+            agentId: b.agentId,
+            err: (wireErr as Error)?.message ?? String(wireErr),
+          });
+        }
+      }
+      if (wiredCount > 0) {
+        log.info('Auto-wired agents on new messaging group', {
+          mgId,
+          agentIds: Array.from(seenAgents),
+        });
+      }
+    } catch (cfgErr) {
+      log.warn('Auto-wire bindings lookup failed', {
+        mgId,
+        err: (cfgErr as Error)?.message ?? String(cfgErr),
+      });
+    }
+    agentCount = wiredCount;
   } else {
     mg = found.mg;
     agentCount = found.agentCount;
