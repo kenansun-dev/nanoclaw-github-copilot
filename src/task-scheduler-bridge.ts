@@ -35,8 +35,7 @@
  *   - Keeps `src/task-scheduler.ts` as a near-verbatim fork v1 file,
  *     easier to re-sync if v2-merge needs to abort.
  *   - Centralises the v2-mode toggle, with the rest of v2 toggles in
- *     module-level startup glue (sender-allowlist-extensions, abort-extensions,
- *     etc.).
+ *     module-level startup glue (abort-extensions, ipc-extensions, etc.).
  */
 
 import {

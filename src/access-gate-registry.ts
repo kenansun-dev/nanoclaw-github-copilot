@@ -1,10 +1,9 @@
 /**
  * Access-gate registry — B.5-prep #4 skeleton.
  *
- * Hook surface for per-message access gating. Modules (e.g.
- * `sender-allowlist-extensions`) self-register a gate at import time;
- * the dispatcher calls `runAccessGates(...)` per message and the
- * first non-`'allow'` decision wins.
+ * Hook surface for per-message access gating. Modules self-register a
+ * gate at import time; the dispatcher calls `runAccessGates(...)` per
+ * message and the first non-`'allow'` decision wins.
  *
  * Lives at `src/` root (not `modules/`) for the same reason as
  * `response-registry.ts` / `delivery.ts` / `channel-registry.ts`:

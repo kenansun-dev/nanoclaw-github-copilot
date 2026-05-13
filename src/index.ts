@@ -1749,9 +1749,14 @@ async function main(): Promise<void> {
     },
   });
 
-  // ─── B.5.3 v2 dispatcher wiring (v2-default since fixup #49 step 9.5) ─
-  // Implementation extracted to src/v2-dispatcher-wiring.ts so it has
-  // dedicated unit tests (see src/v2-dispatcher-wiring.test.ts). Modes:
+  // ─── v2 dispatcher wiring (v2 is the default since fixup #49 step 9.5) ─
+  // Inbound routing goes through src/router.ts (`routeInboundEvent`) which
+  // resolves messaging_group → agent → access gate (upstream
+  // `canAccessAgentGroup` via setAccessGate) → session → container wake.
+  // Auto-wiring of `messaging_group_agents` from `config.bindings[]` happens
+  // on lazy `messaging_groups` create in router.ts (PR-D step 1.2).
+  // Implementation extracted to src/v2-dispatcher-wiring.ts for unit testing
+  // (src/v2-dispatcher-wiring.test.ts). Env var modes:
   //   unset / '1' / any other value  → v2 path (default).
   //   '2'                            → v2 + shadow inbound dispatch.
   //   '0' / 'legacy'                 → fork v1 only (emergency rollback).
