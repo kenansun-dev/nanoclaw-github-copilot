@@ -1407,6 +1407,35 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
 
+  // ─── v2 central DB init + migrations + config reconcile ───
+  // Same on-disk file as legacy initDatabase() — v2-boot-guard renames the
+  // legacy `sessions` table out of the way so migration 001 can recreate it
+  // with the v2 shape. After migrations run, reconcile projects the declared
+  // config (agents, allowFrom users, owners, requireMention) into v2 tables
+  // so the router has everything it needs on first inbound. Without this,
+  // module-level `getDb()` throws "Database not initialized" on first
+  // inbound and no v2 tables exist.
+  try {
+    const { initAndReconcileV2 } = await import('./db/v2-boot.js');
+    const { dbPath, summary } = initAndReconcileV2();
+    logger.info(
+      {
+        path: dbPath,
+        agentGroupsInserted: summary.agentGroups.inserted.length,
+        agentGroupsUpdated: summary.agentGroups.updated.length,
+        agentGroupsArchived: summary.agentGroups.archived.length,
+        usersInserted: summary.users.inserted.length,
+        ownerRolesInserted: summary.userRoles.inserted.length,
+        ownerRolesDeleted: summary.userRoles.deleted.length,
+        agentGroupMembersInserted: summary.agentGroupMembers.inserted,
+        messagingGroupAgentsUpdated: summary.messagingGroupAgents.updated,
+      },
+      'v2 DB initialized + reconciled',
+    );
+  } catch (err) {
+    logger.error({ err }, 'v2 DB init failed — v2 router will throw on inbound');
+  }
+
   // Apply config.logLevel as early as possible so subsequent startup logs
   // reflect the user's preferred verbosity. env LOG_LEVEL still wins inside
   // applyConfigLogLevel (it's locked in logger.ts at module init).
