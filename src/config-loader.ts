@@ -88,6 +88,13 @@ export interface ChatEntry {
   id?: number;
   jid: string;
   name: string;
+  /**
+   * @deprecated v2: routing no longer reads `isMain`. Use bindings
+   * (`channel` + `accountKey` + `peerId`) → `agent_groups` instead.
+   * Kept on the legacy v1 path for mount-permission + share-main DM
+   * collapse (see `src/db.ts`, `src/session-routing.ts`). v2-migrate-chats
+   * also consults it to promote the owner DM into `user_roles`.
+   */
   isMain?: boolean;
   requiresTrigger?: boolean;
   agentId?: string;

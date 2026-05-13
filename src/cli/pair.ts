@@ -116,19 +116,24 @@ export async function runPair(args: string[]): Promise<void> {
 
   const config = loadConfig();
 
-  // Direct mode: nanoclaw pair <jid> --name <name> [--main]
+  // Direct mode: nanoclaw pair <jid> --name <name>
+  // v2 cleanup: `--main`/`--no-main` flags are no longer accepted —
+  // routing goes through bindings/agent_groups, not the legacy `isMain`
+  // singleton. Owner is granted via `pair approve <code>` (above) which
+  // writes `user_roles`. Accept the flags as deprecated no-ops so old
+  // scripts don't break.
   if (args.length > 0 && !args[0].startsWith('-')) {
     const jid = args[0];
     let name = '';
-    let isMain = true;
 
     for (let i = 1; i < args.length; i++) {
       if (args[i] === '--name' && args[i + 1]) {
         name = args[++i];
-      } else if (args[i] === '--main') {
-        isMain = true;
-      } else if (args[i] === '--no-main') {
-        isMain = false;
+      } else if (args[i] === '--main' || args[i] === '--no-main') {
+        console.warn(
+          `⚠️  ${args[i]} is deprecated and ignored; v2 routing uses bindings + user_roles. ` +
+            `Use \`nanoclaw pair approve <code>\` to grant owner.`,
+        );
       }
     }
     if (!name) {
@@ -140,13 +145,12 @@ export async function runPair(args: string[]): Promise<void> {
     const channel = jid.startsWith('tg:') ? 'telegram' : jid.startsWith('teams:') ? 'teams' : 'unknown';
 
     if (!config.chats) (config as any).chats = {};
-    (config.chats as any)[jid] = { name, ...(isMain ? { isMain: true } : {}) };
+    (config.chats as any)[jid] = { name };
     saveConfig(config);
 
     console.log(`✅ Paired: ${jid}`);
     console.log(`   Name: ${name}`);
     console.log(`   Channel: ${channel}`);
-    console.log(`   Main: ${isMain}`);
     console.log(`\nRestart nanoclaw to activate: nanoclaw restart`);
     return;
   }
@@ -161,8 +165,6 @@ export async function runPair(args: string[]): Promise<void> {
   console.log('NanoClaw — Pair a new chat\n');
   const jid = await ask('Chat JID (e.g. tg:123456 or teams:abc): ');
   const name = await ask('Name for this chat: ');
-  const mainAnswer = await ask('Is this the main chat? (Y/n): ');
-  const isMain = mainAnswer.toLowerCase() !== 'n';
   rl.close();
 
   if (!jid) {
@@ -173,7 +175,6 @@ export async function runPair(args: string[]): Promise<void> {
   if (!config.chats) (config as any).chats = {};
   (config.chats as any)[jid] = {
     name: name || jid,
-    ...(isMain ? { isMain: true } : {}),
   };
   saveConfig(config);
 

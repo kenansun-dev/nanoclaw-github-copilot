@@ -101,10 +101,20 @@ export class TuiChannel implements Channel {
 
     // Auto-register the TUI group on the FIRST connect ever (or first
     // connect after this process started). Idempotent: already-present
-    // jid skips registration. isMain=true so the share-main collapse
-    // rule routes it onto the canonical 'main' (or 'main-<agent>') folder.
+    // jid skips registration.
+    //
+    // v2 cleanup (PR-C step 9): the TUI is a single-agent attach. Pick the
+    // agent from `TUI_AGENT_ID` env (override) or fall back to the first
+    // entry in `agents.list[]`. The legacy `isMain: true` on the group
+    // is retained ONLY so the share-main DM collapse + mount-perm code in
+    // `db.ts`/`session-routing.ts` keeps a stable session folder until
+    // those code paths get rewritten in PR-D. It no longer drives routing
+    // — v2 routing goes through bindings.
     const config = loadConfig();
     const assistantName = config.agents?.defaults?.name || ASSISTANT_NAME;
+    const agentList: Array<{ id: string }> = (config as any).agents?.list ?? [];
+    const tuiAgentId =
+      process.env.TUI_AGENT_ID || (agentList.length > 0 ? agentList[0].id : undefined);
 
     const existingGroups = this.opts.registeredGroups();
     if (!existingGroups[jid] && this.opts.registerGroup) {
@@ -115,9 +125,10 @@ export class TuiChannel implements Channel {
         isMain: true,
         trigger: '',
         added_at: new Date().toISOString(),
+        ...(tuiAgentId ? { agentId: tuiAgentId } : {}),
       };
       this.opts.registerGroup(jid, tuiGroup);
-      logger.info({ jid, folder, isMain: true }, 'Auto-registered TUI group (single shared entry)');
+      logger.info({ jid, folder, agentId: tuiAgentId }, 'Auto-registered TUI group');
     }
 
     // Notify chat metadata. isGroup=false so the share-main collapse

@@ -1439,6 +1439,16 @@ async function main(): Promise<void> {
     const { loadConfig } = await import('./config-loader.js');
     const { syncChatsFromConfig } = await import('./chat-manager.js');
     const config = loadConfig();
+    // v2 cleanup (PR-C step 10): legacy top-level `chats[]` is still parsed
+    // for backwards compat (mount perms, share-main DM collapse, migrator
+    // input) but NO LONGER drives routing — routing goes through
+    // `bindings` → `messaging_groups` → `agent_groups`. Warn once.
+    if (config.chats && Object.keys(config.chats).length > 0) {
+      logger.warn(
+        '[v2] legacy `chats[]` present in nanoclaw.json; ignored at runtime for routing, ' +
+          'migrate with `nanoclaw migrate-v2`.',
+      );
+    }
     syncChatsFromConfig(config);
     // Refresh in-memory groups after sync
     registeredGroups = getAllRegisteredGroups();
