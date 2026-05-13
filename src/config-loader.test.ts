@@ -218,6 +218,92 @@ describe('channel accounts normalization', () => {
     const config = loadConfig();
     expect(config.bindings).toBeUndefined();
   });
+
+  // v2 config-shape (docs/proposals/2026-05-12-config-shape-v2.md): accounts
+  // grow access-control fields (dmPolicy / allowFrom / groupPolicy /
+  // groupAllowFrom / groups). Legacy configs without them keep parsing.
+  it('preserves v2 account access-control fields on telegram accounts', () => {
+    fs.writeFileSync(
+      path.join(tmpDir2, 'nanoclaw.json'),
+      JSON.stringify({
+        channels: {
+          telegram: {
+            enabled: true,
+            accounts: {
+              personal: {
+                botToken: 'tok',
+                dmPolicy: 'pairing',
+                allowFrom: ['8731187021'],
+                groupPolicy: 'allowlist',
+                groupAllowFrom: ['8731187021'],
+                groups: {
+                  '*': { requireMention: true },
+                  '-1001crew': { requireMention: false, allowFrom: ['8731187021', '9999'] },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    const acc = config.channels.telegram.accounts?.personal as any;
+    expect(acc.dmPolicy).toBe('pairing');
+    expect(acc.allowFrom).toEqual(['8731187021']);
+    expect(acc.groupPolicy).toBe('allowlist');
+    expect(acc.groupAllowFrom).toEqual(['8731187021']);
+    expect(acc.groups['*'].requireMention).toBe(true);
+    expect(acc.groups['-1001crew'].allowFrom).toEqual(['8731187021', '9999']);
+  });
+
+  it('preserves v2 account access-control fields on teams + discord accounts', () => {
+    fs.writeFileSync(
+      path.join(tmpDir2, 'nanoclaw.json'),
+      JSON.stringify({
+        channels: {
+          teams: {
+            enabled: true,
+            accounts: {
+              default: { appId: 'a', allowFrom: ['29:abc'], dmPolicy: 'open' },
+            },
+          },
+          discord: {
+            enabled: true,
+            accounts: {
+              default: { botToken: 'dc-tok', allowFrom: ['user-1'] },
+            },
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect((config.channels.teams.accounts?.default as any).allowFrom).toEqual(['29:abc']);
+    expect((config.channels.teams.accounts?.default as any).dmPolicy).toBe('open');
+    expect((config.channels.discord.accounts?.default as any).allowFrom).toEqual(['user-1']);
+  });
+
+  it('roundtrips v2 account fields through saveConfig (no field drop)', () => {
+    const config = loadConfig();
+    config.channels.telegram = {
+      enabled: true,
+      accounts: {
+        personal: {
+          botToken: 'tok',
+          dmPolicy: 'pairing',
+          allowFrom: ['8731187021'],
+          groupPolicy: 'allowlist',
+          groups: { '-1001crew': { allowFrom: ['8731187021'] } },
+        },
+      },
+    };
+    saveConfig(config);
+    const reloaded = loadConfig();
+    const acc = reloaded.channels.telegram.accounts?.personal as any;
+    expect(acc.dmPolicy).toBe('pairing');
+    expect(acc.allowFrom).toEqual(['8731187021']);
+    expect(acc.groupPolicy).toBe('allowlist');
+    expect(acc.groups['-1001crew'].allowFrom).toEqual(['8731187021']);
+  });
 });
 
 // --- tenantId dedup migration ---

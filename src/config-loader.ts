@@ -25,12 +25,38 @@ export interface AgentConfig {
   githubMcp?: boolean; // GHC: register GitHub MCP server (web_search, issues, PRs, etc.)
 }
 
-// Per-account credentials for multi-bot support
-export interface TelegramAccountConfig {
+// Per-account credentials for multi-bot support.
+//
+// v2 config-shape additions (docs/proposals/2026-05-12-config-shape-v2.md):
+//   - dmPolicy / allowFrom — DM access control
+//   - groupPolicy / groupAllowFrom / groups — group access control
+// All v2 fields are optional; legacy configs without them continue to parse
+// unchanged. The router still reads `chats[]` (PR-B not yet landed).
+export type DmPolicy = 'pairing' | 'open' | 'strict';
+export type GroupPolicy = 'allowlist' | 'open';
+
+/** Per-group override under accounts.<key>.groups.<groupId>. */
+export interface AccountGroupEntry {
+  requireMention?: boolean;
+  engageMode?: string;
+  allowFrom?: string[];
+}
+
+/** Common v2 access-control fields shared across protocol accounts. */
+export interface AccountAccessConfig {
+  dmPolicy?: DmPolicy;
+  allowFrom?: string[];
+  groupPolicy?: GroupPolicy;
+  groupAllowFrom?: string[];
+  /** Per-group overrides. The wildcard key `"*"` is a fallback for any group. */
+  groups?: Record<string, AccountGroupEntry>;
+}
+
+export interface TelegramAccountConfig extends AccountAccessConfig {
   botToken?: string;
 }
 
-export interface TeamsAccountConfig {
+export interface TeamsAccountConfig extends AccountAccessConfig {
   appId?: string;
   appPassword?: string;
   tenantId?: string;
@@ -38,6 +64,10 @@ export interface TeamsAccountConfig {
   authMode?: 'secret' | 'certificate';
   certThumbprint?: string;
   certPrivateKeyPath?: string;
+}
+
+export interface DiscordAccountConfig extends AccountAccessConfig {
+  botToken?: string;
 }
 
 // Binding: route (channel, accountId, peer) -> agentId
@@ -80,6 +110,7 @@ export interface NanoclawConfig {
     discord: {
       enabled: boolean;
       botToken?: string;
+      accounts?: Record<string, DiscordAccountConfig>;
     };
     telegram: {
       enabled: boolean;
