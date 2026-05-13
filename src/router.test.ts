@@ -10,11 +10,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { initTestDb, closeDb, runMigrations } from './db/index.js';
 import { createAgentGroup } from './db/agent-groups.js';
-import {
-  getMessagingGroupByPlatform,
-  getMessagingGroupAgents,
-  getAllMessagingGroups,
-} from './db/messaging-groups.js';
+import { getMessagingGroupByPlatform, getMessagingGroupAgents, getAllMessagingGroups } from './db/messaging-groups.js';
 import { getDb } from './db/connection.js';
 import type { InboundEvent } from './channels/adapter.js';
 import type { Binding, NanoclawConfig } from './config-loader.js';
@@ -133,9 +129,7 @@ describe('routeInbound auto-wire (PR-D)', () => {
   it('2. Group with binding match creates mga with mention-sticky engage_mode', async () => {
     seedAgent('main');
     mockConfig = {
-      bindings: [
-        { agentId: 'main', match: { channel: 'discord', peer: { kind: 'group', id: 'grp-9' } } },
-      ] as Binding[],
+      bindings: [{ agentId: 'main', match: { channel: 'discord', peer: { kind: 'group', id: 'grp-9' } } }] as Binding[],
     };
 
     const { routeInbound } = await import('./router.js');

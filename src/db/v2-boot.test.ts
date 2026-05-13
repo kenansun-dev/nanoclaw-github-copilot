@@ -53,9 +53,7 @@ describe('initAndReconcileV2 — boot smoke', () => {
           hasOwnNumber: false,
           mode: 'host',
         },
-        list: [
-          { id: 'main', model: 'm', name: 'Main', triggerWord: '@m', hasOwnNumber: false, mode: 'host' },
-        ],
+        list: [{ id: 'main', model: 'm', name: 'Main', triggerWord: '@m', hasOwnNumber: false, mode: 'host' }],
       },
       channels: {
         telegram: {
@@ -69,7 +67,7 @@ describe('initAndReconcileV2 — boot smoke', () => {
 
     // DB file landed at the legacy on-disk location so v2-boot-guard
     // can defuse the legacy `sessions` table.
-    expect(dbPath).toBe(path.join(wsDir, 'store', 'messages.db'));
+    expect(dbPath).toBe(path.join(wsDir, 'store', 'v2.db'));
     expect(fs.existsSync(dbPath)).toBe(true);
 
     expect(summary.agentGroups.inserted).toContain('main');
@@ -94,9 +92,7 @@ describe('initAndReconcileV2 — boot smoke', () => {
           hasOwnNumber: false,
           mode: 'host',
         },
-        list: [
-          { id: 'main', model: 'm', name: 'Main', triggerWord: '@m', hasOwnNumber: false, mode: 'host' },
-        ],
+        list: [{ id: 'main', model: 'm', name: 'Main', triggerWord: '@m', hasOwnNumber: false, mode: 'host' }],
       },
       channels: {
         telegram: {
@@ -149,9 +145,7 @@ describe('initAndReconcileV2 — boot smoke', () => {
           hasOwnNumber: false,
           mode: 'host',
         },
-        list: [
-          { id: 'main', model: 'm', name: 'Main', triggerWord: '@m', hasOwnNumber: false, mode: 'host' },
-        ],
+        list: [{ id: 'main', model: 'm', name: 'Main', triggerWord: '@m', hasOwnNumber: false, mode: 'host' }],
       },
       commands: { ownerAllowFrom: ['telegram:99'] },
     });

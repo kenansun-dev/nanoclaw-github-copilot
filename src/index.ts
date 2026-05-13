@@ -1408,13 +1408,15 @@ async function main(): Promise<void> {
   loadState();
 
   // ─── v2 central DB init + migrations + config reconcile ───
-  // Same on-disk file as legacy initDatabase() — v2-boot-guard renames the
-  // legacy `sessions` table out of the way so migration 001 can recreate it
-  // with the v2 shape. After migrations run, reconcile projects the declared
-  // config (agents, allowFrom users, owners, requireMention) into v2 tables
-  // so the router has everything it needs on first inbound. Without this,
-  // module-level `getDb()` throws "Database not initialized" on first
-  // inbound and no v2 tables exist.
+  // Separate file `<workspace>/store/v2.db` (legacy v1 keeps `messages.db`)
+  // — avoids double-connection-on-same-file gotchas with WAL prepared-stmt
+  // caches. After migrations, reconcile projects declared config (agents,
+  // allowFrom users, owners, requireMention) into v2 tables so the router
+  // has everything it needs on first inbound. Without this, module-level
+  // `getDb()` throws "Database not initialized" on first inbound.
+  // Fail-fast: if init/migrations/reconcile fails, exit(1) — silent log
+  // would leave the bot dropping every message until restart anyway, and
+  // systemd-restart-with-error is more visible than a half-dead process.
   try {
     const { initAndReconcileV2 } = await import('./db/v2-boot.js');
     const { dbPath, summary } = initAndReconcileV2();
@@ -1433,7 +1435,8 @@ async function main(): Promise<void> {
       'v2 DB initialized + reconciled',
     );
   } catch (err) {
-    logger.error({ err }, 'v2 DB init failed — v2 router will throw on inbound');
+    logger.fatal({ err }, 'v2 DB init failed — refusing to start (fail-fast, systemd will restart)');
+    process.exit(1);
   }
 
   // Apply config.logLevel as early as possible so subsequent startup logs
