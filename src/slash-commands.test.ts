@@ -437,6 +437,13 @@ describe('COMMANDS registry', () => {
     expect(names).toContain('model');
     expect(names).toContain('models');
   });
+
+  it('includes pair-approve, pair-pending, and pair-revoke (owner pairing surface)', () => {
+    const names = COMMANDS.map((c) => c.name);
+    expect(names).toContain('pair-approve');
+    expect(names).toContain('pair-pending');
+    expect(names).toContain('pair-revoke');
+  });
 });
 
 // ─── /model + /models ─────────────────────────────────────────────────

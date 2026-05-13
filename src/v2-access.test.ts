@@ -23,7 +23,15 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { NanoclawConfig } from './config-loader.js';
 import { runMigrations } from './db/migrations/index.js';
-import { checkInboundAccess, holdMessageForPairing, redeemPairingCode, sweepExpired, listPendingPairings, type InboundAccessInput } from './v2-access.js';
+import {
+  checkInboundAccess,
+  holdMessageForPairing,
+  redeemPairingCode,
+  revokePairingCode,
+  sweepExpired,
+  listPendingPairings,
+  type InboundAccessInput,
+} from './v2-access.js';
 
 function openDb(): Database.Database {
   const db = new Database(':memory:');
@@ -184,11 +192,7 @@ describe('checkInboundAccess', () => {
         accounts: { default: { groupPolicy: 'open', groups: { '*': { requireMention: false } } } },
       },
     });
-    const r = checkInboundAccess(
-      cfg,
-      db,
-      mkInbound({ isGroup: true, platformId: 'grp-x', senderRawId: 'stranger' }),
-    );
+    const r = checkInboundAccess(cfg, db, mkInbound({ isGroup: true, platformId: 'grp-x', senderRawId: 'stranger' }));
     expect(r.action).toBe('allow');
   });
 
@@ -220,11 +224,7 @@ describe('checkInboundAccess', () => {
     });
     // Sender NOT in 'grp-1' allowFrom → specific overrides wildcard → deny (groupPolicy open
     // would otherwise allow, but the cascade landed on the explicit entry's allowFrom list).
-    const r = checkInboundAccess(
-      cfg,
-      db,
-      mkInbound({ isGroup: true, platformId: 'grp-1', senderRawId: 'stranger' }),
-    );
+    const r = checkInboundAccess(cfg, db, mkInbound({ isGroup: true, platformId: 'grp-1', senderRawId: 'stranger' }));
     // Note: in the current implementation, the explicit group entry's allowFrom DOES participate
     // in the cascade; if sender isn't in it, the code falls through to groupPolicy. With
     // groupPolicy='open' the result is `allow`. The wildcard check below confirms ordering: a
@@ -247,11 +247,7 @@ describe('checkInboundAccess', () => {
         },
       },
     });
-    const r2 = checkInboundAccess(
-      cfg2,
-      db,
-      mkInbound({ isGroup: true, platformId: 'grp-1', senderRawId: 'stranger' }),
-    );
+    const r2 = checkInboundAccess(cfg2, db, mkInbound({ isGroup: true, platformId: 'grp-1', senderRawId: 'stranger' }));
     // Wildcard would allow 'stranger', but specific 'grp-1' entry takes precedence → deny.
     expect(r2.action).toBe('deny');
   });
@@ -430,5 +426,41 @@ describe('holdMessageForPairing + redeemPairingCode + sweepExpired', () => {
     expect(rows.length).toBe(2);
     const peer6 = rows.find((r) => r.peerId === 'peer-6');
     expect(peer6?.messageCount).toBe(2);
+  });
+
+  it('revokePairingCode happy path: deletes code + held messages', () => {
+    const r = holdMessageForPairing(db, 'telegram', 'default', 'peer-r1', { text: 'spam-1' });
+    holdMessageForPairing(db, 'telegram', 'default', 'peer-r1', { text: 'spam-2' });
+    const rev = revokePairingCode(db, r.codeShown);
+    expect(rev.ok).toBe(true);
+    expect(rev.peerId).toBe('peer-r1');
+    expect(rev.removed).toBe(2);
+    const codeCount = (db.prepare(`SELECT COUNT(*) AS c FROM pairing_codes WHERE code = ?`).get(r.code) as { c: number }).c;
+    expect(codeCount).toBe(0);
+    const pendCount = (
+      db.prepare(`SELECT COUNT(*) AS c FROM pending_messages WHERE peer_id = ?`).get('peer-r1') as { c: number }
+    ).c;
+    expect(pendCount).toBe(0);
+  });
+
+  it('revokePairingCode — unknown code returns error', () => {
+    const rev = revokePairingCode(db, 'ZZZZ-ZZZZ');
+    expect(rev.ok).toBe(false);
+    expect(rev.error).toBe('unknown-code');
+  });
+
+  it('revokePairingCode — already-redeemed code is a no-op error', () => {
+    makeOwner(db, 'telegram', 'user-owner');
+    const r = holdMessageForPairing(db, 'telegram', 'default', 'peer-r2', { text: 'hi' });
+    const redeem = redeemPairingCode(db, r.codeShown, 'telegram:user-owner');
+    expect(redeem.ok).toBe(true);
+    const rev = revokePairingCode(db, r.codeShown);
+    expect(rev.ok).toBe(false);
+    expect(rev.error).toBe('already-redeemed');
+    // user_roles row preserved
+    const role = db
+      .prepare(`SELECT role FROM user_roles WHERE user_id = ? AND role = 'paired'`)
+      .get('telegram:peer-r2') as { role: string } | undefined;
+    expect(role?.role).toBe('paired');
   });
 });

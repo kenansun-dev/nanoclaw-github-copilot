@@ -10,12 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import {
-  PAIRING_ALPHABET,
-  PAIRING_CODE_REGEX,
-  generatePairingCode,
-  normalizePairingCode,
-} from './code.js';
+import { PAIRING_ALPHABET, PAIRING_CODE_REGEX, generatePairingCode, normalizePairingCode } from './code.js';
 
 describe('generatePairingCode', () => {
   it('produces XXXX-XXXX matching the canonical regex', () => {

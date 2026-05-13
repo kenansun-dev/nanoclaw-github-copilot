@@ -116,14 +116,18 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: 'pair-approve',
-    description:
-      'Owner-only: redeem a pending pairing code (XXXX-XXXX) to allow a stranger’s queued DMs to dispatch.',
+    description: 'Owner-only: redeem a pending pairing code (XXXX-XXXX) to allow a stranger’s queued DMs to dispatch.',
     args: '<code>',
   },
   {
     name: 'pair-pending',
     description: 'Owner-only: list pending pairing codes awaiting approval.',
     noArgs: true,
+  },
+  {
+    name: 'pair-revoke',
+    description: 'Owner-only: cancel a pending pairing code and drop its held messages.',
+    args: '<code>',
   },
 ];
 
@@ -352,7 +356,13 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
 
   // /pair-approve <code> — owner-only: redeem a pending pairing code.
   // /pair-pending          — owner-only: list pending pairing codes.
-  if (input === '/pair-pending' || input.startsWith('/pair-approve ') || input === '/pair-approve') {
+  if (
+    input === '/pair-pending' ||
+    input.startsWith('/pair-approve ') ||
+    input === '/pair-approve' ||
+    input.startsWith('/pair-revoke ') ||
+    input === '/pair-revoke'
+  ) {
     await handlePairSlash(input, ctx);
     return { handled: true };
   }
@@ -433,16 +443,13 @@ async function handlePairSlash(input: string, ctx: SlashCommandContext): Promise
 
   // Lazy imports: keeps slash-commands lightweight for the non-pair paths.
   const { getDb } = await import('./db/connection.js');
-  const { redeemPairingCode, listPendingPairings } = await import('./v2-access.js');
+  const { redeemPairingCode, listPendingPairings, revokePairingCode } = await import('./v2-access.js');
 
   let db: import('better-sqlite3').Database;
   try {
     db = getDb();
   } catch (err) {
-    await ctx.channel.sendMessage(
-      ctx.chatJid,
-      `❌ Pairing DB unavailable: ${(err as Error).message ?? String(err)}`,
-    );
+    await ctx.channel.sendMessage(ctx.chatJid, `❌ Pairing DB unavailable: ${(err as Error).message ?? String(err)}`);
     return;
   }
 
@@ -463,9 +470,31 @@ async function handlePairSlash(input: string, ctx: SlashCommandContext): Promise
   if (!isOwner) {
     await ctx.channel.sendMessage(
       ctx.chatJid,
-      '❌ /pair-approve and /pair-pending are owner-only. Use `nanoclaw pair approve <code>` from a shell with operator access.',
+      '❌ /pair-approve, /pair-pending and /pair-revoke are owner-only. Use `nanoclaw pair approve <code>` from a shell with operator access.',
     );
     return;
+  }
+
+  // /pair-revoke <code>
+  {
+    const mr = input.match(/^\/pair-revoke(?:\s+(\S+))?\s*$/);
+    if (mr) {
+      const rawCode = mr[1];
+      if (!rawCode) {
+        await ctx.channel.sendMessage(ctx.chatJid, 'Usage: /pair-revoke <CODE>  (e.g. /pair-revoke ABCD-EFGH)');
+        return;
+      }
+      const rev = revokePairingCode(db, rawCode);
+      if (!rev.ok) {
+        await ctx.channel.sendMessage(ctx.chatJid, `❌ Revoke failed: ${rev.error ?? 'unknown'}`);
+        return;
+      }
+      await ctx.channel.sendMessage(
+        ctx.chatJid,
+        `🗑️ Revoked ${rev.channelType}/${rev.accountKey} peer=${rev.peerId} — removed ${rev.removed ?? 0} held message${rev.removed === 1 ? '' : 's'}.`,
+      );
+      return;
+    }
   }
 
   if (input === '/pair-pending') {
@@ -478,10 +507,7 @@ async function handlePairSlash(input: string, ctx: SlashCommandContext): Promise
       const codeShown = `${r.code.slice(0, 4)}-${r.code.slice(4)}`;
       return `• \`${codeShown}\` — ${r.channelType}/${r.accountKey} peer=${r.peerId} (${r.messageCount} msg, expires ${r.expiresAt})`;
     });
-    await ctx.channel.sendMessage(
-      ctx.chatJid,
-      `🔐 Pending pairings (${rows.length}):\n${lines.join('\n')}`,
-    );
+    await ctx.channel.sendMessage(ctx.chatJid, `🔐 Pending pairings (${rows.length}):\n${lines.join('\n')}`);
     return;
   }
 

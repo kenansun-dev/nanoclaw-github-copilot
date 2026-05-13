@@ -353,9 +353,11 @@ export function redeemPairingCode(
       received_at: string;
     }>;
 
-    db.prepare(
-      `DELETE FROM pending_messages WHERE channel_type = ? AND account_key = ? AND peer_id = ?`,
-    ).run(channelType, accountKey, peerId);
+    db.prepare(`DELETE FROM pending_messages WHERE channel_type = ? AND account_key = ? AND peer_id = ?`).run(
+      channelType,
+      accountKey,
+      peerId,
+    );
 
     return held;
   });
@@ -390,10 +392,60 @@ export function redeemPairingCode(
   };
 }
 
-/** List unredeemed, unexpired pairing codes — powers `/pair-pending`. */
-export function listPendingPairings(
+/**
+ * Owner-side revoke: delete an outstanding pairing code (and any held
+ * messages for that peer) before the stranger gets approved. Used when
+ * the owner wants to cancel a pending invite (spam, mistake, expired
+ * intent).
+ *
+ * Semantics:
+ *   - unknown code → { ok: false, error: 'unknown-code' }
+ *   - already-redeemed → { ok: false, error: 'already-redeemed' }
+ *     (no-op: the user_roles row is preserved; revoking after pairing
+ *     is a different surface, not this one)
+ *   - happy path → deletes the code row + matching pending_messages,
+ *     returns peerId + count removed
+ */
+export function revokePairingCode(
   db: Database.Database | null | undefined,
-): Array<{
+  rawCode: string,
+): { ok: boolean; error?: string; peerId?: string; channelType?: string; accountKey?: string; removed?: number } {
+  if (!db) return { ok: false, error: 'db-missing' };
+  const code = normalizePairingCode(rawCode);
+  try {
+    const row = db
+      .prepare(
+        `SELECT code, channel_type, account_key, peer_id, redeemed_at
+           FROM pairing_codes WHERE code = ?`,
+      )
+      .get(code) as
+      | { code: string; channel_type: string; account_key: string; peer_id: string; redeemed_at: string | null }
+      | undefined;
+    if (!row) return { ok: false, error: 'unknown-code' };
+    if (row.redeemed_at) return { ok: false, error: 'already-redeemed' };
+    const tx = db.transaction(() => {
+      const del = db
+        .prepare(`DELETE FROM pending_messages WHERE channel_type = ? AND account_key = ? AND peer_id = ?`)
+        .run(row.channel_type, row.account_key, row.peer_id);
+      db.prepare(`DELETE FROM pairing_codes WHERE code = ?`).run(code);
+      return Number(del.changes ?? 0);
+    });
+    const removed = tx();
+    return {
+      ok: true,
+      peerId: row.peer_id,
+      channelType: row.channel_type,
+      accountKey: row.account_key,
+      removed,
+    };
+  } catch (err) {
+    log.error('revokePairingCode failed', { err: (err as Error)?.message ?? String(err) });
+    return { ok: false, error: 'unknown' };
+  }
+}
+
+/** List unredeemed, unexpired pairing codes — powers `/pair-pending`. */
+export function listPendingPairings(db: Database.Database | null | undefined): Array<{
   code: string;
   channelType: string;
   accountKey: string;
@@ -440,7 +492,6 @@ export function listPendingPairings(
     return [];
   }
 }
-
 
 /**
  * Decide whether an inbound message is allowed past the access gate.
