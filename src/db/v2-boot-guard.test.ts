@@ -61,9 +61,9 @@ describe('prepareForV2Migrations', () => {
     const fired = prepareForV2Migrations(db, dbPath);
     expect(fired).toBe(true);
 
-    const tables = db
-      .prepare(`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`)
-      .all() as { name: string }[];
+    const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`).all() as {
+      name: string;
+    }[];
     const names = tables.map((t) => t.name);
     expect(names).toContain('sessions_legacy_v1');
     expect(names).not.toContain('sessions');
@@ -137,9 +137,9 @@ describe('prepareForV2Migrations', () => {
     const fired = prepareForV2Migrations(db, ':memory:');
     expect(fired).toBe(true);
 
-    const tables = db
-      .prepare(`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`)
-      .all() as { name: string }[];
+    const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`).all() as {
+      name: string;
+    }[];
     expect(tables.map((t) => t.name)).toContain('sessions_legacy_v1');
 
     db.close();

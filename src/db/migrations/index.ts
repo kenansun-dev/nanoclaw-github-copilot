@@ -84,15 +84,14 @@ export function runMigrations(db: Database.Database, dbPath: string = ''): void 
     // PRAGMA foreign_keys must be toggled OUTSIDE the transaction; inside
     // it is silently ignored by SQLite. Migrations that rebuild tables
     // holding FK references must opt in via `requiresForeignKeysOff`.
-    const fkBefore = m.requiresForeignKeysOff
-      ? (db.pragma('foreign_keys', { simple: true }) as 0 | 1)
-      : 0;
+    const fkBefore = m.requiresForeignKeysOff ? (db.pragma('foreign_keys', { simple: true }) as 0 | 1) : 0;
     if (m.requiresForeignKeysOff && fkBefore) db.pragma('foreign_keys = OFF');
     try {
       db.transaction(() => {
         m.up(db);
-        const next = (db.prepare('SELECT COALESCE(MAX(version), 0) + 1 AS v FROM schema_version').get() as { v: number })
-          .v;
+        const next = (
+          db.prepare('SELECT COALESCE(MAX(version), 0) + 1 AS v FROM schema_version').get() as { v: number }
+        ).v;
         db.prepare('INSERT INTO schema_version (version, name, applied) VALUES (?, ?, ?)').run(
           next,
           m.name,
