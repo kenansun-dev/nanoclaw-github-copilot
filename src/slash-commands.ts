@@ -292,14 +292,12 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
         //   * Main chat sees ALL groups' tasks (operator view).
         const isMain = !!getRegisteredGroup(ctx.chatJid)?.isMain;
         const all = getAllTasks();
-        const rows = (isMain ? all : all.filter((t) => t.group_folder === ctx.groupFolder))
-          .slice()
-          .sort((a, b) => {
-            if (a.status !== b.status) return a.status < b.status ? -1 : 1;
-            const an = a.next_run ? new Date(a.next_run).getTime() : Infinity;
-            const bn = b.next_run ? new Date(b.next_run).getTime() : Infinity;
-            return an - bn;
-          });
+        const rows = (isMain ? all : all.filter((t) => t.group_folder === ctx.groupFolder)).slice().sort((a, b) => {
+          if (a.status !== b.status) return a.status < b.status ? -1 : 1;
+          const an = a.next_run ? new Date(a.next_run).getTime() : Infinity;
+          const bn = b.next_run ? new Date(b.next_run).getTime() : Infinity;
+          return an - bn;
+        });
         const text = formatTasksText(rows, {
           // Compact for non-main (chat-scoped); verbose for main (multi-group view).
           compact: !isMain,

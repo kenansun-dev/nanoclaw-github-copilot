@@ -295,9 +295,7 @@ describe('migrateChatsToV2 — DB side (legacy tables → v2)', () => {
     const cfg = makeConfig({
       agents: {
         defaults: makeConfig().agents.defaults,
-        list: [
-          { id: 'main', model: 'm', name: 'Main', triggerWord: '@m', hasOwnNumber: false, mode: 'host' },
-        ],
+        list: [{ id: 'main', model: 'm', name: 'Main', triggerWord: '@m', hasOwnNumber: false, mode: 'host' }],
       },
     });
     expect(() => reconcileConfigToDb(cfg, db)).not.toThrow();

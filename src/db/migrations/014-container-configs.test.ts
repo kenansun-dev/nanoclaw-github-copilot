@@ -13,9 +13,7 @@ describe('migration 014: container_configs', () => {
       .all() as { name: string }[];
     expect(tables.length).toBe(1);
 
-    const cols = (db.prepare(`PRAGMA table_info(container_configs)`).all() as { name: string }[]).map(
-      (c) => c.name,
-    );
+    const cols = (db.prepare(`PRAGMA table_info(container_configs)`).all() as { name: string }[]).map((c) => c.name);
     expect(cols).toEqual(
       expect.arrayContaining([
         'agent_group_id',
@@ -41,12 +39,13 @@ describe('migration 014: container_configs', () => {
     runMigrations(db);
 
     const now = new Date().toISOString();
-    db.prepare(
-      `INSERT INTO agent_groups (id, name, folder, created_at) VALUES (?, ?, ?, ?)`,
-    ).run('ag-1', 'test', 'test', now);
-    db.prepare(
-      `INSERT INTO container_configs (agent_group_id, updated_at) VALUES (?, ?)`,
-    ).run('ag-1', now);
+    db.prepare(`INSERT INTO agent_groups (id, name, folder, created_at) VALUES (?, ?, ?, ?)`).run(
+      'ag-1',
+      'test',
+      'test',
+      now,
+    );
+    db.prepare(`INSERT INTO container_configs (agent_group_id, updated_at) VALUES (?, ?)`).run('ag-1', now);
 
     db.prepare(`DELETE FROM agent_groups WHERE id = ?`).run('ag-1');
     const remaining = db.prepare(`SELECT COUNT(*) AS c FROM container_configs`).get() as { c: number };

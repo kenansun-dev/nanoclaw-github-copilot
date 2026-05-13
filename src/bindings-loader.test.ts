@@ -28,9 +28,7 @@ describe('bindings-loader', () => {
   });
 
   it('channel-only binding matches by channel alone', () => {
-    const t = loadBindings(
-      mkConfig([{ agentId: 'agent-tg', match: { channel: 'telegram' } }]),
-    );
+    const t = loadBindings(mkConfig([{ agentId: 'agent-tg', match: { channel: 'telegram' } }]));
     expect(resolveBinding(t, { channel: 'telegram' })).toBe('agent-tg');
     expect(resolveBinding(t, { channel: 'telegram', accountId: 'whatever' })).toBe('agent-tg');
     expect(resolveBinding(t, { channel: 'telegram', accountId: 'x', peerId: 'y' })).toBe('agent-tg');
@@ -83,19 +81,13 @@ describe('bindings-loader', () => {
         },
       ]),
     );
-    expect(
-      resolveBinding(t, { channel: 'telegram', accountId: 'acct-1', peerId: 'group-7' }),
-    ).toBe('agent-peer');
+    expect(resolveBinding(t, { channel: 'telegram', accountId: 'acct-1', peerId: 'group-7' })).toBe('agent-peer');
     // Same account, different peer → falls back to account-level binding.
-    expect(
-      resolveBinding(t, { channel: 'telegram', accountId: 'acct-1', peerId: 'group-other' }),
-    ).toBe('agent-acct');
+    expect(resolveBinding(t, { channel: 'telegram', accountId: 'acct-1', peerId: 'group-other' })).toBe('agent-acct');
   });
 
   it('no match returns undefined (explicit — caller must fall back to mainAgentId)', () => {
-    const t = loadBindings(
-      mkConfig([{ agentId: 'agent-tg', match: { channel: 'telegram' } }]),
-    );
+    const t = loadBindings(mkConfig([{ agentId: 'agent-tg', match: { channel: 'telegram' } }]));
     expect(resolveBinding(t, { channel: 'discord', accountId: 'a', peerId: 'p' })).toBeUndefined();
   });
 

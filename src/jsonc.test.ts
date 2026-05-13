@@ -13,8 +13,7 @@ import { stripJsonComments, parseJsonc } from './jsonc.js';
 
 describe('stripJsonComments', () => {
   it('strips leading // line comments (the Copilot CLI banner case)', () => {
-    const input =
-      '// User settings belong in settings.json.\n// This file is managed automatically.\n{"a":1}';
+    const input = '// User settings belong in settings.json.\n// This file is managed automatically.\n{"a":1}';
     expect(stripJsonComments(input).trim()).toBe('{"a":1}');
   });
 

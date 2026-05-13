@@ -230,9 +230,7 @@ export async function runHostAgent(
           // JSONC-tolerant: Copilot CLI writes a `// banner` at the top.
           // Bare JSON.parse silently drops the user's loggedInUsers /
           // copilotTokens into the container config (PR #47, 2026-05-12).
-          baseConfig = parseJsonc<Record<string, unknown>>(
-            fs.readFileSync(hostCopilotConfig, 'utf-8'),
-          );
+          baseConfig = parseJsonc<Record<string, unknown>>(fs.readFileSync(hostCopilotConfig, 'utf-8'));
         } catch {
           // Ignore parse errors
         }

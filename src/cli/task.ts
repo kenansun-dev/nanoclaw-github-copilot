@@ -225,9 +225,7 @@ async function addTask(opts: AddTaskOpts): Promise<void> {
     return;
   }
   if (requestedMode !== 'isolated') {
-    console.error(
-      `⚠  --context-mode=${requestedMode} is deprecated and ignored; tasks always run isolated.`,
-    );
+    console.error(`⚠  --context-mode=${requestedMode} is deprecated and ignored; tasks always run isolated.`);
   }
   const contextMode: 'isolated' = 'isolated';
 

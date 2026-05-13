@@ -26,11 +26,7 @@
 
 import type Database from 'better-sqlite3';
 
-import type {
-  AccountAccessConfig,
-  AccountGroupEntry,
-  NanoclawConfig,
-} from './config-loader.js';
+import type { AccountAccessConfig, AccountGroupEntry, NanoclawConfig } from './config-loader.js';
 import { log } from './log.js';
 
 export type AccessAction = 'allow' | 'deny' | 'hold-pairing';
@@ -93,11 +89,7 @@ function resolveAccount(
 }
 
 /** Check if a sender id is registered as global owner. */
-function isOwner(
-  db: Database.Database | null | undefined,
-  channelType: string,
-  senderRawId: string | null,
-): boolean {
+function isOwner(db: Database.Database | null | undefined, channelType: string, senderRawId: string | null): boolean {
   if (!db || !senderRawId) return false;
   try {
     const userId = `${channelType}:${senderRawId}`;
@@ -115,12 +107,7 @@ function isOwner(
  * Stub for step 7: persist the message for pairing-code redemption. For
  * now just logs so the call site is wired and tests can spy on it.
  */
-export function holdMessageForPairing(
-  channelType: string,
-  accountKey: string,
-  peerId: string,
-  text: string,
-): void {
+export function holdMessageForPairing(channelType: string, accountKey: string, peerId: string, text: string): void {
   log.warn('holdMessageForPairing (step-6 stub — step 7 will persist)', {
     channelType,
     accountKey,
@@ -202,8 +189,7 @@ export function checkInboundAccess(
   // ── Group branch ──
   const groupsMap = account.groups ?? {};
   // Specific id overrides '*' wildcard.
-  const groupCfg: AccountGroupEntry | undefined =
-    groupsMap[inbound.platformId] ?? groupsMap['*'];
+  const groupCfg: AccountGroupEntry | undefined = groupsMap[inbound.platformId] ?? groupsMap['*'];
 
   // allowFrom cascade
   const groupAllowFrom = groupCfg?.allowFrom;

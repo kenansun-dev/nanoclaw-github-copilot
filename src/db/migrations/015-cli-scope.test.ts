@@ -25,16 +25,17 @@ describe('migration 015: cli-scope', () => {
     runMigrations(db);
 
     const now = new Date().toISOString();
-    db.prepare(
-      `INSERT INTO agent_groups (id, name, folder, created_at) VALUES (?, ?, ?, ?)`,
-    ).run('ag-1', 'test', 'test', now);
-    db.prepare(
-      `INSERT INTO container_configs (agent_group_id, updated_at) VALUES (?, ?)`,
-    ).run('ag-1', now);
+    db.prepare(`INSERT INTO agent_groups (id, name, folder, created_at) VALUES (?, ?, ?, ?)`).run(
+      'ag-1',
+      'test',
+      'test',
+      now,
+    );
+    db.prepare(`INSERT INTO container_configs (agent_group_id, updated_at) VALUES (?, ?)`).run('ag-1', now);
 
-    const row = db
-      .prepare(`SELECT cli_scope FROM container_configs WHERE agent_group_id = ?`)
-      .get('ag-1') as { cli_scope: string };
+    const row = db.prepare(`SELECT cli_scope FROM container_configs WHERE agent_group_id = ?`).get('ag-1') as {
+      cli_scope: string;
+    };
     expect(row.cli_scope).toBe('group');
   });
 });

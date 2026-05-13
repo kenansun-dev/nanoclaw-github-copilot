@@ -170,9 +170,7 @@ export function reconcileConfigToDb(config: NanoclawConfig, db: Database.Databas
       }
     }
 
-    const insertUser = db.prepare(
-      `INSERT OR IGNORE INTO users (id, kind, created_at) VALUES (?, ?, ?)`,
-    );
+    const insertUser = db.prepare(`INSERT OR IGNORE INTO users (id, kind, created_at) VALUES (?, ?, ?)`);
     for (const [userId, channelType] of users) {
       const info = insertUser.run(userId, channelType, now);
       if (info.changes > 0) summary.users.inserted.push(userId);

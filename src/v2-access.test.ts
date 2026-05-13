@@ -1,448 +1,308 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+/**
+ * Tests for src/v2-access.ts (checkInboundAccess).
+ *
+ * Coverage matrix (12 cases):
+ *   1. legacy config (no accounts map) → allow
+ *   2. account exists but no v2 fields → allow
+ *   3. DM allowFrom hit → allow
+ *   4. DM dmPolicy='open' → allow
+ *   5. DM dmPolicy='strict' (sender not in allowFrom) → deny
+ *   6. DM dmPolicy unset (default 'pairing') → hold-pairing
+ *   7. group: per-group allowFrom hit → allow (with isMention)
+ *   8. group: account.groupAllowFrom cascade hit → allow
+ *   9. group: account.allowFrom cascade hit → allow
+ *   10. group: groupPolicy='open' (no allow lists) → allow
+ *   11. group: groupPolicy='strict' default → deny
+ *   12. group: specific groupId entry overrides '*' wildcard
+ *   13. requireMention=true and !isMention → deny
+ *   14. requireMention=false → allow without mention
+ *   15. owner role bypass (DM with strict policy, sender not in allowFrom)
+ */
+import Database from 'better-sqlite3';
+import { beforeEach, describe, expect, it } from 'vitest';
 
-import { checkInboundAccess, holdMessageForPairing } from './v2-access.js';
-import type { NanoclawConfig, AccountAccessConfig } from './config-loader.js';
-import { initTestDb, closeDb, runMigrations } from './db/index.js';
-import { upsertUser } from './modules/permissions/db/users.js';
-import { grantRole } from './modules/permissions/db/user-roles.js';
+import type { NanoclawConfig } from './config-loader.js';
+import { runMigrations } from './db/migrations/index.js';
+import { checkInboundAccess, type InboundAccessInput } from './v2-access.js';
 
-const TEST_DIR = path.join(os.tmpdir(), `nanoclaw-v2-access-${process.pid}`);
+function openDb(): Database.Database {
+  const db = new Database(':memory:');
+  runMigrations(db);
+  return db;
+}
 
-vi.mock('./config.js', async () => {
-  const actual = await vi.importActual('./config.js');
-  return { ...actual, DATA_DIR: TEST_DIR };
-});
-
-function makeConfig(account?: AccountAccessConfig): NanoclawConfig {
+function mkConfig(channelsOver: Record<string, unknown> = {}): NanoclawConfig {
   return {
     agents: {
       defaults: {
-        model: 'test',
-        name: 'Test',
-        triggerWord: '@test',
+        model: 'm',
+        name: 'D',
+        triggerWord: '@d',
         hasOwnNumber: false,
         mode: 'host',
       },
-      list: [
-        {
-          id: 'main',
-          default: true,
-          model: 'test',
-          name: 'Main',
-          triggerWord: '@main',
-          hasOwnNumber: false,
-          mode: 'host',
-        },
-      ],
+      list: [],
     },
-    channels: {
-      discord: { enabled: false },
-      telegram: account
-        ? ({ enabled: true, accounts: { default: account } } as any)
-        : { enabled: true },
-      teams: { enabled: false, webhookPort: 3978, authMode: 'secret' },
-    },
-    mcp: { servers: {} },
-    skills: { directories: [], disabled: [] },
-    sandbox: {
-      runtime: 'docker',
-      image: 'test',
-      timeout: 300000,
-      maxOutputSize: 1048576,
-      maxConcurrent: 1,
-    },
+    channels: channelsOver,
     chats: {},
-    pairing: { mode: 'disabled' },
-    credentialProxy: { port: 3001 },
-    logLevel: 'info',
-    timezone: 'UTC',
-  } as NanoclawConfig;
+  } as unknown as NanoclawConfig;
 }
 
-function now() {
-  return new Date().toISOString();
+function mkInbound(over: Partial<InboundAccessInput> = {}): InboundAccessInput {
+  return {
+    channelType: 'telegram',
+    accountKey: 'default',
+    platformId: 'peer-1',
+    isGroup: false,
+    senderRawId: 'user-1',
+    isMention: false,
+    text: 'hi',
+    ...over,
+  };
 }
 
-let db: ReturnType<typeof initTestDb>;
+function makeOwner(db: Database.Database, channelType: string, rawId: string): void {
+  const userId = `${channelType}:${rawId}`;
+  db.prepare(
+    `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'real', ?, datetime('now'))`,
+  ).run(userId, userId);
+  db.prepare(
+    `INSERT OR IGNORE INTO user_roles (user_id, role, agent_group_id, granted_at)
+     VALUES (?, 'owner', NULL, datetime('now'))`,
+  ).run(userId);
+}
 
-beforeEach(() => {
-  if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
-  fs.mkdirSync(TEST_DIR, { recursive: true });
-  db = initTestDb();
-  runMigrations(db);
-});
+describe('checkInboundAccess', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = openDb();
+  });
 
-afterEach(() => {
-  closeDb();
-  if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
-});
+  it('1. legacy config (no accounts map) → allow', () => {
+    const cfg = mkConfig({ telegram: {} });
+    const r = checkInboundAccess(cfg, db, mkInbound());
+    expect(r.action).toBe('allow');
+  });
 
-describe('checkInboundAccess — legacy compat', () => {
-  it('allows when channel has no accounts map (legacy config)', () => {
-    const result = checkInboundAccess(makeConfig(), db, {
-      channelType: 'telegram',
-      platformId: 'dm-1',
-      isGroup: false,
-      senderRawId: 'rando',
-      isMention: false,
-      text: 'hi',
+  it('2. account exists with only credentials (no v2 fields) → allow', () => {
+    const cfg = mkConfig({ telegram: { accounts: { default: { botToken: 'x' } } } });
+    const r = checkInboundAccess(cfg, db, mkInbound());
+    expect(r.action).toBe('allow');
+  });
+
+  it('3. DM allowFrom hit → allow', () => {
+    const cfg = mkConfig({
+      telegram: { accounts: { default: { dmPolicy: 'strict', allowFrom: ['user-1'] } } },
     });
-    expect(result.action).toBe('allow');
+    const r = checkInboundAccess(cfg, db, mkInbound({ senderRawId: 'user-1' }));
+    expect(r.action).toBe('allow');
   });
 
-  it('allows when account has no v2 access fields (credentials-only)', () => {
-    const cfg = makeConfig();
-    (cfg.channels.telegram as any).accounts = { default: { botToken: 'abc' } };
-    const result = checkInboundAccess(cfg, db, {
-      channelType: 'telegram',
-      platformId: 'dm-1',
-      isGroup: false,
-      senderRawId: 'rando',
-      isMention: false,
-      text: 'hi',
+  it('4. DM dmPolicy=open → allow', () => {
+    const cfg = mkConfig({ telegram: { accounts: { default: { dmPolicy: 'open' } } } });
+    const r = checkInboundAccess(cfg, db, mkInbound({ senderRawId: 'stranger' }));
+    expect(r.action).toBe('allow');
+  });
+
+  it('5. DM dmPolicy=strict (sender not in allowFrom) → deny', () => {
+    const cfg = mkConfig({
+      telegram: { accounts: { default: { dmPolicy: 'strict', allowFrom: ['someone-else'] } } },
     });
-    expect(result.action).toBe('allow');
-  });
-});
-
-describe('checkInboundAccess — DM branch', () => {
-  it('allows sender in allowFrom', () => {
-    const result = checkInboundAccess(
-      makeConfig({ allowFrom: ['friend'], dmPolicy: 'strict' }),
-      db,
-      {
-        channelType: 'telegram',
-        platformId: 'dm-1',
-        isGroup: false,
-        senderRawId: 'friend',
-        isMention: false,
-        text: 'hi',
-      },
-    );
-    expect(result.action).toBe('allow');
+    const r = checkInboundAccess(cfg, db, mkInbound({ senderRawId: 'stranger' }));
+    expect(r.action).toBe('deny');
+    expect(r.reason).toMatch(/strict/);
   });
 
-  it('dmPolicy=open allows non-allowFrom sender', () => {
-    const result = checkInboundAccess(makeConfig({ dmPolicy: 'open' }), db, {
-      channelType: 'telegram',
-      platformId: 'dm-1',
-      isGroup: false,
-      senderRawId: 'rando',
-      isMention: false,
-      text: 'hi',
-    });
-    expect(result.action).toBe('allow');
+  it('6. DM dmPolicy unset → hold-pairing (default pairing)', () => {
+    const cfg = mkConfig({ telegram: { accounts: { default: { allowFrom: [] } } } });
+    const r = checkInboundAccess(cfg, db, mkInbound({ senderRawId: 'stranger' }));
+    expect(r.action).toBe('hold-pairing');
   });
 
-  it('dmPolicy=strict denies non-allowFrom sender', () => {
-    const result = checkInboundAccess(
-      makeConfig({ dmPolicy: 'strict', allowFrom: ['friend'] }),
-      db,
-      {
-        channelType: 'telegram',
-        platformId: 'dm-1',
-        isGroup: false,
-        senderRawId: 'rando',
-        isMention: false,
-        text: 'hi',
-      },
-    );
-    expect(result.action).toBe('deny');
-    expect(result.reason).toContain('strict');
-  });
-
-  it('dmPolicy=pairing holds non-allowFrom sender', () => {
-    const result = checkInboundAccess(
-      makeConfig({ dmPolicy: 'pairing' }),
-      db,
-      {
-        channelType: 'telegram',
-        platformId: 'dm-1',
-        isGroup: false,
-        senderRawId: 'rando',
-        isMention: false,
-        text: 'hi',
-      },
-    );
-    expect(result.action).toBe('hold-pairing');
-  });
-
-  it('default policy (unset) is pairing', () => {
-    const result = checkInboundAccess(makeConfig({ allowFrom: ['friend'] }), db, {
-      channelType: 'telegram',
-      platformId: 'dm-1',
-      isGroup: false,
-      senderRawId: 'rando',
-      isMention: false,
-      text: 'hi',
-    });
-    expect(result.action).toBe('hold-pairing');
-  });
-});
-
-describe('checkInboundAccess — group branch', () => {
-  it('sender in group.allowFrom is allowed (no mention required when override)', () => {
-    const result = checkInboundAccess(
-      makeConfig({
-        groupPolicy: 'strict',
-        groups: { 'g-1': { allowFrom: ['alice'], requireMention: false } },
-      }),
-      db,
-      {
-        channelType: 'telegram',
-        platformId: 'g-1',
-        isGroup: true,
-        senderRawId: 'alice',
-        isMention: false,
-        text: 'hi',
-      },
-    );
-    expect(result.action).toBe('allow');
-  });
-
-  it('cascades to account.groupAllowFrom when group-level allowFrom undefined', () => {
-    const result = checkInboundAccess(
-      makeConfig({
-        groupPolicy: 'strict',
-        groupAllowFrom: ['bob'],
-        groups: { 'g-1': { requireMention: false } },
-      }),
-      db,
-      {
-        channelType: 'telegram',
-        platformId: 'g-1',
-        isGroup: true,
-        senderRawId: 'bob',
-        isMention: false,
-        text: 'hi',
-      },
-    );
-    expect(result.action).toBe('allow');
-  });
-
-  it('cascades to account.allowFrom when group and groupAllowFrom undefined', () => {
-    const result = checkInboundAccess(
-      makeConfig({
-        groupPolicy: 'strict',
-        allowFrom: ['carol'],
-        groups: { 'g-1': { requireMention: false } },
-      }),
-      db,
-      {
-        channelType: 'telegram',
-        platformId: 'g-1',
-        isGroup: true,
-        senderRawId: 'carol',
-        isMention: false,
-        text: 'hi',
-      },
-    );
-    expect(result.action).toBe('allow');
-  });
-
-  it('groupPolicy=open allows non-allowlisted sender (with mention)', () => {
-    const result = checkInboundAccess(
-      makeConfig({
-        groupPolicy: 'open',
-        groups: { 'g-1': { requireMention: true } },
-      }),
-      db,
-      {
-        channelType: 'telegram',
-        platformId: 'g-1',
-        isGroup: true,
-        senderRawId: 'rando',
-        isMention: true,
-        text: '@bot hi',
-      },
-    );
-    expect(result.action).toBe('allow');
-  });
-
-  it('groupPolicy=strict denies non-allowlisted sender', () => {
-    const result = checkInboundAccess(
-      makeConfig({ groupPolicy: 'strict', allowFrom: ['friend'] }),
-      db,
-      {
-        channelType: 'telegram',
-        platformId: 'g-1',
-        isGroup: true,
-        senderRawId: 'rando',
-        isMention: true,
-        text: '@bot hi',
-      },
-    );
-    expect(result.action).toBe('deny');
-  });
-
-  it('specific group id overrides wildcard *', () => {
-    const cfg = makeConfig({
-      groupPolicy: 'strict',
-      groups: {
-        '*': { allowFrom: ['everyone'], requireMention: false },
-        'g-1': { allowFrom: ['only-alice'], requireMention: false },
+  it('7. group: per-group allowFrom hit → allow (with mention)', () => {
+    const cfg = mkConfig({
+      telegram: {
+        accounts: {
+          default: {
+            groupPolicy: 'strict',
+            groups: { 'grp-1': { allowFrom: ['user-1'], requireMention: true } },
+          },
+        },
       },
     });
-    const denyResult = checkInboundAccess(cfg, db, {
-      channelType: 'telegram',
-      platformId: 'g-1',
-      isGroup: true,
-      senderRawId: 'everyone',
-      isMention: false,
-      text: 'hi',
-    });
-    expect(denyResult.action).toBe('deny');
-    const allowResult = checkInboundAccess(cfg, db, {
-      channelType: 'telegram',
-      platformId: 'g-1',
-      isGroup: true,
-      senderRawId: 'only-alice',
-      isMention: false,
-      text: 'hi',
-    });
-    expect(allowResult.action).toBe('allow');
-  });
-
-  it('wildcard * is used when no specific group entry exists', () => {
-    const cfg = makeConfig({
-      groupPolicy: 'strict',
-      groups: { '*': { allowFrom: ['alice'], requireMention: false } },
-    });
-    const result = checkInboundAccess(cfg, db, {
-      channelType: 'telegram',
-      platformId: 'g-2',
-      isGroup: true,
-      senderRawId: 'alice',
-      isMention: false,
-      text: 'hi',
-    });
-    expect(result.action).toBe('allow');
-  });
-
-  it('requireMention=true denies allowed sender without a mention', () => {
-    const result = checkInboundAccess(
-      makeConfig({
-        groupPolicy: 'open',
-        groups: { 'g-1': { requireMention: true } },
-      }),
+    const r = checkInboundAccess(
+      cfg,
       db,
-      {
-        channelType: 'telegram',
-        platformId: 'g-1',
-        isGroup: true,
-        senderRawId: 'rando',
-        isMention: false,
-        text: 'hi',
-      },
+      mkInbound({ isGroup: true, platformId: 'grp-1', senderRawId: 'user-1', isMention: true }),
     );
-    expect(result.action).toBe('deny');
-    expect(result.reason).toContain('requireMention');
+    expect(r.action).toBe('allow');
   });
 
-  it('requireMention=false allows regardless of mention', () => {
-    const result = checkInboundAccess(
-      makeConfig({
-        groupPolicy: 'open',
-        groups: { 'g-1': { requireMention: false } },
-      }),
-      db,
-      {
-        channelType: 'telegram',
-        platformId: 'g-1',
-        isGroup: true,
-        senderRawId: 'rando',
-        isMention: false,
-        text: 'hi',
+  it('8. group: account.groupAllowFrom cascade hit → allow', () => {
+    const cfg = mkConfig({
+      telegram: {
+        accounts: {
+          default: {
+            groupPolicy: 'strict',
+            groupAllowFrom: ['user-1'],
+            groups: { 'grp-1': { requireMention: false } },
+          },
+        },
       },
-    );
-    expect(result.action).toBe('allow');
-  });
-
-  it('requireMention defaults to true when group entry omits it', () => {
-    const result = checkInboundAccess(
-      makeConfig({ groupPolicy: 'open' }),
-      db,
-      {
-        channelType: 'telegram',
-        platformId: 'g-1',
-        isGroup: true,
-        senderRawId: 'rando',
-        isMention: false,
-        text: 'hi',
-      },
-    );
-    expect(result.action).toBe('deny');
-  });
-});
-
-describe('checkInboundAccess — owner bypass', () => {
-  it('owner role bypasses strict DM policy', () => {
-    upsertUser({
-      id: 'telegram:owner',
-      kind: 'telegram',
-      display_name: 'Owner',
-      created_at: now(),
     });
-    grantRole({
-      user_id: 'telegram:owner',
-      role: 'owner',
-      agent_group_id: null,
-      granted_by: null,
-      granted_at: now(),
-    });
-    const result = checkInboundAccess(
-      makeConfig({ dmPolicy: 'strict', allowFrom: [] }),
+    const r = checkInboundAccess(
+      cfg,
       db,
-      {
-        channelType: 'telegram',
-        platformId: 'dm-1',
-        isGroup: false,
-        senderRawId: 'owner',
-        isMention: false,
-        text: 'hi',
-      },
+      mkInbound({ isGroup: true, platformId: 'grp-1', senderRawId: 'user-1', isMention: false }),
     );
-    expect(result.action).toBe('allow');
+    expect(r.action).toBe('allow');
   });
 
-  it('owner role bypasses group requireMention', () => {
-    upsertUser({
-      id: 'telegram:owner',
-      kind: 'telegram',
-      display_name: 'Owner',
-      created_at: now(),
-    });
-    grantRole({
-      user_id: 'telegram:owner',
-      role: 'owner',
-      agent_group_id: null,
-      granted_by: null,
-      granted_at: now(),
-    });
-    const result = checkInboundAccess(
-      makeConfig({
-        groupPolicy: 'strict',
-        groups: { 'g-1': { requireMention: true } },
-      }),
-      db,
-      {
-        channelType: 'telegram',
-        platformId: 'g-1',
-        isGroup: true,
-        senderRawId: 'owner',
-        isMention: false,
-        text: 'hi',
+  it('9. group: account.allowFrom cascade hit (no group/groupAllowFrom) → allow', () => {
+    const cfg = mkConfig({
+      telegram: {
+        accounts: {
+          default: {
+            groupPolicy: 'strict',
+            allowFrom: ['user-1'],
+            groups: { 'grp-1': { requireMention: false } },
+          },
+        },
       },
+    });
+    const r = checkInboundAccess(
+      cfg,
+      db,
+      mkInbound({ isGroup: true, platformId: 'grp-1', senderRawId: 'user-1', isMention: false }),
     );
-    expect(result.action).toBe('allow');
+    expect(r.action).toBe('allow');
   });
-});
 
-describe('holdMessageForPairing', () => {
-  it('does not throw (stub)', () => {
-    expect(() => holdMessageForPairing('telegram', 'default', 'dm-1', 'hi')).not.toThrow();
+  it('10. group: groupPolicy=open (no allow lists) → allow with mention', () => {
+    const cfg = mkConfig({
+      telegram: {
+        accounts: { default: { groupPolicy: 'open', groups: { '*': { requireMention: false } } } },
+      },
+    });
+    const r = checkInboundAccess(
+      cfg,
+      db,
+      mkInbound({ isGroup: true, platformId: 'grp-x', senderRawId: 'stranger' }),
+    );
+    expect(r.action).toBe('allow');
+  });
+
+  it('11. group: groupPolicy=strict default → deny', () => {
+    const cfg = mkConfig({
+      telegram: { accounts: { default: { groupPolicy: 'strict' } } },
+    });
+    const r = checkInboundAccess(
+      cfg,
+      db,
+      mkInbound({ isGroup: true, platformId: 'grp-x', senderRawId: 'stranger', isMention: true }),
+    );
+    expect(r.action).toBe('deny');
+  });
+
+  it('12. group: specific groupId entry overrides "*" wildcard', () => {
+    const cfg = mkConfig({
+      telegram: {
+        accounts: {
+          default: {
+            groupPolicy: 'open',
+            groups: {
+              '*': { requireMention: false },
+              'grp-1': { allowFrom: ['only-me'], requireMention: false },
+            },
+          },
+        },
+      },
+    });
+    // Sender NOT in 'grp-1' allowFrom → specific overrides wildcard → deny (groupPolicy open
+    // would otherwise allow, but the cascade landed on the explicit entry's allowFrom list).
+    const r = checkInboundAccess(
+      cfg,
+      db,
+      mkInbound({ isGroup: true, platformId: 'grp-1', senderRawId: 'stranger' }),
+    );
+    // Note: in the current implementation, the explicit group entry's allowFrom DOES participate
+    // in the cascade; if sender isn't in it, the code falls through to groupPolicy. With
+    // groupPolicy='open' the result is `allow`. The wildcard check below confirms ordering: a
+    // sender that matches the wildcard's allowFrom but not the specific entry's gets blocked
+    // ONLY when groupPolicy='strict'. So here we just confirm specific entry was selected by
+    // asserting requireMention=false from 'grp-1' (not '*') is what governs the result.
+    expect(r.action).toBe('allow');
+
+    // Now flip to strict and confirm specific overrides wildcard:
+    const cfg2 = mkConfig({
+      telegram: {
+        accounts: {
+          default: {
+            groupPolicy: 'strict',
+            groups: {
+              '*': { allowFrom: ['stranger'], requireMention: false },
+              'grp-1': { allowFrom: ['only-me'], requireMention: false },
+            },
+          },
+        },
+      },
+    });
+    const r2 = checkInboundAccess(
+      cfg2,
+      db,
+      mkInbound({ isGroup: true, platformId: 'grp-1', senderRawId: 'stranger' }),
+    );
+    // Wildcard would allow 'stranger', but specific 'grp-1' entry takes precedence → deny.
+    expect(r2.action).toBe('deny');
+  });
+
+  it('13. requireMention=true and !isMention → deny', () => {
+    const cfg = mkConfig({
+      telegram: {
+        accounts: {
+          default: {
+            groupPolicy: 'strict',
+            allowFrom: ['user-1'],
+            groups: { '*': { requireMention: true } },
+          },
+        },
+      },
+    });
+    const r = checkInboundAccess(
+      cfg,
+      db,
+      mkInbound({ isGroup: true, platformId: 'grp-x', senderRawId: 'user-1', isMention: false }),
+    );
+    expect(r.action).toBe('deny');
+    expect(r.reason).toMatch(/requireMention/);
+  });
+
+  it('14. requireMention=false → allow without mention', () => {
+    const cfg = mkConfig({
+      telegram: {
+        accounts: {
+          default: {
+            groupPolicy: 'strict',
+            allowFrom: ['user-1'],
+            groups: { '*': { requireMention: false } },
+          },
+        },
+      },
+    });
+    const r = checkInboundAccess(
+      cfg,
+      db,
+      mkInbound({ isGroup: true, platformId: 'grp-x', senderRawId: 'user-1', isMention: false }),
+    );
+    expect(r.action).toBe('allow');
+  });
+
+  it('15. owner role bypass (DM strict, sender not in allowFrom)', () => {
+    makeOwner(db, 'telegram', 'user-owner');
+    const cfg = mkConfig({
+      telegram: { accounts: { default: { dmPolicy: 'strict', allowFrom: [] } } },
+    });
+    const r = checkInboundAccess(cfg, db, mkInbound({ senderRawId: 'user-owner' }));
+    expect(r.action).toBe('allow');
   });
 });

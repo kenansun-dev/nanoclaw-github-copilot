@@ -38,9 +38,7 @@ describe('migration 105: messaging_groups.account_key', () => {
        VALUES (?, ?, ?, ?, ?)`,
     ).run('mg-work', 'telegram', 'work', '8731', now);
 
-    const rows = db
-      .prepare(`SELECT id FROM messaging_groups WHERE platform_id = ?`)
-      .all('8731') as { id: string }[];
+    const rows = db.prepare(`SELECT id FROM messaging_groups WHERE platform_id = ?`).all('8731') as { id: string }[];
     expect(rows.map((r) => r.id).sort()).toEqual(['mg-personal', 'mg-work']);
   });
 
@@ -65,8 +63,10 @@ describe('migration 105: messaging_groups.account_key', () => {
   it('legacy v2 tables still present (sanity: 001 not regressed)', () => {
     const db = open();
     const tables = db
-      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN
-                ('agent_groups','users','user_roles','agent_group_members')`)
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name IN
+                ('agent_groups','users','user_roles','agent_group_members')`,
+      )
       .all() as { name: string }[];
     expect(tables.length).toBe(4);
   });
@@ -75,9 +75,7 @@ describe('migration 105: messaging_groups.account_key', () => {
     const db = open();
     runMigrations(db);
     runMigrations(db);
-    const versions = db
-      .prepare(`SELECT name FROM schema_version WHERE name = ?`)
-      .all('105-fork-v2-schema');
+    const versions = db.prepare(`SELECT name FROM schema_version WHERE name = ?`).all('105-fork-v2-schema');
     expect(versions.length).toBe(1);
   });
 

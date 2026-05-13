@@ -209,12 +209,7 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
       return;
     }
     if (access.action === 'hold-pairing') {
-      holdMessageForPairing(
-        event.channelType,
-        'default',
-        event.platformId,
-        preParsed.text ?? '',
-      );
+      holdMessageForPairing(event.channelType, 'default', event.platformId, preParsed.text ?? '');
       return;
     }
   } catch (err) {

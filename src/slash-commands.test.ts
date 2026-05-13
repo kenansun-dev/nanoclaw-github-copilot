@@ -238,14 +238,42 @@ describe('handleSlashCommand', () => {
     // group-A; should only see group-A tasks (1 of 3), even though
     // task-c shares the same chat_jid (collapse-on-read scenario).
     const fixtures = [
-      { id: 'task-a', group_folder: 'group-A', chat_jid: 'tg:A1', prompt: 'a', schedule_type: 'cron', schedule_value: '0 * * * *', next_run: null, status: 'active' },
-      { id: 'task-b', group_folder: 'group-B', chat_jid: 'tg:B1', prompt: 'b', schedule_type: 'cron', schedule_value: '0 * * * *', next_run: null, status: 'active' },
-      { id: 'task-c', group_folder: 'group-B', chat_jid: 'tg:A1', prompt: 'c', schedule_type: 'cron', schedule_value: '0 * * * *', next_run: null, status: 'active' },
+      {
+        id: 'task-a',
+        group_folder: 'group-A',
+        chat_jid: 'tg:A1',
+        prompt: 'a',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
+      {
+        id: 'task-b',
+        group_folder: 'group-B',
+        chat_jid: 'tg:B1',
+        prompt: 'b',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
+      {
+        id: 'task-c',
+        group_folder: 'group-B',
+        chat_jid: 'tg:A1',
+        prompt: 'c',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
     ];
     (db.getAllTasks as any).mockReturnValueOnce(fixtures);
     (db.getRegisteredGroup as any).mockReturnValueOnce(undefined); // not main
     const ctx = makeCtx({ chatJid: 'tg:A1', groupFolder: 'group-A' });
-    await handleSlashCommand('/tasks', ctx);    const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    await handleSlashCommand('/tasks', ctx);
+    const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
     expect(sentText).toContain('task-a');
     expect(sentText).not.toContain('task-b');
     expect(sentText).not.toContain('task-c'); // would slip in with chat_jid filter
@@ -254,11 +282,34 @@ describe('handleSlashCommand', () => {
   it('/tasks from main chat shows ALL groups (parity with old MCP isMain branch)', async () => {
     const db = await import('./db.js');
     const fixtures = [
-      { id: 'task-a', group_folder: 'group-A', chat_jid: 'tg:A1', prompt: 'a', schedule_type: 'cron', schedule_value: '0 * * * *', next_run: null, status: 'active' },
-      { id: 'task-b', group_folder: 'group-B', chat_jid: 'tg:B1', prompt: 'b', schedule_type: 'cron', schedule_value: '0 * * * *', next_run: null, status: 'active' },
+      {
+        id: 'task-a',
+        group_folder: 'group-A',
+        chat_jid: 'tg:A1',
+        prompt: 'a',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
+      {
+        id: 'task-b',
+        group_folder: 'group-B',
+        chat_jid: 'tg:B1',
+        prompt: 'b',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
     ];
     (db.getAllTasks as any).mockReturnValueOnce(fixtures);
-    (db.getRegisteredGroup as any).mockReturnValueOnce({ jid: 'tg:main', name: 'main', folder: 'main', isMain: true } as any);
+    (db.getRegisteredGroup as any).mockReturnValueOnce({
+      jid: 'tg:main',
+      name: 'main',
+      folder: 'main',
+      isMain: true,
+    } as any);
     const ctx = makeCtx({ chatJid: 'tg:main', groupFolder: 'main' });
     await handleSlashCommand('/tasks', ctx);
     const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
