@@ -21,6 +21,15 @@
  *                                       needing the upstream sender-approval
  *                                       flow. Owner is implicitly a member
  *                                       via `user_roles` and skipped here.
+ *   5. accounts.*.groups.*.requireMention
+ *                                     → projects to engage_mode/engage_pattern
+ *                                       on every existing
+ *                                       `messaging_group_agents` row whose
+ *                                       messaging_group matches (channel,
+ *                                       peerId, is_group=1). DM-level
+ *                                       allowFrom users are not touched —
+ *                                       router default 'pattern'/'.' is
+ *                                       correct for DMs.
  *
  * Explicitly NOT in scope (lazy / grows on demand):
  *
@@ -47,6 +56,7 @@ interface ReconcileSummary {
   users: { inserted: string[] };
   userRoles: { inserted: string[]; deleted: string[] };
   agentGroupMembers: { inserted: number };
+  messagingGroupAgents: { updated: number };
 }
 
 function nowIso(): string {
@@ -122,6 +132,7 @@ export function reconcileConfigToDb(config: NanoclawConfig, db: Database.Databas
     users: { inserted: [] },
     userRoles: { inserted: [], deleted: [] },
     agentGroupMembers: { inserted: 0 },
+    messagingGroupAgents: { updated: 0 },
   };
 
   const tx = db.transaction(() => {
@@ -247,6 +258,44 @@ export function reconcileConfigToDb(config: NanoclawConfig, db: Database.Databas
       for (const ag of liveAgentGroupIds) {
         const info = insertMember.run(userId, ag.id, now);
         if (info.changes > 0) summary.agentGroupMembers.inserted += 1;
+      }
+    }
+
+    // ── 5. messaging_group_agents engage_mode projection ───────────────
+    // For each declared `accounts.<channelKey>.<accountId>.groups.<peerId>
+    // .requireMention`, update every existing `messaging_group_agents` row
+    // bound to the matching messaging_group (channel_type, platform_id,
+    // is_group=1):
+    //   requireMention === false → engage_mode='pattern',  engage_pattern='.'
+    //   otherwise (true / unset) → engage_mode='mention-sticky', pattern=NULL
+    // DM-level allowFrom users are intentionally not touched here — the
+    // router default ('pattern' / '.') is correct for DMs (PR-D).
+    const channelsCfg = (config.channels ?? {}) as Record<string, unknown>;
+    const updateEngage = db.prepare(
+      `UPDATE messaging_group_agents
+          SET engage_mode = ?, engage_pattern = ?
+        WHERE messaging_group_id = ?`,
+    );
+    const findMg = db.prepare(
+      `SELECT id FROM messaging_groups
+        WHERE channel_type = ? AND platform_id = ? AND is_group = 1`,
+    );
+    for (const [channelKey, channelDef] of Object.entries(channelsCfg)) {
+      const channelType = channelKeyToType(channelKey);
+      const accounts = (channelDef as { accounts?: Record<string, unknown> } | undefined)?.accounts;
+      if (!accounts) continue;
+      for (const acc of Object.values(accounts)) {
+        const groups = (acc as { groups?: Record<string, { requireMention?: boolean }> }).groups;
+        if (!groups) continue;
+        for (const [peerId, gDef] of Object.entries(groups)) {
+          const requireMention = gDef?.requireMention !== false; // default true
+          const engageMode = requireMention ? 'mention-sticky' : 'pattern';
+          const engagePattern: string | null = requireMention ? null : '.';
+          const mgRow = findMg.get(channelType, peerId) as { id: string } | undefined;
+          if (!mgRow) continue;
+          const info = updateEngage.run(engageMode, engagePattern, mgRow.id);
+          summary.messagingGroupAgents.updated += Number(info.changes ?? 0);
+        }
       }
     }
   });

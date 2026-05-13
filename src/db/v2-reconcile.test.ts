@@ -469,3 +469,158 @@ describe('reconcileConfigToDb — agent_group_members projection (PR-D)', () => 
     expect(second.agentGroupMembers.inserted).toBe(0);
   });
 });
+
+describe('reconcileConfigToDb — messaging_group_agents engage_mode projection (PR-D step 5)', () => {
+  // Helper to seed an mg + mga so the projection has something to update.
+  function seedGroup(
+    db: Database.Database,
+    opts: {
+      mgId: string;
+      channelType: string;
+      peerId: string;
+      isGroup: 0 | 1;
+      agentId: string;
+      mgaId: string;
+      engageMode?: string;
+      engagePattern?: string | null;
+    },
+  ): void {
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at)
+       VALUES (?, ?, ?, NULL, ?)`,
+    ).run(opts.agentId, opts.agentId, opts.agentId, now);
+    db.prepare(
+      `INSERT INTO messaging_groups (id, channel_type, platform_id, name, is_group, created_at)
+       VALUES (?, ?, ?, NULL, ?, ?)`,
+    ).run(opts.mgId, opts.channelType, opts.peerId, opts.isGroup, now);
+    db.prepare(
+      `INSERT INTO messaging_group_agents
+         (id, messaging_group_id, agent_group_id, engage_mode, engage_pattern,
+          sender_scope, ignored_message_policy, session_mode, priority, created_at)
+       VALUES (?, ?, ?, ?, ?, 'all', 'drop', 'shared', 0, ?)`,
+    ).run(opts.mgaId, opts.mgId, opts.agentId, opts.engageMode ?? 'pattern', opts.engagePattern ?? '.', now);
+  }
+
+  it('requireMention=false → engage_mode=pattern, engage_pattern=.', () => {
+    const db = open();
+    seedGroup(db, {
+      mgId: 'mg1',
+      channelType: 'telegram',
+      peerId: '-1001',
+      isGroup: 1,
+      agentId: 'a1',
+      mgaId: 'mga1',
+      engageMode: 'mention-sticky',
+      engagePattern: null,
+    });
+    const cfg = makeConfig({
+      agents: { defaults: makeConfig().agents.defaults, list: [{ id: 'a1', name: 'A1' }] },
+      channels: {
+        telegram: {
+          enabled: false,
+          accounts: { default: { groups: { '-1001': { requireMention: false } } } },
+        },
+      } as NanoclawConfig['channels'],
+    });
+    const s = reconcileConfigToDb(cfg, db);
+    expect(s.messagingGroupAgents.updated).toBe(1);
+    const row = db
+      .prepare(`SELECT engage_mode, engage_pattern FROM messaging_group_agents WHERE id = ?`)
+      .get('mga1') as { engage_mode: string; engage_pattern: string | null };
+    expect(row.engage_mode).toBe('pattern');
+    expect(row.engage_pattern).toBe('.');
+  });
+
+  it('requireMention=true → engage_mode=mention-sticky, engage_pattern=NULL', () => {
+    const db = open();
+    seedGroup(db, {
+      mgId: 'mg2',
+      channelType: 'telegram',
+      peerId: '-1002',
+      isGroup: 1,
+      agentId: 'a1',
+      mgaId: 'mga2',
+      engageMode: 'pattern',
+      engagePattern: '.',
+    });
+    const cfg = makeConfig({
+      agents: { defaults: makeConfig().agents.defaults, list: [{ id: 'a1', name: 'A1' }] },
+      channels: {
+        telegram: {
+          enabled: false,
+          accounts: { default: { groups: { '-1002': { requireMention: true } } } },
+        },
+      } as NanoclawConfig['channels'],
+    });
+    const s = reconcileConfigToDb(cfg, db);
+    expect(s.messagingGroupAgents.updated).toBe(1);
+    const row = db
+      .prepare(`SELECT engage_mode, engage_pattern FROM messaging_group_agents WHERE id = ?`)
+      .get('mga2') as { engage_mode: string; engage_pattern: string | null };
+    expect(row.engage_mode).toBe('mention-sticky');
+    expect(row.engage_pattern).toBeNull();
+  });
+
+  it('requireMention unset defaults to true (mention-sticky)', () => {
+    const db = open();
+    seedGroup(db, {
+      mgId: 'mg3',
+      channelType: 'telegram',
+      peerId: '-1003',
+      isGroup: 1,
+      agentId: 'a1',
+      mgaId: 'mga3',
+      engageMode: 'pattern',
+      engagePattern: '.',
+    });
+    const cfg = makeConfig({
+      agents: { defaults: makeConfig().agents.defaults, list: [{ id: 'a1', name: 'A1' }] },
+      channels: {
+        telegram: {
+          enabled: false,
+          accounts: { default: { groups: { '-1003': {} } } },
+        },
+      } as NanoclawConfig['channels'],
+    });
+    const s = reconcileConfigToDb(cfg, db);
+    expect(s.messagingGroupAgents.updated).toBe(1);
+    const row = db
+      .prepare(`SELECT engage_mode, engage_pattern FROM messaging_group_agents WHERE id = ?`)
+      .get('mga3') as { engage_mode: string; engage_pattern: string | null };
+    expect(row.engage_mode).toBe('mention-sticky');
+    expect(row.engage_pattern).toBeNull();
+  });
+
+  it('does not touch DM messaging_groups (is_group=0) — router default stays', () => {
+    const db = open();
+    seedGroup(db, {
+      mgId: 'mg-dm',
+      channelType: 'telegram',
+      peerId: '8731',
+      isGroup: 0, // DM
+      agentId: 'a1',
+      mgaId: 'mga-dm',
+      engageMode: 'pattern',
+      engagePattern: '.',
+    });
+    const cfg = makeConfig({
+      agents: { defaults: makeConfig().agents.defaults, list: [{ id: 'a1', name: 'A1' }] },
+      channels: {
+        telegram: {
+          enabled: false,
+          // requireMention=false on a peer that happens to also be a DM:
+          // since is_group=0, the projection MUST NOT match.
+          accounts: { default: { groups: { '8731': { requireMention: false } } } },
+        },
+      } as NanoclawConfig['channels'],
+    });
+    const s = reconcileConfigToDb(cfg, db);
+    expect(s.messagingGroupAgents.updated).toBe(0);
+    const row = db
+      .prepare(`SELECT engage_mode, engage_pattern FROM messaging_group_agents WHERE id = ?`)
+      .get('mga-dm') as { engage_mode: string; engage_pattern: string | null };
+    expect(row.engage_mode).toBe('pattern');
+    expect(row.engage_pattern).toBe('.');
+  });
+});
