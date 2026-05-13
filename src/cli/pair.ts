@@ -3,8 +3,72 @@
  */
 import readline from 'readline';
 import { loadConfig, saveConfig } from '../config-loader.js';
+import { getDb } from '../db/connection.js';
+import { redeemPairingCode, listPendingPairings } from '../v2-access.js';
 
 export async function runPair(args: string[]): Promise<void> {
+  // Subcommands first (`nanoclaw pair approve <code>`, `nanoclaw pair pending`).
+  // Falls through to the legacy direct/interactive flow when the first arg
+  // is not a recognized subcommand.
+  const sub = args[0];
+  if (sub === 'approve') {
+    const rawCode = args[1];
+    if (!rawCode) {
+      console.error('Usage: nanoclaw pair approve <CODE> [--owner <id>] [--agent <agent-group-id>]');
+      process.exit(1);
+    }
+    let ownerId: string | null = null;
+    let agentId: string | null = null;
+    for (let i = 2; i < args.length; i++) {
+      if (args[i] === '--owner' && args[i + 1]) ownerId = args[++i];
+      else if (args[i] === '--agent' && args[i + 1]) agentId = args[++i];
+    }
+    if (!ownerId) {
+      // Default: use the first owner row in user_roles. Operators running
+      // this from a shell are presumed to *be* the owner; pick the row
+      // so the granted_by FK is satisfiable.
+      try {
+        const db = getDb();
+        const row = db
+          .prepare(`SELECT user_id FROM user_roles WHERE role = 'owner' LIMIT 1`)
+          .get() as { user_id: string } | undefined;
+        if (row) ownerId = row.user_id;
+      } catch {
+        /* fall through to error below */
+      }
+    }
+    if (!ownerId) {
+      console.error('No global owner found. Pass --owner <user-id> explicitly, or run nanoclaw init first.');
+      process.exit(1);
+    }
+    const db = getDb();
+    const result = redeemPairingCode(db, rawCode, ownerId, agentId);
+    if (!result.ok) {
+      console.error(`❌ Pairing failed: ${result.error ?? 'unknown'}`);
+      process.exit(1);
+    }
+    const n = result.replayed?.length ?? 0;
+    console.log(
+      `✅ Paired ${result.channelType}/${result.accountKey} peer=${result.peerId} — ${n} held message${n === 1 ? '' : 's'} ready to dispatch.`,
+    );
+    return;
+  }
+  if (sub === 'pending') {
+    const db = getDb();
+    const rows = listPendingPairings(db);
+    if (rows.length === 0) {
+      console.log('No pending pairing codes.');
+      return;
+    }
+    for (const r of rows) {
+      const codeShown = `${r.code.slice(0, 4)}-${r.code.slice(4)}`;
+      console.log(
+        `${codeShown}  ${r.channelType}/${r.accountKey}  peer=${r.peerId}  msgs=${r.messageCount}  expires=${r.expiresAt}`,
+      );
+    }
+    return;
+  }
+
   const config = loadConfig();
 
   // Direct mode: nanoclaw pair <jid> --name <name> [--main]

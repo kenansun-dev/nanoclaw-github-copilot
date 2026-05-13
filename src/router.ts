@@ -212,7 +212,53 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
       return;
     }
     if (access.action === 'hold-pairing') {
-      holdMessageForPairing(event.channelType, 'default', event.platformId, preParsed.text ?? '');
+      const heldDb = tryGetDb();
+      if (heldDb) {
+        try {
+          const senderRaw = preParsed.senderId ?? event.platformId;
+          const result = holdMessageForPairing(heldDb, event.channelType, 'default', senderRaw, {
+            text: preParsed.text ?? '',
+            senderName: null,
+            raw: { platformId: event.platformId, threadId: event.threadId, content: event.message.content },
+          });
+          // Only DM the stranger when this hold minted a fresh code —
+          // subsequent retries queue silently so we don't spam them.
+          if (result.newCode) {
+            try {
+              const adapter2 = getChannelAdapter(event.channelType);
+              if (adapter2) {
+                await adapter2.deliver(event.platformId, event.threadId, {
+                  kind: 'chat',
+                  content: {
+                    text:
+                      `🔐 Your message is pending owner approval.\n` +
+                      `Pairing code: ${result.codeShown}\n` +
+                      `Ask the owner to run \`/pair-approve ${result.codeShown}\` to approve. ` +
+                      `Code expires in 24h.`,
+                  },
+                });
+              }
+            } catch (notifyErr) {
+              log.warn('hold-pairing notice deliver failed', {
+                channelType: event.channelType,
+                platformId: event.platformId,
+                err: (notifyErr as Error)?.message ?? String(notifyErr),
+              });
+            }
+          }
+        } catch (holdErr) {
+          log.warn('holdMessageForPairing persist failed', {
+            channelType: event.channelType,
+            platformId: event.platformId,
+            err: (holdErr as Error)?.message ?? String(holdErr),
+          });
+        }
+      } else {
+        log.warn('hold-pairing: no DB available, dropping inbound', {
+          channelType: event.channelType,
+          platformId: event.platformId,
+        });
+      }
       return;
     }
   } catch (err) {

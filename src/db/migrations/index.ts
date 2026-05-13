@@ -13,6 +13,7 @@ import { migration013 } from './013-approval-render-metadata.js';
 import { migration014 } from './014-container-configs.js';
 import { migration015 } from './015-cli-scope.js';
 import { migration105ForkV2Schema } from './105-fork-v2-schema.js';
+import { migration106PendingPairing } from './106-pending-pairing.js';
 import { moduleApprovalsPendingApprovals } from './module-approvals-pending-approvals.js';
 import { moduleApprovalsTitleOptions } from './module-approvals-title-options.js';
 import { prepareForV2Migrations } from '../v2-boot-guard.js';
@@ -49,6 +50,7 @@ const migrations: Migration[] = [
   migration014,
   migration015,
   migration105ForkV2Schema,
+  migration106PendingPairing,
 ];
 
 export function runMigrations(db: Database.Database, dbPath: string = ''): void {

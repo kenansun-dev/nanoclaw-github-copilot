@@ -114,6 +114,17 @@ export const COMMANDS: SlashCommand[] = [
       'List configured MCP servers (parity with CC `/mcp` and `gh copilot mcp list`). File-only read, <50ms.',
     args: '',
   },
+  {
+    name: 'pair-approve',
+    description:
+      'Owner-only: redeem a pending pairing code (XXXX-XXXX) to allow a stranger’s queued DMs to dispatch.',
+    args: '<code>',
+  },
+  {
+    name: 'pair-pending',
+    description: 'Owner-only: list pending pairing codes awaiting approval.',
+    noArgs: true,
+  },
 ];
 
 // ─── Command execution ───────────────────────────────────────────────────────
@@ -339,6 +350,13 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
     return { handled: true };
   }
 
+  // /pair-approve <code> — owner-only: redeem a pending pairing code.
+  // /pair-pending          — owner-only: list pending pairing codes.
+  if (input === '/pair-pending' || input.startsWith('/pair-approve ') || input === '/pair-approve') {
+    await handlePairSlash(input, ctx);
+    return { handled: true };
+  }
+
   // /wiki [topic|search <query>] — pass to agent with wiki skill context
   if (input === '/wiki' || input.startsWith('/wiki ')) {
     // Ensure wiki directory exists
@@ -396,6 +414,95 @@ async function captureStdout(fn: () => Promise<void> | void): Promise<string> {
     console.warn = origWarn;
   }
   return chunks.join('\n');
+}
+
+// ─── /pair-approve + /pair-pending implementation ─────────────────────────────
+
+/**
+ * Owner-only check for /pair-* slash commands.
+ *
+ * Uses the same `user_roles.role='owner'` row that `v2-access` consults
+ * (see isOwner there). The caller id is derived from `ctx.chatJid` — in
+ * DM contexts the jid is `<channel>:<senderId>`; in groups we cannot
+ * reliably attribute the slash sender from ctx alone, so we conservatively
+ * reject group invocations here. CLI invocations (`nanoclaw pair approve`)
+ * bypass this slash gate entirely.
+ */
+async function handlePairSlash(input: string, ctx: SlashCommandContext): Promise<void> {
+  if (!ctx.channel) return;
+
+  // Lazy imports: keeps slash-commands lightweight for the non-pair paths.
+  const { getDb } = await import('./db/connection.js');
+  const { redeemPairingCode, listPendingPairings } = await import('./v2-access.js');
+
+  let db: import('better-sqlite3').Database;
+  try {
+    db = getDb();
+  } catch (err) {
+    await ctx.channel.sendMessage(
+      ctx.chatJid,
+      `❌ Pairing DB unavailable: ${(err as Error).message ?? String(err)}`,
+    );
+    return;
+  }
+
+  // Derive caller id from chatJid (`<channel>:<senderId>`). Strict v1 jid
+  // shapes like `tg:<chatId>` collapse to a single segment after the prefix,
+  // and there's no slash-level sender attribution in those flows — reject.
+  const callerOwnerId = ctx.chatJid;
+  const isOwner = (() => {
+    try {
+      const row = db
+        .prepare(`SELECT 1 AS hit FROM user_roles WHERE user_id = ? AND role = 'owner' LIMIT 1`)
+        .get(callerOwnerId) as { hit: number } | undefined;
+      return !!row;
+    } catch {
+      return false;
+    }
+  })();
+  if (!isOwner) {
+    await ctx.channel.sendMessage(
+      ctx.chatJid,
+      '❌ /pair-approve and /pair-pending are owner-only. Use `nanoclaw pair approve <code>` from a shell with operator access.',
+    );
+    return;
+  }
+
+  if (input === '/pair-pending') {
+    const rows = listPendingPairings(db);
+    if (rows.length === 0) {
+      await ctx.channel.sendMessage(ctx.chatJid, '✅ No pending pairing codes.');
+      return;
+    }
+    const lines = rows.map((r) => {
+      const codeShown = `${r.code.slice(0, 4)}-${r.code.slice(4)}`;
+      return `• \`${codeShown}\` — ${r.channelType}/${r.accountKey} peer=${r.peerId} (${r.messageCount} msg, expires ${r.expiresAt})`;
+    });
+    await ctx.channel.sendMessage(
+      ctx.chatJid,
+      `🔐 Pending pairings (${rows.length}):\n${lines.join('\n')}`,
+    );
+    return;
+  }
+
+  // /pair-approve <code>
+  const m = input.match(/^\/pair-approve(?:\s+(\S+))?\s*$/);
+  const rawCode = m?.[1];
+  if (!rawCode) {
+    await ctx.channel.sendMessage(ctx.chatJid, 'Usage: /pair-approve <CODE>  (e.g. /pair-approve ABCD-EFGH)');
+    return;
+  }
+
+  const result = redeemPairingCode(db, rawCode, callerOwnerId);
+  if (!result.ok) {
+    await ctx.channel.sendMessage(ctx.chatJid, `❌ Pairing failed: ${result.error ?? 'unknown'}`);
+    return;
+  }
+  const n = result.replayed?.length ?? 0;
+  await ctx.channel.sendMessage(
+    ctx.chatJid,
+    `✅ Paired ${result.channelType}/${result.accountKey} peer=${result.peerId} — ${n} held message${n === 1 ? '' : 's'} ready to dispatch.`,
+  );
 }
 
 async function handlePluginSlash(argv: string[], ctx: SlashCommandContext): Promise<void> {
