@@ -193,6 +193,9 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
     const preParsed = safeParseContent(event.message.content);
     const access = checkInboundAccess(loadConfig(), tryGetDb(), {
       channelType: event.channelType,
+      // TODO(v2-multi-account): short-term assumes a single bot per channel;
+      // steps 9–12 should derive accountKey from the inbound event (adapter
+      // already knows which account received the message).
       accountKey: 'default',
       platformId: event.platformId,
       isGroup: event.message.isGroup === true,
@@ -213,13 +216,35 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
       return;
     }
   } catch (err) {
-    // Gate failures should never strand inbound messages — log and fall
-    // through to legacy behaviour.
+    // Gate failures should never strand inbound messages — log, audit, and
+    // fall through to legacy behaviour.
+    const errMsg = (err as Error)?.message ?? String(err);
     log.warn('v2 access gate threw — falling through to legacy routing', {
       channelType: event.channelType,
       platformId: event.platformId,
-      err: (err as Error)?.message,
+      err: errMsg,
     });
+    // Audit the fail-open so we can spot regressions. recordDroppedMessage
+    // hits the DB; if it also throws (e.g. db not initialised in tests),
+    // fall back to a structured console.warn tag.
+    try {
+      recordDroppedMessage({
+        channel_type: event.channelType,
+        platform_id: event.platformId,
+        user_id: null,
+        sender_name: null,
+        reason: `v2-gate-error-fallback: ${errMsg}`,
+        messaging_group_id: null,
+        agent_group_id: null,
+      });
+    } catch (auditErr) {
+      console.warn('[v2-gate-error] fail-open audit could not be recorded', {
+        channelType: event.channelType,
+        platformId: event.platformId,
+        gateErr: errMsg,
+        auditErr: (auditErr as Error)?.stack ?? String(auditErr),
+      });
+    }
   }
 
   // 1. Combined lookup: messaging_group row + count of wired agents in a

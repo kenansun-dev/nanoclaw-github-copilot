@@ -103,20 +103,20 @@ export const GHC_CONTAINER_IMAGE = IS_GHC_PROVIDER ? 'nanoclaw-agent-ghc:latest'
 export function resolveAgentForChat(chatJid: string): AgentConfig {
   const config = loadConfig();
   // v2 read path: build bindings table and look up by (channel, accountId, peerId).
-  // chatJid format: '<proto>:<rawId>' (legacy) or '<proto>:<accountKey>:<rawId>'.
+  // chatJid format: '<proto>:<peerId>'. peerId itself may contain ':' (e.g. Teams
+  // ids like '29:abc-def' or '19:xxx@thread.v2'). We deliberately do NOT try to
+  // pull an accountKey out of a colon-split prefix — that mis-attributed the
+  // first segment of Teams ids to accountId and broke binding lookups.
+  // TODO(v2-multi-account): when introducing per-account routing, plumb a
+  // structured ChatRef { channel, account, peer } through the call sites instead
+  // of re-splitting a string here.
   const parts = chatJid.split(':');
   let channel: string | undefined;
-  let accountId: string | undefined;
+  const accountId: string | undefined = undefined;
   let peerId: string | undefined;
   if (parts.length >= 2) {
     channel = parts[0] === 'tg' ? 'telegram' : parts[0];
-    if (parts.length === 2) {
-      peerId = parts[1];
-    } else {
-      // 3+ segments: middle is accountKey, tail is peer id (may contain ':')
-      accountId = parts[1];
-      peerId = parts.slice(2).join(':');
-    }
+    peerId = parts.slice(1).join(':');
   }
   const table = loadBindings(config);
   let agentId: string | undefined;

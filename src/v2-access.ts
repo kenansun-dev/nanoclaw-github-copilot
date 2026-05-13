@@ -217,6 +217,14 @@ export function checkInboundAccess(
   // Allowed — apply requireMention from group config (default true).
   const requireMention = groupCfg?.requireMention ?? DEFAULT_REQUIRE_MENTION;
   if (requireMention && !inbound.isMention) {
+    log.debug(
+      'v2-access deny: requireMention-not-satisfied — tip: set group.requireMention=false to allow non-mention messages',
+      {
+        channelType: inbound.channelType,
+        platformId: inbound.platformId,
+        groupPolicy: account.groupPolicy ?? DEFAULT_GROUP_POLICY,
+      },
+    );
     return { action: 'deny', reason: 'requireMention-not-satisfied' };
   }
 
