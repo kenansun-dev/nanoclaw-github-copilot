@@ -12,6 +12,8 @@ import {
   revokePairingCode,
   sweepExpired,
   listPendingPairings,
+  isUserConfigAllowed,
+  maybeHoldForPairing,
 } from './v2-access.js';
 
 function openDb(): Database.Database {
@@ -192,5 +194,99 @@ describe('holdMessageForPairing + redeemPairingCode + sweepExpired', () => {
       .prepare(`SELECT role FROM user_roles WHERE user_id = ? AND role = 'paired'`)
       .get('telegram:peer-r2') as { role: string } | undefined;
     expect(role?.role).toBe('paired');
+  });
+});
+
+describe('isUserConfigAllowed (PR-D pair-scoping helper)', () => {
+  it('matches accounts.*.allowFrom (channel-qualified)', () => {
+    const cfg = {
+      channels: { telegram: { accounts: { default: { allowFrom: ['8731'] } } } },
+    };
+    expect(isUserConfigAllowed('telegram:8731', cfg)).toBe(true);
+    expect(isUserConfigAllowed('telegram:9999', cfg)).toBe(false);
+  });
+  it('matches accounts.*.groupAllowFrom', () => {
+    const cfg = {
+      channels: { discord: { accounts: { default: { groupAllowFrom: ['u1'] } } } },
+    };
+    expect(isUserConfigAllowed('discord:u1', cfg)).toBe(true);
+  });
+  it('matches accounts.*.groups.*.allowFrom', () => {
+    const cfg = {
+      channels: {
+        telegram: { accounts: { default: { groups: { '-100': { allowFrom: ['gu'] } } } } },
+      },
+    };
+    expect(isUserConfigAllowed('telegram:gu', cfg)).toBe(true);
+  });
+  it('matches commands.ownerAllowFrom (already qualified)', () => {
+    const cfg = { commands: { ownerAllowFrom: ['telegram:owner'] } };
+    expect(isUserConfigAllowed('telegram:owner', cfg)).toBe(true);
+  });
+  it('returns false for empty / null inputs', () => {
+    expect(isUserConfigAllowed('', {})).toBe(false);
+    expect(isUserConfigAllowed('telegram:x', null as unknown as object)).toBe(false);
+  });
+  it('maps tg → telegram', () => {
+    const cfg = { channels: { tg: { accounts: { default: { allowFrom: ['8731'] } } } } };
+    expect(isUserConfigAllowed('telegram:8731', cfg)).toBe(true);
+  });
+});
+
+describe('maybeHoldForPairing (PR-D pair-scoping helper)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = openDb();
+  });
+  const cfg = {
+    channels: { telegram: { accounts: { default: { allowFrom: ['8731'] } } } },
+  };
+  const dmMg = { is_group: 0 };
+  const groupMg = { is_group: 1 };
+  const dmEvent = {
+    channelType: 'telegram',
+    accountKey: 'default',
+    peerId: '8731',
+    payload: { text: 'hello' },
+  };
+
+  it('holds when DM + config-declared user + no prior redemption', () => {
+    const r = maybeHoldForPairing(dmEvent, dmMg, 'telegram:8731', cfg, db);
+    expect(r).not.toBeNull();
+    expect(r?.newCode).toBe(true);
+    expect((db.prepare(`SELECT COUNT(*) AS c FROM pending_messages`).get() as { c: number }).c).toBe(1);
+  });
+
+  it('returns null when inbound is a group (condition 1)', () => {
+    const r = maybeHoldForPairing(dmEvent, groupMg, 'telegram:8731', cfg, db);
+    expect(r).toBeNull();
+    expect((db.prepare(`SELECT COUNT(*) AS c FROM pending_messages`).get() as { c: number }).c).toBe(0);
+  });
+
+  it('returns null when user is not config-declared (condition 2)', () => {
+    const r = maybeHoldForPairing(dmEvent, dmMg, 'telegram:9999', cfg, db);
+    expect(r).toBeNull();
+  });
+
+  it('returns null when a redeemed pairing already exists (condition 3)', () => {
+    makeOwner(db, 'telegram', 'owner');
+    // First inbound holds + emits a code.
+    const first = maybeHoldForPairing(dmEvent, dmMg, 'telegram:8731', cfg, db);
+    expect(first).not.toBeNull();
+    // Owner redeems → device confirmed.
+    const redeem = redeemPairingCode(db, first!.codeShown, 'telegram:owner');
+    expect(redeem.ok).toBe(true);
+    // Subsequent inbounds from the same peer: no hold (idempotent).
+    const second = maybeHoldForPairing(dmEvent, dmMg, 'telegram:8731', cfg, db);
+    expect(second).toBeNull();
+  });
+
+  it('idempotency: re-holding before redemption reuses the existing code', () => {
+    const first = maybeHoldForPairing(dmEvent, dmMg, 'telegram:8731', cfg, db);
+    const second = maybeHoldForPairing(dmEvent, dmMg, 'telegram:8731', cfg, db);
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(second!.code).toBe(first!.code);
+    expect(second!.newCode).toBe(false);
   });
 });

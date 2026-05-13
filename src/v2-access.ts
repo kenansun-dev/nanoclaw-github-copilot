@@ -408,3 +408,115 @@ export function listPendingPairings(db: Database.Database | null | undefined): A
     return [];
   }
 }
+
+// ─── PR-D pair scoping helpers (not yet wired into router; PR-E scope) ─
+
+/**
+ * Returns true when `userId` (`<channelType>:<rawId>`) appears in any
+ * config-declared allowlist:
+ *   - `accounts.<channelKey>.<accountId>.allowFrom`
+ *   - `accounts.<channelKey>.<accountId>.groupAllowFrom`
+ *   - `accounts.<channelKey>.<accountId>.groups.<peerId>.allowFrom`
+ *   - `commands.ownerAllowFrom`
+ *
+ * Mirrors the channel-key → channel-type mapping used by
+ * `src/db/v2-reconcile.ts:channelKeyToType` (kept in sync via duplication
+ * rather than circular import).
+ *
+ * Used by `maybeHoldForPairing` to decide whether the inbound user counts
+ * as "config-declared" for the pair-scoping decision.
+ */
+export function isUserConfigAllowed(userId: string, config: unknown): boolean {
+  if (!userId || typeof config !== 'object' || config === null) return false;
+  const cfg = config as {
+    channels?: Record<string, unknown>;
+    commands?: { ownerAllowFrom?: string[] };
+  };
+  // commands.ownerAllowFrom is already channel-qualified.
+  for (const oid of cfg.commands?.ownerAllowFrom ?? []) {
+    if (oid === userId) return true;
+  }
+  const channels = cfg.channels;
+  if (!channels) return false;
+  for (const [channelKey, channelDef] of Object.entries(channels)) {
+    const channelType = channelKeyForType(channelKey);
+    const accounts = (channelDef as { accounts?: Record<string, unknown> } | undefined)?.accounts;
+    if (!accounts) continue;
+    for (const acc of Object.values(accounts)) {
+      const a = acc as {
+        allowFrom?: string[];
+        groupAllowFrom?: string[];
+        groups?: Record<string, { allowFrom?: string[] }>;
+      };
+      for (const raw of a.allowFrom ?? []) if (`${channelType}:${raw}` === userId) return true;
+      for (const raw of a.groupAllowFrom ?? []) if (`${channelType}:${raw}` === userId) return true;
+      for (const g of Object.values(a.groups ?? {})) {
+        for (const raw of g.allowFrom ?? []) if (`${channelType}:${raw}` === userId) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function channelKeyForType(channelKey: string): string {
+  // Kept in sync with src/db/v2-reconcile.ts:channelKeyToType. Duplicated
+  // to avoid importing the reconcile module from the access path.
+  switch (channelKey) {
+    case 'tg':
+      return 'telegram';
+    default:
+      return channelKey;
+  }
+}
+
+/**
+ * Pair-scoping decision: should this DM be HELD for owner approval (rather
+ * than dispatched immediately)?
+ *
+ * Returns the `HoldMessageResult` (i.e. holds) only when ALL three
+ * conditions are met:
+ *
+ *   1. inbound is a DM (`mg.is_group === 0`),
+ *   2. `userId` is config-declared (`isUserConfigAllowed`), AND
+ *   3. there is no existing **redeemed** pairing row for this
+ *      (channel_type, account_key, peer_id) — i.e. the device has not
+ *      already been confirmed.
+ *
+ * Idempotent: subsequent calls for an already-redeemed peer return
+ * `null` so the router would dispatch normally.
+ *
+ * NOTE: This is the device-confirm hook from the PR-D pair refactor.
+ * The access decision (is the user allowed to talk to this agent group?)
+ * is owned by the upstream `canAccessAgentGroup` gate; pair-scoping is a
+ * separate device-ownership confirmation step on top of it.
+ *
+ * // Wiring into router is PR-E scope.
+ */
+export function maybeHoldForPairing(
+  event: { channelType: string; accountKey?: string | null; peerId: string; payload: HoldMessagePayload },
+  mg: { is_group: number },
+  userId: string | null,
+  config: unknown,
+  db: Database.Database | null | undefined,
+): HoldMessageResult | null {
+  if (!db) return null;
+  if (mg.is_group !== 0) return null; // condition 1
+  if (!userId) return null;
+  if (!isUserConfigAllowed(userId, config)) return null; // condition 2
+  const accountKey = event.accountKey || 'default';
+  // condition 3: skip if any redeemed code already exists for this peer.
+  try {
+    const redeemed = db
+      .prepare(
+        `SELECT 1 FROM pairing_codes
+           WHERE channel_type = ? AND account_key = ? AND peer_id = ?
+             AND redeemed_at IS NOT NULL
+           LIMIT 1`,
+      )
+      .get(event.channelType, accountKey, event.peerId);
+    if (redeemed) return null;
+  } catch {
+    // Missing pairing_codes table (older test DB) → fall through to hold.
+  }
+  return holdMessageForPairing(db, event.channelType, accountKey, event.peerId, event.payload);
+}
