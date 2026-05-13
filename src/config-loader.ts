@@ -33,7 +33,7 @@ export interface AgentConfig {
 // All v2 fields are optional; legacy configs without them continue to parse
 // unchanged. The router still reads `chats[]` (PR-B not yet landed).
 export type DmPolicy = 'pairing' | 'open' | 'strict';
-export type GroupPolicy = 'allowlist' | 'open';
+export type GroupPolicy = 'allowlist' | 'open' | 'strict';
 
 /** Per-group override under accounts.<key>.groups.<groupId>. */
 export interface AccountGroupEntry {

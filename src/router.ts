@@ -34,9 +34,21 @@ import { wakeContainer } from './container-runner.js';
 import { getSession } from './db/sessions.js';
 import type { AgentGroup, MessagingGroup, MessagingGroupAgent } from './types.js';
 import type { InboundEvent } from './channels/adapter.js';
+import { checkInboundAccess, holdMessageForPairing } from './v2-access.js';
+import { loadConfig } from './config-loader.js';
+import { getDb } from './db/connection.js';
 
 function generateId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Safe getDb wrapper — returns null when the DB is not yet initialized. */
+function tryGetDb(): ReturnType<typeof getDb> | null {
+  try {
+    return getDb();
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -172,6 +184,48 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
   }
 
   const isMention = event.message.isMention === true;
+
+  // 0b. v2 access gate: account-level dmPolicy / allowFrom / groupPolicy /
+  //     requireMention checks driven by config (see v2-access.ts). Permissive
+  //     when channel has no `accounts` map (legacy config). Step 7 will wire
+  //     `hold-pairing` to a real pending-message store.
+  try {
+    const preParsed = safeParseContent(event.message.content);
+    const access = checkInboundAccess(loadConfig(), tryGetDb(), {
+      channelType: event.channelType,
+      accountKey: 'default',
+      platformId: event.platformId,
+      isGroup: event.message.isGroup === true,
+      senderRawId: preParsed.senderId ?? null,
+      isMention,
+      text: preParsed.text ?? '',
+    });
+    if (access.action === 'deny') {
+      log.debug('v2 access gate: deny', {
+        channelType: event.channelType,
+        platformId: event.platformId,
+        reason: access.reason,
+      });
+      return;
+    }
+    if (access.action === 'hold-pairing') {
+      holdMessageForPairing(
+        event.channelType,
+        'default',
+        event.platformId,
+        preParsed.text ?? '',
+      );
+      return;
+    }
+  } catch (err) {
+    // Gate failures should never strand inbound messages — log and fall
+    // through to legacy behaviour.
+    log.warn('v2 access gate threw — falling through to legacy routing', {
+      channelType: event.channelType,
+      platformId: event.platformId,
+      err: (err as Error)?.message,
+    });
+  }
 
   // 1. Combined lookup: messaging_group row + count of wired agents in a
   //    single query. Cheap short-circuit for the common "unwired channel"
