@@ -143,6 +143,31 @@ export function migrateChatsToV2(
   };
 
   const configPath = opts.configPath ?? paths.config;
+  // Bug 4 defense: prod configs persist chats under `channels.<k>.chats[]`,
+  // not the top-level `chats` Record. loadConfig() normally merges via
+  // normalizeChats() but if the migrator is called with a raw config the
+  // entries can go missing. Harvest them into `config.chats` first so
+  // the loop below is the single source of truth.
+  if ((!config.chats || Object.keys(config.chats).length === 0) && config.channels && typeof config.channels === 'object') {
+    const harvested: Record<string, { name: string; isMain?: boolean; agentId?: string; requiresTrigger?: boolean }> = {};
+    for (const [, chDef] of Object.entries(config.channels) as Array<[string, unknown]>) {
+      const chats = (chDef as { chats?: unknown })?.chats;
+      if (!Array.isArray(chats)) continue;
+      for (const entry of chats as Array<{ jid?: string; name?: string; isMain?: boolean; agentId?: string; requiresTrigger?: boolean }>) {
+        if (entry?.jid && !harvested[entry.jid]) {
+          harvested[entry.jid] = {
+            name: entry.name || entry.jid,
+            isMain: entry.isMain,
+            agentId: entry.agentId,
+            requiresTrigger: entry.requiresTrigger,
+          };
+        }
+      }
+    }
+    if (Object.keys(harvested).length > 0) {
+      (config as { chats?: typeof harvested }).chats = harvested;
+    }
+  }
   const hasConfigChats = !!config.chats && typeof config.chats === 'object' && Object.keys(config.chats).length > 0;
 
   // ── Snapshot nanoclaw.json before any mutation ─────────────────────────
@@ -168,6 +193,17 @@ export function migrateChatsToV2(
       const now = new Date().toISOString();
 
       if (hasConfigChats) {
+        // Bug 3 fix: legacy configs ship only `agents.defaults`. reconcile
+        // step 1 projects `agents.list[]` → agent_groups, so without a list
+        // the table stays empty and no messaging_group_agents row can ever
+        // bind. Bootstrap a single 'main' entry derived from defaults so
+        // the projection has something to work with. Idempotent: skip if
+        // the user already declared at least one named agent.
+        const agentsCfg = (config as unknown as { agents?: { defaults?: Record<string, unknown>; list?: Array<Record<string, unknown>> } }).agents;
+        if (agentsCfg && agentsCfg.defaults && (!Array.isArray(agentsCfg.list) || agentsCfg.list.length === 0)) {
+          agentsCfg.list = [{ id: 'main', ...agentsCfg.defaults }];
+          log.info('🪧  v2 migrate: bootstrapped agents.list = [{ id: "main", ...defaults }]');
+        }
         const insertUser = db.prepare(`INSERT OR IGNORE INTO users (id, kind, created_at) VALUES (?, ?, ?)`);
         const insertOwnerRole = db.prepare(
           `INSERT OR IGNORE INTO user_roles (user_id, role, agent_group_id, granted_at)
@@ -189,7 +225,7 @@ export function migrateChatsToV2(
           let isGroup = opts.isGroupByJid?.get(jid);
           if (isGroup === undefined) isGroup = heuristicIsGroup(channelType, rawId);
 
-          const accounts = ensureAccountsBag(config, channelKey);
+          const accounts = ensureAccountsBag(config, channelType);
           const acc = accounts.default;
 
           if (isGroup) {
@@ -201,7 +237,7 @@ export function migrateChatsToV2(
             if (acc.groups[rawId] === undefined) {
               acc.groups[rawId] = { requireMention: true };
               log.info(
-                `🪧  v2 migrate: group ${jid} → accounts.${channelKey}.default.groups['${rawId}'] (requireMention=true; legacy trigger-only default preserved)`,
+                `🪧  v2 migrate: group ${jid} → accounts.${channelType}.default.groups['${rawId}'] (requireMention=true; legacy trigger-only default preserved)`,
               );
             }
             summary.groups.push(jid);
@@ -222,23 +258,28 @@ export function migrateChatsToV2(
             }
           }
 
-          // Bindings (Flag 3): if the chat entry carries an agentId hint,
-          // surface it as a top-level `bindings[]` rule on the same channel/
-          // account so the new router has an authoritative routing source.
-          // Dedupe by (agentId, channel, accountId='default').
-          if (entry.agentId) {
+          // Bindings (Flag 3): default to the first declared agent (or the
+          // bootstrap-derived 'main') so legacy chats[] (which never carry
+          // entry.agentId) still produce a binding the router can match.
+          // Without this, bindings[] stays empty → no messaging_group_agents
+          // → router drops every message.
+          const declaredList = ((config as { agents?: { list?: Array<{ id?: string }> } }).agents?.list ?? [])
+            .map((a) => a?.id)
+            .filter((id): id is string => !!id);
+          const targetAgentId = entry.agentId || declaredList[0] || 'main';
+          {
             const bindings = ((config as { bindings?: import('../config-loader.js').Binding[] }).bindings ??= []);
             const dup = bindings.some(
               (b) =>
-                b.agentId === entry.agentId &&
-                b.match?.channel === channelKey &&
+                b.agentId === targetAgentId &&
+                b.match?.channel === channelType &&
                 (b.match?.accountId ?? 'default') === 'default' &&
                 !b.match?.peer?.id,
             );
             if (!dup) {
               bindings.push({
-                agentId: entry.agentId,
-                match: { channel: channelKey, accountId: 'default' },
+                agentId: targetAgentId,
+                match: { channel: channelType, accountId: 'default' },
               });
             }
           }

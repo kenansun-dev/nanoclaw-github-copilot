@@ -199,9 +199,9 @@ describe('initAndReconcileV2 — boot smoke', () => {
     // so reconcile sees them as pre-existing (INSERT OR IGNORE → not in
     // summary.inserted). Verify final DB state instead.
     const db = getDb();
-    const ownerUser = db
-      .prepare('SELECT id FROM users WHERE id = ?')
-      .get('telegram:8731187021') as { id: string } | undefined;
+    const ownerUser = db.prepare('SELECT id FROM users WHERE id = ?').get('telegram:8731187021') as
+      | { id: string }
+      | undefined;
     expect(ownerUser?.id).toBe('telegram:8731187021');
     const ownerRole = db
       .prepare(`SELECT user_id FROM user_roles WHERE user_id = ? AND role = 'owner'`)
@@ -212,14 +212,14 @@ describe('initAndReconcileV2 — boot smoke', () => {
     // Verify on-disk config now has v2 fields and `chats` is gone.
     const writtenCfg = JSON.parse(fs.readFileSync(path.join(wsDir, 'nanoclaw.json'), 'utf-8'));
     expect(writtenCfg.chats).toBeUndefined();
-    // Migrator writes under channelKey ('tg' from the jid prefix), not channelType ('telegram').
-    expect(writtenCfg.channels.tg.accounts.default.allowFrom).toContain('8731187021');
+    // Bug 1 fix: writes go to channels.<channelType>, not channels.<channelKey>.
+    expect(writtenCfg.channels.telegram.accounts.default.allowFrom).toContain('8731187021');
     expect(writtenCfg.commands?.ownerAllowFrom).toContain('telegram:8731187021');
     expect(writtenCfg.bindings ?? []).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           agentId: 'main',
-          match: expect.objectContaining({ channel: 'tg', accountId: 'default' }),
+          match: expect.objectContaining({ channel: 'telegram', accountId: 'default' }),
         }),
       ]),
     );

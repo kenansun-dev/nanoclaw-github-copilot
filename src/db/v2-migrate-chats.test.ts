@@ -350,7 +350,11 @@ describe('migrateChatsToV2 — bindings emission (Flag 3)', () => {
     });
   });
 
-  it('chats without agentId do not produce any binding', () => {
+  it('chats without agentId fall back to a default binding for the channel (Bug 2 fix)', () => {
+    // Bug 2 fix: legacy chats[] entries never carry agentId. Without a
+    // default-binding fallback, the router has no agent to route to and
+    // drops every inbound. Use first declared agent (or bootstrapped
+    // 'main') as the binding target.
     const db = open();
     const cfg = makeConfig({
       chats: {
@@ -358,6 +362,68 @@ describe('migrateChatsToV2 — bindings emission (Flag 3)', () => {
       },
     });
     migrateChatsToV2(cfg, db, { skipSaveConfig: true, skipSnapshot: true });
-    expect(cfg.bindings ?? []).toEqual([]);
+    expect(cfg.bindings ?? []).toEqual([
+      { agentId: 'main', match: { channel: 'telegram', accountId: 'default' } },
+    ]);
+  });
+});
+
+describe('migrateChatsToV2 — prod-shape regressions (4-bug batch)', () => {
+  it('Bug 1: writes accounts under channelType, not the jid prefix (no fake `tg`/`tui` channels)', () => {
+    const db = open();
+    const cfg = makeConfig({
+      chats: { 'tg:8731': { name: 'kenan-tg', isMain: true } },
+    });
+    migrateChatsToV2(cfg, db, { skipSaveConfig: true, skipSnapshot: true });
+    const channels = (cfg as unknown as { channels: Record<string, { accounts?: { default?: { allowFrom?: string[] } } }> }).channels;
+    expect(channels.telegram.accounts?.default?.allowFrom).toContain('8731');
+    expect(channels.tg).toBeUndefined();
+  });
+
+  it('Bug 3: bootstraps agents.list = [{ id: "main", ...defaults }] when only defaults present', () => {
+    const db = open();
+    const cfg = makeConfig({
+      chats: { 'telegram:8731': { name: 'Owner DM', isMain: true } },
+    });
+    expect(cfg.agents.list).toEqual([]);
+    migrateChatsToV2(cfg, db, { skipSaveConfig: true, skipSnapshot: true });
+    expect(cfg.agents.list).toHaveLength(1);
+    expect(cfg.agents.list?.[0]?.id).toBe('main');
+    expect(cfg.agents.list?.[0]?.name).toBe('D');
+  });
+
+  it('Bug 3 idempotent: existing agents.list is preserved (no second "main" appended)', () => {
+    const db = open();
+    const cfg = makeConfig({
+      chats: { 'telegram:8731': { name: 'Owner DM', isMain: true } },
+      agents: {
+        defaults: { model: 'm', name: 'D', triggerWord: '@d', hasOwnNumber: false, mode: 'host' },
+        list: [{ id: 'work', model: 'm', name: 'Work', triggerWord: '@w', hasOwnNumber: false, mode: 'host' }],
+      },
+    });
+    migrateChatsToV2(cfg, db, { skipSaveConfig: true, skipSnapshot: true });
+    expect(cfg.agents.list?.map((a) => a.id)).toEqual(['work']);
+    expect(cfg.bindings?.[0]?.agentId).toBe('work');
+  });
+
+  it('Bug 4: harvests channels.<k>.chats[] when top-level config.chats is empty', () => {
+    const db = open();
+    const cfg = makeConfig({
+      chats: {},
+      channels: {
+        discord: { enabled: false },
+        teams: { enabled: false, webhookPort: 3978, authMode: 'secret' },
+        telegram: {
+          enabled: true,
+          chats: [{ jid: 'tg:8731', name: 'kenan-tg', isMain: true }],
+        } as never,
+      },
+    });
+    migrateChatsToV2(cfg, db, { skipSaveConfig: true, skipSnapshot: true });
+    const channels = (cfg as unknown as { channels: Record<string, { accounts?: { default?: { allowFrom?: string[] } } }> }).channels;
+    expect(channels.telegram.accounts?.default?.allowFrom).toContain('8731');
+    expect(cfg.bindings ?? []).toEqual([
+      { agentId: 'main', match: { channel: 'telegram', accountId: 'default' } },
+    ]);
   });
 });
