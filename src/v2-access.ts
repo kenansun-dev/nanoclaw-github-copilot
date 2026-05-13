@@ -408,4 +408,3 @@ export function listPendingPairings(db: Database.Database | null | undefined): A
     return [];
   }
 }
-

@@ -131,9 +131,7 @@ export function reconcileConfigToDb(config: NanoclawConfig, db: Database.Databas
     const declaredAgents = (config.agents?.list ?? []).filter((a) => a.id);
     const declaredById = new Map(declaredAgents.map((a) => [a.id!, a]));
 
-    const existingAgents = db
-      .prepare('SELECT id, name, agent_provider, archived_at FROM agent_groups')
-      .all() as Array<{
+    const existingAgents = db.prepare('SELECT id, name, agent_provider, archived_at FROM agent_groups').all() as Array<{
       id: string;
       name: string;
       agent_provider: string | null;
@@ -234,9 +232,9 @@ export function reconcileConfigToDb(config: NanoclawConfig, db: Database.Databas
     // (src/modules/permissions/access.ts) then accepts them automatically
     // and the upstream sender-approval flow is bypassed for known users.
     // Owners are implicitly members via `user_roles` and need no row.
-    const liveAgentGroupIds = db
-      .prepare(`SELECT id FROM agent_groups WHERE archived_at IS NULL`)
-      .all() as Array<{ id: string }>;
+    const liveAgentGroupIds = db.prepare(`SELECT id FROM agent_groups WHERE archived_at IS NULL`).all() as Array<{
+      id: string;
+    }>;
 
     const insertMember = db.prepare(
       `INSERT OR IGNORE INTO agent_group_members (user_id, agent_group_id, added_by, added_at)

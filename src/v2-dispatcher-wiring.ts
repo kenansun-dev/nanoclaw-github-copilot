@@ -26,7 +26,6 @@
  * avoid hitting real fork modules from a unit test.
  */
 
-import type { AccessGateFn } from './router.js';
 import type { AbortForkDeps } from './modules/abort-extensions/index.js';
 
 export type V2Mode = string | undefined;
@@ -57,12 +56,6 @@ export interface V2WiringDeps {
 }
 
 export interface V2WiringLoaders {
-  loadRouter?: () => Promise<{
-    setAccessGate: (gate: AccessGateFn) => void;
-  }>;
-  loadSenderAllowlist?: () => Promise<{
-    makeSenderAllowlistGate: () => AccessGateFn;
-  }>;
   loadAbortFork?: () => Promise<{
     installAbortFork: (deps: AbortForkDeps) => void;
   }>;
@@ -73,8 +66,6 @@ export interface V2WiringLoaders {
 }
 
 const defaultLoaders: Required<V2WiringLoaders> = {
-  loadRouter: () => import('./router.js'),
-  loadSenderAllowlist: () => import('./modules/sender-allowlist-extensions/index.js'),
   loadAbortFork: () => import('./modules/abort-extensions/index.js'),
   loadRegisteredGroupsFork: () => import('./modules/registered-groups-extensions/index.js'),
   loadModulesBarrel: () => import('./modules/index.js'),
@@ -108,18 +99,17 @@ export async function installV2DispatcherHooks(
   const ld = { ...defaultLoaders, ...loaders };
 
   try {
-    const { setAccessGate } = await ld.loadRouter();
-    const { makeSenderAllowlistGate } = await ld.loadSenderAllowlist();
     const { installAbortFork } = await ld.loadAbortFork();
     const { installRegisteredGroupsFork } = await ld.loadRegisteredGroupsFork();
     // v2 module barrels self-register on import (approvals, interactive,
     // scheduling, permissions, agent-to-agent, self-mod). Importing
     // here, after channel adapters init, matches the boot order
     // specified in docs/v2-migration-inventory.md §"Side-effect import
-    // order".
+    // order". Notably permissions/index.ts calls setAccessGate() with
+    // the upstream `canAccessAgentGroup` wrapper — PR-D removed the
+    // fork-only sender-allowlist gate so we let upstream win.
     await ld.loadModulesBarrel();
 
-    setAccessGate(makeSenderAllowlistGate());
     installAbortFork({
       killActive: deps.killActive,
       sendAck: deps.sendAck,
@@ -130,7 +120,7 @@ export async function installV2DispatcherHooks(
       kind: 'installed',
       mode: effectiveMode,
       shadow: effectiveMode === '2',
-      gates: ['sender-allowlist'],
+      gates: ['upstream-permissions'],
       abortHandler: 'fork',
       groupResolver: 'registered-groups-extensions',
     };

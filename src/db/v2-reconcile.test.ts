@@ -388,7 +388,10 @@ describe('reconcileConfigToDb — agent_group_members projection (PR-D)', () => 
           hasOwnNumber: false,
           mode: 'host',
         },
-        list: [{ id: 'a1', name: 'A1' }, { id: 'a2', name: 'A2' }],
+        list: [
+          { id: 'a1', name: 'A1' },
+          { id: 'a2', name: 'A2' },
+        ],
       },
       channels: {
         telegram: {

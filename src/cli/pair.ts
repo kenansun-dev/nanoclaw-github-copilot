@@ -13,7 +13,11 @@ import { redeemPairingCode, listPendingPairings, revokePairingCode } from '../v2
  */
 function formatTable(headers: string[], rows: string[][]): string {
   const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? '').length)));
-  const pad = (cells: string[]): string => cells.map((c, i) => (c ?? '').padEnd(widths[i])).join('  ').trimEnd();
+  const pad = (cells: string[]): string =>
+    cells
+      .map((c, i) => (c ?? '').padEnd(widths[i]))
+      .join('  ')
+      .trimEnd();
   return [pad(headers), ...rows.map(pad)].join('\n');
 }
 

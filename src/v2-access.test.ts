@@ -1,4 +1,3 @@
-
 /**
  * Tests for src/v2-access.ts pair flow (post-PR-D: access gate moved to
  * upstream `setAccessGate`; this file only covers pair hold/redeem).
@@ -164,7 +163,9 @@ describe('holdMessageForPairing + redeemPairingCode + sweepExpired', () => {
     expect(rev.ok).toBe(true);
     expect(rev.peerId).toBe('peer-r1');
     expect(rev.removed).toBe(2);
-    const codeCount = (db.prepare(`SELECT COUNT(*) AS c FROM pairing_codes WHERE code = ?`).get(r.code) as { c: number }).c;
+    const codeCount = (
+      db.prepare(`SELECT COUNT(*) AS c FROM pairing_codes WHERE code = ?`).get(r.code) as { c: number }
+    ).c;
     expect(codeCount).toBe(0);
     const pendCount = (
       db.prepare(`SELECT COUNT(*) AS c FROM pending_messages WHERE peer_id = ?`).get('peer-r1') as { c: number }

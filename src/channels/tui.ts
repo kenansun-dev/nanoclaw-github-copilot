@@ -113,8 +113,7 @@ export class TuiChannel implements Channel {
     const config = loadConfig();
     const assistantName = config.agents?.defaults?.name || ASSISTANT_NAME;
     const agentList: Array<{ id: string }> = (config as any).agents?.list ?? [];
-    const tuiAgentId =
-      process.env.TUI_AGENT_ID || (agentList.length > 0 ? agentList[0].id : undefined);
+    const tuiAgentId = process.env.TUI_AGENT_ID || (agentList.length > 0 ? agentList[0].id : undefined);
 
     const existingGroups = this.opts.registeredGroups();
     if (!existingGroups[jid] && this.opts.registerGroup) {
