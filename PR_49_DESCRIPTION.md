@@ -102,3 +102,10 @@ Net +11 (15 new tests in `v2-reconcile.test.ts` + `v2-access.test.ts`,
   should add a deletion / divergence-warn surface.
 - Wire `maybeHoldForPairing` into router (held in `src/v2-access.ts` as a
   pure helper for now to keep PR-D reviewable).
+- `requireMention` projection (step 5) only updates **existing**
+  `messaging_group_agents` rows. A chat that has never received inbound
+  has no mga row yet, so a `requireMention` config change won't apply
+  until first inbound triggers router auto-wire. Acceptable for now
+  (engage_mode default for groups is `mention-sticky`, matching the
+  most common `requireMention=true`); revisit when bindings move under
+  `accounts.*` and reconcile gains enough info to pre-create.
