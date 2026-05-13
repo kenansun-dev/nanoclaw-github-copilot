@@ -15,6 +15,7 @@ import { migration015 } from './015-cli-scope.js';
 import { migration105ForkV2Schema } from './105-fork-v2-schema.js';
 import { moduleApprovalsPendingApprovals } from './module-approvals-pending-approvals.js';
 import { moduleApprovalsTitleOptions } from './module-approvals-title-options.js';
+import { prepareForV2Migrations } from '../v2-boot-guard.js';
 
 export interface Migration {
   version: number;
@@ -50,7 +51,12 @@ const migrations: Migration[] = [
   migration105ForkV2Schema,
 ];
 
-export function runMigrations(db: Database.Database): void {
+export function runMigrations(db: Database.Database, dbPath: string = ''): void {
+  // Defuse legacy `sessions` table BEFORE migration 001 runs `CREATE TABLE
+  // sessions` (without IF NOT EXISTS). No-op on fresh, in-memory, or
+  // already-migrated DBs. See src/db/v2-boot-guard.ts for the full rationale.
+  prepareForV2Migrations(db, dbPath);
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_version (
       version INTEGER PRIMARY KEY,
