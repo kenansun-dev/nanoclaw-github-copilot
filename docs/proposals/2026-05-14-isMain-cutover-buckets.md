@@ -191,6 +191,49 @@ Things I might have missed and want VM eyes on:
 If VM grep finds new sites → add a row to the right bucket above before I
 start commit 1.
 
+### Grep results (2026-05-15 self-run, awaiting VM second pass)
+
+**Found 3 cross-process surfaces literal grep `isMain` missed**:
+
+1. **`is_main` SQL column** (Bucket A/I): `src/db.ts:247-251` (DDL +
+   backfill), `src/db.ts:859,887,921` (SELECT/INSERT). Migration 108
+   in Bucket I needs `DROP COLUMN is_main` before `DROP TABLE`.
+
+2. **`NANOCLAW_IS_MAIN` env var** (cross-process snapshot wire — **new
+   Bucket J**): host stamps env var on container spawn
+   (`container/agent-runner-ghc/src/index.ts:424`). Container reads in:
+   - `container/agent-runner/src/ipc-mcp-stdio.ts:23,178,224,271,297,323,388,429`
+   - `container/agent-runner-ghc/src/ipc-mcp-stdio.ts:25` (mirror)
+   - `container/agent-runner-ghc/src/mcp-tools/server.ts:35`
+
+   Used to: (a) gate `target_group_jid` cross-folder access, (b) filter
+   `current_tasks.json` reads, (c) emit IPC `isMain: String(isMain)`
+   header back to host, (d) hide group registration commands. **All
+   four are the same semantic as Bucket A** (default-agent binding =
+   privileged). Replace env var with `NANOCLAW_IS_DEFAULT_AGENT=0|1`
+   stamped from `mgaIsDefaultAgent(mga)`. Container code keeps the same
+   shape — just rename the constant.
+
+3. **`available_groups.json` / `current_tasks.json` snapshot files**
+   (Bucket A consumer side): writer at `container-runner.ts:734,776`
+   filters tasks/groups by `isMain` boolean param. Reader at
+   `container/agent-runner/src/ipc-mcp-stdio.ts:213,224`. Snapshot
+   payload shape itself does **not** carry `isMain` field — only
+   filtering on write side. Replacing writer's `isMain` param with
+   `isDefaultAgent` is sufficient; on-disk JSON shape unchanged.
+
+**Updated commit plan**: add Bucket J (env var rename) **between A and
+E**, requires coordinated host + container/agent-runner-ghc + container/agent-runner
+build (3 packages). Suggest splitting into J1 (host renames + writes
+both env vars during transition) and J2 (containers read new var, host
+drops old). This is the only commit needing container rebuild.
+
+### Grep negative — NOT found anywhere
+- `group['isMain']` (any quoted dynamic access) — 0 hits
+- IPC envelope carrying `senderUserId` / `userId` from sandbox to host —
+  **0 hits**, confirms Bucket C **must** stay folder-key. Open Q
+  pre-decided in favor of (i).
+
 ---
 
 ## Open question for kenan / VM (one)
