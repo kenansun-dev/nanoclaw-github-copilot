@@ -421,7 +421,15 @@ async function main(): Promise<void> {
             env: {
               NANOCLAW_CHAT_JID: containerInput.chatJid,
               NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
+              // Bucket J1 (Step 3+4 cutover): stamp BOTH the legacy
+              // `NANOCLAW_IS_MAIN` and the new `NANOCLAW_IS_DEFAULT_AGENT`
+              // env vars during the transition. Readers prefer the new
+              // var with a fallback to the legacy var (and a warn on
+              // fallback). J2 will drop the legacy var after the warn
+              // count goes to zero. See
+              // docs/proposals/2026-05-14-isMain-cutover-buckets.md.
               NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+              NANOCLAW_IS_DEFAULT_AGENT: containerInput.isMain ? '1' : '0',
             },
             tools: ['*'],
           },

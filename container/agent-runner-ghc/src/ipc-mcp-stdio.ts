@@ -22,7 +22,16 @@ const RESPONSES_DIR = path.join(IPC_DIR, 'responses');
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
-const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+// Bucket J1 (Step 3+4 cutover): prefer NANOCLAW_IS_DEFAULT_AGENT (new),
+// fall back to NANOCLAW_IS_MAIN (legacy) with a warn. See
+// docs/proposals/2026-05-14-isMain-cutover-buckets.md.
+const rawNew = process.env.NANOCLAW_IS_DEFAULT_AGENT;
+const rawOld = process.env.NANOCLAW_IS_MAIN;
+if (rawNew === undefined && rawOld !== undefined) {
+  // eslint-disable-next-line no-console
+  console.error('[nanoclaw J1] NANOCLAW_IS_DEFAULT_AGENT missing; falling back to legacy NANOCLAW_IS_MAIN');
+}
+const isMain = (rawNew ?? rawOld) === '1';
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });

@@ -32,7 +32,16 @@ export const RESPONSES_DIR = path.join(IPC_DIR, 'responses');
 
 export const chatJid = process.env.NANOCLAW_CHAT_JID!;
 export const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
-export const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+// Bucket J1 (Step 3+4 cutover): prefer NANOCLAW_IS_DEFAULT_AGENT (new),
+// fall back to NANOCLAW_IS_MAIN (legacy) with a warn. See
+// docs/proposals/2026-05-14-isMain-cutover-buckets.md.
+const _rawNewIDA = process.env.NANOCLAW_IS_DEFAULT_AGENT;
+const _rawOldIM = process.env.NANOCLAW_IS_MAIN;
+if (_rawNewIDA === undefined && _rawOldIM !== undefined) {
+  // eslint-disable-next-line no-console
+  console.error('[nanoclaw J1] NANOCLAW_IS_DEFAULT_AGENT missing; falling back to legacy NANOCLAW_IS_MAIN');
+}
+export const isMain = (_rawNewIDA ?? _rawOldIM) === '1';
 
 // ---------------------------------------------------------------------------
 // Atomic IPC file write (preserved verbatim)
