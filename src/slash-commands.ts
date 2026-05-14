@@ -308,12 +308,11 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
   if (input === '/tasks') {
     if (ctx.channel) {
       try {
-        const [{ getAllTasks, getRegisteredGroup }, { formatTasksText }, { isOwner: v2IsOwner }] =
-          await Promise.all([
-            import('./db.js'),
-            import('./cli/task-format.js'),
-            import('./modules/permissions/db/user-roles.js'),
-          ]);
+        const [{ getAllTasks, getRegisteredGroup }, { formatTasksText }, { isOwner: v2IsOwner }] = await Promise.all([
+          import('./db.js'),
+          import('./cli/task-format.js'),
+          import('./modules/permissions/db/user-roles.js'),
+        ]);
         // Parity with the prior MCP `list_tasks` (container/.../mcp-tools/scheduling.ts:174):
         //   * Filter by `group_folder` (NOT `chat_jid`) so isMain DMs that
         //     collapse onto a shared session see all of their sibling DM
@@ -329,13 +328,18 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
         const isMain = (() => {
           if (ctx.senderId) {
             const v2 = v2IsOwner(ctx.senderId);
-            // Belt-and-suspenders during dual-read window: if v2 says no but
-            // v1 says yes, log so we can spot reconcile gaps before deleting v1.
+            // Belt-and-suspenders during dual-read window: warn on EITHER
+            // direction of mismatch so we can spot reconcile gaps before
+            // deleting v1 in Bucket I (VM review nit on Bucket B).
+            //   * v1=true, v2=false  → v2 missing an owner row
+            //                          (would TIGHTEN access if we cut over now)
+            //   * v1=false, v2=true  → v2 has an owner row v1 doesn't
+            //                          (would WIDEN access — safety-relevant)
             const v1 = !!getRegisteredGroup(ctx.chatJid)?.isMain;
-            if (v1 && !v2) {
+            if (v1 !== v2) {
               log.warn(
-                { chatJid: ctx.chatJid, senderId: ctx.senderId },
-                '/tasks dual-read mismatch: v1 isMain=true but v2 isOwner=false (Bucket B)',
+                { chatJid: ctx.chatJid, senderId: ctx.senderId, v1IsMain: v1, v2IsOwner: v2 },
+                '/tasks dual-read mismatch (Bucket B); v2 still authoritative',
               );
             }
             return v2;

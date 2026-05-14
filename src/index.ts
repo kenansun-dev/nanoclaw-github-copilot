@@ -310,15 +310,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     killActiveRunner: (jid: string) => queue.killActive(jid),
   };
   const regularMessages: typeof missedMessages = [];
+  // Bucket B (Step 3+4): qualify per-message senderId so /tasks et al.
+  // can run owner checks via v2 user_roles. parseChatJid maps known
+  // chatJid prefixes (tg:/discord:/teams:/...) to channelType; rawId
+  // comes from the inbound message's `sender` column (db.ts:427).
+  // chatJid is fixed for this batch — lift the parse out of the loop
+  // (VM review nit on Bucket B).
+  const parsedJid = parseChatJid(chatJid);
   for (const msg of missedMessages) {
     const slashInput = normalizeSlashInput(msg.content);
-    // Bucket B (Step 3+4): qualify per-message senderId so /tasks et al.
-    // can run owner checks via v2 user_roles. parseChatJid maps known
-    // chatJid prefixes (tg:/discord:/teams:/...) to channelType; rawId
-    // comes from the inbound message's `sender` column (db.ts:427).
-    const parsed = parseChatJid(chatJid);
-    const senderId =
-      parsed && msg.sender ? `${parsed.channelType}:${msg.sender}` : undefined;
+    const senderId = parsedJid && msg.sender ? `${parsedJid.channelType}:${msg.sender}` : undefined;
     const slashResult = await handleSlashCommand(slashInput, { ...slashCtx, senderId });
     if (slashResult.handled) {
       lastAgentTimestamp[chatJid] = msg.timestamp;
@@ -1085,12 +1086,12 @@ async function startMessageLoop(): Promise<void> {
               killActiveRunner: (jid: string) => queue.killActive(jid),
             };
             const nonSlash: typeof messagesToSend = [];
+            // Bucket B (Step 3+4): see dispatch comment above. chatJid is
+            // fixed for this batch; parse once (VM review nit).
+            const parsedJid2 = parseChatJid(chatJid);
             for (const msg of messagesToSend) {
               const slashInput = normalizeSlashInput(msg.content);
-              // Bucket B (Step 3+4): see dispatch comment above.
-              const parsed = parseChatJid(chatJid);
-              const senderId =
-                parsed && msg.sender ? `${parsed.channelType}:${msg.sender}` : undefined;
+              const senderId = parsedJid2 && msg.sender ? `${parsedJid2.channelType}:${msg.sender}` : undefined;
               const slashResult = await handleSlashCommand(slashInput, { ...slashCtx2, senderId });
               if (slashResult.handled) {
                 lastAgentTimestamp[chatJid] = msg.timestamp;
