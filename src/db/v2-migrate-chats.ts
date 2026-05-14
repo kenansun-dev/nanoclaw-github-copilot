@@ -148,12 +148,23 @@ export function migrateChatsToV2(
   // normalizeChats() but if the migrator is called with a raw config the
   // entries can go missing. Harvest them into `config.chats` first so
   // the loop below is the single source of truth.
-  if ((!config.chats || Object.keys(config.chats).length === 0) && config.channels && typeof config.channels === 'object') {
-    const harvested: Record<string, { name: string; isMain?: boolean; agentId?: string; requiresTrigger?: boolean }> = {};
+  if (
+    (!config.chats || Object.keys(config.chats).length === 0) &&
+    config.channels &&
+    typeof config.channels === 'object'
+  ) {
+    const harvested: Record<string, { name: string; isMain?: boolean; agentId?: string; requiresTrigger?: boolean }> =
+      {};
     for (const [, chDef] of Object.entries(config.channels) as Array<[string, unknown]>) {
       const chats = (chDef as { chats?: unknown })?.chats;
       if (!Array.isArray(chats)) continue;
-      for (const entry of chats as Array<{ jid?: string; name?: string; isMain?: boolean; agentId?: string; requiresTrigger?: boolean }>) {
+      for (const entry of chats as Array<{
+        jid?: string;
+        name?: string;
+        isMain?: boolean;
+        agentId?: string;
+        requiresTrigger?: boolean;
+      }>) {
         if (entry?.jid && !harvested[entry.jid]) {
           harvested[entry.jid] = {
             name: entry.name || entry.jid,
@@ -199,7 +210,11 @@ export function migrateChatsToV2(
         // bind. Bootstrap a single 'main' entry derived from defaults so
         // the projection has something to work with. Idempotent: skip if
         // the user already declared at least one named agent.
-        const agentsCfg = (config as unknown as { agents?: { defaults?: Record<string, unknown>; list?: Array<Record<string, unknown>> } }).agents;
+        const agentsCfg = (
+          config as unknown as {
+            agents?: { defaults?: Record<string, unknown>; list?: Array<Record<string, unknown>> };
+          }
+        ).agents;
         if (agentsCfg && agentsCfg.defaults && (!Array.isArray(agentsCfg.list) || agentsCfg.list.length === 0)) {
           agentsCfg.list = [{ id: 'main', ...agentsCfg.defaults }];
           log.info('🪧  v2 migrate: bootstrapped agents.list = [{ id: "main", ...defaults }]');
@@ -257,11 +272,18 @@ export function migrateChatsToV2(
               // `channels` key, deepMerge leaves it pointing at the shared
               // DEFAULTS.channels object by reference. Mutation would
               // leak globally and bleed across boots / tests.
-              const cfgRoot = config as unknown as { channels?: Record<string, { roleBindings?: Record<string, 'owner' | 'admin'>; [k: string]: unknown }> };
+              const cfgRoot = config as unknown as {
+                channels?: Record<string, { roleBindings?: Record<string, 'owner' | 'admin'>; [k: string]: unknown }>;
+              };
               cfgRoot.channels = { ...((cfgRoot.channels ?? {}) as Record<string, never>) };
               const channels = cfgRoot.channels!;
               const existing = channels[channelType] ?? ({ enabled: false } as never);
-              const ch = { ...existing, roleBindings: { ...((existing as { roleBindings?: Record<string, 'owner' | 'admin'> }).roleBindings ?? {}) } };
+              const ch = {
+                ...existing,
+                roleBindings: {
+                  ...((existing as { roleBindings?: Record<string, 'owner' | 'admin'> }).roleBindings ?? {}),
+                },
+              };
               if (ch.roleBindings[rawId] !== 'owner' && ch.roleBindings[rawId] !== 'admin') {
                 ch.roleBindings[rawId] = 'owner';
               }

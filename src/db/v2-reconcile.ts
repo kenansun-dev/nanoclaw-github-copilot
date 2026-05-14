@@ -92,6 +92,12 @@ function channelKeyToType(channelKey: string): string {
 
 interface MutableAccount {
   allowFrom?: string[];
+  /**
+   * @deprecated Auto-merged into `allowFrom` by
+   * `autoMergeGroupAllowFrom` and then deleted. Kept on the type only
+   * so the merge function can read+drop it; reconcile readers must not
+   * reference this field.
+   */
   groupAllowFrom?: string[];
   groups?: Record<string, { allowFrom?: string[]; requireMention?: boolean }>;
   [k: string]: unknown;
@@ -172,6 +178,10 @@ function autoMergeOwnerAllowFrom(config: NanoclawConfig): void {
     }
     channels[channelType] = ch;
   }
+  // Drop the deprecated field from the in-memory config so downstream
+  // readers see a single source of truth. Symmetric with
+  // autoMergeGroupAllowFrom which deletes acc.groupAllowFrom.
+  delete cmds!.ownerAllowFrom;
   if (merged && !warnedDeprecatedOwnerAllowFrom) {
     warnedDeprecatedOwnerAllowFrom = true;
     log.warn(
@@ -192,9 +202,9 @@ function collectAllowFromUsers(config: NanoclawConfig): Map<string, string> {
     if (!accounts) continue;
     for (const acc of Object.values(accounts)) {
       for (const raw of acc.allowFrom ?? []) users.set(`${channelType}:${raw}`, channelType);
-      // groupAllowFrom should already be merged by autoMergeGroupAllowFrom,
-      // but read defensively in case a caller bypassed the merge step.
-      for (const raw of acc.groupAllowFrom ?? []) users.set(`${channelType}:${raw}`, channelType);
+      // groupAllowFrom intentionally not read here — merged into
+      // allowFrom in the pre-tx autoMergeGroupAllowFrom step. Field is
+      // also dropped from MutableAccount.
       for (const g of Object.values(acc.groups ?? {})) {
         for (const raw of g.allowFrom ?? []) users.set(`${channelType}:${raw}`, channelType);
       }
@@ -323,9 +333,7 @@ export function reconcileConfigToDb(config: NanoclawConfig, db: Database.Databas
       `INSERT OR IGNORE INTO user_roles (user_id, role, agent_group_id, granted_at)
        VALUES (?, ?, NULL, ?)`,
     );
-    const deleteRole = db.prepare(
-      `DELETE FROM user_roles WHERE user_id = ? AND role = ? AND agent_group_id IS NULL`,
-    );
+    const deleteRole = db.prepare(`DELETE FROM user_roles WHERE user_id = ? AND role = ? AND agent_group_id IS NULL`);
 
     for (const r of roles) {
       const key = `${r.userId}|${r.role}`;

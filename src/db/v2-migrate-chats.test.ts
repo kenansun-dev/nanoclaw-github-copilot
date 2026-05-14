@@ -88,9 +88,9 @@ describe('migrateChatsToV2 — config side', () => {
     expect(cfg.channels.telegram.accounts!.default.allowFrom).toEqual(['8731']);
     // v2 RBAC cutover: isMain → channels.<type>.roleBindings instead of
     // commands.ownerAllowFrom.
-    expect(
-      (cfg.channels.telegram as unknown as { roleBindings: Record<string, string> }).roleBindings,
-    ).toEqual({ '8731': 'owner' });
+    expect((cfg.channels.telegram as unknown as { roleBindings: Record<string, string> }).roleBindings).toEqual({
+      '8731': 'owner',
+    });
 
     const user = db.prepare(`SELECT id, kind FROM users WHERE id = ?`).get('telegram:8731') as {
       id: string;
@@ -368,9 +368,7 @@ describe('migrateChatsToV2 — bindings emission (Flag 3)', () => {
       },
     });
     migrateChatsToV2(cfg, db, { skipSaveConfig: true, skipSnapshot: true });
-    expect(cfg.bindings ?? []).toEqual([
-      { agentId: 'main', match: { channel: 'telegram', accountId: 'default' } },
-    ]);
+    expect(cfg.bindings ?? []).toEqual([{ agentId: 'main', match: { channel: 'telegram', accountId: 'default' } }]);
   });
 });
 
@@ -381,7 +379,9 @@ describe('migrateChatsToV2 — prod-shape regressions (4-bug batch)', () => {
       chats: { 'tg:8731': { name: 'kenan-tg', isMain: true } },
     });
     migrateChatsToV2(cfg, db, { skipSaveConfig: true, skipSnapshot: true });
-    const channels = (cfg as unknown as { channels: Record<string, { accounts?: { default?: { allowFrom?: string[] } } }> }).channels;
+    const channels = (
+      cfg as unknown as { channels: Record<string, { accounts?: { default?: { allowFrom?: string[] } } }> }
+    ).channels;
     expect(channels.telegram.accounts?.default?.allowFrom).toContain('8731');
     expect(channels.tg).toBeUndefined();
   });
@@ -426,10 +426,10 @@ describe('migrateChatsToV2 — prod-shape regressions (4-bug batch)', () => {
       },
     });
     migrateChatsToV2(cfg, db, { skipSaveConfig: true, skipSnapshot: true });
-    const channels = (cfg as unknown as { channels: Record<string, { accounts?: { default?: { allowFrom?: string[] } } }> }).channels;
+    const channels = (
+      cfg as unknown as { channels: Record<string, { accounts?: { default?: { allowFrom?: string[] } } }> }
+    ).channels;
     expect(channels.telegram.accounts?.default?.allowFrom).toContain('8731');
-    expect(cfg.bindings ?? []).toEqual([
-      { agentId: 'main', match: { channel: 'telegram', accountId: 'default' } },
-    ]);
+    expect(cfg.bindings ?? []).toEqual([{ agentId: 'main', match: { channel: 'telegram', accountId: 'default' } }]);
   });
 });

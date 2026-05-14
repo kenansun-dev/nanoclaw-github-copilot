@@ -732,9 +732,9 @@ describe('reconcileConfigToDb — deprecated commands.ownerAllowFrom auto-merge'
         .get();
       expect(row).toBeDefined();
       // (c) live config now carries roleBindings entry
-      expect(
-        (cfg.channels.telegram as unknown as { roleBindings?: Record<string, string> }).roleBindings,
-      ).toEqual({ '8731187021': 'owner' });
+      expect((cfg.channels.telegram as unknown as { roleBindings?: Record<string, string> }).roleBindings).toEqual({
+        '8731187021': 'owner',
+      });
     } finally {
       log.warn = origWarn;
     }
@@ -766,7 +766,11 @@ describe('reconcileConfigToDb — deprecated accounts.*.groupAllowFrom auto-merg
       });
       reconcileConfigToDb(cfg, db);
       expect(warnSpy.filter((m) => m.includes('groupAllowFrom is deprecated')).length).toBe(1);
-      const acc = (cfg.channels.telegram as unknown as { accounts: { default: { allowFrom: string[]; groupAllowFrom?: string[] } } }).accounts.default;
+      const acc = (
+        cfg.channels.telegram as unknown as {
+          accounts: { default: { allowFrom: string[]; groupAllowFrom?: string[] } };
+        }
+      ).accounts.default;
       expect(acc.allowFrom?.sort()).toEqual(['7777', '8731']);
       expect(acc.groupAllowFrom).toBeUndefined();
       // user row created for the merged id
@@ -775,5 +779,58 @@ describe('reconcileConfigToDb — deprecated accounts.*.groupAllowFrom auto-merg
     } finally {
       log.warn = origWarn;
     }
+  });
+});
+
+// Regression: deepMerge in loadConfig keeps DEFAULTS.channels by reference
+// when user config omits `channels`. Pre-cutover bug let autoMerge writes
+// leak into the DEFAULTS singleton and bleed across boots / test cases
+// (was caught by v2-boot.test.ts "auto-migrates legacy chats[]" failing
+// with a stale '99' → 'owner' from a sibling test). Pin behavior:
+// reconcile must not pre-populate roleBindings on a config that never
+// declared the deprecated source field.
+describe('reconcileConfigToDb — DEFAULTS leak regression', () => {
+  beforeEach(() => __resetDeprecationWarningsForTests());
+
+  it('does not leak roleBindings writes across separate config objects', () => {
+    const db = open();
+    // First config: no `channels` key at all + legacy commands.ownerAllowFrom.
+    const cfg1 = {
+      configVersion: 2,
+      agents: {
+        defaults: {
+          provider: 'p', model: 'm', name: 'D', triggerWord: '@d',
+          hasOwnNumber: false, mode: 'host' as const,
+        },
+        list: [{ id: 'main' }],
+      },
+      commands: { ownerAllowFrom: ['telegram:42'] },
+    } as unknown as NanoclawConfig;
+    reconcileConfigToDb(cfg1, db);
+
+    // The autoMerge wrote a fresh `channels` map onto cfg1.
+    expect(
+      (cfg1 as unknown as { channels?: Record<string, { roleBindings?: Record<string, string> }> })
+        .channels?.telegram?.roleBindings,
+    ).toEqual({ '42': 'owner' });
+
+    // Second, completely fresh config: also omits `channels`, has no
+    // commands.ownerAllowFrom. If reconcile had mutated any shared
+    // singleton (e.g. DEFAULTS.channels), this config would arrive with
+    // a phantom roleBindings entry.
+    const cfg2 = {
+      configVersion: 2,
+      agents: {
+        defaults: {
+          provider: 'p', model: 'm', name: 'D', triggerWord: '@d',
+          hasOwnNumber: false, mode: 'host' as const,
+        },
+        list: [{ id: 'main' }],
+      },
+    } as unknown as NanoclawConfig;
+    reconcileConfigToDb(cfg2, db);
+
+    // No channels key was added — nothing to merge into.
+    expect((cfg2 as unknown as { channels?: unknown }).channels).toBeUndefined();
   });
 });

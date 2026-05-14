@@ -415,9 +415,13 @@ export function listPendingPairings(db: Database.Database | null | undefined): A
  * Returns true when `userId` (`<channelType>:<rawId>`) appears in any
  * config-declared allowlist:
  *   - `accounts.<channelKey>.<accountId>.allowFrom`
- *   - `accounts.<channelKey>.<accountId>.groupAllowFrom`
  *   - `accounts.<channelKey>.<accountId>.groups.<peerId>.allowFrom`
- *   - `commands.ownerAllowFrom`
+ *   - `channels.<channelKey>.roleBindings` (owner / admin)
+ *
+ * Legacy paths (`commands.ownerAllowFrom`, `accounts.*.groupAllowFrom`)
+ * are auto-merged + dropped by `reconcileConfigToDb`'s pre-tx step;
+ * after boot they are not present in the live config object and are
+ * intentionally not read here.
  *
  * Mirrors the channel-key → channel-type mapping used by
  * `src/db/v2-reconcile.ts:channelKeyToType` (kept in sync via duplication
@@ -430,26 +434,27 @@ export function isUserConfigAllowed(userId: string, config: unknown): boolean {
   if (!userId || typeof config !== 'object' || config === null) return false;
   const cfg = config as {
     channels?: Record<string, unknown>;
-    commands?: { ownerAllowFrom?: string[] };
   };
-  // commands.ownerAllowFrom is already channel-qualified.
-  for (const oid of cfg.commands?.ownerAllowFrom ?? []) {
-    if (oid === userId) return true;
-  }
   const channels = cfg.channels;
   if (!channels) return false;
   for (const [channelKey, channelDef] of Object.entries(channels)) {
     const channelType = channelKeyForType(channelKey);
-    const accounts = (channelDef as { accounts?: Record<string, unknown> } | undefined)?.accounts;
+    const ch = channelDef as {
+      accounts?: Record<string, unknown>;
+      roleBindings?: Record<string, 'owner' | 'admin'>;
+    } | undefined;
+    // roleBindings: raw id keys (e.g. "8731187021") → fully-qualified.
+    for (const rawId of Object.keys(ch?.roleBindings ?? {})) {
+      if (`${channelType}:${rawId}` === userId) return true;
+    }
+    const accounts = ch?.accounts;
     if (!accounts) continue;
     for (const acc of Object.values(accounts)) {
       const a = acc as {
         allowFrom?: string[];
-        groupAllowFrom?: string[];
         groups?: Record<string, { allowFrom?: string[] }>;
       };
       for (const raw of a.allowFrom ?? []) if (`${channelType}:${raw}` === userId) return true;
-      for (const raw of a.groupAllowFrom ?? []) if (`${channelType}:${raw}` === userId) return true;
       for (const g of Object.values(a.groups ?? {})) {
         for (const raw of g.allowFrom ?? []) if (`${channelType}:${raw}` === userId) return true;
       }

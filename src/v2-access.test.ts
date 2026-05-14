@@ -205,11 +205,14 @@ describe('isUserConfigAllowed (PR-D pair-scoping helper)', () => {
     expect(isUserConfigAllowed('telegram:8731', cfg)).toBe(true);
     expect(isUserConfigAllowed('telegram:9999', cfg)).toBe(false);
   });
-  it('matches accounts.*.groupAllowFrom', () => {
+  it('matches channels.<type>.roleBindings (owner|admin)', () => {
     const cfg = {
-      channels: { discord: { accounts: { default: { groupAllowFrom: ['u1'] } } } },
+      channels: {
+        discord: { roleBindings: { 'u1': 'owner' } },
+      },
     };
     expect(isUserConfigAllowed('discord:u1', cfg)).toBe(true);
+    expect(isUserConfigAllowed('discord:u2', cfg)).toBe(false);
   });
   it('matches accounts.*.groups.*.allowFrom', () => {
     const cfg = {
@@ -219,9 +222,13 @@ describe('isUserConfigAllowed (PR-D pair-scoping helper)', () => {
     };
     expect(isUserConfigAllowed('telegram:gu', cfg)).toBe(true);
   });
-  it('matches commands.ownerAllowFrom (already qualified)', () => {
+  it('does NOT match deprecated commands.ownerAllowFrom (auto-merged + deleted at reconcile)', () => {
+    // After reconcile pre-tx step, commands.ownerAllowFrom is removed
+    // from the live config and its entries land in
+    // channels.<type>.roleBindings. Helper intentionally does not
+    // read the deprecated field.
     const cfg = { commands: { ownerAllowFrom: ['telegram:owner'] } };
-    expect(isUserConfigAllowed('telegram:owner', cfg)).toBe(true);
+    expect(isUserConfigAllowed('telegram:owner', cfg)).toBe(false);
   });
   it('returns false for empty / null inputs', () => {
     expect(isUserConfigAllowed('', {})).toBe(false);
