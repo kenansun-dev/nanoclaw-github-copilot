@@ -9,6 +9,7 @@ import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './log-extensions.js';
 import { RegisteredGroup } from './types-extensions.js';
+import { isMainDualRead } from './v2-default-agent.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<string | void>;
@@ -55,14 +56,19 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
     const registeredGroups = deps.registeredGroups();
 
-    // Build folder→isMain lookup from registered groups
+    // Build folder→isMain lookup from registered groups (v1 authoritative).
+    // Bucket C dual-read (Step 3+4): the v2 answer is `agents.list[]`'s
+    // default-agent id == folder. We compute it per source-folder below
+    // via `isMainDualRead`, which logs `warn` on mismatch so we can grep
+    // cutover progress before deleting the v1 read in Bucket I.
     const folderIsMain = new Map<string, boolean>();
     for (const group of Object.values(registeredGroups)) {
       if (group.isMain) folderIsMain.set(group.folder, true);
     }
 
     for (const sourceGroup of groupFolders) {
-      const isMain = folderIsMain.get(sourceGroup) === true;
+      const v1IsMain = folderIsMain.get(sourceGroup) === true;
+      const isMain = isMainDualRead(sourceGroup, v1IsMain);
       const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
       const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks');
 
