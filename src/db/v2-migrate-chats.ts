@@ -210,8 +210,10 @@ export function migrateChatsToV2(
            VALUES (?, 'owner', NULL, ?)`,
         );
 
-        const commands = ((config as unknown as { commands?: { ownerAllowFrom?: string[] } }).commands ??= {});
-        commands.ownerAllowFrom ??= [];
+        // v2 RBAC cutover: legacy isMain owner promotion now writes to
+        // channels.<channelType>.roleBindings (raw id → 'owner').
+        // commands.ownerAllowFrom is no longer touched here; if a user
+        // config still ships it, reconcileConfigToDb auto-merges + warns.
 
         for (const [jid, entry] of Object.entries(config.chats!)) {
           const parsed = splitJid(jid);
@@ -248,7 +250,22 @@ export function migrateChatsToV2(
 
             if (entry.isMain) {
               const ownerId = `${channelType}:${rawId}`;
-              commands.ownerAllowFrom = pushUnique(commands.ownerAllowFrom, ownerId);
+              // v2 RBAC cutover: write to channels.<channelType>.roleBindings
+              // (raw id → 'owner') instead of commands.ownerAllowFrom.
+              // Shallow-clone `config.channels` and the target channel
+              // before mutating: when the loaded config never declared a
+              // `channels` key, deepMerge leaves it pointing at the shared
+              // DEFAULTS.channels object by reference. Mutation would
+              // leak globally and bleed across boots / tests.
+              const cfgRoot = config as unknown as { channels?: Record<string, { roleBindings?: Record<string, 'owner' | 'admin'>; [k: string]: unknown }> };
+              cfgRoot.channels = { ...((cfgRoot.channels ?? {}) as Record<string, never>) };
+              const channels = cfgRoot.channels!;
+              const existing = channels[channelType] ?? ({ enabled: false } as never);
+              const ch = { ...existing, roleBindings: { ...((existing as { roleBindings?: Record<string, 'owner' | 'admin'> }).roleBindings ?? {}) } };
+              if (ch.roleBindings[rawId] !== 'owner' && ch.roleBindings[rawId] !== 'admin') {
+                ch.roleBindings[rawId] = 'owner';
+              }
+              channels[channelType] = ch as never;
               const userInfo = insertUser.run(ownerId, channelType, now);
               const roleInfo = insertOwnerRole.run(ownerId, now);
               if (userInfo.changes > 0 || roleInfo.changes > 0) {

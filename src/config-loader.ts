@@ -47,10 +47,23 @@ export interface AccountAccessConfig {
   dmPolicy?: DmPolicy;
   allowFrom?: string[];
   groupPolicy?: GroupPolicy;
+  /**
+   * @deprecated v2 cutover: prefer including these ids in `allowFrom`.
+   * Reconcile auto-merges any remaining entries into `allowFrom` and emits
+   * a one-shot deprecation warning per boot.
+   */
   groupAllowFrom?: string[];
   /** Per-group overrides. The wildcard key `"*"` is a fallback for any group. */
   groups?: Record<string, AccountGroupEntry>;
 }
+
+/**
+ * Channel-level role assignments. Sibling to `accounts` on each channel
+ * config. Key = raw platform id (e.g. "8731187021"); value = role.
+ * Both `owner` and `admin` are global (agent_group_id IS NULL) for now;
+ * scoped admin will land in a later step.
+ */
+export type RoleBindings = Record<string, 'owner' | 'admin'>;
 
 export interface TelegramAccountConfig extends AccountAccessConfig {
   botToken?: string;
@@ -118,11 +131,13 @@ export interface NanoclawConfig {
       enabled: boolean;
       botToken?: string;
       accounts?: Record<string, DiscordAccountConfig>;
+      roleBindings?: RoleBindings;
     };
     telegram: {
       enabled: boolean;
       botToken?: string;
       accounts?: Record<string, TelegramAccountConfig>;
+      roleBindings?: RoleBindings;
     };
     teams: {
       enabled: boolean;
@@ -134,6 +149,7 @@ export interface NanoclawConfig {
       certThumbprint?: string;
       certPrivateKeyPath?: string;
       accounts?: Record<string, TeamsAccountConfig>;
+      roleBindings?: RoleBindings;
     };
     [key: string]: { enabled: boolean; [k: string]: unknown };
   };

@@ -214,7 +214,8 @@ describe('initAndReconcileV2 — boot smoke', () => {
     expect(writtenCfg.chats).toBeUndefined();
     // Bug 1 fix: writes go to channels.<channelType>, not channels.<channelKey>.
     expect(writtenCfg.channels.telegram.accounts.default.allowFrom).toContain('8731187021');
-    expect(writtenCfg.commands?.ownerAllowFrom).toContain('telegram:8731187021');
+    // v2 RBAC cutover: isMain → channels.<type>.roleBindings (was: commands.ownerAllowFrom).
+    expect(writtenCfg.channels.telegram.roleBindings).toEqual({ '8731187021': 'owner' });
     expect(writtenCfg.bindings ?? []).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

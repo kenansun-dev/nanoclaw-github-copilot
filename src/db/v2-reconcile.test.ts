@@ -12,11 +12,12 @@
  * lazy on first inbound (router-switch commit).
  */
 import Database from 'better-sqlite3';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 
 import type { NanoclawConfig } from '../config-loader.js';
+import { log } from '../log.js';
 import { runMigrations } from './migrations/index.js';
-import { reconcileConfigToDb } from './v2-reconcile.js';
+import { reconcileConfigToDb, __resetDeprecationWarningsForTests } from './v2-reconcile.js';
 
 function open(): Database.Database {
   const db = new Database(':memory:');
@@ -622,5 +623,157 @@ describe('reconcileConfigToDb — messaging_group_agents engage_mode projection 
       .get('mga-dm') as { engage_mode: string; engage_pattern: string | null };
     expect(row.engage_mode).toBe('pattern');
     expect(row.engage_pattern).toBe('.');
+  });
+});
+
+describe('reconcileConfigToDb — channels.<type>.roleBindings (RBAC step 1+2)', () => {
+  beforeEach(() => __resetDeprecationWarningsForTests());
+
+  it('writes user_roles(role=owner, agent_group_id IS NULL) from channels.telegram.roleBindings', () => {
+    const db = open();
+    const cfg = makeConfig({
+      channels: {
+        discord: { enabled: false },
+        telegram: {
+          enabled: true,
+          roleBindings: { '8731187021': 'owner' },
+        },
+        teams: { enabled: false, webhookPort: 3978, authMode: 'secret' },
+      } as NanoclawConfig['channels'],
+    });
+    const s = reconcileConfigToDb(cfg, db);
+    expect(s.userRoles.inserted).toContain('telegram:8731187021');
+    const row = db
+      .prepare(
+        `SELECT user_id, role, agent_group_id FROM user_roles
+          WHERE user_id = 'telegram:8731187021' AND role = 'owner'`,
+      )
+      .get() as { user_id: string; role: string; agent_group_id: null } | undefined;
+    expect(row).toBeDefined();
+    expect(row!.agent_group_id).toBeNull();
+    // user row also bootstrapped
+    const u = db.prepare(`SELECT id, kind FROM users WHERE id = ?`).get('telegram:8731187021');
+    expect(u).toEqual({ id: 'telegram:8731187021', kind: 'telegram' });
+  });
+
+  it('writes admin role globally (agent_group_id IS NULL) from roleBindings', () => {
+    const db = open();
+    const cfg = makeConfig({
+      channels: {
+        discord: { enabled: false },
+        telegram: {
+          enabled: true,
+          roleBindings: { '8731': 'owner', '4242': 'admin' },
+        },
+        teams: { enabled: false, webhookPort: 3978, authMode: 'secret' },
+      } as NanoclawConfig['channels'],
+    });
+    reconcileConfigToDb(cfg, db);
+    const rows = db
+      .prepare(
+        `SELECT user_id, role FROM user_roles
+          WHERE agent_group_id IS NULL ORDER BY user_id`,
+      )
+      .all() as Array<{ user_id: string; role: string }>;
+    expect(rows).toEqual([
+      { user_id: 'telegram:4242', role: 'admin' },
+      { user_id: 'telegram:8731', role: 'owner' },
+    ]);
+  });
+
+  it('full overwrite: dropping a roleBinding removes the role row', () => {
+    const db = open();
+    const cfg1 = makeConfig({
+      channels: {
+        discord: { enabled: false },
+        telegram: { enabled: true, roleBindings: { '8731': 'owner' } },
+        teams: { enabled: false, webhookPort: 3978, authMode: 'secret' },
+      } as NanoclawConfig['channels'],
+    });
+    reconcileConfigToDb(cfg1, db);
+    const cfg2 = makeConfig({
+      channels: {
+        discord: { enabled: false },
+        telegram: { enabled: true },
+        teams: { enabled: false, webhookPort: 3978, authMode: 'secret' },
+      } as NanoclawConfig['channels'],
+    });
+    const s = reconcileConfigToDb(cfg2, db);
+    expect(s.userRoles.deleted).toContain('telegram:8731');
+    const cnt = db.prepare(`SELECT COUNT(*) AS c FROM user_roles`).get() as { c: number };
+    expect(cnt.c).toBe(0);
+  });
+});
+
+describe('reconcileConfigToDb — deprecated commands.ownerAllowFrom auto-merge', () => {
+  beforeEach(() => __resetDeprecationWarningsForTests());
+
+  it('auto-merges commands.ownerAllowFrom into roleBindings + writes owner row + warns once', () => {
+    const warnSpy: string[] = [];
+    const origWarn = log.warn;
+    log.warn = (msg: string) => {
+      warnSpy.push(msg);
+    };
+    try {
+      const db = open();
+      const cfg = makeConfig();
+      (cfg as unknown as { commands: { ownerAllowFrom: string[] } }).commands = {
+        ownerAllowFrom: ['telegram:8731187021'],
+      };
+      reconcileConfigToDb(cfg, db);
+      // (a) deprecation warn fired exactly once
+      expect(warnSpy.filter((m) => m.includes('commands.ownerAllowFrom is deprecated')).length).toBe(1);
+      // (b) owner row written global
+      const row = db
+        .prepare(
+          `SELECT user_id FROM user_roles
+            WHERE user_id = 'telegram:8731187021' AND role = 'owner' AND agent_group_id IS NULL`,
+        )
+        .get();
+      expect(row).toBeDefined();
+      // (c) live config now carries roleBindings entry
+      expect(
+        (cfg.channels.telegram as unknown as { roleBindings?: Record<string, string> }).roleBindings,
+      ).toEqual({ '8731187021': 'owner' });
+    } finally {
+      log.warn = origWarn;
+    }
+  });
+});
+
+describe('reconcileConfigToDb — deprecated accounts.*.groupAllowFrom auto-merge', () => {
+  beforeEach(() => __resetDeprecationWarningsForTests());
+
+  it('merges groupAllowFrom into allowFrom + drops the field + warns once', () => {
+    const warnSpy: string[] = [];
+    const origWarn = log.warn;
+    log.warn = (msg: string) => {
+      warnSpy.push(msg);
+    };
+    try {
+      const db = open();
+      const cfg = makeConfig({
+        channels: {
+          discord: { enabled: false },
+          telegram: {
+            enabled: true,
+            accounts: {
+              default: { allowFrom: ['8731'], groupAllowFrom: ['7777'] },
+            },
+          },
+          teams: { enabled: false, webhookPort: 3978, authMode: 'secret' },
+        } as NanoclawConfig['channels'],
+      });
+      reconcileConfigToDb(cfg, db);
+      expect(warnSpy.filter((m) => m.includes('groupAllowFrom is deprecated')).length).toBe(1);
+      const acc = (cfg.channels.telegram as unknown as { accounts: { default: { allowFrom: string[]; groupAllowFrom?: string[] } } }).accounts.default;
+      expect(acc.allowFrom?.sort()).toEqual(['7777', '8731']);
+      expect(acc.groupAllowFrom).toBeUndefined();
+      // user row created for the merged id
+      const u = db.prepare(`SELECT id FROM users WHERE id = ?`).get('telegram:7777');
+      expect(u).toEqual({ id: 'telegram:7777' });
+    } finally {
+      log.warn = origWarn;
+    }
   });
 });

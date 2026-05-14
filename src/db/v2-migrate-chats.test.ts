@@ -86,9 +86,11 @@ describe('migrateChatsToV2 — config side', () => {
     expect(summary.ownersBootstrapped).toEqual(['telegram:8731']);
     expect(cfg.chats).toBeUndefined();
     expect(cfg.channels.telegram.accounts!.default.allowFrom).toEqual(['8731']);
-    expect((cfg as unknown as { commands: { ownerAllowFrom: string[] } }).commands.ownerAllowFrom).toEqual([
-      'telegram:8731',
-    ]);
+    // v2 RBAC cutover: isMain → channels.<type>.roleBindings instead of
+    // commands.ownerAllowFrom.
+    expect(
+      (cfg.channels.telegram as unknown as { roleBindings: Record<string, string> }).roleBindings,
+    ).toEqual({ '8731': 'owner' });
 
     const user = db.prepare(`SELECT id, kind FROM users WHERE id = ?`).get('telegram:8731') as {
       id: string;
@@ -115,7 +117,9 @@ describe('migrateChatsToV2 — config side', () => {
     expect(summary.dms).toEqual(['telegram:42']);
     expect(summary.ownersBootstrapped).toEqual([]);
     expect(cfg.channels.telegram.accounts!.default.allowFrom).toEqual(['42']);
-    expect((cfg as unknown as { commands: { ownerAllowFrom: string[] } }).commands.ownerAllowFrom).toEqual([]);
+    expect(
+      (cfg.channels.telegram as unknown as { roleBindings?: Record<string, string> }).roleBindings,
+    ).toBeUndefined();
     const role = db.prepare(`SELECT COUNT(*) AS c FROM user_roles`).get() as { c: number };
     expect(role.c).toBe(0);
   });
@@ -134,7 +138,9 @@ describe('migrateChatsToV2 — config side', () => {
     const groups = cfg.channels.telegram.accounts!.default.groups!;
     expect(groups['-1001crew']).toEqual({ requireMention: true });
     // isMain on a group does NOT promote to owner (owners are DM-rooted)
-    expect((cfg as unknown as { commands: { ownerAllowFrom: string[] } }).commands.ownerAllowFrom).toEqual([]);
+    expect(
+      (cfg.channels.telegram as unknown as { roleBindings?: Record<string, string> }).roleBindings,
+    ).toBeUndefined();
   });
 
   it('respects authoritative isGroupByJid override (Telegram negative-id heuristic is fallback)', () => {
