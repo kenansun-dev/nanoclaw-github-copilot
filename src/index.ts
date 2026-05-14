@@ -49,6 +49,7 @@ import { isAbortRequestText } from './abort-triggers.js';
 import { shadowRoute } from './shadow-inbound.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
+import { isMainDualRead } from './v2-default-agent.js';
 import { findChannel, formatMessages, formatOutbound, formatConversationContext } from './text-format.js';
 import { restoreRemoteControl, startRemoteControl, stopRemoteControl } from './remote-control.js';
 import { isSenderAllowed, isTriggerAllowed, loadSenderAllowlist, shouldDropMessage } from './sender-allowlist.js';
@@ -75,7 +76,10 @@ const queue = new GroupQueue();
 const onecli = IS_GHC_PROVIDER ? null : new OneCLI({ url: ONECLI_URL });
 
 function ensureOneCLIAgent(jid: string, group: RegisteredGroup): void {
-  if (!onecli || group.isMain) return;
+  // Bucket A (Step 3+4 cutover): dual-read shim. v1 group.isMain is still
+  // authoritative; v2 helper warns on mismatch.
+  // See docs/proposals/2026-05-14-isMain-cutover-buckets.md.
+  if (!onecli || isMainDualRead(group.folder, group.isMain === true)) return;
   const identifier = group.folder.toLowerCase().replace(/_/g, '-');
   onecli!.ensureAgent({ name: group.name, identifier }).then(
     (res: any) => {
@@ -237,7 +241,9 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   // identity and instructions from the first run.  (Fixes #1391)
   const groupMdFile = path.join(groupDir, 'CLAUDE.md');
   if (!fs.existsSync(groupMdFile)) {
-    const templateFile = path.join(DATA_DIR, GROUPS_DIR, group.isMain ? 'main' : 'global', 'CLAUDE.md');
+    // Bucket A: dual-read for CLAUDE.md template path (mount-derived).
+    const isMainTpl = isMainDualRead(group.folder, group.isMain === true);
+    const templateFile = path.join(DATA_DIR, GROUPS_DIR, isMainTpl ? 'main' : 'global', 'CLAUDE.md');
     if (fs.existsSync(templateFile)) {
       let content = fs.readFileSync(templateFile, 'utf-8');
       if (ASSISTANT_NAME !== 'Andy') {
@@ -849,10 +855,13 @@ async function runAgent(
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
-  const isMain = group.isMain === true;
-  // Resolve which provider this chat's agent uses, then look up the
-  // sessionId for THAT provider only. A group can have separate
-  // CC and GHC sessions and they don't cross-contaminate.
+  // Bucket A (Step 3+4 cutover): central isMain decision point. This single
+  // value flows into RunnerInput.isMain (→ container-runner mount layout,
+  // mount-security.validateMount, host-runner CLAUDE.md path) and into the
+  // tasks/groups snapshot writers. Dual-read here covers all downstream
+  // consumers without touching them.
+  // See docs/proposals/2026-05-14-isMain-cutover-buckets.md.
+  const isMain = isMainDualRead(group.folder, group.isMain === true);
   const agent = resolveAgentForChat(chatJid);
   const provider = getAgentProvider(agent);
   const sessionId = sessions[group.folder]?.[provider];
@@ -1630,7 +1639,9 @@ async function main(): Promise<void> {
   // Handle /remote-control and /remote-control-end commands
   async function handleRemoteControl(command: string, chatJid: string, msg: NewMessage): Promise<void> {
     const group = registeredGroups[chatJid];
-    if (!group?.isMain) {
+    // Bucket A: privilege gate (remote-control). Dual-read shim.
+    const isMainGroup = group ? isMainDualRead(group.folder, group.isMain === true) : false;
+    if (!isMainGroup) {
       logger.warn({ chatJid, sender: msg.sender }, 'Remote control rejected: not main group');
       return;
     }
@@ -1880,7 +1891,8 @@ async function main(): Promise<void> {
         next_run: t.next_run,
       }));
       for (const group of Object.values(registeredGroups)) {
-        writeTasksSnapshot(group.folder, group.isMain === true, taskRows);
+        // Bucket A: dual-read for tasks snapshot writer.
+        writeTasksSnapshot(group.folder, isMainDualRead(group.folder, group.isMain === true), taskRows);
       }
     },
   });

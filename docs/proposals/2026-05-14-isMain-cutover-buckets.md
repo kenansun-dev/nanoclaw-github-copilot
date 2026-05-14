@@ -39,10 +39,27 @@ mga is the one that gets `main/` mount.
 | `src/db.ts` | 51, 57, 68, 72, 83, 86 | `loadChatsConfigSnapshot` derives folder from isMain (DM share-main collapse) | `getMessagingGroupFolder(channel, peerId)` reads from `messaging_groups` row + mga |
 | `src/session-routing.ts` | 5, 8, 43, 56 | DM session collapse for share-main | same |
 
-**Dual-read shim**: `mgaIsDefaultAgent(mgaId)` reads new mga; if no row, falls
-back to legacy `getRegisteredGroup(jid).isMain`. Log a `warn` on fallback so
-we can grep the warn count and prove cutover is complete before deleting v1
-read.
+**Dual-read shim**: same shape as Bucket C — v1 (`group.isMain`) stays
+authoritative, the v2 helper computes in parallel and warns on mismatch.
+`mgaIsDefaultAgent(folder)` is `folderIsDefaultAgent(folder)` from
+`src/v2-default-agent.ts` (introduced in Bucket C, `1b5607a`).
+
+## Dual-read shape: B vs A/C (intentional asymmetry)
+
+- **Bucket B (`/tasks`)**: v2 (`isOwner(senderId)`) is **authoritative**;
+  v1 (`isMain`) is the legacy fallback used only when `senderId` is
+  unavailable. Each invocation has a per-call senderId, so v2 can be
+  trusted directly. **Bucket I for B = delete the v1 fallback path**,
+  not flip a read direction.
+- **Buckets A and C** (mount + IPC): v1 (`group.isMain` /
+  `RegisteredGroup.isMain`) is **authoritative**; v2
+  (`folderIsDefaultAgent`) shadows + warns. v2 is config-derived (no
+  per-call signal) so we can't validate it case-by-case at runtime; the
+  warn count is our cutover gate. **Bucket I for A and C = the actual
+  read-flip** (delete v1 read, return v2 directly).
+
+This asymmetry is intentional and matches each bucket's signal shape.
+Do not "normalize" the two shapes during the dual-read window.
 
 ---
 
