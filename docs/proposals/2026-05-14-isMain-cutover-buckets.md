@@ -81,20 +81,36 @@ shape, just rename and read v2 table.
 
 ---
 
-## Bucket D — Routing / engagement triggers
+## Bucket D — Routing / engagement triggers (REVISED 2026-05-15)
 
 **Semantic**: "main chat doesn't need @-mention to respond; non-main does."
 
-**v2 replacement**: this is **already** covered by `mga.engage_mode` (set by
-reconcile from `accounts.*.groups.*.requireMention`, see Step 1+2 commit).
-The remaining isMain reads here are dead weight — they shadow the mga
-projection. Just delete the isMain branch; let mga drive.
+**Original plan was wrong**: I claimed `mga.engage_mode` already covers
+these sites and the isMain branches are dead weight. After grep:
+`engage_mode` is enforced in `src/router.ts:453` (v2 path). The isMain
+reads in `src/index.ts` (lines 78, 295, 330, 1042) are on the **v1
+dispatch path** (`processGroupMessages` + the legacy fan-out loop),
+which is still the live path for fork-only chats not yet projected
+through the v2 router. Deleting them = trigger-required regression for
+those chats.
+
+**Revised v2 replacement**: dual-read shadow (same shape as Bucket C).
+Keep `group.isMain` authoritative; in parallel resolve
+`folderIsDefaultAgent(group.folder)` and warn on mismatch. After Bucket
+C's warn count is zero across prod for N days, Bucket H deletes the v1
+router path itself (chat-reconcile + v1 dispatch loop), at which point
+these isMain reads become unreachable and get deleted with the dispatch
+loop — no separate Bucket D delete needed.
+
+**Action this turn**: NO commit for Bucket D. Defer until Bucket H. The
+four engage-trigger sites stay v1 until then; Bucket C's IPC dual-read
+covers the privilege check (the actual security-sensitive surface).
 
 | File | Lines | Current | Proposed |
 |---|---|---|---|
-| `src/index.ts` | 78, 295, 330, 1042, 1619 | `if (group.isMain) skip trigger` | delete; rely on `mga.engage_mode === 'pattern'` |
-| `src/channels/tui.ts` | 35, 108, 120, 124 | TUI bootstrap stamps `isMain: true` | TUI bootstrap calls reconcile-style helper to ensure default-agent binding exists |
-| `src/cli/tui-direct.ts` | 28, 364, 519, 527 | hardcoded `isMain: true` on TUI sessions | same TUI helper |
+| `src/index.ts` | 78, 295, 330, 1042 | `if (group.isMain) skip trigger` | **defer to Bucket H** — will be deleted with the v1 dispatch loop |
+| `src/channels/tui.ts` | 35, 108, 120, 124 | TUI bootstrap stamps `isMain: true` | **defer to Bucket E** — TUI bootstrap is just `chat add --main` in a different shape; rewrite when E rewrites the writer side. Stamping `isMain: true` is harmless until then. |
+| `src/cli/tui-direct.ts` | 28, 364, 519, 527 | hardcoded `isMain: true` on TUI sessions | same as TUI rewrite (Bucket E) |
 
 ---
 
@@ -162,10 +178,13 @@ get deleted with the file.
 
 ## Commit / PR plan (all in current daily PR)
 
-1. **commit B+C+D first** (UI/IPC/routing — no schema risk, easy revert)
-2. **commit A** (mount permission — most complex, isolated commit)
-3. **commit E+F** (CLI + doctor — UX-visible, careful messaging)
-4. **commit H+I** (deletes — only after `grep -rn isMain src/ --include='*.ts' | grep -v test` returns 0 outside the deletes themselves)
+1. **commit B** (slash /tasks — done, `3b06c44`)
+2. **commit C** (IPC dual-read — done, `1b5607a`)
+3. **D — deferred to H** (see revised section above)
+4. **commit A** (mount permission — most complex, isolated commit)
+5. **commit E+F** (CLI + doctor — UX-visible, careful messaging) — Bucket E now also absorbs the TUI bootstrap rewrite
+6. **commit J1+J2** (env var rename, see Bucket J below)
+7. **commit H+I** (deletes — only after `grep -rn isMain src/ --include='*.ts' | grep -v test` returns 0 outside the deletes themselves; H deletes v1 dispatch loop which makes the index.ts isMain reads unreachable)
 
 Between each commit:
 - `npm test` green
