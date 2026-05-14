@@ -301,6 +301,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Handle slash commands in ALL messages, not just the last one.
   // Separate slash commands from regular messages to avoid swallowing.
   const { normalizeSlashInput, handleSlashCommand } = await import('./slash-commands.js');
+  const { parseChatJid } = await import('./shadow-inbound.js');
   const slashCtx = {
     chatJid,
     groupFolder: group.folder,
@@ -311,7 +312,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const regularMessages: typeof missedMessages = [];
   for (const msg of missedMessages) {
     const slashInput = normalizeSlashInput(msg.content);
-    const slashResult = await handleSlashCommand(slashInput, slashCtx);
+    // Bucket B (Step 3+4): qualify per-message senderId so /tasks et al.
+    // can run owner checks via v2 user_roles. parseChatJid maps known
+    // chatJid prefixes (tg:/discord:/teams:/...) to channelType; rawId
+    // comes from the inbound message's `sender` column (db.ts:427).
+    const parsed = parseChatJid(chatJid);
+    const senderId =
+      parsed && msg.sender ? `${parsed.channelType}:${msg.sender}` : undefined;
+    const slashResult = await handleSlashCommand(slashInput, { ...slashCtx, senderId });
     if (slashResult.handled) {
       lastAgentTimestamp[chatJid] = msg.timestamp;
     } else {
@@ -1068,6 +1076,7 @@ async function startMessageLoop(): Promise<void> {
           // Handle slash commands in ALL pending messages, not just the last
           if (messagesToSend.length > 0) {
             const { normalizeSlashInput, handleSlashCommand } = await import('./slash-commands.js');
+            const { parseChatJid } = await import('./shadow-inbound.js');
             const slashCtx2 = {
               chatJid,
               groupFolder: group.folder,
@@ -1078,7 +1087,11 @@ async function startMessageLoop(): Promise<void> {
             const nonSlash: typeof messagesToSend = [];
             for (const msg of messagesToSend) {
               const slashInput = normalizeSlashInput(msg.content);
-              const slashResult = await handleSlashCommand(slashInput, slashCtx2);
+              // Bucket B (Step 3+4): see dispatch comment above.
+              const parsed = parseChatJid(chatJid);
+              const senderId =
+                parsed && msg.sender ? `${parsed.channelType}:${msg.sender}` : undefined;
+              const slashResult = await handleSlashCommand(slashInput, { ...slashCtx2, senderId });
               if (slashResult.handled) {
                 lastAgentTimestamp[chatJid] = msg.timestamp;
               } else {

@@ -23,6 +23,7 @@ import {
   type ShowThinking,
 } from './session-overrides.js';
 import { Channel } from './types-extensions.js';
+import { logger as log } from './log-extensions.js';
 
 // ─── Command definitions ─────────────────────────────────────────────────────
 
@@ -158,6 +159,17 @@ export interface SlashCommandContext {
   chatJid: string;
   groupFolder: string;
   channel: Channel | undefined;
+  /**
+   * Fully-qualified sender id (`<channelType>:<rawId>`, e.g. `telegram:8731187021`)
+   * for the message being processed. Set per-iteration by the dispatch loop
+   * since one ctx is shared across multiple messages in a batch.
+   *
+   * Optional: legacy callers (cli/task, tests pre-Bucket-B) may omit and
+   * the v2 owner-check falls back to the legacy `getRegisteredGroup().isMain`
+   * shim with a `warn` log so we can grep cutover progress (Step 3+4 dual-read,
+   * see docs/proposals/2026-05-14-isMain-cutover-buckets.md Bucket B).
+   */
+  senderId?: string;
   /** Delete in-memory session entry (e.g., `delete sessions[folder]`) */
   clearSession: (folder: string) => void;
   /**
@@ -296,16 +308,46 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
   if (input === '/tasks') {
     if (ctx.channel) {
       try {
-        const [{ getAllTasks, getRegisteredGroup }, { formatTasksText }] = await Promise.all([
-          import('./db.js'),
-          import('./cli/task-format.js'),
-        ]);
+        const [{ getAllTasks, getRegisteredGroup }, { formatTasksText }, { isOwner: v2IsOwner }] =
+          await Promise.all([
+            import('./db.js'),
+            import('./cli/task-format.js'),
+            import('./modules/permissions/db/user-roles.js'),
+          ]);
         // Parity with the prior MCP `list_tasks` (container/.../mcp-tools/scheduling.ts:174):
         //   * Filter by `group_folder` (NOT `chat_jid`) so isMain DMs that
         //     collapse onto a shared session see all of their sibling DM
         //     tasks (db.ts:51-86 collapse-on-read).
-        //   * Main chat sees ALL groups' tasks (operator view).
-        const isMain = !!getRegisteredGroup(ctx.chatJid)?.isMain;
+        //   * Owner sees ALL groups' tasks (operator view).
+        //
+        // Bucket B (Step 3+4 cutover): semantic was "main chat sees all".
+        // The actual concept is "operator/owner sees all" — chat-type was
+        // a proxy for "this is the owner's chat". v2 reads `user_roles` via
+        // `isOwner(senderId)`. Dual-read shim: v2 first, fall back to v1
+        // `isMain` if `senderId` is unavailable (legacy callers); log a warn
+        // on fallback so we can grep cutover progress.
+        const isMain = (() => {
+          if (ctx.senderId) {
+            const v2 = v2IsOwner(ctx.senderId);
+            // Belt-and-suspenders during dual-read window: if v2 says no but
+            // v1 says yes, log so we can spot reconcile gaps before deleting v1.
+            const v1 = !!getRegisteredGroup(ctx.chatJid)?.isMain;
+            if (v1 && !v2) {
+              log.warn(
+                { chatJid: ctx.chatJid, senderId: ctx.senderId },
+                '/tasks dual-read mismatch: v1 isMain=true but v2 isOwner=false (Bucket B)',
+              );
+            }
+            return v2;
+          }
+          // Legacy fallback (no senderId threaded). Will go away after all
+          // call sites are updated; warn to grep remaining sites.
+          log.warn(
+            { chatJid: ctx.chatJid, groupFolder: ctx.groupFolder },
+            '/tasks invoked without ctx.senderId; falling back to v1 isMain (Bucket B)',
+          );
+          return !!getRegisteredGroup(ctx.chatJid)?.isMain;
+        })();
         const all = getAllTasks();
         const rows = (isMain ? all : all.filter((t) => t.group_folder === ctx.groupFolder)).slice().sort((a, b) => {
           if (a.status !== b.status) return a.status < b.status ? -1 : 1;

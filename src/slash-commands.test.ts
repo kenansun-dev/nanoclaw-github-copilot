@@ -46,6 +46,10 @@ vi.mock('./db.js', () => ({
   getAllTasks: vi.fn(() => []),
 }));
 
+vi.mock('./modules/permissions/db/user-roles.js', () => ({
+  isOwner: vi.fn(() => false),
+}));
+
 // ─── Mock context factory ────────────────────────────────────────────────────
 
 function makeCtx(overrides: Partial<SlashCommandContext> = {}): SlashCommandContext {
@@ -315,6 +319,87 @@ describe('handleSlashCommand', () => {
     const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
     expect(sentText).toContain('task-a');
     expect(sentText).toContain('task-b');
+  });
+
+  it('/tasks scopes via v2 isOwner(senderId) when senderId is threaded (Bucket B)', async () => {
+    const db = await import('./db.js');
+    const userRoles = await import('./modules/permissions/db/user-roles.js');
+    const fixtures = [
+      {
+        id: 'task-a',
+        group_folder: 'group-A',
+        chat_jid: 'tg:A1',
+        prompt: 'a',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
+      {
+        id: 'task-b',
+        group_folder: 'group-B',
+        chat_jid: 'tg:B1',
+        prompt: 'b',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
+    ];
+    (db.getAllTasks as any).mockReturnValueOnce(fixtures);
+    // Owner caller: should see ALL tasks even though chat is not isMain
+    // (legacy v1 lookup would only return the chat's own folder).
+    (db.getRegisteredGroup as any).mockReturnValue(undefined);
+    (userRoles.isOwner as any).mockReturnValueOnce(true);
+    const ctx = makeCtx({
+      chatJid: 'tg:A1',
+      groupFolder: 'group-A',
+      senderId: 'telegram:8731187021',
+    });
+    await handleSlashCommand('/tasks', ctx);
+    const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    expect(sentText).toContain('task-a');
+    expect(sentText).toContain('task-b'); // owner sees other group's tasks
+    expect((userRoles.isOwner as any)).toHaveBeenCalledWith('telegram:8731187021');
+  });
+
+  it('/tasks v2 non-owner senderId scopes to own folder (Bucket B)', async () => {
+    const db = await import('./db.js');
+    const userRoles = await import('./modules/permissions/db/user-roles.js');
+    const fixtures = [
+      {
+        id: 'task-a',
+        group_folder: 'group-A',
+        chat_jid: 'tg:A1',
+        prompt: 'a',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
+      {
+        id: 'task-b',
+        group_folder: 'group-B',
+        chat_jid: 'tg:B1',
+        prompt: 'b',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
+    ];
+    (db.getAllTasks as any).mockReturnValueOnce(fixtures);
+    (db.getRegisteredGroup as any).mockReturnValue(undefined);
+    (userRoles.isOwner as any).mockReturnValueOnce(false);
+    const ctx = makeCtx({
+      chatJid: 'tg:A1',
+      groupFolder: 'group-A',
+      senderId: 'telegram:99',
+    });
+    await handleSlashCommand('/tasks', ctx);
+    const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    expect(sentText).toContain('task-a');
+    expect(sentText).not.toContain('task-b');
   });
 
   it('/capabilities returns handled: false (passthrough to agent)', async () => {
