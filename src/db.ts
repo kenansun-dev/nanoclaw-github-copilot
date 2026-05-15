@@ -883,9 +883,13 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   if (!isValidGroupFolder(group.folder)) {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
+  // I-1-safe (2026-05-15): stopped writing v1 `is_main` column. Reads still
+  // surface it via `row.is_main` for backward compat, but the source of
+  // truth is now v2-master via `isMainDualRead`. Schema/column intentionally
+  // retained — drop will come in a later bucket.
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -894,7 +898,6 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.added_at,
     group.containerConfig ? JSON.stringify(group.containerConfig) : null,
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
-    group.isMain ? 1 : 0,
   );
 }
 

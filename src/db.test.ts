@@ -673,38 +673,11 @@ describe('message query LIMIT', () => {
 });
 
 // --- RegisteredGroup isMain round-trip ---
-
-describe('registered group isMain', () => {
-  it('persists isMain=true through set/get round-trip', () => {
-    setRegisteredGroup('main@s.whatsapp.net', {
-      name: 'Main Chat',
-      folder: 'whatsapp_main',
-      trigger: '@Andy',
-      added_at: '2024-01-01T00:00:00.000Z',
-      isMain: true,
-    });
-
-    const groups = getAllRegisteredGroups();
-    const group = groups['main@s.whatsapp.net'];
-    expect(group).toBeDefined();
-    expect(group.isMain).toBe(true);
-    expect(group.folder).toBe('whatsapp_main');
-  });
-
-  it('omits isMain for non-main groups', () => {
-    setRegisteredGroup('group@g.us', {
-      name: 'Family Chat',
-      folder: 'whatsapp_family-chat',
-      trigger: '@Andy',
-      added_at: '2024-01-01T00:00:00.000Z',
-    });
-
-    const groups = getAllRegisteredGroups();
-    const group = groups['group@g.us'];
-    expect(group).toBeDefined();
-    expect(group.isMain).toBeUndefined();
-  });
-});
+//
+// Removed in I-1-safe (2026-05-15): the v1 `registered_groups.is_main`
+// column is no longer written. isMain is now sourced from v2-master via
+// `isMainDualRead`. The set/get round-trip on this column would now read
+// the column default (0) and is intentionally retired.
 
 // --- getMessageById (reply context) ---
 
