@@ -330,11 +330,16 @@ export function runDoctor(): CheckResult[] {
     let mainJids: string[] = [];
     let isGroupByJid: Record<string, boolean | undefined> = {};
     try {
-      const { folderIsDefaultAgent } = require('./v2-default-agent.js');
+      const { isDefaultAgentDmFolder } = require('./session-routing.js');
       const { getAllRegisteredGroups, getAllChats } = require('./db.js');
       const groups = getAllRegisteredGroups() as Record<string, { folder: string }>;
+      // Use pattern check (literal 'main' + `main(-<agent>)?-<channel>-<8hex>`)
+      // because DB folders for default-agent DMs are unique-per-jid
+      // (`uniqueIsMainFolder`); strict-equality `folderIsDefaultAgent` would
+      // miss them. Pattern matches the same set the share-main collapse
+      // recognizes at read time.
       mainJids = Object.entries(groups)
-        .filter(([, g]) => folderIsDefaultAgent(g.folder) === true)
+        .filter(([, g]) => isDefaultAgentDmFolder(g.folder))
         .map(([jid]) => jid);
       const allChats = getAllChats() as Array<{
         jid: string;
