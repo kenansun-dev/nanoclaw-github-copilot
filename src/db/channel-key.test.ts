@@ -1,11 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  channelKeyToType,
-  typeToChannelKey,
-  synthLegacyJid,
-  splitJid,
-  jidToTypeAndPlatformId,
-} from './channel-key.js';
+import { channelKeyToType, typeToChannelKey, synthLegacyJid, splitJid, jidToTypeAndPlatformId } from './channel-key.js';
 
 describe('channel-key bridging', () => {
   describe('channelKeyToType', () => {

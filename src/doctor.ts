@@ -360,8 +360,14 @@ export function runDoctor(): CheckResult[] {
     results.push(
       check('Chat metadata v1↔v2 drift', () => {
         try {
-          const { getAllRegisteredGroups } = require('./db.js');
-          const { getAllRegisteredGroupsV2, compareV1V2ChatMetadata } = require('./db/v2-chat-metadata.js');
+          // ESM ("type":"module") — bare `require` is undefined here.
+          // Use the same `createRequire` pattern as the chat-reconcile
+          // sync load below so the diagnostic actually runs (VM F-Doctor
+          // catch on c280d5e: bare require silently threw, drift never
+          // surfaced).
+          const req = createRequire(import.meta.url);
+          const { getAllRegisteredGroups } = req('./db.js');
+          const { getAllRegisteredGroupsV2, compareV1V2ChatMetadata } = req('./db/v2-chat-metadata.js');
           const v1 = getAllRegisteredGroups();
           const v2 = getAllRegisteredGroupsV2();
           const drift = compareV1V2ChatMetadata(v1, v2);
