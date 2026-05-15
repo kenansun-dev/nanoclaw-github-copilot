@@ -17,7 +17,7 @@ import {
   IPC_DIR,
   chatJid,
   groupFolder,
-  isMain,
+  isDefaultAgent,
 } from './server.js';
 import { formatTasksText, type TaskRow } from '../cli-shared/task-format.js';
 
@@ -123,7 +123,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     }
 
     // Non-main groups can only schedule for themselves
-    const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
+    const targetJid = isDefaultAgent && args.target_group_jid ? args.target_group_jid : chatJid;
 
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -171,7 +171,7 @@ server.tool(
         Record<string, unknown>
       >;
 
-      const filtered = isMain
+      const filtered = isDefaultAgent
         ? allTasks
         : allTasks.filter((t) => (t as { groupFolder?: string }).groupFolder === groupFolder);
 
@@ -197,7 +197,7 @@ server.tool(
         };
       });
 
-      const text = formatTasksText(rows, { compact: !isMain });
+      const text = formatTasksText(rows, { compact: !isDefaultAgent });
       return { content: [{ type: 'text' as const, text }] };
     } catch (err) {
       return {
@@ -221,7 +221,7 @@ server.tool(
       type: 'pause_task',
       taskId: args.task_id,
       groupFolder,
-      isMain,
+      isDefaultAgent,
       timestamp: new Date().toISOString(),
     };
 
@@ -242,7 +242,7 @@ server.tool(
       type: 'resume_task',
       taskId: args.task_id,
       groupFolder,
-      isMain,
+      isDefaultAgent,
       timestamp: new Date().toISOString(),
     };
 
@@ -263,7 +263,7 @@ server.tool(
       type: 'cancel_task',
       taskId: args.task_id,
       groupFolder,
-      isMain,
+      isDefaultAgent,
       timestamp: new Date().toISOString(),
     };
 
@@ -328,7 +328,7 @@ server.tool(
       type: 'update_task',
       taskId: args.task_id,
       groupFolder,
-      isMain: String(isMain),
+      isDefaultAgent: String(isDefaultAgent),
       timestamp: new Date().toISOString(),
     };
     if (args.prompt !== undefined) data.prompt = args.prompt;

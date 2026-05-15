@@ -232,7 +232,7 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
         sessionId,
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,
-        isMain,
+        isDefaultAgent: isMain,
         isScheduledTask: true,
         taskId: task.id,
         assistantName: agent.name || ASSISTANT_NAME,

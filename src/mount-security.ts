@@ -222,7 +222,7 @@ export interface MountValidationResult {
  * Validate a single additional mount against the allowlist.
  * Returns validation result with reason.
  */
-export function validateMount(mount: AdditionalMount, isMain: boolean): MountValidationResult {
+export function validateMount(mount: AdditionalMount, isDefaultAgent: boolean): MountValidationResult {
   const allowlist = loadMountAllowlist();
 
   // If no allowlist, block all additional mounts
@@ -280,7 +280,7 @@ export function validateMount(mount: AdditionalMount, isMain: boolean): MountVal
   let effectiveReadonly = true; // Default to readonly
 
   if (requestedReadWrite) {
-    if (!isMain && allowlist.nonMainReadOnly) {
+    if (!isDefaultAgent && allowlist.nonMainReadOnly) {
       // Non-main groups forced to read-only
       effectiveReadonly = true;
       logger.info(
@@ -322,7 +322,7 @@ export function validateMount(mount: AdditionalMount, isMain: boolean): MountVal
 export function validateAdditionalMounts(
   mounts: AdditionalMount[],
   groupName: string,
-  isMain: boolean,
+  isDefaultAgent: boolean,
 ): Array<{
   hostPath: string;
   containerPath: string;
@@ -335,7 +335,7 @@ export function validateAdditionalMounts(
   }> = [];
 
   for (const mount of mounts) {
-    const result = validateMount(mount, isMain);
+    const result = validateMount(mount, isDefaultAgent);
 
     if (result.allowed) {
       validatedMounts.push({

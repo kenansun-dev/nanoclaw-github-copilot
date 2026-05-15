@@ -10,7 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
-import { getServer, writeIpcFile, MESSAGES_DIR, RESPONSES_DIR, isMain } from './server.js';
+import { getServer, writeIpcFile, MESSAGES_DIR, RESPONSES_DIR, isDefaultAgent } from './server.js';
 
 const server = getServer();
 
@@ -32,7 +32,7 @@ server.tool(
     config_value: z.string().optional().describe('New value for set_config (JSON string)'),
   },
   async (args) => {
-    if (!isMain) {
+    if (!isDefaultAgent) {
       return {
         content: [
           {

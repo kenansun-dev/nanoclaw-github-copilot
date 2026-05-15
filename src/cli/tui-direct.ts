@@ -25,7 +25,7 @@ interface ContainerInput {
   sessionId?: string;
   groupFolder: string;
   chatJid: string;
-  isMain: boolean;
+  isDefaultAgent: boolean;
   assistantName?: string;
   model?: string;
 }
@@ -361,7 +361,7 @@ export async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
     sessionId: opts.sessionId,
     groupFolder: opts.groupFolder,
     chatJid: 'tui-local',
-    isMain: true,
+    isDefaultAgent: true,
     assistantName: opts.assistantName,
     model: opts.model.includes('/') ? opts.model.split('/')[1] : opts.model,
   };
@@ -516,7 +516,7 @@ export async function runSandboxQuery(opts: QueryOptions): Promise<ContainerOutp
       sessionId: opts.sessionId,
       groupFolder: opts.groupFolder,
       chatJid: 'tui-local',
-      isMain: true,
+      isDefaultAgent: true,
       assistantName: opts.assistantName,
       model: opts.model.includes('/') ? opts.model.split('/')[1] : opts.model,
     };
@@ -524,7 +524,7 @@ export async function runSandboxQuery(opts: QueryOptions): Promise<ContainerOutp
     const group = {
       name: 'tui',
       folder: opts.groupFolder,
-      isMain: true,
+      isDefaultAgent: true,
       trigger: '',
       added_at: new Date().toISOString(),
     };

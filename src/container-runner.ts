@@ -50,7 +50,7 @@ export interface ContainerInput {
   sessionId?: string;
   groupFolder: string;
   chatJid: string;
-  isMain: boolean;
+  isDefaultAgent: boolean;
   isScheduledTask?: boolean;
   /** When isScheduledTask=true, the scheduled task id for processName formatting. */
   taskId?: string;
@@ -93,13 +93,13 @@ export function parseHostCopilotConfig(raw: string): Record<string, unknown> {
   return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
 }
 
-function buildVolumeMounts(group: RegisteredGroup, isMain: boolean, chatJid?: string): VolumeMount[] {
+function buildVolumeMounts(group: RegisteredGroup, isDefaultAgent: boolean, chatJid?: string): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const sessionDir = resolveSessionDir(chatJid);
   const projectRoot = PACKAGE_ROOT;
   const groupDir = resolveGroupFolderPath(group.folder);
 
-  if (isMain) {
+  if (isDefaultAgent) {
     // Main gets the project root read-only. Writable paths the agent needs
     // (store, group folder, IPC, .claude/) are mounted separately below.
     // Read-only prevents the agent from modifying host application code
@@ -278,7 +278,7 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean, chatJid?: st
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
-    const validatedMounts = validateAdditionalMounts(group.containerConfig.additionalMounts, group.name, isMain);
+    const validatedMounts = validateAdditionalMounts(group.containerConfig.additionalMounts, group.name, isDefaultAgent);
     mounts.push(...validatedMounts);
   }
 
@@ -374,7 +374,7 @@ export async function runContainerAgent(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(group, input.isMain, input.chatJid);
+  const mounts = buildVolumeMounts(group, input.isDefaultAgent, input.chatJid);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
   const containerArgs = buildContainerArgs(mounts, containerName, input.chatJid);
@@ -394,7 +394,7 @@ export async function runContainerAgent(
       group: group.name,
       containerName,
       mountCount: mounts.length,
-      isMain: input.isMain,
+      isDefaultAgent: input.isDefaultAgent,
     },
     'Spawning container agent',
   );
@@ -586,7 +586,7 @@ export async function runContainerAgent(
         `=== Container Run Log ===`,
         `Timestamp: ${new Date().toISOString()}`,
         `Group: ${group.name}`,
-        `IsMain: ${input.isMain}`,
+        `IsDefaultAgent: ${input.isDefaultAgent}`,
         `Duration: ${duration}ms`,
         `Exit Code: ${code}`,
         `Stdout Truncated: ${stdoutTruncated}`,
@@ -733,7 +733,7 @@ export async function runContainerAgent(
 
 export function writeTasksSnapshot(
   groupFolder: string,
-  isMain: boolean,
+  isDefaultAgent: boolean,
   tasks: Array<{
     id: string;
     groupFolder: string;
@@ -755,7 +755,7 @@ export function writeTasksSnapshot(
   fs.mkdirSync(groupIpcDir, { recursive: true });
 
   // Main sees all tasks, others only see their own
-  const filteredTasks = isMain ? tasks : tasks.filter((t) => t.groupFolder === groupFolder);
+  const filteredTasks = isDefaultAgent ? tasks : tasks.filter((t) => t.groupFolder === groupFolder);
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
   fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
@@ -775,7 +775,7 @@ export interface AvailableGroup {
  */
 export function writeGroupsSnapshot(
   groupFolder: string,
-  isMain: boolean,
+  isDefaultAgent: boolean,
   groups: AvailableGroup[],
   registeredJids: Set<string>,
 ): void {
@@ -783,7 +783,7 @@ export function writeGroupsSnapshot(
   fs.mkdirSync(groupIpcDir, { recursive: true });
 
   // Main sees all groups; others see nothing (they can't activate groups)
-  const visibleGroups = isMain ? groups : [];
+  const visibleGroups = isDefaultAgent ? groups : [];
 
   const groupsFile = path.join(groupIpcDir, 'available_groups.json');
   fs.writeFileSync(

@@ -404,11 +404,9 @@ export async function runHostAgent(
 
   // Global agent prompt template
   // GHC uses COPILOT.md if available, CC uses CLAUDE.md
-  // Bucket A (Step 3+4 cutover): read isMain from `input` (the dual-read'd
-  // value plumbed by index.ts:863) instead of `group.isMain` (raw v1
-  // RegisteredGroup field). Keeps host-runner aligned with the chokepoint
-  // so we don't get split-brain mount/prompt decisions.
-  const groupType = input.isMain ? 'main' : 'global';
+  // v2-only (PR #49): use the dual-read'd default-agent flag plumbed via
+  // `input.isDefaultAgent`. v1 `group.isMain` was retired with the field.
+  const groupType = input.isDefaultAgent ? 'main' : 'global';
   const promptFilename = isAgentGHC(agent)
     ? fs.existsSync(path.join(pkgRoot, 'groups', groupType, 'COPILOT.md'))
       ? 'COPILOT.md'

@@ -16,7 +16,7 @@ import {
   TASKS_DIR,
   chatJid,
   groupFolder,
-  isMain,
+  isDefaultAgent,
 } from './server.js';
 
 const server = getServer();
@@ -114,7 +114,7 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
   },
   async (args) => {
-    if (!isMain) {
+    if (!isDefaultAgent) {
       return {
         content: [
           { type: 'text' as const, text: 'Only the main group can register new groups.' },
