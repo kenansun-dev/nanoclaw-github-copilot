@@ -32,22 +32,55 @@ config — orthogonal, not part of this cutover).
 Container does **not** read `containerConfig`, `trigger_pattern`,
 `requires_trigger`. Those stay host-side.
 
-## Where the host reads `registered_groups` today
+## Where the host touches `registered_groups` today
 
-| Site | Field consumed | Cutover target |
+**Verified by re-grep 2026-05-16 04:08 GMT+8.** 11 read calls / 3 write
+calls across 9 files; central API = `db.ts` 4 functions.
+
+### Read callers (11)
+
+| File | Line | Call | Field consumed |
+|---|---|---|---|
+| `src/index.ts` | 102 | `getAllRegisteredGroups()` | full row map (boot hydrate) |
+| `src/index.ts` | 1518 | `getAllRegisteredGroups()` | full row map (refresh) |
+| `src/index.ts` | 1709 | `getAllRegisteredGroups()` | full row map (per-message) |
+| `src/chat-manager.ts` | 86 | `getAllRegisteredGroups()` | folder uniqueness check |
+| `src/chat-manager.ts` | 190 | `getAllRegisteredGroups()` | jid→folder lookup |
+| `src/chat-reconcile.ts` | 45 | `getAllRegisteredGroups()` | reconcile config.chats |
+| `src/chat-reconcile.ts` | 80 | `getAllRegisteredGroups()` | inverse pass |
+| `src/cli/task.ts` | 232 | `getRegisteredGroup(jid)` | folder for task scope |
+| `src/cli/task.ts` | 237 | `getAllRegisteredGroups()` | enumerate for `--all` |
+| `src/doctor.ts` | 335 | `getAllRegisteredGroups()` | sync check vs config.chats |
+| `src/session-overrides.ts` | 43 | `getRegisteredGroup(chatJid)` | folder for override key |
+
+### Write callers (3)
+
+| File | Line | Call | Trigger |
+|---|---|---|---|
+| `src/chat-manager.ts` | 94 | `setRegisteredGroup` | `chat add` reconcile |
+| `src/chat-manager.ts` | 179 | `removeRegisteredGroup` | `chat remove` |
+| `src/index.ts` | 233 | `setRegisteredGroup` | inbound `/register` |
+
+### Indirect (host-runner via dispatch)
+
+| File | Line | Path |
 |---|---|---|
-| `src/index.ts:102` boot-time hydrate | full row map | `MG ⋈ MGA` join (per-account) |
-| `src/index.ts:1518, 1709` per-message refresh | full row map | same |
-| `src/host-runner.ts:194` `resolveAgentForChat(input.chatJid)` | folder + agent | `MGA.agent_group_id` direct |
-| `src/host-runner.ts:407` `input.isDefaultAgent` derivation | folder pattern | `AG.default = 1` flag |
-| `src/doctor.ts:67, 328-357` consistency check | folder map | `MG.platform_id` map |
-| `src/group-queue.ts:139+` `getGroup(groupJid)` | in-memory only | unchanged (uses jid as key) |
-| `src/modules/registered-groups-extensions/index.ts` | re-exports `db.ts` API | re-point to MG-backed shim |
+| `src/host-runner.ts` | 194 | `resolveAgentForChat(input.chatJid)` — folder lookup goes through `getAllRegisteredGroups` cache populated at index.ts:102 |
+| `src/host-runner.ts` | 407 | `input.isDefaultAgent` — already off `v2-default-agent.ts`, no longer touches RG |
 
-The narrow surface = the central read API
-(`getAllRegisteredGroups` / `getRegisteredGroup`). If we replace those
-two functions with an MG-backed implementation that returns the same
-shape, every caller above transparently switches over.
+### Module re-export
+
+`src/modules/registered-groups-extensions/index.ts` — re-exports the
+4 `db.ts` functions verbatim. Phase 1 facade swap = single edit here
+because it's the official extension boundary.
+
+### The narrow waist
+
+All 14 call sites flow through 4 `db.ts` functions:
+`getAllRegisteredGroups` / `getRegisteredGroup` (read) and
+`setRegisteredGroup` / `removeRegisteredGroup` (write). Replace those
+4 with MG-backed implementations returning the same shape, and the
+cutover is transparent to every caller.
 
 ## Field mapping
 
