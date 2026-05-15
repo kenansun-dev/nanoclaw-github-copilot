@@ -26,6 +26,18 @@
 import { getDb } from './connection.js';
 import { logger } from '../log-extensions.js';
 import { jidToTypeAndPlatformId, synthLegacyJid } from './channel-key.js';
+import {
+  createMessagingGroup,
+  getMessagingGroupByPlatform,
+  updateMessagingGroup,
+  deleteMessagingGroup,
+  createMessagingGroupAgent,
+  getMessagingGroupAgentByPair,
+  getMessagingGroupAgents,
+  updateMessagingGroupAgent,
+  deleteMessagingGroupAgent,
+} from './messaging-groups.js';
+import { createAgentGroup, getAgentGroupByFolder } from './agent-groups.js';
 import type { RegisteredGroup } from '../types-extensions.js';
 
 interface MgRow {
@@ -54,9 +66,14 @@ interface BridgedRow {
 
 function mgWithMgaToBridged(mg: MgRow, mga: MgaRow | null): BridgedRow {
   // engage_pattern is the v2 equivalent of v1 trigger_pattern.
-  // engage_mode='always' ⇒ no trigger required (was requiresTrigger=false).
+  // The "always engage" flavor is encoded as engage_mode='pattern'
+  // + engage_pattern='.' (matches everything) per migration 010.
   const trigger = mga?.engage_pattern ?? mga?.trigger_rules ?? '';
-  const requiresTrigger = mga?.engage_mode != null ? mga.engage_mode !== 'always' : undefined;
+  let requiresTrigger: boolean | undefined;
+  if (mga?.engage_mode != null) {
+    const isAlways = mga.engage_mode === 'pattern' && mga.engage_pattern === '.';
+    requiresTrigger = !isAlways;
+  }
   return {
     jid: synthLegacyJid(mg.channel_type, mg.platform_id),
     name: mg.name ?? '',
@@ -156,9 +173,10 @@ export function compareV1V2ChatMetadata(
   return { v1OnlyJids: v1Only, v2OnlyJids: v2Only, fieldMismatchJids: mismatch };
 }
 
-/** Phase 1 dual-read warn helper. Called from db.ts facade reads when
- *  `process.env.NANOCLAW_CHAT_METADATA_DUAL_READ !== '0'`. Logs a single
- *  aggregate warn line per call (not per-row) to keep noise floor low. */
+/** Phase 1 dual-read warn helper. Retained for the doctor drift check
+ *  in deployments still on the dual-read code path; new code should not
+ *  call this. Cutover (2026-05-16) flipped the db.ts facade to v2-only
+ *  reads/writes, so live traffic no longer triggers this. */
 export function warnOnChatMetadataDrift(
   v1: Record<string, RegisteredGroup>,
   v2: Record<string, BridgedRow & { folder: string }>,
@@ -178,6 +196,121 @@ export function warnOnChatMetadataDrift(
       sampleV2Only: drift.v2OnlyJids.slice(0, 3),
       sampleMismatch: drift.fieldMismatchJids.slice(0, 3),
     },
-    'chat-metadata v1↔v2 drift detected (Phase 1 dual-read)',
+    'chat-metadata v1↔v2 drift detected',
   );
+}
+
+// ── Write API (cutover 2026-05-16) ──
+//
+// These mirror the v1 `setRegisteredGroup` / `removeRegisteredGroup`
+// surface but write into MG + MGA only. Used by the db.ts facade
+// after the v1-write path was retired.
+
+/** Map v1 `requiresTrigger` flag to v2 `engage_mode` + `engage_pattern`.
+ *  - true (default for groups)  → 'mention-sticky' / null    (must @mention)
+ *  - false (default for solo)   → 'pattern' / '.'             (always engage)
+ *  - undefined                  → default to 'mention-sticky'
+ *  Encoding mirrors migration 010-engage-modes.ts. */
+function requiresTriggerToEngageFields(
+  requiresTrigger: boolean | undefined,
+  triggerPattern: string,
+): { engage_mode: 'pattern' | 'mention' | 'mention-sticky'; engage_pattern: string | null } {
+  if (requiresTrigger === false) {
+    return { engage_mode: 'pattern', engage_pattern: '.' };
+  }
+  // requiresTrigger is true or undefined → needs an explicit trigger.
+  // Use 'mention-sticky' as the v1-equivalent of "@mention engages, then
+  // sticky for the rest of the conversation". The v1 trigger pattern (if
+  // provided) is preserved in engage_pattern for diagnostics; engage_mode
+  // is the source of truth.
+  return { engage_mode: 'mention-sticky', engage_pattern: triggerPattern || null };
+}
+
+/** Idempotent upsert of the MG + MGA pair for a v1 `RegisteredGroup`.
+ *  Ensures the `agent_groups` row exists for `group.folder` first, since
+ *  MGA.agent_group_id has a FK to it (see migrations/001-initial.ts:32). */
+export function setRegisteredGroupV2(
+  jid: string,
+  group: RegisteredGroup & { jid?: string },
+): void {
+  const decoded = jidToTypeAndPlatformId(jid);
+  if (!decoded) {
+    throw new Error(`setRegisteredGroupV2: cannot decode jid ${jid}`);
+  }
+  const now = new Date().toISOString();
+
+  // 1. Ensure agent_groups row exists for the folder (FK target). New
+  //    chats created via `addChat` may invent a folder before the
+  //    config→agent_groups reconcile runs; we mirror reconcile's id
+  //    convention (id == folder) so the rows converge.
+  let ag = getAgentGroupByFolder(group.folder);
+  if (!ag) {
+    createAgentGroup({
+      id: group.folder,
+      name: group.folder,
+      folder: group.folder,
+      agent_provider: null,
+      created_at: now,
+    });
+    ag = getAgentGroupByFolder(group.folder)!;
+  }
+
+  // 2. Upsert the messaging_group row.
+  let mg = getMessagingGroupByPlatform(decoded.channelType, decoded.platformId);
+  if (!mg) {
+    const mgId = `mg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    createMessagingGroup({
+      id: mgId,
+      channel_type: decoded.channelType,
+      platform_id: decoded.platformId,
+      name: group.name,
+      is_group: 0,
+      unknown_sender_policy: 'strict',
+      created_at: now,
+    });
+    mg = getMessagingGroupByPlatform(decoded.channelType, decoded.platformId)!;
+  } else if (mg.name !== group.name) {
+    updateMessagingGroup(mg.id, { name: group.name });
+  }
+
+  // 3. Upsert the messaging_group_agents wiring.
+  const { engage_mode: engageMode, engage_pattern: engagePattern } = requiresTriggerToEngageFields(
+    group.requiresTrigger,
+    group.trigger,
+  );
+  const existingMga = getMessagingGroupAgentByPair(mg.id, ag.id);
+  if (!existingMga) {
+    createMessagingGroupAgent({
+      id: `mga-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      messaging_group_id: mg.id,
+      agent_group_id: ag.id,
+      engage_mode: engageMode,
+      engage_pattern: engagePattern,
+      sender_scope: 'known',
+      ignored_message_policy: 'accumulate',
+      session_mode: 'shared',
+      priority: 0,
+      created_at: now,
+    });
+  } else {
+    updateMessagingGroupAgent(existingMga.id, {
+      engage_mode: engageMode,
+      engage_pattern: engagePattern,
+    });
+  }
+}
+
+/** Symmetric to `setRegisteredGroupV2`. Removes the MGA wiring for the
+ *  jid; if no other MGAs reference the MG, removes the MG too.
+ *  Returns true when at least one row was deleted. */
+export function removeRegisteredGroupV2(jid: string): boolean {
+  const decoded = jidToTypeAndPlatformId(jid);
+  if (!decoded) return false;
+  const mg = getMessagingGroupByPlatform(decoded.channelType, decoded.platformId);
+  if (!mg) return false;
+
+  const mgas = getMessagingGroupAgents(mg.id);
+  for (const mga of mgas) deleteMessagingGroupAgent(mga.id);
+  deleteMessagingGroup(mg.id);
+  return mgas.length > 0 || true;
 }
