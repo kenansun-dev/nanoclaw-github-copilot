@@ -2,31 +2,23 @@
  * v2 helper: "is this group folder the default-agent folder?"
  *
  * The semantic equivalent of v1's `RegisteredGroup.isMain` keyed by
- * folder. In v2, the default agent is declared in
- * `agents.list[]` (entry with `default: true`, else first entry, else
- * `agents.defaults`). `agent_groups.id` equals the folder
- * (see `src/db/v2-migrate-chats.ts:383` — agId = folder), so the
- * default-agent folder is just the chosen agent's id.
+ * folder. In v2, the default agent is declared in `agents.list[]`
+ * (entry with `default: true`, else first entry, else `agents.defaults`).
+ * `agent_groups.id` equals the folder (see `src/db/v2-migrate-chats.ts:383`
+ * — agId = folder), so the default-agent folder is just the chosen
+ * agent's id.
  *
- * Used by Bucket C of the isMain cutover (see
- * docs/proposals/2026-05-14-isMain-cutover-buckets.md). Caller picks a
- * dual-read shim:
- *
- *   - Authoritative branch still reads v1 `RegisteredGroup.isMain`
- *     (folder-keyed), behavior unchanged.
- *   - This helper computes the v2 answer in parallel.
- *   - On disagreement, log.warn so we can grep cutover progress.
- *   - Returns `null` (= "v2 cannot decide") when config has no agent
- *     ids; the caller's dual-read should skip the warn in that case
- *     (legacy compat / TUI-only deployments).
+ * Authoritative since PR #49 (Path A v1 isMain removal). The previous
+ * `isMainDualRead` shim was removed once all host runtime read paths
+ * migrated off RegisteredGroup.isMain.
  */
 
 import { getConfig } from './config.js';
-import { logger } from './log-extensions.js';
 
 /**
  * Returns the v2 answer to "is this folder the privileged
- * (default-agent) folder?", or `null` when v2 has no opinion.
+ * (default-agent) folder?", or `null` when v2 has no opinion (config
+ * not loaded yet / no agents configured and no `agents.defaults.id`).
  *
  * Pure / side-effect free — reads the cached config snapshot.
  */
@@ -53,44 +45,4 @@ export function folderIsDefaultAgent(folder: string): boolean | null {
   const chosenId = chosen?.id;
   if (!chosenId) return null;
   return folder === chosenId;
-}
-
-/**
- * v2-master cutover read: takes the v1 answer + folder, runs the v2
- * lookup. Returns v2 when it has an opinion, v1 otherwise. Warns on
- * mismatch.
- *
- * Behavior change (2026-05-15, isMain Step 3+4 cutover): previously
- * returned `v1IsMain` (v1 authoritative). Now returns the v2 answer
- * when non-null. v1 is only used when config has no agents (TUI-only
- * deployments / very early boot before config load).
- *
- * The mismatch warn is rate-limited per (folder, v1, v2) combination
- * by a process-local Set so one badly-configured chat doesn't spam.
- */
-const warnedMismatch = new Set<string>();
-
-export function isMainDualRead(folder: string, v1IsMain: boolean): boolean {
-  const v2 = folderIsDefaultAgent(folder);
-  if (v2 === null) {
-    // v2 cannot decide (no agents config / very early boot). Fall back
-    // to v1 so deployments without agents.list still work.
-    return v1IsMain;
-  }
-  if (v2 !== v1IsMain) {
-    const key = `${folder}|${v1IsMain ? 1 : 0}|${v2 ? 1 : 0}`;
-    if (!warnedMismatch.has(key)) {
-      warnedMismatch.add(key);
-      logger.warn(
-        { folder, v1IsMain, v2IsDefaultAgent: v2 },
-        'isMain v2-master cutover: v1 ≠ v2 (Bucket H, see docs/proposals/2026-05-14-isMain-cutover-buckets.md). v2 now authoritative; v1 column kept for backup diff.',
-      );
-    }
-  }
-  return v2;
-}
-
-/** Test-only: clear the mismatch dedup set. */
-export function __resetIsMainDualReadDedupForTests(): void {
-  warnedMismatch.clear();
 }

@@ -52,11 +52,7 @@ export function isDefaultAgentDmFolder(folder: string): boolean {
  *                         group — collapsing only when we know it is a DM.
  * @returns The folder upstream consumers should see for routing/mounts.
  */
-export function collapseMainDmFolder(
-  folder: string,
-  chatConfig?: { agentId?: string },
-  chatIsGroup?: boolean,
-): string {
+export function collapseMainDmFolder(folder: string, chatConfig?: { agentId?: string }, chatIsGroup?: boolean): string {
   if (!isDefaultAgentDmFolder(folder)) return folder;
   if (chatIsGroup === true) return folder; // group/channel — never collapse
 

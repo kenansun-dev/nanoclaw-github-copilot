@@ -320,16 +320,22 @@ export function runDoctor(): CheckResult[] {
       .map(([name]) => name);
     results.push(check('Registered chats', () => chatsCheck(chatCount, enabledChannels)));
 
-    // Main chat singleton: catches the silent mount-collision bug for
-    // group chats. Multiple isMain DMs are allowed and intentionally
+    // Default-agent singleton: catches the silent mount-collision bug for
+    // group chats. Multiple default-agent DMs are allowed and intentionally
     // share a session (see session-routing.ts).
-    const mainJids = Object.entries(config.chats)
-      .filter(([, e]: any[]) => e?.isMain)
-      .map(([jid]) => jid);
-    // Build is-group map from the chats table (channel adapters populate this).
+    //
+    // Post-PR #49 (Path A v1 isMain removal): source mainJids from the v2
+    // helper applied over registered_groups (single source of truth) instead
+    // of the deprecated `config.chats[].isMain` field.
+    let mainJids: string[] = [];
     let isGroupByJid: Record<string, boolean | undefined> = {};
     try {
-      const { getAllChats } = require('./db.js');
+      const { folderIsDefaultAgent } = require('./v2-default-agent.js');
+      const { getAllRegisteredGroups, getAllChats } = require('./db.js');
+      const groups = getAllRegisteredGroups() as Record<string, { folder: string }>;
+      mainJids = Object.entries(groups)
+        .filter(([, g]) => folderIsDefaultAgent(g.folder) === true)
+        .map(([jid]) => jid);
       const allChats = getAllChats() as Array<{
         jid: string;
         is_group?: number | null;

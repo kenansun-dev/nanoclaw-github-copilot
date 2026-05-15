@@ -35,10 +35,7 @@ export interface ChatInfo {
  * agent prefix to prevent session collisions when multiple agents share the
  * same chat (e.g. two Teams bots in one group conversation).
  */
-export function deriveGroupFolder(
-  jid: string,
-  chatConfig?: { isDefaultAgent?: boolean; agentId?: string },
-): string {
+export function deriveGroupFolder(jid: string, chatConfig?: { isDefaultAgent?: boolean; agentId?: string }): string {
   if (chatConfig?.isDefaultAgent) {
     // Unique per jid in the DB; collapse-on-read maps DM defaults back to
     // a shared canonical folder. Existing rows with folder='main' continue

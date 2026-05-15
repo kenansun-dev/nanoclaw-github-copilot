@@ -1,7 +1,8 @@
 /**
- * Tests for `src/v2-default-agent.ts` — Bucket C dual-read helper.
+ * Tests for `src/v2-default-agent.ts` — default-agent folder lookup.
  *
- * See docs/proposals/2026-05-14-isMain-cutover-buckets.md.
+ * Post-PR #49 (Path A v1 isMain removal): only `folderIsDefaultAgent`
+ * remains; the dual-read shim was retired.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,22 +14,9 @@ vi.mock('./config.js', () => ({
   getConfig: () => ({ agents: mockAgents }),
 }));
 
-const warnSpy = vi.fn();
-vi.mock('./log-extensions.js', () => ({
-  logger: {
-    warn: (...args: unknown[]) => warnSpy(...args),
-    debug: vi.fn(),
-    info: vi.fn(),
-    error: vi.fn(),
-  },
-}));
-
-const { folderIsDefaultAgent, isMainDualRead, __resetIsMainDualReadDedupForTests } =
-  await import('./v2-default-agent.js');
+const { folderIsDefaultAgent } = await import('./v2-default-agent.js');
 
 beforeEach(() => {
-  warnSpy.mockReset();
-  __resetIsMainDualReadDedupForTests();
   mockAgents = { defaults: { id: 'main' } };
 });
 
@@ -74,31 +62,5 @@ describe('folderIsDefaultAgent', () => {
   it('returns null when chosen list entry has no id', () => {
     mockAgents = { defaults: { id: 'main' }, list: [{}] };
     expect(folderIsDefaultAgent('main')).toBeNull();
-  });
-});
-
-describe('isMainDualRead (v2-master after Bucket H cutover 2026-05-15)', () => {
-  it('returns v2 on agreement (= v1), no warn', () => {
-    mockAgents = { defaults: { id: 'main' } };
-    expect(isMainDualRead('main', true)).toBe(true);
-    expect(isMainDualRead('global', false)).toBe(false);
-    expect(warnSpy).not.toHaveBeenCalled();
-  });
-
-  it('returns v2 (now authoritative) on mismatch and warns once', () => {
-    // v1 says main, v2 disagrees (folder != default-agent id) -> v2 wins
-    mockAgents = { defaults: { id: 'coder' } };
-    expect(isMainDualRead('main', true)).toBe(false);
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    // Second call with the same triple is deduped
-    expect(isMainDualRead('main', true)).toBe(false);
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it('falls back to v1 when v2 has no opinion (no warn)', () => {
-    mockAgents = { defaults: { id: 'main' }, list: [{}] };
-    expect(isMainDualRead('main', true)).toBe(true);
-    expect(isMainDualRead('global', false)).toBe(false);
-    expect(warnSpy).not.toHaveBeenCalled();
   });
 });
