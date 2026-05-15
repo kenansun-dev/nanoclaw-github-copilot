@@ -7,6 +7,15 @@ import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './log-extensions.js';
 import { collapseMainDmFolder } from './session-routing.js';
 import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types-extensions.js';
+// v2 chat-metadata Phase 1 dual-read (proposal 2026-05-16). Read paths
+// only — v1 is still primary; v2 is read in parallel and any drift logged.
+// `safelyDualRead*` swallows errors when v2 db is uninitialized (very
+// early boot, tests without v2 bootstrap) so it never breaks v1 readers.
+import {
+  getRegisteredGroupV2,
+  getAllRegisteredGroupsV2,
+  warnOnChatMetadataDrift,
+} from './db/v2-chat-metadata.js';
 
 let db: Database.Database;
 
@@ -871,6 +880,28 @@ export function getRegisteredGroup(jid: string): (RegisteredGroup & { jid: strin
     containerConfig: row.container_config ? JSON.parse(row.container_config) : undefined,
     requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
   };
+  // Phase 1 dual-read: in parallel, query v2 MG⋈MGA. v1 still primary;
+  // we only warn on drift so doctor + logs surface inconsistencies before
+  // Phase 2 flips read primacy. Disabled via
+  // `NANOCLAW_CHAT_METADATA_DUAL_READ=0`.
+  if (process.env.NANOCLAW_CHAT_METADATA_DUAL_READ !== '0') {
+    try {
+      const v2Row = getRegisteredGroupV2(jid);
+      if (!v2Row || v2Row.folder !== baseGroup.folder) {
+        logger.warn(
+          {
+            jid,
+            v1Folder: baseGroup.folder,
+            v2Folder: v2Row?.folder ?? null,
+            caller: 'getRegisteredGroup',
+          },
+          'chat-metadata v1↔v2 drift (single jid lookup)',
+        );
+      }
+    } catch {
+      /* v2 not initialized yet (early boot / tests) — swallow */
+    }
+  }
   // Collapse-on-read: default-agent DMs share a canonical session per agent.
   // Folder pattern (`main(-<agent>)?-<channel>-<8hex>`) drives detection.
   // See src/session-routing.ts and features/dm-session-sharing.md.
@@ -947,6 +978,18 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       ...baseGroup,
       folder: resolveCollapsedFolderBatch({ ...baseGroup, jid: row.jid }, chatsConfig, isGroupMap),
     };
+  }
+  // Phase 1 dual-read drift surfacing (proposal 2026-05-16). v1 is
+  // primary; we just warn so doctor + logs catch divergence before
+  // Phase 2 flips read primacy. Disabled via
+  // `NANOCLAW_CHAT_METADATA_DUAL_READ=0`.
+  if (process.env.NANOCLAW_CHAT_METADATA_DUAL_READ !== '0') {
+    try {
+      const v2Map = getAllRegisteredGroupsV2();
+      warnOnChatMetadataDrift(result, v2Map, 'getAllRegisteredGroups');
+    } catch {
+      /* v2 not initialized yet (early boot / tests) — swallow */
+    }
   }
   return result;
 }

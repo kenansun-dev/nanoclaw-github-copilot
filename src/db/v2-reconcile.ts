@@ -72,23 +72,9 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function channelKeyToType(channelKey: string): string {
-  switch (channelKey) {
-    case 'telegram':
-    case 'teams':
-    case 'discord':
-    case 'whatsapp':
-    case 'slack':
-    case 'iMessage':
-    case 'email':
-    case 'matrix':
-      return channelKey;
-    case 'tg':
-      return 'telegram';
-    default:
-      return channelKey;
-  }
-}
+// channelKeyToType lifted to src/db/channel-key.ts (single source of
+// truth for v1↔v2 channel id bridging).
+import { channelKeyToType } from './channel-key.js';
 
 interface MutableAccount {
   allowFrom?: string[];

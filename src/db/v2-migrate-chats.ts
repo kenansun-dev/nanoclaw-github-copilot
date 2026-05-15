@@ -63,31 +63,10 @@ export interface MigrateChatsSummary {
   noop: boolean;
 }
 
-function channelKeyToType(channelKey: string): string {
-  switch (channelKey) {
-    case 'tg':
-      return 'telegram';
-    case 'telegram':
-    case 'teams':
-    case 'discord':
-    case 'whatsapp':
-    case 'slack':
-    case 'imessage':
-    case 'iMessage':
-    case 'email':
-    case 'matrix':
-      return channelKey === 'iMessage' ? 'imessage' : channelKey;
-    default:
-      return channelKey;
-  }
-}
-
-/** Split `proto:rest` jid into [channelKey, rawId]. Returns null on malformed. */
-function splitJid(jid: string): [string, string] | null {
-  const idx = jid.indexOf(':');
-  if (idx <= 0 || idx === jid.length - 1) return null;
-  return [jid.slice(0, idx), jid.slice(idx + 1)];
-}
+// channelKeyToType + splitJid live in src/db/channel-key.ts so the
+// inverse mapping (typeToChannelKey, used by v2-chat-metadata cutover)
+// stays in sync with the forward mapping. Imported above.
+import { channelKeyToType, splitJid } from './channel-key.js';
 
 /** Heuristic is-group fallback when no authoritative map is provided. */
 function heuristicIsGroup(channelType: string, rawId: string): boolean {
