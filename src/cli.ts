@@ -833,7 +833,7 @@ async function runChat(args: string[]) {
           const idCol = String(c.id ?? '?').padStart(3);
           const chCol = (c.channel || '?').padEnd(10);
           const jidCol = c.jid.padEnd(25).slice(0, 25);
-          const main = c.isMain ? ' [default]' : '';
+          const main = c.isDefaultAgent ? ' [default]' : '';
           console.log(`  ${idCol} | ${chCol} | ${jidCol} | ${c.name}${main}`);
         }
       }
@@ -870,7 +870,7 @@ async function runChat(args: string[]) {
         process.exit(1);
       }
       const { addChat } = await import('./chat-manager.js');
-      addChat(jid, name, { isMain });
+      addChat(jid, name, { isDefaultAgent: isMain });
       console.log(`Chat registered: ${jid} (${name})${isMain ? ' [default]' : ''}`);
       break;
     }
@@ -894,7 +894,7 @@ async function runChat(args: string[]) {
         process.exit(1);
       }
       const { addChat } = await import('./chat-manager.js');
-      const { id } = addChat(jid, name, { isMain });
+      const { id } = addChat(jid, name, { isDefaultAgent: isMain });
       console.log(`Chat registered: #${id} ${jid} (${name})${isMain ? ' [default]' : ''}`);
       break;
     }

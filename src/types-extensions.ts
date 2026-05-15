@@ -60,7 +60,9 @@ export interface RegisteredGroup {
   added_at: string;
   containerConfig?: ContainerConfig;
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
-  isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
+  // v1 `isMain` field retired in PR #49 (Path A cutover). Default-agent
+  // status is now derived from folder pattern (see src/session-routing.ts
+  // `isDefaultAgentDmFolder`) and the agent config (`folderIsDefaultAgent`).
 }
 
 export interface NewMessage {

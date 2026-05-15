@@ -117,11 +117,10 @@ export class TuiChannel implements Channel {
 
     const existingGroups = this.opts.registeredGroups();
     if (!existingGroups[jid] && this.opts.registerGroup) {
-      const folder = deriveGroupFolder(jid, { isMain: true });
+      const folder = deriveGroupFolder(jid, { isDefaultAgent: true });
       const tuiGroup = {
         name: 'tui',
         folder,
-        isMain: true,
         trigger: '',
         added_at: new Date().toISOString(),
         ...(tuiAgentId ? { agentId: tuiAgentId } : {}),

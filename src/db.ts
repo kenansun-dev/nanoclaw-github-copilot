@@ -48,13 +48,13 @@ export function getAllChatIsGroup(): Map<string, boolean | undefined> {
  * nanoclaw.json or undefined if config can't be loaded. Wrapped so we
  * can call it once outside hot loops in `getAllRegisteredGroups`.
  */
-function loadChatsConfigSnapshot(): Record<string, { agentId?: string; isMain?: boolean }> | undefined {
+function loadChatsConfigSnapshot(): Record<string, { agentId?: string }> | undefined {
   try {
     // Lazy require to avoid pulling config-loader during early db init.
     // config-loader does not import from db.ts, so this is acyclic.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { loadConfig } = require('./config-loader.js');
-    return loadConfig().chats as Record<string, { agentId?: string; isMain?: boolean }> | undefined;
+    return loadConfig().chats as Record<string, { agentId?: string }> | undefined;
   } catch {
     return undefined;
   }
@@ -69,9 +69,8 @@ function loadChatsConfigSnapshot(): Record<string, { agentId?: string; isMain?: 
  * `resolveCollapsedFolderBatch` to avoid N+1 SQL/fs reads.
  */
 function resolveCollapsedFolder(group: RegisteredGroup & { jid: string }): string {
-  if (!group.isMain) return group.folder;
   const chats = loadChatsConfigSnapshot();
-  return collapseMainDmFolder(group, chats?.[group.jid], getChatIsGroup(group.jid));
+  return collapseMainDmFolder(group.folder, chats?.[group.jid], getChatIsGroup(group.jid));
 }
 
 /**
@@ -80,11 +79,10 @@ function resolveCollapsedFolder(group: RegisteredGroup & { jid: string }): strin
  */
 function resolveCollapsedFolderBatch(
   group: RegisteredGroup & { jid: string },
-  chatsConfig: Record<string, { agentId?: string; isMain?: boolean }> | undefined,
+  chatsConfig: Record<string, { agentId?: string }> | undefined,
   isGroupMap: Map<string, boolean | undefined>,
 ): string {
-  if (!group.isMain) return group.folder;
-  return collapseMainDmFolder(group, chatsConfig?.[group.jid], isGroupMap.get(group.jid));
+  return collapseMainDmFolder(group.folder, chatsConfig?.[group.jid], isGroupMap.get(group.jid));
 }
 
 function createSchema(database: Database.Database): void {
@@ -872,9 +870,9 @@ export function getRegisteredGroup(jid: string): (RegisteredGroup & { jid: strin
     added_at: row.added_at,
     containerConfig: row.container_config ? JSON.parse(row.container_config) : undefined,
     requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
-    isMain: row.is_main === 1 ? true : undefined,
   };
-  // Collapse-on-read: isMain DMs share a canonical session per agent.
+  // Collapse-on-read: default-agent DMs share a canonical session per agent.
+  // Folder pattern (`main(-<agent>)?-<channel>-<8hex>`) drives detection.
   // See src/session-routing.ts and features/dm-session-sharing.md.
   return { ...baseGroup, folder: resolveCollapsedFolder(baseGroup) };
 }
@@ -941,9 +939,9 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       added_at: row.added_at,
       containerConfig: row.container_config ? JSON.parse(row.container_config) : undefined,
       requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
-      isMain: row.is_main === 1 ? true : undefined,
     };
-    // Collapse-on-read: isMain DMs share a canonical session per agent.
+    // Collapse-on-read: default-agent DMs share a canonical session per agent.
+    // Folder pattern (`main(-<agent>)?-<channel>-<8hex>`) drives detection.
     // See src/session-routing.ts and features/dm-session-sharing.md.
     result[row.jid] = {
       ...baseGroup,

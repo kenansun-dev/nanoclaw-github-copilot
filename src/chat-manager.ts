@@ -8,13 +8,13 @@ import { loadConfig, saveConfig, NanoclawConfig, nextChatId } from './config-loa
 import { setRegisteredGroup, getAllRegisteredGroups, removeRegisteredGroup } from './db.js';
 import { reconcileChatRegistry } from './chat-reconcile.js';
 import { logger } from './log-extensions.js';
-import { uniqueIsMainFolder } from './session-routing.js';
+import { uniqueIsMainFolder, isDefaultAgentDmFolder } from './session-routing.js';
 
 export interface ChatInfo {
   id?: number;
   jid: string;
   name: string;
-  isMain: boolean;
+  isDefaultAgent: boolean;
   channel?: string;
   lastMessageTime?: string;
 }
@@ -22,21 +22,25 @@ export interface ChatInfo {
 /**
  * Derive a unique group folder name from a chat JID and its config.
  *
- * For isMain chats we generate a unique-per-jid folder so multiple chats
- * marked isMain can coexist in the DB (the `registered_groups.folder UNIQUE`
- * constraint forbids two rows with the same folder). They are *collapsed* back
- * to a canonical 'main' (or 'main-<agent>') at read time by
- * `collapseMainDmFolder` in session-routing.ts — only when authoritative
- * `chats.is_group` says the chat is a DM. Group chats marked isMain keep
- * their unique folder and stay isolated.
+ * For default-agent chats we generate a unique-per-jid folder so multiple
+ * chats sharing that designation can coexist in the DB (the
+ * `registered_groups.folder UNIQUE` constraint forbids two rows with the
+ * same folder). They are *collapsed* back to a canonical 'main' (or
+ * 'main-<agent>') at read time by `collapseMainDmFolder` in
+ * session-routing.ts — only when authoritative `chats.is_group` says the
+ * chat is a DM. Group chats marked default-agent keep their unique folder
+ * and stay isolated.
  *
- * For non-isMain chats with an assigned agentId, the folder includes the
+ * For other chats with an assigned agentId, the folder includes the
  * agent prefix to prevent session collisions when multiple agents share the
  * same chat (e.g. two Teams bots in one group conversation).
  */
-export function deriveGroupFolder(jid: string, chatConfig?: { isMain?: boolean; agentId?: string }): string {
-  if (chatConfig?.isMain) {
-    // Unique per jid in the DB; collapse-on-read maps DM mains back to
+export function deriveGroupFolder(
+  jid: string,
+  chatConfig?: { isDefaultAgent?: boolean; agentId?: string },
+): string {
+  if (chatConfig?.isDefaultAgent) {
+    // Unique per jid in the DB; collapse-on-read maps DM defaults back to
     // a shared canonical folder. Existing rows with folder='main' continue
     // to work — collapse is a no-op for them.
     return uniqueIsMainFolder(jid, chatConfig.agentId);
@@ -86,14 +90,16 @@ export function syncChatsFromConfig(config: NanoclawConfig): void {
 
   for (const [jid, chatConfig] of Object.entries(config.chats)) {
     if (!existing[jid]) {
-      const folder = deriveGroupFolder(jid, chatConfig);
+      const folder = deriveGroupFolder(jid, {
+        isDefaultAgent: chatConfig.isMain ?? false,
+        agentId: (chatConfig as { agentId?: string }).agentId,
+      });
       setRegisteredGroup(jid, {
         name: chatConfig.name,
         folder,
         trigger: config.agents.defaults.triggerWord,
         added_at: new Date().toISOString(),
         requiresTrigger: chatConfig.requiresTrigger ?? false,
-        isMain: chatConfig.isMain ?? false,
       });
       logger.info({ jid, name: chatConfig.name, folder }, 'Chat synced from config');
     }
@@ -107,7 +113,7 @@ export function addChat(
   jid: string,
   name: string,
   options: {
-    isMain?: boolean;
+    isDefaultAgent?: boolean;
     requiresTrigger?: boolean;
     agentId?: string;
   } = {},
@@ -121,14 +127,13 @@ export function addChat(
   config.chats[jid] = {
     id,
     name,
-    isMain: options.isMain,
     requiresTrigger: options.requiresTrigger,
   };
 
   saveConfig(config);
 
   const folder = deriveGroupFolder(jid, {
-    isMain: options.isMain,
+    isDefaultAgent: options.isDefaultAgent,
     agentId: options.agentId,
   });
   setRegisteredGroup(jid, {
@@ -137,7 +142,6 @@ export function addChat(
     trigger: config.agents.defaults.triggerWord,
     added_at: new Date().toISOString(),
     requiresTrigger: options.requiresTrigger ?? false,
-    isMain: options.isMain ?? false,
   });
 
   logger.info({ id, jid, name, folder }, 'Chat added');
@@ -147,6 +151,10 @@ export function addChat(
 /**
  * Set or clear the main chat. Pass null to clear.
  * `target` is a jid (already validated by caller).
+ *
+ * v1 `isMain` cutover (PR #49): writes `chats[].isMain` for backcompat
+ * with old configs/clients but the runtime no longer reads it. Default
+ * agent designation now flows through `agents.list[].default` in v2.
  */
 export function setMainChat(jid: string | null): void {
   const config = loadConfig();
@@ -189,7 +197,7 @@ export function listChats(): ChatInfo[] {
       id: config.chats[jid]?.id,
       jid,
       name: g.name,
-      isMain: g.isMain ?? false,
+      isDefaultAgent: isDefaultAgentDmFolder(g.folder),
       channel: jid.startsWith('tg:')
         ? 'telegram'
         : jid.startsWith('teams:')
