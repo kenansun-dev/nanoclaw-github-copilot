@@ -817,8 +817,8 @@ async function runChat(args: string[]) {
         `Reconciled: added ${r.added.length}, deduped main on ${r.dedupedMains.length}, mirrored to DB ${r.mirroredToDb.length}.`,
       );
       if (r.added.length > 0) console.log('  added: ' + r.added.join(', '));
-      if (r.dedupedMains.length > 0) console.log('  cleared isMain: ' + r.dedupedMains.join(', '));
-      if (r.keptMain) console.log('  kept main: ' + r.keptMain);
+      if (r.dedupedMains.length > 0) console.log('  cleared default-agent flag: ' + r.dedupedMains.join(', '));
+      if (r.keptMain) console.log('  kept default-agent: ' + r.keptMain);
       break;
     }
     case 'list': {
@@ -833,7 +833,7 @@ async function runChat(args: string[]) {
           const idCol = String(c.id ?? '?').padStart(3);
           const chCol = (c.channel || '?').padEnd(10);
           const jidCol = c.jid.padEnd(25).slice(0, 25);
-          const main = c.isMain ? ' [main]' : '';
+          const main = c.isMain ? ' [default]' : '';
           console.log(`  ${idCol} | ${chCol} | ${jidCol} | ${c.name}${main}`);
         }
       }
@@ -854,27 +854,48 @@ async function runChat(args: string[]) {
     case 'add': {
       const jid = args[1];
       const name = args[2] || 'unnamed';
-      const isMain = args.includes('--main');
+      // Bucket F2: dual-accept `--main` (legacy) + `--default-agent` (v2).
+      // Warn on legacy use; will be removed after one release cycle.
+      const hasLegacy = args.includes('--main');
+      const hasV2 = args.includes('--default-agent');
+      if (hasLegacy && !hasV2) {
+        console.warn(
+          '\u26a0\ufe0f  --main is deprecated; use --default-agent instead. ' +
+            'The legacy flag will be removed in a future release.',
+        );
+      }
+      const isMain = hasLegacy || hasV2;
       if (!jid) {
-        console.error('Usage: nanoclaw chat add <jid> <name> [--main]');
+        console.error('Usage: nanoclaw chat add <jid> <name> [--default-agent]');
         process.exit(1);
       }
       const { addChat } = await import('./chat-manager.js');
       addChat(jid, name, { isMain });
-      console.log(`Chat registered: ${jid} (${name})${isMain ? ' [main]' : ''}`);
+      console.log(`Chat registered: ${jid} (${name})${isMain ? ' [default]' : ''}`);
       break;
     }
     case 'add': {
       const jid = args[1];
       const name = args[2] || 'unnamed';
-      const isMain = args.includes('--main');
+      // Bucket F2: dual-accept (see prior `case 'add':`). This second
+      // duplicate case is unreachable due to switch fall-through, but keep
+      // the same shape until a separate dead-code cleanup commit.
+      const hasLegacy = args.includes('--main');
+      const hasV2 = args.includes('--default-agent');
+      if (hasLegacy && !hasV2) {
+        console.warn(
+          '\u26a0\ufe0f  --main is deprecated; use --default-agent instead. ' +
+            'The legacy flag will be removed in a future release.',
+        );
+      }
+      const isMain = hasLegacy || hasV2;
       if (!jid) {
-        console.error('Usage: nanoclaw chat add <jid> <name> [--main]');
+        console.error('Usage: nanoclaw chat add <jid> <name> [--default-agent]');
         process.exit(1);
       }
       const { addChat } = await import('./chat-manager.js');
       const { id } = addChat(jid, name, { isMain });
-      console.log(`Chat registered: #${id} ${jid} (${name})${isMain ? ' [main]' : ''}`);
+      console.log(`Chat registered: #${id} ${jid} (${name})${isMain ? ' [default]' : ''}`);
       break;
     }
     case 'set-main': {
@@ -1053,7 +1074,8 @@ Channels
   channel test <name>               Test a channel connection
 
 Chats
-  pair [<jid>] [--name <n>] [--main] Pair a new chat
+  pair [<jid>] [--name <n>]         Pair a new chat
+  chat add <jid> <name> [--default-agent]  Register a chat (--main accepted, deprecated)
   chat list                         List registered chats
   chat pending                      Show unregistered chats
   chat add <jid> --name <name>      Register a chat
