@@ -20,6 +20,10 @@ export function channelKeyToType(channelKey: string): string {
   switch (channelKey) {
     case 'tg':
       return 'telegram';
+    case 'dc':
+      return 'discord';
+    case 'wa':
+      return 'whatsapp';
     case 'iMessage':
       return 'imessage';
     case 'telegram':
@@ -43,6 +47,10 @@ export function typeToChannelKey(channelType: string): string {
   switch (channelType) {
     case 'telegram':
       return 'tg';
+    case 'discord':
+      return 'dc';
+    case 'whatsapp':
+      return 'wa';
     // imessage stays 'imessage' (v1 used both 'imessage' and 'iMessage';
     // we canonicalize to 'imessage' on read-back).
     default:

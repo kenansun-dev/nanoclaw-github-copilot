@@ -4,6 +4,8 @@ import { channelKeyToType, typeToChannelKey, synthLegacyJid, splitJid, jidToType
 describe('channel-key bridging', () => {
   describe('channelKeyToType', () => {
     it('maps tg → telegram', () => expect(channelKeyToType('tg')).toBe('telegram'));
+    it('maps dc → discord', () => expect(channelKeyToType('dc')).toBe('discord'));
+    it('maps wa → whatsapp', () => expect(channelKeyToType('wa')).toBe('whatsapp'));
     it('passes telegram/discord/teams/whatsapp/slack/matrix/email through', () => {
       for (const t of ['telegram', 'discord', 'teams', 'whatsapp', 'slack', 'matrix', 'email']) {
         expect(channelKeyToType(t)).toBe(t);
@@ -15,9 +17,11 @@ describe('channel-key bridging', () => {
   });
 
   describe('typeToChannelKey', () => {
-    it('maps telegram → tg (the only rewrite)', () => expect(typeToChannelKey('telegram')).toBe('tg'));
+    it('maps telegram → tg', () => expect(typeToChannelKey('telegram')).toBe('tg'));
+    it('maps discord → dc', () => expect(typeToChannelKey('discord')).toBe('dc'));
+    it('maps whatsapp → wa', () => expect(typeToChannelKey('whatsapp')).toBe('wa'));
     it('passes everything else through', () => {
-      for (const t of ['discord', 'teams', 'whatsapp', 'slack', 'matrix', 'imessage', 'tui', 'email', 'nostr']) {
+      for (const t of ['teams', 'slack', 'matrix', 'imessage', 'tui', 'email', 'nostr']) {
         expect(typeToChannelKey(t)).toBe(t);
       }
     });
@@ -63,6 +67,9 @@ describe('channel-key bridging', () => {
       'teams:a:1Rw3-S4Le_nHy4oLPqvBSqG3iXslDKGBqTtN5NYrmLC65tgjeivzoJDJwzg',
       'tui:default',
       'tg:99999',
+      // Discord/WhatsApp prefixes (config-loader.ts:434-435, chat-manager.ts:202-204)
+      'dc:guild:1101013892257288273:channel:1485294667707977929',
+      'wa:1234567890@s.whatsapp.net',
     ];
     for (const jid of samples) {
       it(`jid ${jid} → (type, platform_id) → jid stays equal`, () => {
