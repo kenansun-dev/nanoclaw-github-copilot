@@ -257,3 +257,59 @@ Revised estimate: Phase 1 dual-read PR is ~150–200 LOC of host/runner
 changes plus tests, **not** the "37-site rewrite" the first pass
 implied. Reviewable in a single sitting.
 
+---
+
+## Cross-ref: F1 finding for Rpi5's task 2 (companion proposal)
+
+During review of `2026-05-16-chat-metadata-via-mg-mga.md` I found a
+100% jid-prefix mismatch between legacy `registered_groups.jid` and the
+v2 `messaging_groups` synthetic jid the doc proposes to join on.
+Documenting here so the finding survives Discord scroll and is attached
+to PR #49.
+
+### Evidence (live VM DB, 2026-05-16)
+
+```sh
+sqlite3 ~/.nanoclaw/store/messages.db \
+  "ATTACH '/home/kenan/.nanoclaw/store/v2.db' AS v2;
+   SELECT rg.jid, mg.channel_type||':'||mg.platform_id
+   FROM registered_groups rg
+   LEFT JOIN v2.messaging_groups mg
+     ON (mg.channel_type||':'||mg.platform_id) = rg.jid;"
+```
+
+Result — every right-side column is NULL:
+```
+tg:8731187021     | <<MISS>>
+tui:default       | <<MISS>>
+```
+
+### Root cause
+
+`src/db/v2-migrate-chats.ts:66` `channelKeyToType()`:
+- `'tg'` → `'telegram'`
+- `'dc'` → `'discord'` (etc.)
+
+Legacy `registered_groups.jid` uses the **short** prefix; v2
+`messaging_groups.channel_type` uses the **full** name. Naive equality
+on `channel_type || ':' || platform_id` returns 0 rows for every chat.
+
+### Fix recommendation — (a) read-side helper
+
+Add `synthLegacyJid(channelType, platformId)` in `v2-chat-metadata.ts`
+using the inverse of `channelKeyToType` (single switch table). Use it
+in both directions:
+- v2 → legacy lookup key for `getRegisteredGroup(jid)` facade
+- bidirectional warn for drift detection
+
+No legacy data mutation. No new column. ~10 LOC plus a test.
+
+### Status
+
+- F1 was flagged in initial review of `1baba9f`
+- Verified concrete on live DB before Rpi5's `6fa17cc` update
+- `6fa17cc` improves inventory accuracy (11 reads / 3 writes / 4-fn
+  waist) but does **not** yet incorporate the prefix fix
+- Rpi5 to update field-mapping section + add `synthLegacyJid` helper
+  spec before Phase 1 commit
+
