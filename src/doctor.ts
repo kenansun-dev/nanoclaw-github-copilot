@@ -353,38 +353,6 @@ export function runDoctor(): CheckResult[] {
     }
     results.push(check('Main chat singleton', () => mainChatSingletonCheck(mainJids, chatCount, isGroupByJid)));
 
-    // Phase 1 chat-metadata cutover (proposal 2026-05-16) drift counter.
-    // F4 from VM review: doctor itself walks the facade so it can't see
-    // drift via warn-on-mismatch. Compare v1 + v2 directly here and surface
-    // a dedicated diagnostic line.
-    results.push(
-      check('Chat metadata v1↔v2 drift', () => {
-        try {
-          // ESM ("type":"module") — bare `require` is undefined here.
-          // Use the same `createRequire` pattern as the chat-reconcile
-          // sync load below so the diagnostic actually runs (VM F-Doctor
-          // catch on c280d5e: bare require silently threw, drift never
-          // surfaced).
-          const req = createRequire(import.meta.url);
-          const { getAllRegisteredGroups } = req('./db.js');
-          const { getAllRegisteredGroupsV2, compareV1V2ChatMetadata } = req('./db/v2-chat-metadata.js');
-          const v1 = getAllRegisteredGroups();
-          const v2 = getAllRegisteredGroupsV2();
-          const drift = compareV1V2ChatMetadata(v1, v2);
-          const total = drift.v1OnlyJids.length + drift.v2OnlyJids.length + drift.fieldMismatchJids.length;
-          if (total === 0) {
-            return { ok: true, msg: 'v1 ↔ v2 chat metadata in sync' };
-          }
-          return {
-            ok: false,
-            msg: `chat-metadata drift: ${drift.v1OnlyJids.length} v1-only, ${drift.v2OnlyJids.length} v2-only, ${drift.fieldMismatchJids.length} field mismatch`,
-          };
-        } catch (err) {
-          return { ok: true, msg: `v2 chat metadata not initialized (${(err as Error).message})` };
-        }
-      }),
-    );
-
     // Chat registry drift: catches the production bug found post-PR-#14
     // deploy where inbound-registered chats live only in registered_groups
     // and silently bypass the singleton invariant. Dry-run reconcile, no

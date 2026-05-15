@@ -213,7 +213,6 @@ export async function processTaskIpc(
     folder?: string;
     trigger?: string;
     requiresTrigger?: boolean;
-    containerConfig?: RegisteredGroup['containerConfig'];
     /**
      * Channel-qualified user id stamped by the in-container MCP server
      * (HR list #3, isOwner phase 1). When isOwner(triggeringUserId) is
@@ -429,7 +428,6 @@ export async function processTaskIpc(
           folder: data.folder,
           trigger: data.trigger,
           added_at: new Date().toISOString(),
-          containerConfig: data.containerConfig,
           requiresTrigger: data.requiresTrigger,
         });
       } else {

@@ -58,11 +58,13 @@ export interface RegisteredGroup {
   folder: string;
   trigger: string;
   added_at: string;
-  containerConfig?: ContainerConfig;
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
   // v1 `isMain` field retired in PR #49 (Path A cutover). Default-agent
   // status is now derived from folder pattern (see src/session-routing.ts
   // `isDefaultAgentDmFolder`) and the agent config (`folderIsDefaultAgent`).
+  // v1 `containerConfig` field retired 2026-05-16 (owner-approved Q1):
+  // never-shipped per-chat timeout/mount override; channel-level config
+  // remains via `getChannelContainerConfig`.
 }
 
 export interface NewMessage {

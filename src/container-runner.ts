@@ -283,15 +283,9 @@ function buildVolumeMounts(group: RegisteredGroup, isDefaultAgent: boolean, chat
     });
   }
 
-  // Additional mounts validated against external allowlist (tamper-proof from containers)
-  if (group.containerConfig?.additionalMounts) {
-    const validatedMounts = validateAdditionalMounts(
-      group.containerConfig.additionalMounts,
-      group.name,
-      isDefaultAgent,
-    );
-    mounts.push(...validatedMounts);
-  }
+  // v1 `containerConfig.additionalMounts` retired 2026-05-16: per-chat
+  // mount overrides were never wired to a real config surface. Channel-
+  // level mounts still flow via channel registry.
 
   return mounts;
 }
@@ -514,7 +508,7 @@ export async function runContainerAgent(
     // mtime + claim-stuck) rather than an in-process idle setTimeout, so the
     // hard timeout is just the configured container timeout — no IDLE_TIMEOUT
     // grace period needed. Aligns with upstream (no IDLE_TIMEOUT in upstream).
-    const timeoutMs = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
+    const timeoutMs = CONTAINER_TIMEOUT;
 
     const killOnTimeout = () => {
       if (timedOut) return; // Guard against double-trigger

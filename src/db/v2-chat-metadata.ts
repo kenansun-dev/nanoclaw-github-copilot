@@ -229,10 +229,7 @@ function requiresTriggerToEngageFields(
 /** Idempotent upsert of the MG + MGA pair for a v1 `RegisteredGroup`.
  *  Ensures the `agent_groups` row exists for `group.folder` first, since
  *  MGA.agent_group_id has a FK to it (see migrations/001-initial.ts:32). */
-export function setRegisteredGroupV2(
-  jid: string,
-  group: RegisteredGroup & { jid?: string },
-): void {
+export function setRegisteredGroupV2(jid: string, group: RegisteredGroup & { jid?: string }): void {
   const decoded = jidToTypeAndPlatformId(jid);
   if (!decoded) {
     throw new Error(`setRegisteredGroupV2: cannot decode jid ${jid}`);

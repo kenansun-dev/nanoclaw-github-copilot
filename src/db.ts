@@ -11,7 +11,12 @@ import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types-
 // only — v1 is still primary; v2 is read in parallel and any drift logged.
 // `safelyDualRead*` swallows errors when v2 db is uninitialized (very
 // early boot, tests without v2 bootstrap) so it never breaks v1 readers.
-import { getRegisteredGroupV2, getAllRegisteredGroupsV2, setRegisteredGroupV2, removeRegisteredGroupV2 } from './db/v2-chat-metadata.js';
+import {
+  getRegisteredGroupV2,
+  getAllRegisteredGroupsV2,
+  setRegisteredGroupV2,
+  removeRegisteredGroupV2,
+} from './db/v2-chat-metadata.js';
 
 let db: Database.Database;
 
