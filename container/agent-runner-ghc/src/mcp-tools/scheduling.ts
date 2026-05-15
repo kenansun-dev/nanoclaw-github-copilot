@@ -18,6 +18,7 @@ import {
   chatJid,
   groupFolder,
   isDefaultAgent,
+  triggeringUserId,
 } from './server.js';
 import { formatTasksText, type TaskRow } from '../cli-shared/task-format.js';
 
@@ -139,6 +140,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       context_mode: 'isolated',
       targetJid,
       createdBy: groupFolder,
+      triggeringUserId,
       timestamp: new Date().toISOString(),
     };
 
@@ -222,6 +224,7 @@ server.tool(
       taskId: args.task_id,
       groupFolder,
       isDefaultAgent,
+      triggeringUserId,
       timestamp: new Date().toISOString(),
     };
 
@@ -243,6 +246,7 @@ server.tool(
       taskId: args.task_id,
       groupFolder,
       isDefaultAgent,
+      triggeringUserId,
       timestamp: new Date().toISOString(),
     };
 
@@ -264,6 +268,7 @@ server.tool(
       taskId: args.task_id,
       groupFolder,
       isDefaultAgent,
+      triggeringUserId,
       timestamp: new Date().toISOString(),
     };
 
@@ -329,6 +334,7 @@ server.tool(
       taskId: args.task_id,
       groupFolder,
       isDefaultAgent: String(isDefaultAgent),
+      triggeringUserId,
       timestamp: new Date().toISOString(),
     };
     if (args.prompt !== undefined) data.prompt = args.prompt;

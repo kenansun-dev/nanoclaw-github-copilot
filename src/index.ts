@@ -335,6 +335,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (regularMessages.length === 0) return true;
 
+  // Channel-qualified user id of the LAST sender in this batched turn.
+  // Used by the in-container MCP server to stamp IPC payloads so the host
+  // can apply isOwner privilege gates (HR list #3, isOwner phase 1).
+  // parsedJid is already computed above (line ~323). Falls back to
+  // undefined when sender or parsedJid is missing.
+  const lastSenderMsg = regularMessages[regularMessages.length - 1];
+  const triggeringUserId =
+    parsedJid && lastSenderMsg?.sender ? `${parsedJid.channelType}:${lastSenderMsg.sender}` : undefined;
+
   // Replace missedMessages with non-slash messages for further processing
   missedMessages = regularMessages;
 
@@ -483,326 +492,337 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Thinking message state (separate from answer progressive message)
 
   try {
-    const output = await runAgent(group, prompt, chatJid, async (result) => {
-      // Streaming output callback
+    const output = await runAgent(
+      group,
+      prompt,
+      chatJid,
+      async (result) => {
+        // Streaming output callback
 
-      // Query-complete sentinel: agent finished a query and is waiting for
-      // the next IPC pipe (IPC mode only). Mark a boundary so the next
-      // non-null result resets per-turn message-id state. Doing the reset
-      // here (on the sentinel) instead of pre-emptively at the top of the
-      // next turn avoids racing with trailing partials of the current turn.
-      if (result.result === null && (result as any).newSessionId && !result.partial) {
-        queryBoundaryPendingThinking = true;
-        queryBoundaryPendingResult = true;
-        // Don't return — let the rest of the handler run for thinking/status
-        // bookkeeping, then exit naturally on the !result.result guard above.
-      }
-
-      // Thinking-only deltas (no result yet). Modes:
-      //   `flash` -> stream a compact one-line preview into `thinkingMsgId`;
-      //             deleted/cleared on first answer chunk.
-      //   `on`    -> stream the full thinking text into `thinkingMsgId`;
-      //             kept visible above the answer (separate message).
-      //   `off`   -> drop the delta; final result will not include thinking.
-      if (result.thinking && !result.result) {
-        // Drop trailing reasoning_delta events that arrive AFTER the turn's
-        // final answer was already sent (and before any new-turn boundary).
-        if (turnFinalized) {
-          const seqNow = queue.getUserTurnSeq(chatJid);
-          if (seqNow === lastUserTurnSeqSeen) {
-            return;
-          }
-          // New turn started — fall through; the seq-check below will
-          // reset state.
-        }
-        // Reliable per-turn boundary check (see comment in result.result
-        // branch below): if userTurnSeq advanced, this delta belongs to a
-        // new turn — set the thinking pending flag so the boundary block
-        // below resets thinkingMsgId / opening lock.
-        const currentSeq = queue.getUserTurnSeq(chatJid);
-        if (currentSeq !== lastUserTurnSeqSeen) {
-          lastUserTurnSeqSeen = currentSeq;
+        // Query-complete sentinel: agent finished a query and is waiting for
+        // the next IPC pipe (IPC mode only). Mark a boundary so the next
+        // non-null result resets per-turn message-id state. Doing the reset
+        // here (on the sentinel) instead of pre-emptively at the top of the
+        // next turn avoids racing with trailing partials of the current turn.
+        if (result.result === null && (result as any).newSessionId && !result.partial) {
           queryBoundaryPendingThinking = true;
           queryBoundaryPendingResult = true;
-          turnFinalized = false;
+          // Don't return — let the rest of the handler run for thinking/status
+          // bookkeeping, then exit naturally on the !result.result guard above.
         }
-        const thinkingMode = normalizeShowThinking(
-          getEffectiveShowThinking(chatJid) ?? getConfig().agents?.defaults?.showThinking,
-        );
-        const streamThinking = thinkingMode === 'flash' && !!channel.editMessage && !channel.usesNativeStreaming;
-        // In flash mode, once we've dismissed the thinking preview on the
-        // first answer chunk, ignore trailing reasoning_delta events for
-        // the rest of the turn (don't re-open it).
-        if (streamThinking && channel.editMessage && !(thinkingMode === 'flash' && flashThinkingDismissed)) {
-          // Boundary handling: a new query (queryBoundaryPending=true)
-          // means a fresh turn — drop the previous turn's thinking
-          // pointer so this turn opens a new one.
-          if (queryBoundaryPendingThinking) {
-            // Consume the thinking-side sentinel exactly once per turn so
-            // subsequent reasoning_delta frames don't re-wipe thinkingMsgId
-            // (kenan TG repro 2026-04-25 21:55 — 7 frames produced 7 sends).
-            // The result-side sentinel is a separate flag and is consumed
-            // in the result.result branch below; that branch still needs
-            // to reset progressiveMsgId/lastFinalMsgId for the new turn.
-            queryBoundaryPendingThinking = false;
-            thinkingMsgId = undefined;
-            flashThinkingDismissed = false;
-            lastThinkingRendered = undefined;
-            thinkingPrependedThisQuery = false;
-            flashOpeningLock.reset();
-            flashEditCoalescer.clear();
+
+        // Thinking-only deltas (no result yet). Modes:
+        //   `flash` -> stream a compact one-line preview into `thinkingMsgId`;
+        //             deleted/cleared on first answer chunk.
+        //   `on`    -> stream the full thinking text into `thinkingMsgId`;
+        //             kept visible above the answer (separate message).
+        //   `off`   -> drop the delta; final result will not include thinking.
+        if (result.thinking && !result.result) {
+          // Drop trailing reasoning_delta events that arrive AFTER the turn's
+          // final answer was already sent (and before any new-turn boundary).
+          if (turnFinalized) {
+            const seqNow = queue.getUserTurnSeq(chatJid);
+            if (seqNow === lastUserTurnSeqSeen) {
+              return;
+            }
+            // New turn started — fall through; the seq-check below will
+            // reset state.
           }
-          const tp = formatThinkingForFlash(result.thinking, chatJid);
-          if (tp) {
-            const sendOpts = tp.parseMode ? { parseMode: tp.parseMode } : undefined;
-            if (!thinkingMsgId) {
-              // Opening lock: openOnce() either runs sendMessage (if we're
-              // first) or awaits the in-flight opener (if a sibling delta
-              // beat us). After it resolves, thinkingMsgId is set and the
-              // late delta falls through to the coalescer enqueue branch.
-              await flashOpeningLock.openOnce(async () => {
-                await traceSetTyping(channel, chatJid, false, 'thinking-first');
-                const desired = tp.text + ' ◌';
-                const msgId = await channel.sendMessage(chatJid, desired, sendOpts);
-                thinkingMsgId = typeof msgId === 'string' ? msgId : undefined;
-                lastThinkingRendered = desired;
-              });
-              if (thinkingMsgId) {
-                // Late-waiter path: our text may differ from what the
-                // first sender just sent. Skip the enqueue if it's the
-                // exact same text (rpi5 review 2026-04-25: avoid the
-                // first-frame no-op edit). lastThinkingRendered tracks
-                // the most recent text we rendered for this msgId.
+          // Reliable per-turn boundary check (see comment in result.result
+          // branch below): if userTurnSeq advanced, this delta belongs to a
+          // new turn — set the thinking pending flag so the boundary block
+          // below resets thinkingMsgId / opening lock.
+          const currentSeq = queue.getUserTurnSeq(chatJid);
+          if (currentSeq !== lastUserTurnSeqSeen) {
+            lastUserTurnSeqSeen = currentSeq;
+            queryBoundaryPendingThinking = true;
+            queryBoundaryPendingResult = true;
+            turnFinalized = false;
+          }
+          const thinkingMode = normalizeShowThinking(
+            getEffectiveShowThinking(chatJid) ?? getConfig().agents?.defaults?.showThinking,
+          );
+          const streamThinking = thinkingMode === 'flash' && !!channel.editMessage && !channel.usesNativeStreaming;
+          // In flash mode, once we've dismissed the thinking preview on the
+          // first answer chunk, ignore trailing reasoning_delta events for
+          // the rest of the turn (don't re-open it).
+          if (streamThinking && channel.editMessage && !(thinkingMode === 'flash' && flashThinkingDismissed)) {
+            // Boundary handling: a new query (queryBoundaryPending=true)
+            // means a fresh turn — drop the previous turn's thinking
+            // pointer so this turn opens a new one.
+            if (queryBoundaryPendingThinking) {
+              // Consume the thinking-side sentinel exactly once per turn so
+              // subsequent reasoning_delta frames don't re-wipe thinkingMsgId
+              // (kenan TG repro 2026-04-25 21:55 — 7 frames produced 7 sends).
+              // The result-side sentinel is a separate flag and is consumed
+              // in the result.result branch below; that branch still needs
+              // to reset progressiveMsgId/lastFinalMsgId for the new turn.
+              queryBoundaryPendingThinking = false;
+              thinkingMsgId = undefined;
+              flashThinkingDismissed = false;
+              lastThinkingRendered = undefined;
+              thinkingPrependedThisQuery = false;
+              flashOpeningLock.reset();
+              flashEditCoalescer.clear();
+            }
+            const tp = formatThinkingForFlash(result.thinking, chatJid);
+            if (tp) {
+              const sendOpts = tp.parseMode ? { parseMode: tp.parseMode } : undefined;
+              if (!thinkingMsgId) {
+                // Opening lock: openOnce() either runs sendMessage (if we're
+                // first) or awaits the in-flight opener (if a sibling delta
+                // beat us). After it resolves, thinkingMsgId is set and the
+                // late delta falls through to the coalescer enqueue branch.
+                await flashOpeningLock.openOnce(async () => {
+                  await traceSetTyping(channel, chatJid, false, 'thinking-first');
+                  const desired = tp.text + ' ◌';
+                  const msgId = await channel.sendMessage(chatJid, desired, sendOpts);
+                  thinkingMsgId = typeof msgId === 'string' ? msgId : undefined;
+                  lastThinkingRendered = desired;
+                });
+                if (thinkingMsgId) {
+                  // Late-waiter path: our text may differ from what the
+                  // first sender just sent. Skip the enqueue if it's the
+                  // exact same text (rpi5 review 2026-04-25: avoid the
+                  // first-frame no-op edit). lastThinkingRendered tracks
+                  // the most recent text we rendered for this msgId.
+                  const desired = tp.text + ' ◌';
+                  if (lastThinkingRendered !== desired) {
+                    flashEditCoalescer.enqueue(thinkingMsgId, desired, sendOpts);
+                    lastThinkingRendered = desired;
+                  }
+                }
+              } else {
+                // Coalescer path: enqueue the latest text instead of
+                // awaiting editMessage directly. This caps in-flight edits at
+                // one per msgId, drops intermediate frames automatically, and
+                // detects + cleans up the editMessage→sendMessage fallback
+                // orphan instead of letting it stay on screen as a duplicate.
+                // (kenan TG repro 2026-04-25 00:35: long thinking text in
+                // flash mode produced N orphan thinking bubbles.)
                 const desired = tp.text + ' ◌';
                 if (lastThinkingRendered !== desired) {
                   flashEditCoalescer.enqueue(thinkingMsgId, desired, sendOpts);
                   lastThinkingRendered = desired;
                 }
               }
-            } else {
-              // Coalescer path: enqueue the latest text instead of
-              // awaiting editMessage directly. This caps in-flight edits at
-              // one per msgId, drops intermediate frames automatically, and
-              // detects + cleans up the editMessage→sendMessage fallback
-              // orphan instead of letting it stay on screen as a duplicate.
-              // (kenan TG repro 2026-04-25 00:35: long thinking text in
-              // flash mode produced N orphan thinking bubbles.)
-              const desired = tp.text + ' ◌';
-              if (lastThinkingRendered !== desired) {
-                flashEditCoalescer.enqueue(thinkingMsgId, desired, sendOpts);
-                lastThinkingRendered = desired;
-              }
             }
           }
-        }
-        return;
-      }
-
-      if (result.result) {
-        // Reliable per-turn boundary: if the queue advanced its turn seq
-        // since we last looked (a new user message was piped), treat this
-        // as a new turn even if no SDK sentinel fired.
-        const currentSeq = queue.getUserTurnSeq(chatJid);
-        if (currentSeq !== lastUserTurnSeqSeen) {
-          lastUserTurnSeqSeen = currentSeq;
-          queryBoundaryPendingResult = true;
-          queryBoundaryPendingThinking = true;
-          turnFinalized = false;
-        }
-        // New-turn boundary: clear per-turn message tracking before handling
-        // this output so it sends fresh instead of editing the previous turn.
-        if (queryBoundaryPendingResult) {
-          queryBoundaryPendingResult = false;
-          progressiveMsgId = undefined;
-          progressiveText = '';
-          lastFinalMsgId = undefined;
-          outputSentToUser = false;
-          // NOTE: thinking-side state (thinkingMsgId, flashThinkingDismissed,
-          // lastThinkingRendered, flashOpeningLock, flashEditCoalescer,
-          // thinkingPrependedThisQuery) is intentionally NOT reset here.
-          // The thinking-branch boundary owns those fields and resets them
-          // on its own turn-advance. If we cleared thinkingMsgId here, the
-          // current-turn flash thinking bubble (opened by thinking-branch
-          // earlier in this same turn) would be orphaned: the dismiss code
-          // below relies on thinkingMsgId being defined to delete the
-          // bubble at finalize. (kenan TG repro 2026-04-26 00:20: thinking
-          // bubble at 16:20:45 was never deleted because the result-branch
-          // reset at 16:20:59 nulled thinkingMsgId before final-output ran.)
-          // Cancel any leftover native stream from the previous turn so
-          // the next turn opens a fresh stream. cancel() is idempotent.
-          if (streamHandle) {
-            try {
-              await streamHandle.cancel();
-            } catch (err) {
-              logger.warn(
-                { chatJid, err: (err as Error).message },
-                'streamHandle.cancel during turn boundary failed (non-fatal)',
-              );
-            }
-            streamHandle = undefined;
-          }
-          logger.debug({ chatJid, group: group.name }, 'IPC turn boundary: reset per-turn message-id state');
-        }
-        // Mode behavior on first answer event:
-        //   `on`    -> prepend thinking to result.result as ONE message
-        //              (legacy behavior, restored 2026-04-25 after PR #27
-        //              regression — the per-delta streaming path is too
-        //              fragile for long thinking text and produced N
-        //              orphan bubbles when editMessage hit any failure).
-        //   `flash` -> delete thinkingMsgId (or edit to a single space if
-        //              channel lacks deleteMessage). Set flashThinkingDismissed
-        //              so trailing reasoning_delta events don't re-open it.
-        //   `off`   -> nothing to do.
-        let thinkingParseMode: 'HTML' | 'Markdown' | undefined;
-        const thinkingMode = normalizeShowThinking(
-          getEffectiveShowThinking(chatJid) ?? getConfig().agents?.defaults?.showThinking,
-        );
-        if (result.thinking && !result.partial && thinkingMode === 'on' && !thinkingPrependedThisQuery) {
-          const tp = formatThinkingForChannel(result.thinking, chatJid);
-          const merged = applyOnModeThinkingPrepend({
-            thinking: result.thinking,
-            resultText: typeof result.result === 'string' ? result.result : JSON.stringify(result.result),
-            alreadyPrepended: thinkingPrependedThisQuery,
-            formatted: tp,
-          });
-          if (merged.prepended) {
-            thinkingParseMode = merged.parseMode;
-            result.result = merged.resultText;
-            thinkingPrependedThisQuery = true;
-          }
-        }
-        if (thinkingMsgId && thinkingMode === 'flash' && !flashThinkingDismissed) {
-          // Drain coalescer first: a pending edit on this msgId would
-          // race with the delete (delete succeeds → edit hits a deleted
-          // msg → logs warn, harmless but noisy). Also remove the slot so
-          // any trailing reasoning_delta that sneaks past the
-          // flashThinkingDismissed gate is a no-op.
-          await flashEditCoalescer.drain(thinkingMsgId);
-          // Flash spec (kenan 2026-04-24): "thinking 内容删掉".
-          // Try deleteMessage first; fall back to editing to a single
-          // space (channels reject empty text) if the channel doesn't
-          // expose deleteMessage. Better than the prior behavior of
-          // leaving the full thinking preview visible.
-          try {
-            if (channel.deleteMessage) {
-              await channel.deleteMessage(chatJid, thinkingMsgId);
-            } else if (channel.editMessage) {
-              await channel.editMessage(chatJid, thinkingMsgId, ' ');
-            }
-          } catch (err) {
-            logger.warn({ chatJid, err: (err as Error).message }, 'flash thinking dismiss failed (non-fatal)');
-          }
-          thinkingMsgId = undefined;
-          flashThinkingDismissed = true;
-        }
-        // (`on` mode now merges thinking into result.result above; the
-        //  streamed-thinking-message design from PR #27 was reverted on
-        //  2026-04-25 after producing orphan-bubble regression on TG.)
-        const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
-        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-        if (!text) {
-          if (result.status === 'success') queue.notifyIdle(chatJid);
           return;
         }
 
-        // Agent produced output for the user — reset busy-ack debounce so any
-        // future silent stretch on a follow-up message can be acked again.
-        queue.notifyAgentOutput(chatJid);
+        if (result.result) {
+          // Reliable per-turn boundary: if the queue advanced its turn seq
+          // since we last looked (a new user message was piped), treat this
+          // as a new turn even if no SDK sentinel fired.
+          const currentSeq = queue.getUserTurnSeq(chatJid);
+          if (currentSeq !== lastUserTurnSeqSeen) {
+            lastUserTurnSeqSeen = currentSeq;
+            queryBoundaryPendingResult = true;
+            queryBoundaryPendingThinking = true;
+            turnFinalized = false;
+          }
+          // New-turn boundary: clear per-turn message tracking before handling
+          // this output so it sends fresh instead of editing the previous turn.
+          if (queryBoundaryPendingResult) {
+            queryBoundaryPendingResult = false;
+            progressiveMsgId = undefined;
+            progressiveText = '';
+            lastFinalMsgId = undefined;
+            outputSentToUser = false;
+            // NOTE: thinking-side state (thinkingMsgId, flashThinkingDismissed,
+            // lastThinkingRendered, flashOpeningLock, flashEditCoalescer,
+            // thinkingPrependedThisQuery) is intentionally NOT reset here.
+            // The thinking-branch boundary owns those fields and resets them
+            // on its own turn-advance. If we cleared thinkingMsgId here, the
+            // current-turn flash thinking bubble (opened by thinking-branch
+            // earlier in this same turn) would be orphaned: the dismiss code
+            // below relies on thinkingMsgId being defined to delete the
+            // bubble at finalize. (kenan TG repro 2026-04-26 00:20: thinking
+            // bubble at 16:20:45 was never deleted because the result-branch
+            // reset at 16:20:59 nulled thinkingMsgId before final-output ran.)
+            // Cancel any leftover native stream from the previous turn so
+            // the next turn opens a fresh stream. cancel() is idempotent.
+            if (streamHandle) {
+              try {
+                await streamHandle.cancel();
+              } catch (err) {
+                logger.warn(
+                  { chatJid, err: (err as Error).message },
+                  'streamHandle.cancel during turn boundary failed (non-fatal)',
+                );
+              }
+              streamHandle = undefined;
+            }
+            logger.debug({ chatJid, group: group.name }, 'IPC turn boundary: reset per-turn message-id state');
+          }
+          // Mode behavior on first answer event:
+          //   `on`    -> prepend thinking to result.result as ONE message
+          //              (legacy behavior, restored 2026-04-25 after PR #27
+          //              regression — the per-delta streaming path is too
+          //              fragile for long thinking text and produced N
+          //              orphan bubbles when editMessage hit any failure).
+          //   `flash` -> delete thinkingMsgId (or edit to a single space if
+          //              channel lacks deleteMessage). Set flashThinkingDismissed
+          //              so trailing reasoning_delta events don't re-open it.
+          //   `off`   -> nothing to do.
+          let thinkingParseMode: 'HTML' | 'Markdown' | undefined;
+          const thinkingMode = normalizeShowThinking(
+            getEffectiveShowThinking(chatJid) ?? getConfig().agents?.defaults?.showThinking,
+          );
+          if (result.thinking && !result.partial && thinkingMode === 'on' && !thinkingPrependedThisQuery) {
+            const tp = formatThinkingForChannel(result.thinking, chatJid);
+            const merged = applyOnModeThinkingPrepend({
+              thinking: result.thinking,
+              resultText: typeof result.result === 'string' ? result.result : JSON.stringify(result.result),
+              alreadyPrepended: thinkingPrependedThisQuery,
+              formatted: tp,
+            });
+            if (merged.prepended) {
+              thinkingParseMode = merged.parseMode;
+              result.result = merged.resultText;
+              thinkingPrependedThisQuery = true;
+            }
+          }
+          if (thinkingMsgId && thinkingMode === 'flash' && !flashThinkingDismissed) {
+            // Drain coalescer first: a pending edit on this msgId would
+            // race with the delete (delete succeeds → edit hits a deleted
+            // msg → logs warn, harmless but noisy). Also remove the slot so
+            // any trailing reasoning_delta that sneaks past the
+            // flashThinkingDismissed gate is a no-op.
+            await flashEditCoalescer.drain(thinkingMsgId);
+            // Flash spec (kenan 2026-04-24): "thinking 内容删掉".
+            // Try deleteMessage first; fall back to editing to a single
+            // space (channels reject empty text) if the channel doesn't
+            // expose deleteMessage. Better than the prior behavior of
+            // leaving the full thinking preview visible.
+            try {
+              if (channel.deleteMessage) {
+                await channel.deleteMessage(chatJid, thinkingMsgId);
+              } else if (channel.editMessage) {
+                await channel.editMessage(chatJid, thinkingMsgId, ' ');
+              }
+            } catch (err) {
+              logger.warn({ chatJid, err: (err as Error).message }, 'flash thinking dismiss failed (non-fatal)');
+            }
+            thinkingMsgId = undefined;
+            flashThinkingDismissed = true;
+          }
+          // (`on` mode now merges thinking into result.result above; the
+          //  streamed-thinking-message design from PR #27 was reverted on
+          //  2026-04-25 after producing orphan-bubble regression on TG.)
+          const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
+          const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+          if (!text) {
+            if (result.status === 'success') queue.notifyIdle(chatJid);
+            return;
+          }
 
-        const sendOpts = thinkingParseMode ? { parseMode: thinkingParseMode } : undefined;
+          // Agent produced output for the user — reset busy-ack debounce so any
+          // future silent stretch on a follow-up message can be acked again.
+          queue.notifyAgentOutput(chatJid);
 
-        if (result.partial && channel.usesNativeStreaming && channel.streamMessage) {
-          // Native streaming path: hand cumulative text to the channel's
-          // StreamHandle. The handle is responsible for serializing
-          // outbound activities and graceful degradation on platforms
-          // that reject mid-stream. We never call sendMessage/editMessage
-          // here, so updateActivity races (the partial+final duplicate
-          // bug) cannot occur on this path.
-          progressiveText = text;
-          if (!streamHandle) {
-            await traceSetTyping(channel, chatJid, false, 'native-stream-open');
-            streamHandle = await channel.streamMessage(chatJid, sendOpts);
-          }
-          await streamHandle.chunk(text);
-        } else if (result.partial && channel.editMessage) {
-          // Delta/partial: accumulate and edit existing message.
-          progressiveText = text; // delta buffer already accumulated in agent-runner
-          if (!progressiveMsgId) {
-            // First partial — send new message
-            await traceSetTyping(channel, chatJid, false, 'progressive-first-partial');
-            const msgId = await channel.sendMessage(chatJid, text + ' ◌', sendOpts);
-            progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;
-          } else {
-            // Subsequent partial — edit existing message. Capture id in
-            // case editMessage falls back to a fresh sendMessage (returns
-            // a new id) so we keep editing the live message instead of
-            // spawning duplicates. (kenan TG repro 2026-04-24)
-            const editedId = await channel.editMessage(chatJid, progressiveMsgId, text + ' ◌', sendOpts);
-            if (typeof editedId === 'string' && editedId !== progressiveMsgId) {
-              progressiveMsgId = editedId;
+          const sendOpts = thinkingParseMode ? { parseMode: thinkingParseMode } : undefined;
+
+          if (result.partial && channel.usesNativeStreaming && channel.streamMessage) {
+            // Native streaming path: hand cumulative text to the channel's
+            // StreamHandle. The handle is responsible for serializing
+            // outbound activities and graceful degradation on platforms
+            // that reject mid-stream. We never call sendMessage/editMessage
+            // here, so updateActivity races (the partial+final duplicate
+            // bug) cannot occur on this path.
+            progressiveText = text;
+            if (!streamHandle) {
+              await traceSetTyping(channel, chatJid, false, 'native-stream-open');
+              streamHandle = await channel.streamMessage(chatJid, sendOpts);
             }
-          }
-        } else {
-          // Final message (or channel doesn't support edit)
-          await traceSetTyping(channel, chatJid, false, 'final-output');
-          if (streamHandle) {
-            // Native streaming path: close the stream with the final text.
-            // The handle owns whether this becomes a new message or replaces
-            // the in-flight stream bubble (Teams: replaces; others: TBD).
-            const msgId = await streamHandle.end(text);
-            streamHandle = undefined;
-            lastFinalMsgId = typeof msgId === 'string' ? msgId : undefined;
-          } else if (progressiveMsgId && channel.editMessage) {
-            // Replace the progressive message with final content. Capture
-            // the (possibly new) id from the editMessage fallback path so
-            // lastFinalMsgId tracks the actual visible message.
-            const editedId = await channel.editMessage(chatJid, progressiveMsgId, text, sendOpts);
-            if (typeof editedId === 'string') {
-              lastFinalMsgId = editedId;
-            }
-          } else if (outputSentToUser && lastFinalMsgId && channel.editMessage && !channel.prefersNewMessageForFinal) {
-            // Multiple final outputs (e.g. tool call → new response): edit the
-            // last message on channels where in-place edits feel natural
-            // (Telegram). Channels with prefersNewMessageForFinal (Teams)
-            // skip this branch and send a new message instead, otherwise
-            // each subsequent final silently overwrites the previous one.
-            const editedId = await channel.editMessage(chatJid, lastFinalMsgId, text, sendOpts);
-            if (typeof editedId === 'string' && editedId !== lastFinalMsgId) {
-              lastFinalMsgId = editedId;
+            await streamHandle.chunk(text);
+          } else if (result.partial && channel.editMessage) {
+            // Delta/partial: accumulate and edit existing message.
+            progressiveText = text; // delta buffer already accumulated in agent-runner
+            if (!progressiveMsgId) {
+              // First partial — send new message
+              await traceSetTyping(channel, chatJid, false, 'progressive-first-partial');
+              const msgId = await channel.sendMessage(chatJid, text + ' ◌', sendOpts);
+              progressiveMsgId = typeof msgId === 'string' ? msgId : undefined;
+            } else {
+              // Subsequent partial — edit existing message. Capture id in
+              // case editMessage falls back to a fresh sendMessage (returns
+              // a new id) so we keep editing the live message instead of
+              // spawning duplicates. (kenan TG repro 2026-04-24)
+              const editedId = await channel.editMessage(chatJid, progressiveMsgId, text + ' ◌', sendOpts);
+              if (typeof editedId === 'string' && editedId !== progressiveMsgId) {
+                progressiveMsgId = editedId;
+              }
             }
           } else {
-            const msgId = await channel.sendMessage(chatJid, text, sendOpts);
-            lastFinalMsgId = typeof msgId === 'string' ? msgId : undefined;
+            // Final message (or channel doesn't support edit)
+            await traceSetTyping(channel, chatJid, false, 'final-output');
+            if (streamHandle) {
+              // Native streaming path: close the stream with the final text.
+              // The handle owns whether this becomes a new message or replaces
+              // the in-flight stream bubble (Teams: replaces; others: TBD).
+              const msgId = await streamHandle.end(text);
+              streamHandle = undefined;
+              lastFinalMsgId = typeof msgId === 'string' ? msgId : undefined;
+            } else if (progressiveMsgId && channel.editMessage) {
+              // Replace the progressive message with final content. Capture
+              // the (possibly new) id from the editMessage fallback path so
+              // lastFinalMsgId tracks the actual visible message.
+              const editedId = await channel.editMessage(chatJid, progressiveMsgId, text, sendOpts);
+              if (typeof editedId === 'string') {
+                lastFinalMsgId = editedId;
+              }
+            } else if (
+              outputSentToUser &&
+              lastFinalMsgId &&
+              channel.editMessage &&
+              !channel.prefersNewMessageForFinal
+            ) {
+              // Multiple final outputs (e.g. tool call → new response): edit the
+              // last message on channels where in-place edits feel natural
+              // (Telegram). Channels with prefersNewMessageForFinal (Teams)
+              // skip this branch and send a new message instead, otherwise
+              // each subsequent final silently overwrites the previous one.
+              const editedId = await channel.editMessage(chatJid, lastFinalMsgId, text, sendOpts);
+              if (typeof editedId === 'string' && editedId !== lastFinalMsgId) {
+                lastFinalMsgId = editedId;
+              }
+            } else {
+              const msgId = await channel.sendMessage(chatJid, text, sendOpts);
+              lastFinalMsgId = typeof msgId === 'string' ? msgId : undefined;
+            }
+            progressiveMsgId = undefined;
+            progressiveText = '';
+            outputSentToUser = true;
+            // Mark this turn finalized; any further reasoning_delta events
+            // arriving before a new userTurnSeq are SDK trailing artifacts
+            // and must be ignored to avoid orphan thinking bubbles.
+            turnFinalized = true;
+            // Re-arm typing keepalive after sending an interim final-output
+            // message, but as a *bounded* pulse: if no further output
+            // arrives within TTL ms, auto-clear so we don't show 'typing
+            // forever' on the last final (turn-end may not run for many
+            // seconds while the runner drains its idle window).
+            // Any subsequent traceSetTyping (next thinking, next final,
+            // turn-end, finally-guard) cancels the pending auto-clear.
+            // (kenan Teams repro 2026-04-27 — 'always typing' regression
+            //  after the unbounded re-arm in 18daa61.)
+            await armTypingBounded(channel, chatJid, 'after-interim-final', INTERIM_TYPING_TTL_MS);
           }
-          progressiveMsgId = undefined;
-          progressiveText = '';
-          outputSentToUser = true;
-          // Mark this turn finalized; any further reasoning_delta events
-          // arriving before a new userTurnSeq are SDK trailing artifacts
-          // and must be ignored to avoid orphan thinking bubbles.
-          turnFinalized = true;
-          // Re-arm typing keepalive after sending an interim final-output
-          // message, but as a *bounded* pulse: if no further output
-          // arrives within TTL ms, auto-clear so we don't show 'typing
-          // forever' on the last final (turn-end may not run for many
-          // seconds while the runner drains its idle window).
-          // Any subsequent traceSetTyping (next thinking, next final,
-          // turn-end, finally-guard) cancels the pending auto-clear.
-          // (kenan Teams repro 2026-04-27 — 'always typing' regression
-          //  after the unbounded re-arm in 18daa61.)
-          await armTypingBounded(channel, chatJid, 'after-interim-final', INTERIM_TYPING_TTL_MS);
+          logger.info({ group: group.name, partial: !!result.partial }, `Agent output: ${raw.length} chars`);
         }
-        logger.info({ group: group.name, partial: !!result.partial }, `Agent output: ${raw.length} chars`);
-      }
 
-      if (result.status === 'success') {
-        queue.notifyIdle(chatJid);
-      }
+        if (result.status === 'success') {
+          queue.notifyIdle(chatJid);
+        }
 
-      if (result.status === 'error') {
-        hadError = true;
-      }
-    });
+        if (result.status === 'error') {
+          hadError = true;
+        }
+      },
+      triggeringUserId,
+    );
 
     await traceSetTyping(channel, chatJid, false, 'turn-end');
 
@@ -852,6 +872,7 @@ async function runAgent(
   prompt: string,
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  triggeringUserId?: string,
 ): Promise<'success' | 'error'> {
   // v2-only (PR #49): is-this-the-default-agent decision point. The
   // boolean flows into RunnerInput.isDefaultAgent (→ container mount layout,
@@ -905,6 +926,7 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isDefaultAgent: isDefaultAgent,
+        triggeringUserId,
         assistantName: ASSISTANT_NAME,
       },
       (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),

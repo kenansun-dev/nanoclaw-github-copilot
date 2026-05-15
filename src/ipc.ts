@@ -10,6 +10,7 @@ import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './log-extensions.js';
 import { RegisteredGroup } from './types-extensions.js';
 import { folderIsDefaultAgent } from './v2-default-agent.js';
+import { isOwner } from './modules/permissions/db/user-roles.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<string | void>;
@@ -213,12 +214,24 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    /**
+     * Channel-qualified user id stamped by the in-container MCP server
+     * (HR list #3, isOwner phase 1). When isOwner(triggeringUserId) is
+     * true, gates allow cross-folder ops alongside the existing
+     * isDefaultAgent fallback.
+     */
+    triggeringUserId?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isDefaultAgent: boolean, // Verified from directory path
   deps: IpcDeps,
 ): Promise<void> {
   const registeredGroups = deps.registeredGroups();
+  // Owner-override predicate — additive next to isDefaultAgent + sameFolder.
+  // Phase 1 dual-read: a stamped owner triggeringUserId can authorize
+  // cross-folder task ops without the source folder being the default
+  // agent. isDefaultAgent fallback preserved for zero-regression.
+  const ownerOverride = data.triggeringUserId ? isOwner(data.triggeringUserId) : false;
 
   switch (data.type) {
     case 'schedule_task':
@@ -235,7 +248,7 @@ export async function processTaskIpc(
         const targetFolder = targetGroupEntry.folder;
 
         // Authorization: non-main groups can only schedule for themselves
-        if (!isDefaultAgent && targetFolder !== sourceGroup) {
+        if (!ownerOverride && !isDefaultAgent && targetFolder !== sourceGroup) {
           logger.warn({ sourceGroup, targetFolder }, 'Unauthorized schedule_task attempt blocked');
           break;
         }
@@ -302,7 +315,7 @@ export async function processTaskIpc(
     case 'pause_task':
       if (data.taskId) {
         const task = getTaskById(data.taskId);
-        if (task && (isDefaultAgent || task.group_folder === sourceGroup)) {
+        if (task && (ownerOverride || isDefaultAgent || task.group_folder === sourceGroup)) {
           updateTask(data.taskId, { status: 'paused' });
           logger.info({ taskId: data.taskId, sourceGroup }, 'Task paused via IPC');
           deps.onTasksChanged();
@@ -315,7 +328,7 @@ export async function processTaskIpc(
     case 'resume_task':
       if (data.taskId) {
         const task = getTaskById(data.taskId);
-        if (task && (isDefaultAgent || task.group_folder === sourceGroup)) {
+        if (task && (ownerOverride || isDefaultAgent || task.group_folder === sourceGroup)) {
           updateTask(data.taskId, { status: 'active' });
           logger.info({ taskId: data.taskId, sourceGroup }, 'Task resumed via IPC');
           deps.onTasksChanged();
@@ -328,7 +341,7 @@ export async function processTaskIpc(
     case 'cancel_task':
       if (data.taskId) {
         const task = getTaskById(data.taskId);
-        if (task && (isDefaultAgent || task.group_folder === sourceGroup)) {
+        if (task && (ownerOverride || isDefaultAgent || task.group_folder === sourceGroup)) {
           deleteTask(data.taskId);
           logger.info({ taskId: data.taskId, sourceGroup }, 'Task cancelled via IPC');
           deps.onTasksChanged();
@@ -345,7 +358,7 @@ export async function processTaskIpc(
           logger.warn({ taskId: data.taskId, sourceGroup }, 'Task not found for update');
           break;
         }
-        if (!isDefaultAgent && task.group_folder !== sourceGroup) {
+        if (!ownerOverride && !isDefaultAgent && task.group_folder !== sourceGroup) {
           logger.warn({ taskId: data.taskId, sourceGroup }, 'Unauthorized task update attempt');
           break;
         }

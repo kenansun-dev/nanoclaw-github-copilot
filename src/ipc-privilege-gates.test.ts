@@ -70,6 +70,12 @@ vi.mock('./v2-default-agent.js', () => ({
   folderIsDefaultAgent: () => false,
 }));
 
+// isOwner mock for Phase 1 owner-override tests. Only 'tg:owner' counts;
+// undefined / unknown ids fall through to the legacy isDefaultAgent path.
+vi.mock('./modules/permissions/db/user-roles.js', () => ({
+  isOwner: (id: string) => id === 'tg:owner',
+}));
+
 const { processTaskIpc } = await import('./ipc.js');
 
 // Minimal IpcDeps stub — `processTaskIpc` only touches a few fields for
@@ -169,6 +175,33 @@ describe('processTaskIpc — privilege gates (current isDefaultAgent predicate)'
       );
       expect(updateTaskSpy).toHaveBeenCalledWith(t.id, { status: 'paused' });
     });
+
+    it('allows owner cross-folder via triggeringUserId', async () => {
+      const t = seedTask('other-folder');
+      await processTaskIpc(
+        { type: 'pause_task', taskId: t.id, triggeringUserId: 'tg:owner' },
+        'side',
+        false,
+        makeDeps(),
+      );
+      expect(updateTaskSpy).toHaveBeenCalledWith(t.id, { status: 'paused' });
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('still blocks non-owner non-default cross-folder', async () => {
+      const t = seedTask('other-folder');
+      await processTaskIpc(
+        { type: 'pause_task', taskId: t.id, triggeringUserId: 'tg:rando' },
+        'side',
+        false,
+        makeDeps(),
+      );
+      expect(updateTaskSpy).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: t.id }),
+        expect.stringContaining('Unauthorized task pause'),
+      );
+    });
   });
 
   describe('cancel_task', () => {
@@ -183,6 +216,29 @@ describe('processTaskIpc — privilege gates (current isDefaultAgent predicate)'
       const t = seedTask('side');
       await processTaskIpc({ type: 'cancel_task', taskId: t.id }, 'main', true, makeDeps());
       expect(deleteTaskSpy).toHaveBeenCalledWith(t.id);
+    });
+
+    it('allows owner cross-folder via triggeringUserId', async () => {
+      const t = seedTask('other-folder');
+      await processTaskIpc(
+        { type: 'cancel_task', taskId: t.id, triggeringUserId: 'tg:owner' },
+        'side',
+        false,
+        makeDeps(),
+      );
+      expect(deleteTaskSpy).toHaveBeenCalledWith(t.id);
+    });
+
+    it('still blocks non-owner non-default cross-folder', async () => {
+      const t = seedTask('other-folder');
+      await processTaskIpc(
+        { type: 'cancel_task', taskId: t.id, triggeringUserId: 'tg:rando' },
+        'side',
+        false,
+        makeDeps(),
+      );
+      expect(deleteTaskSpy).not.toHaveBeenCalled();
+      expect(taskStore.has(t.id)).toBe(true);
     });
   });
 
@@ -201,6 +257,32 @@ describe('processTaskIpc — privilege gates (current isDefaultAgent predicate)'
       const t = seedTask('side');
       await processTaskIpc({ type: 'update_task', taskId: t.id, prompt: 'new prompt' }, 'side', false, makeDeps());
       expect(updateTaskSpy).toHaveBeenCalledWith(t.id, expect.objectContaining({ prompt: 'new prompt' }));
+    });
+
+    it('allows owner cross-folder via triggeringUserId', async () => {
+      const t = seedTask('other-folder');
+      await processTaskIpc(
+        { type: 'update_task', taskId: t.id, prompt: 'owner edit', triggeringUserId: 'tg:owner' },
+        'side',
+        false,
+        makeDeps(),
+      );
+      expect(updateTaskSpy).toHaveBeenCalledWith(t.id, expect.objectContaining({ prompt: 'owner edit' }));
+    });
+
+    it('still blocks non-owner non-default cross-folder', async () => {
+      const t = seedTask('other-folder');
+      await processTaskIpc(
+        { type: 'update_task', taskId: t.id, prompt: 'nope', triggeringUserId: 'tg:rando' },
+        'side',
+        false,
+        makeDeps(),
+      );
+      expect(updateTaskSpy).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: t.id }),
+        expect.stringContaining('Unauthorized task update'),
+      );
     });
   });
 
@@ -257,6 +339,44 @@ describe('processTaskIpc — privilege gates (current isDefaultAgent predicate)'
         makeDeps(),
       );
       expect(createTaskSpy).toHaveBeenCalled();
+    });
+
+    it('allows owner cross-folder via triggeringUserId', async () => {
+      await processTaskIpc(
+        {
+          type: 'schedule_task',
+          prompt: 'p',
+          schedule_type: 'cron',
+          schedule_value: '0 * * * *',
+          targetJid: 'tg:222',
+          triggeringUserId: 'tg:owner',
+        },
+        'other-folder',
+        false,
+        makeDeps(),
+      );
+      expect(createTaskSpy).toHaveBeenCalled();
+    });
+
+    it('still blocks non-owner non-default cross-folder', async () => {
+      await processTaskIpc(
+        {
+          type: 'schedule_task',
+          prompt: 'p',
+          schedule_type: 'cron',
+          schedule_value: '0 * * * *',
+          targetJid: 'tg:222',
+          triggeringUserId: 'tg:rando',
+        },
+        'other-folder',
+        false,
+        makeDeps(),
+      );
+      expect(createTaskSpy).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceGroup: 'other-folder', targetFolder: 'side' }),
+        expect.stringContaining('Unauthorized schedule_task'),
+      );
     });
   });
 });

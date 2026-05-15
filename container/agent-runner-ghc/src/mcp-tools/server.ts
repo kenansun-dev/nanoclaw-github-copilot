@@ -36,6 +36,13 @@ export const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 // Legacy NANOCLAW_IS_MAIN env was retired alongside the v1 isMain field.
 export const isDefaultAgent = process.env.NANOCLAW_IS_DEFAULT_AGENT === '1';
 
+// Channel-qualified user id of the user whose latest message triggered
+// this turn (e.g. `telegram:8731187021`). Stamped onto IPC payloads so
+// the host can apply isOwner privilege gates without re-deriving identity.
+// Empty env => undefined (HR list #3, 2026-05-16 isOwner phase 1).
+export const triggeringUserId: string | undefined =
+  process.env.NANOCLAW_TRIGGERING_USER_ID || undefined;
+
 // ---------------------------------------------------------------------------
 // Atomic IPC file write (preserved verbatim)
 // ---------------------------------------------------------------------------

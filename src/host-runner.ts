@@ -258,6 +258,14 @@ export async function runHostAgent(
     HOME: process.env.HOME || process.env.USERPROFILE || os.homedir(),
   };
 
+  // Channel-qualified user id of the user whose latest message triggered
+  // this turn — see ContainerInput.triggeringUserId. The in-process MCP
+  // server reads this from env to stamp IPC payloads for host-side isOwner
+  // privilege gates (HR list #3, 2026-05-16 isOwner phase 1).
+  if (input.triggeringUserId) {
+    env.NANOCLAW_TRIGGERING_USER_ID = input.triggeringUserId;
+  }
+
   // Auth token
   if (isAgentGHC(agent)) {
     const token = resolveGithubToken();

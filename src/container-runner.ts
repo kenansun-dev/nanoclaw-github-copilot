@@ -51,6 +51,13 @@ export interface ContainerInput {
   groupFolder: string;
   chatJid: string;
   isDefaultAgent: boolean;
+  /**
+   * Channel-qualified user id of the user whose latest message triggered
+   * this turn (e.g. `telegram:8731187021`). Used by IPC privilege gates to
+   * allow owner cross-folder ops without isDefaultAgent. May be undefined
+   * for scheduled-task or programmatic invocations.
+   */
+  triggeringUserId?: string;
   isScheduledTask?: boolean;
   /** When isScheduledTask=true, the scheduled task id for processName formatting. */
   taskId?: string;
@@ -289,7 +296,12 @@ function buildVolumeMounts(group: RegisteredGroup, isDefaultAgent: boolean, chat
   return mounts;
 }
 
-function buildContainerArgs(mounts: VolumeMount[], containerName: string, chatJid?: string): string[] {
+function buildContainerArgs(
+  mounts: VolumeMount[],
+  containerName: string,
+  chatJid?: string,
+  triggeringUserId?: string,
+): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
   const containerImage = resolveContainerImage(chatJid);
 
@@ -299,6 +311,13 @@ function buildContainerArgs(mounts: VolumeMount[], containerName: string, chatJi
   // Pass sandbox engine setting (node=compiled dist, tsx=self-modifying)
   const engine = getConfig().sandbox?.engine || 'node';
   args.push('-e', `NANOCLAW_ENGINE=${engine}`);
+
+  // Channel-qualified user id of the user whose latest message triggered
+  // this turn. Used by the in-container MCP server to stamp every IPC
+  // payload so the host can apply isOwner privilege gates (HR list #3,
+  // 2026-05-16 isOwner phase 1). Empty when unknown so consumers can
+  // distinguish 'unknown user' from 'owner' without crashing.
+  args.push('-e', `NANOCLAW_TRIGGERING_USER_ID=${triggeringUserId ?? ''}`);
 
   // Pass plugin directories as colon-separated env var for agent-runners
   const ws = path.dirname(DATA_DIR); // resolved workspace root (v1: ~/.nanoclaw, v2: ~/.nanoclaw-v2)
@@ -381,7 +400,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isDefaultAgent, input.chatJid);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName, input.chatJid);
+  const containerArgs = buildContainerArgs(mounts, containerName, input.chatJid, input.triggeringUserId);
 
   logger.debug(
     {

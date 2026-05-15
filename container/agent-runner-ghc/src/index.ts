@@ -27,6 +27,8 @@ interface ContainerInput {
   groupFolder: string;
   chatJid: string;
   isDefaultAgent: boolean;
+  /** Channel-qualified user id of the latest sender (e.g. `telegram:123`). */
+  triggeringUserId?: string;
   isScheduledTask?: boolean;
   assistantName?: string;
   model?: string;
@@ -424,6 +426,7 @@ async function main(): Promise<void> {
               // v2-only (PR #49): only NANOCLAW_IS_DEFAULT_AGENT remains;
               // legacy NANOCLAW_IS_MAIN was retired with the v1 isMain field.
               NANOCLAW_IS_DEFAULT_AGENT: containerInput.isDefaultAgent ? '1' : '0',
+              NANOCLAW_TRIGGERING_USER_ID: containerInput.triggeringUserId ?? '',
             },
             tools: ['*'],
           },
