@@ -9,7 +9,7 @@ import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './log-extensions.js';
 import { RegisteredGroup } from './types-extensions.js';
-import { isMainDualRead } from './v2-default-agent.js';
+import { folderIsDefaultAgent } from './v2-default-agent.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<string | void>;
@@ -21,7 +21,7 @@ export interface IpcDeps {
   getAvailableGroups: () => AvailableGroup[];
   writeGroupsSnapshot: (
     groupFolder: string,
-    isMain: boolean,
+    isDefaultAgent: boolean,
     availableGroups: AvailableGroup[],
     registeredJids: Set<string>,
   ) => void;
@@ -56,19 +56,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
     const registeredGroups = deps.registeredGroups();
 
-    // Build folder→isMain lookup from registered groups (v1 authoritative).
-    // Bucket C dual-read (Step 3+4): the v2 answer is `agents.list[]`'s
-    // default-agent id == folder. We compute it per source-folder below
-    // via `isMainDualRead`, which logs `warn` on mismatch so we can grep
-    // cutover progress before deleting the v1 read in Bucket I.
-    const folderIsMain = new Map<string, boolean>();
-    for (const group of Object.values(registeredGroups)) {
-      if (group.isMain) folderIsMain.set(group.folder, true);
-    }
-
+    // v2-only (PR #49): compute folder-is-default-agent per source folder
+    // via folderIsDefaultAgent(). v1 RegisteredGroup.isMain field retired.
     for (const sourceGroup of groupFolders) {
-      const v1IsMain = folderIsMain.get(sourceGroup) === true;
-      const isMain = isMainDualRead(sourceGroup, v1IsMain);
+      const isDefaultAgent = folderIsDefaultAgent(sourceGroup) === true;
       const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
       const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks');
 
@@ -83,7 +74,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
               if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
-                if (isMain || (targetGroup && targetGroup.folder === sourceGroup)) {
+                if (isDefaultAgent || (targetGroup && targetGroup.folder === sourceGroup)) {
                   await deps.sendMessage(data.chatJid, data.text);
                   logger.info({ chatJid: data.chatJid, sourceGroup }, 'IPC message sent');
                 } else {
@@ -93,7 +84,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
               // Handle react IPC
               if (data.type === 'react' && data.chatJid && data.emoji && deps.reactToMessage) {
                 const targetGroup = registeredGroups[data.chatJid];
-                if (isMain || (targetGroup && targetGroup.folder === sourceGroup)) {
+                if (isDefaultAgent || (targetGroup && targetGroup.folder === sourceGroup)) {
                   await deps.reactToMessage(data.chatJid, data.emoji, data.messageId);
                   logger.info({ chatJid: data.chatJid, emoji: data.emoji }, 'IPC reaction sent');
                 }
@@ -101,13 +92,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
               // Handle send_file IPC
               if (data.type === 'send_file' && data.chatJid && data.filePath && deps.sendFile) {
                 const targetGroup = registeredGroups[data.chatJid];
-                if (isMain || (targetGroup && targetGroup.folder === sourceGroup)) {
+                if (isDefaultAgent || (targetGroup && targetGroup.folder === sourceGroup)) {
                   await deps.sendFile(data.chatJid, data.filePath, data.filename);
                   logger.info({ chatJid: data.chatJid, file: data.filePath }, 'IPC file sent');
                 }
               }
               // Handle nanoclaw_control IPC (restart, config changes)
-              if (data.type === 'control' && isMain) {
+              if (data.type === 'control' && isDefaultAgent) {
                 await handleControlIpc(data, deps);
               }
               // Handle nanoclaw_plugin IPC (list/install/uninstall/marketplace_*).
@@ -116,7 +107,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
               // marketplace_remove) are restricted to the main chat for safety.
               if (data.type === 'plugin') {
                 const readOnlyActions = ['list', 'marketplace_list', 'marketplace_browse'];
-                if (readOnlyActions.includes(data.action) || isMain) {
+                if (readOnlyActions.includes(data.action) || isDefaultAgent) {
                   const responseDir = path.join(ipcBaseDir, sourceGroup, 'responses');
                   await handlePluginIpc(data, responseDir);
                 }
@@ -143,7 +134,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
               // Pass source group identity to processTaskIpc for authorization
-              await processTaskIpc(data, sourceGroup, isMain, deps);
+              await processTaskIpc(data, sourceGroup, isDefaultAgent, deps);
               fs.unlinkSync(filePath);
             } catch (err) {
               logger.error({ file, sourceGroup, err }, 'Error processing IPC task');
@@ -224,7 +215,7 @@ export async function processTaskIpc(
     containerConfig?: RegisteredGroup['containerConfig'];
   },
   sourceGroup: string, // Verified identity from IPC directory
-  isMain: boolean, // Verified from directory path
+  isDefaultAgent: boolean, // Verified from directory path
   deps: IpcDeps,
 ): Promise<void> {
   const registeredGroups = deps.registeredGroups();
@@ -244,7 +235,7 @@ export async function processTaskIpc(
         const targetFolder = targetGroupEntry.folder;
 
         // Authorization: non-main groups can only schedule for themselves
-        if (!isMain && targetFolder !== sourceGroup) {
+        if (!isDefaultAgent && targetFolder !== sourceGroup) {
           logger.warn({ sourceGroup, targetFolder }, 'Unauthorized schedule_task attempt blocked');
           break;
         }
@@ -311,7 +302,7 @@ export async function processTaskIpc(
     case 'pause_task':
       if (data.taskId) {
         const task = getTaskById(data.taskId);
-        if (task && (isMain || task.group_folder === sourceGroup)) {
+        if (task && (isDefaultAgent || task.group_folder === sourceGroup)) {
           updateTask(data.taskId, { status: 'paused' });
           logger.info({ taskId: data.taskId, sourceGroup }, 'Task paused via IPC');
           deps.onTasksChanged();
@@ -324,7 +315,7 @@ export async function processTaskIpc(
     case 'resume_task':
       if (data.taskId) {
         const task = getTaskById(data.taskId);
-        if (task && (isMain || task.group_folder === sourceGroup)) {
+        if (task && (isDefaultAgent || task.group_folder === sourceGroup)) {
           updateTask(data.taskId, { status: 'active' });
           logger.info({ taskId: data.taskId, sourceGroup }, 'Task resumed via IPC');
           deps.onTasksChanged();
@@ -337,7 +328,7 @@ export async function processTaskIpc(
     case 'cancel_task':
       if (data.taskId) {
         const task = getTaskById(data.taskId);
-        if (task && (isMain || task.group_folder === sourceGroup)) {
+        if (task && (isDefaultAgent || task.group_folder === sourceGroup)) {
           deleteTask(data.taskId);
           logger.info({ taskId: data.taskId, sourceGroup }, 'Task cancelled via IPC');
           deps.onTasksChanged();
@@ -354,7 +345,7 @@ export async function processTaskIpc(
           logger.warn({ taskId: data.taskId, sourceGroup }, 'Task not found for update');
           break;
         }
-        if (!isMain && task.group_folder !== sourceGroup) {
+        if (!isDefaultAgent && task.group_folder !== sourceGroup) {
           logger.warn({ taskId: data.taskId, sourceGroup }, 'Unauthorized task update attempt');
           break;
         }
@@ -396,7 +387,7 @@ export async function processTaskIpc(
 
     case 'refresh_groups':
       // Only main group can request a refresh
-      if (isMain) {
+      if (isDefaultAgent) {
         logger.info({ sourceGroup }, 'Group metadata refresh requested via IPC');
         await deps.syncGroups(true);
         // Write updated snapshot immediately
@@ -409,7 +400,7 @@ export async function processTaskIpc(
 
     case 'register_group':
       // Only main group can register new groups
-      if (!isMain) {
+      if (!isDefaultAgent) {
         logger.warn({ sourceGroup }, 'Unauthorized register_group attempt blocked');
         break;
       }
@@ -418,10 +409,8 @@ export async function processTaskIpc(
           logger.warn({ sourceGroup, folder: data.folder }, 'Invalid register_group request - unsafe folder name');
           break;
         }
-        // Defense in depth: agent cannot set isMain via IPC.
-        // Preserve isMain from the existing registration so IPC config
-        // updates (e.g. adding additionalMounts) don't strip the flag.
-        const existingGroup = registeredGroups[data.jid];
+        // v2-only (PR #49): isMain field on RegisteredGroup retired;
+        // default-agent identity is now derived from folder (folderIsDefaultAgent).
         deps.registerGroup(data.jid, {
           name: data.name,
           folder: data.folder,
@@ -429,7 +418,6 @@ export async function processTaskIpc(
           added_at: new Date().toISOString(),
           containerConfig: data.containerConfig,
           requiresTrigger: data.requiresTrigger,
-          isMain: existingGroup?.isMain,
         });
       } else {
         logger.warn({ data }, 'Invalid register_group request - missing required fields');

@@ -164,10 +164,9 @@ export interface SlashCommandContext {
    * for the message being processed. Set per-iteration by the dispatch loop
    * since one ctx is shared across multiple messages in a batch.
    *
-   * Optional: legacy callers (cli/task, tests pre-Bucket-B) may omit and
-   * the v2 owner-check falls back to the legacy `getRegisteredGroup().isMain`
-   * shim with a `warn` log so we can grep cutover progress (Step 3+4 dual-read,
-   * see docs/proposals/2026-05-14-isMain-cutover-buckets.md Bucket B).
+   * Optional: legacy callers (cli/task, older tests) may omit; the v2
+   * owner check then falls back to `folderIsDefaultAgent(group.folder)`
+   * with a warn (PR #49).
    */
   senderId?: string;
   /** Delete in-memory session entry (e.g., `delete sessions[folder]`) */
@@ -308,61 +307,42 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
   if (input === '/tasks') {
     if (ctx.channel) {
       try {
-        const [{ getAllTasks, getRegisteredGroup }, { formatTasksText }, { isOwner: v2IsOwner }] = await Promise.all([
-          import('./db.js'),
-          import('./cli/task-format.js'),
-          import('./modules/permissions/db/user-roles.js'),
-        ]);
-        // Parity with the prior MCP `list_tasks` (container/.../mcp-tools/scheduling.ts:174):
-        //   * Filter by `group_folder` (NOT `chat_jid`) so isMain DMs that
+        const [{ getAllTasks }, { formatTasksText }, { isOwner: v2IsOwner }, { folderIsDefaultAgent }] =
+          await Promise.all([
+            import('./db.js'),
+            import('./cli/task-format.js'),
+            import('./modules/permissions/db/user-roles.js'),
+            import('./v2-default-agent.js'),
+          ]);
+        // Parity with the prior MCP `list_tasks` (container/.../mcp-tools/scheduling.ts):
+        //   * Filter by `group_folder` (NOT `chat_jid`) so default-agent DMs that
         //     collapse onto a shared session see all of their sibling DM
-        //     tasks (db.ts:51-86 collapse-on-read).
+        //     tasks (db.ts collapse-on-read).
         //   * Owner sees ALL groups' tasks (operator view).
         //
-        // Bucket B (Step 3+4 cutover): semantic was "main chat sees all".
-        // The actual concept is "operator/owner sees all" — chat-type was
-        // a proxy for "this is the owner's chat". v2 reads `user_roles` via
-        // `isOwner(senderId)`. Dual-read shim: v2 first, fall back to v1
-        // `isMain` if `senderId` is unavailable (legacy callers); log a warn
-        // on fallback so we can grep cutover progress.
-        const isMain = (() => {
-          if (ctx.senderId) {
-            const v2 = v2IsOwner(ctx.senderId);
-            // Belt-and-suspenders during dual-read window: warn on EITHER
-            // direction of mismatch so we can spot reconcile gaps before
-            // deleting v1 in Bucket I (VM review nit on Bucket B).
-            //   * v1=true, v2=false  → v2 missing an owner row
-            //                          (would TIGHTEN access if we cut over now)
-            //   * v1=false, v2=true  → v2 has an owner row v1 doesn't
-            //                          (would WIDEN access — safety-relevant)
-            const v1 = !!getRegisteredGroup(ctx.chatJid)?.isMain;
-            if (v1 !== v2) {
-              log.warn(
-                { chatJid: ctx.chatJid, senderId: ctx.senderId, v1IsMain: v1, v2IsOwner: v2 },
-                '/tasks dual-read mismatch (Bucket B); v2 still authoritative',
-              );
-            }
-            return v2;
-          }
-          // Legacy fallback (no senderId threaded). Will go away after all
-          // call sites are updated; warn to grep remaining sites.
+        // v2-only (PR #49): prefer `isOwner(senderId)`. Fall back to
+        // `folderIsDefaultAgent(group.folder)` when senderId is unavailable
+        // (legacy callers) — the default-agent's own folder is treated as
+        // the operator scope.
+        const isOperator = (() => {
+          if (ctx.senderId) return v2IsOwner(ctx.senderId);
           log.warn(
             { chatJid: ctx.chatJid, groupFolder: ctx.groupFolder },
-            '/tasks invoked without ctx.senderId; falling back to v1 isMain (Bucket B)',
+            '/tasks invoked without ctx.senderId; falling back to folder-default-agent (PR #49)',
           );
-          return !!getRegisteredGroup(ctx.chatJid)?.isMain;
+          return folderIsDefaultAgent(ctx.groupFolder) === true;
         })();
         const all = getAllTasks();
-        const rows = (isMain ? all : all.filter((t) => t.group_folder === ctx.groupFolder)).slice().sort((a, b) => {
+        const rows = (isOperator ? all : all.filter((t) => t.group_folder === ctx.groupFolder)).slice().sort((a, b) => {
           if (a.status !== b.status) return a.status < b.status ? -1 : 1;
           const an = a.next_run ? new Date(a.next_run).getTime() : Infinity;
           const bn = b.next_run ? new Date(b.next_run).getTime() : Infinity;
           return an - bn;
         });
         const text = formatTasksText(rows, {
-          // Compact for non-main (chat-scoped); verbose for main (multi-group view).
-          compact: !isMain,
-          filterDesc: isMain ? 'all groups' : `group=${ctx.groupFolder}`,
+          // Compact for non-operator (chat-scoped); verbose for operator (multi-group view).
+          compact: !isOperator,
+          filterDesc: isOperator ? 'all groups' : `group=${ctx.groupFolder}`,
         });
         await ctx.channel.sendMessage(ctx.chatJid, '```\n' + text.trim() + '\n```');
       } catch (err: any) {

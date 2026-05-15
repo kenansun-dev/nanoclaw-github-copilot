@@ -49,7 +49,7 @@ import { isAbortRequestText } from './abort-triggers.js';
 import { shadowRoute } from './shadow-inbound.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
-import { isMainDualRead } from './v2-default-agent.js';
+import { folderIsDefaultAgent } from './v2-default-agent.js';
 import { findChannel, formatMessages, formatOutbound, formatConversationContext } from './text-format.js';
 import { restoreRemoteControl, startRemoteControl, stopRemoteControl } from './remote-control.js';
 import { isSenderAllowed, isTriggerAllowed, loadSenderAllowlist, shouldDropMessage } from './sender-allowlist.js';
@@ -76,10 +76,8 @@ const queue = new GroupQueue();
 const onecli = IS_GHC_PROVIDER ? null : new OneCLI({ url: ONECLI_URL });
 
 function ensureOneCLIAgent(jid: string, group: RegisteredGroup): void {
-  // Bucket A (Step 3+4 cutover): dual-read shim. v1 group.isMain is still
-  // authoritative; v2 helper warns on mismatch.
-  // See docs/proposals/2026-05-14-isMain-cutover-buckets.md.
-  if (!onecli || isMainDualRead(group.folder, group.isMain === true)) return;
+  // v2-only (PR #49): folder is the default-agent? Compute on demand.
+  if (!onecli || folderIsDefaultAgent(group.folder) === true) return;
   const identifier = group.folder.toLowerCase().replace(/_/g, '-');
   onecli!.ensureAgent({ name: group.name, identifier }).then(
     (res: any) => {
@@ -242,8 +240,8 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   const groupMdFile = path.join(groupDir, 'CLAUDE.md');
   if (!fs.existsSync(groupMdFile)) {
     // Bucket A: dual-read for CLAUDE.md template path (mount-derived).
-    const isMainTpl = isMainDualRead(group.folder, group.isMain === true);
-    const templateFile = path.join(DATA_DIR, GROUPS_DIR, isMainTpl ? 'main' : 'global', 'CLAUDE.md');
+    const isDefaultAgentTpl = folderIsDefaultAgent(group.folder) === true;
+    const templateFile = path.join(DATA_DIR, GROUPS_DIR, isDefaultAgentTpl ? 'main' : 'global', 'CLAUDE.md');
     if (fs.existsSync(templateFile)) {
       let content = fs.readFileSync(templateFile, 'utf-8');
       if (ASSISTANT_NAME !== 'Andy') {
@@ -298,7 +296,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return true;
   }
 
-  const isMainGroup = isMainDualRead(group.folder, group.isMain === true);
+  const isDefaultAgentGroup = folderIsDefaultAgent(group.folder) === true;
 
   let missedMessages = getMessagesSince(chatJid, getOrRecoverCursor(chatJid), ASSISTANT_NAME, MAX_MESSAGES_PER_PROMPT);
 
@@ -342,7 +340,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // For non-main groups, check if trigger is required and present
   // (after slash commands, so /think etc. work without @mention)
-  if (!isMainGroup && group.requiresTrigger !== false) {
+  if (!isDefaultAgentGroup && group.requiresTrigger !== false) {
     const triggerPattern = getTriggerPattern(group.trigger);
     const allowlistCfg = loadSenderAllowlist();
     const hasTrigger = missedMessages.some(
@@ -855,13 +853,11 @@ async function runAgent(
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
-  // Bucket A (Step 3+4 cutover): central isMain decision point. This single
-  // value flows into RunnerInput.isMain (→ container-runner mount layout,
-  // mount-security.validateMount, host-runner CLAUDE.md path) and into the
-  // tasks/groups snapshot writers. Dual-read here covers all downstream
-  // consumers without touching them.
-  // See docs/proposals/2026-05-14-isMain-cutover-buckets.md.
-  const isMain = isMainDualRead(group.folder, group.isMain === true);
+  // v2-only (PR #49): is-this-the-default-agent decision point. The
+  // boolean flows into RunnerInput.isDefaultAgent (→ container mount layout,
+  // mount-security.validateMount, host-runner template path) and the
+  // tasks/groups snapshot writers.
+  const isDefaultAgent = folderIsDefaultAgent(group.folder) === true;
   const agent = resolveAgentForChat(chatJid);
   const provider = getAgentProvider(agent);
   const sessionId = sessions[group.folder]?.[provider];
@@ -870,7 +866,7 @@ async function runAgent(
   const tasks = getAllTasks();
   writeTasksSnapshot(
     group.folder,
-    isMain,
+    isDefaultAgent,
     tasks.map((t) => ({
       id: t.id,
       groupFolder: t.group_folder,
@@ -885,7 +881,7 @@ async function runAgent(
 
   // Update available groups snapshot (main group only can see all groups)
   const availableGroups = getAvailableGroups();
-  writeGroupsSnapshot(group.folder, isMain, availableGroups, new Set(Object.keys(registeredGroups)));
+  writeGroupsSnapshot(group.folder, isDefaultAgent, availableGroups, new Set(Object.keys(registeredGroups)));
 
   // Wrap onOutput to track session ID from streamed results
   const wrappedOnOutput = onOutput
@@ -908,7 +904,7 @@ async function runAgent(
         sessionId,
         groupFolder: group.folder,
         chatJid,
-        isDefaultAgent: isMain,
+        isDefaultAgent: isDefaultAgent,
         assistantName: ASSISTANT_NAME,
       },
       (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -1056,8 +1052,8 @@ async function startMessageLoop(): Promise<void> {
             continue;
           }
 
-          const isMainGroup = isMainDualRead(group.folder, group.isMain === true);
-          const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
+          const isDefaultAgentGroup = folderIsDefaultAgent(group.folder) === true;
+          const needsTrigger = !isDefaultAgentGroup && group.requiresTrigger !== false;
 
           // For non-main groups, only act on trigger messages.
           // Non-trigger messages accumulate in DB and get pulled as
@@ -1640,8 +1636,8 @@ async function main(): Promise<void> {
   async function handleRemoteControl(command: string, chatJid: string, msg: NewMessage): Promise<void> {
     const group = registeredGroups[chatJid];
     // Bucket A: privilege gate (remote-control). Dual-read shim.
-    const isMainGroup = group ? isMainDualRead(group.folder, group.isMain === true) : false;
-    if (!isMainGroup) {
+    const isDefaultAgentGroup = group ? folderIsDefaultAgent(group.folder) === true : false;
+    if (!isDefaultAgentGroup) {
       logger.warn({ chatJid, sender: msg.sender }, 'Remote control rejected: not main group');
       return;
     }
@@ -1892,7 +1888,7 @@ async function main(): Promise<void> {
       }));
       for (const group of Object.values(registeredGroups)) {
         // Bucket A: dual-read for tasks snapshot writer.
-        writeTasksSnapshot(group.folder, isMainDualRead(group.folder, group.isMain === true), taskRows);
+        writeTasksSnapshot(group.folder, folderIsDefaultAgent(group.folder) === true, taskRows);
       }
     },
   });

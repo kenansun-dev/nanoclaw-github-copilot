@@ -799,8 +799,12 @@ describe('reconcileConfigToDb — DEFAULTS leak regression', () => {
       configVersion: 2,
       agents: {
         defaults: {
-          provider: 'p', model: 'm', name: 'D', triggerWord: '@d',
-          hasOwnNumber: false, mode: 'host' as const,
+          provider: 'p',
+          model: 'm',
+          name: 'D',
+          triggerWord: '@d',
+          hasOwnNumber: false,
+          mode: 'host' as const,
         },
         list: [{ id: 'main' }],
       },
@@ -810,8 +814,8 @@ describe('reconcileConfigToDb — DEFAULTS leak regression', () => {
 
     // The autoMerge wrote a fresh `channels` map onto cfg1.
     expect(
-      (cfg1 as unknown as { channels?: Record<string, { roleBindings?: Record<string, string> }> })
-        .channels?.telegram?.roleBindings,
+      (cfg1 as unknown as { channels?: Record<string, { roleBindings?: Record<string, string> }> }).channels?.telegram
+        ?.roleBindings,
     ).toEqual({ '42': 'owner' });
 
     // Second, completely fresh config: also omits `channels`, has no
@@ -822,8 +826,12 @@ describe('reconcileConfigToDb — DEFAULTS leak regression', () => {
       configVersion: 2,
       agents: {
         defaults: {
-          provider: 'p', model: 'm', name: 'D', triggerWord: '@d',
-          hasOwnNumber: false, mode: 'host' as const,
+          provider: 'p',
+          model: 'm',
+          name: 'D',
+          triggerWord: '@d',
+          hasOwnNumber: false,
+          mode: 'host' as const,
         },
         list: [{ id: 'main' }],
       },

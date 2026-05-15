@@ -18,6 +18,7 @@ import {
 import { GroupQueue, taskSlotKey } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './log-extensions.js';
+import { folderIsDefaultAgent } from './v2-default-agent.js';
 import { RegisteredGroup, ScheduledTask } from './types-extensions.js';
 
 /**
@@ -169,11 +170,11 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
   }
 
   // Update tasks snapshot for container to read (filtered by group)
-  const isMain = group.isMain === true;
+  const isDefaultAgent = folderIsDefaultAgent(group.folder) === true;
   const tasks = getAllTasks();
   writeTasksSnapshot(
     task.group_folder,
-    isMain,
+    isDefaultAgent,
     tasks.map((t) => ({
       id: t.id,
       groupFolder: t.group_folder,
@@ -232,7 +233,7 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
         sessionId,
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,
-        isDefaultAgent: isMain,
+        isDefaultAgent,
         isScheduledTask: true,
         taskId: task.id,
         assistantName: agent.name || ASSISTANT_NAME,

@@ -208,7 +208,7 @@ describe('isUserConfigAllowed (PR-D pair-scoping helper)', () => {
   it('matches channels.<type>.roleBindings (owner|admin)', () => {
     const cfg = {
       channels: {
-        discord: { roleBindings: { 'u1': 'owner' } },
+        discord: { roleBindings: { u1: 'owner' } },
       },
     };
     expect(isUserConfigAllowed('discord:u1', cfg)).toBe(true);

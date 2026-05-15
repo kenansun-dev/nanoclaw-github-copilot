@@ -184,7 +184,6 @@ export async function runHostAgent(
   group: {
     name: string;
     folder: string;
-    isMain?: boolean;
     containerConfig?: { timeout?: number };
   },
   input: ContainerInput,

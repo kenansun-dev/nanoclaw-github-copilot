@@ -439,10 +439,12 @@ export function isUserConfigAllowed(userId: string, config: unknown): boolean {
   if (!channels) return false;
   for (const [channelKey, channelDef] of Object.entries(channels)) {
     const channelType = channelKeyForType(channelKey);
-    const ch = channelDef as {
-      accounts?: Record<string, unknown>;
-      roleBindings?: Record<string, 'owner' | 'admin'>;
-    } | undefined;
+    const ch = channelDef as
+      | {
+          accounts?: Record<string, unknown>;
+          roleBindings?: Record<string, 'owner' | 'admin'>;
+        }
+      | undefined;
     // roleBindings: raw id keys (e.g. "8731187021") → fully-qualified.
     for (const rawId of Object.keys(ch?.roleBindings ?? {})) {
       if (`${channelType}:${rawId}` === userId) return true;

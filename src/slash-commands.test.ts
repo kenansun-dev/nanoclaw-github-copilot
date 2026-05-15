@@ -360,7 +360,7 @@ describe('handleSlashCommand', () => {
     const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
     expect(sentText).toContain('task-a');
     expect(sentText).toContain('task-b'); // owner sees other group's tasks
-    expect((userRoles.isOwner as any)).toHaveBeenCalledWith('telegram:8731187021');
+    expect(userRoles.isOwner as any).toHaveBeenCalledWith('telegram:8731187021');
   });
 
   it('/tasks v2 non-owner senderId scopes to own folder (Bucket B)', async () => {

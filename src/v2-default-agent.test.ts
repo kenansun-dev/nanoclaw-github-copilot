@@ -23,9 +23,8 @@ vi.mock('./log-extensions.js', () => ({
   },
 }));
 
-const { folderIsDefaultAgent, isMainDualRead, __resetIsMainDualReadDedupForTests } = await import(
-  './v2-default-agent.js'
-);
+const { folderIsDefaultAgent, isMainDualRead, __resetIsMainDualReadDedupForTests } =
+  await import('./v2-default-agent.js');
 
 beforeEach(() => {
   warnSpy.mockReset();

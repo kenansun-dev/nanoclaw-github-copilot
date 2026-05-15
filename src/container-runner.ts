@@ -278,7 +278,11 @@ function buildVolumeMounts(group: RegisteredGroup, isDefaultAgent: boolean, chat
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
-    const validatedMounts = validateAdditionalMounts(group.containerConfig.additionalMounts, group.name, isDefaultAgent);
+    const validatedMounts = validateAdditionalMounts(
+      group.containerConfig.additionalMounts,
+      group.name,
+      isDefaultAgent,
+    );
     mounts.push(...validatedMounts);
   }
 
