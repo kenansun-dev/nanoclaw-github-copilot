@@ -78,25 +78,25 @@ describe('folderIsDefaultAgent', () => {
   });
 });
 
-describe('isMainDualRead', () => {
-  it('returns the v1 answer (authoritative) on agreement, no warn', () => {
+describe('isMainDualRead (v2-master after Bucket H cutover 2026-05-15)', () => {
+  it('returns v2 on agreement (= v1), no warn', () => {
     mockAgents = { defaults: { id: 'main' } };
     expect(isMainDualRead('main', true)).toBe(true);
     expect(isMainDualRead('global', false)).toBe(false);
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it('returns v1 (still authoritative) on mismatch and warns once', () => {
-    // v1 says main, v2 disagrees (folder != default-agent id)
+  it('returns v2 (now authoritative) on mismatch and warns once', () => {
+    // v1 says main, v2 disagrees (folder != default-agent id) -> v2 wins
     mockAgents = { defaults: { id: 'coder' } };
-    expect(isMainDualRead('main', true)).toBe(true);
+    expect(isMainDualRead('main', true)).toBe(false);
     expect(warnSpy).toHaveBeenCalledTimes(1);
     // Second call with the same triple is deduped
-    expect(isMainDualRead('main', true)).toBe(true);
+    expect(isMainDualRead('main', true)).toBe(false);
     expect(warnSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('returns v1 unchanged when v2 has no opinion (no warn)', () => {
+  it('falls back to v1 when v2 has no opinion (no warn)', () => {
     mockAgents = { defaults: { id: 'main' }, list: [{}] };
     expect(isMainDualRead('main', true)).toBe(true);
     expect(isMainDualRead('global', false)).toBe(false);

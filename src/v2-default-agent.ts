@@ -56,10 +56,15 @@ export function folderIsDefaultAgent(folder: string): boolean | null {
 }
 
 /**
- * Dual-read helper: takes the v1 answer + folder, runs the v2 lookup,
- * logs a warn on mismatch, returns the v1 answer (authoritative).
+ * v2-master cutover read: takes the v1 answer + folder, runs the v2
+ * lookup. Returns v2 when it has an opinion, v1 otherwise. Warns on
+ * mismatch.
  *
- * Centralized so every IPC site doesn't repeat the warn boilerplate.
+ * Behavior change (2026-05-15, isMain Step 3+4 cutover): previously
+ * returned `v1IsMain` (v1 authoritative). Now returns the v2 answer
+ * when non-null. v1 is only used when config has no agents (TUI-only
+ * deployments / very early boot before config load).
+ *
  * The mismatch warn is rate-limited per (folder, v1, v2) combination
  * by a process-local Set so one badly-configured chat doesn't spam.
  */
@@ -67,17 +72,22 @@ const warnedMismatch = new Set<string>();
 
 export function isMainDualRead(folder: string, v1IsMain: boolean): boolean {
   const v2 = folderIsDefaultAgent(folder);
-  if (v2 !== null && v2 !== v1IsMain) {
+  if (v2 === null) {
+    // v2 cannot decide (no agents config / very early boot). Fall back
+    // to v1 so deployments without agents.list still work.
+    return v1IsMain;
+  }
+  if (v2 !== v1IsMain) {
     const key = `${folder}|${v1IsMain ? 1 : 0}|${v2 ? 1 : 0}`;
     if (!warnedMismatch.has(key)) {
       warnedMismatch.add(key);
       logger.warn(
         { folder, v1IsMain, v2IsDefaultAgent: v2 },
-        'isMain dual-read mismatch (Bucket C, see docs/proposals/2026-05-14-isMain-cutover-buckets.md). v1 still authoritative.',
+        'isMain v2-master cutover: v1 ≠ v2 (Bucket H, see docs/proposals/2026-05-14-isMain-cutover-buckets.md). v2 now authoritative; v1 column kept for backup diff.',
       );
     }
   }
-  return v1IsMain;
+  return v2;
 }
 
 /** Test-only: clear the mismatch dedup set. */
