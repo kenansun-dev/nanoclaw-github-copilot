@@ -86,13 +86,99 @@ cutover is transparent to every caller.
 
 | Legacy `registered_groups` | v2 source | Notes |
 |---|---|---|
-| `jid` | `MG.channel_type ‖ ':' ‖ MG.platform_id` | already the shape we mint at write time |
+| `jid` | `synthLegacyJid(MG.channel_type, MG.platform_id)` | **NOT raw `channel_type:platform_id` — see F1 fix below** |
 | `name` | `MG.name` | 1:1 |
 | `folder` | derived `<agentSlug>-<channel>-<8hex>` or `'main'` | computed, never stored on MG |
 | `trigger_pattern` | `MGA.engage_pattern` | already migrated by `010-engage-modes` |
 | `requires_trigger` | `MGA.engage_mode != 'always'` | derived |
 | `container_config` | **gap** — see Open Q1 | currently only on legacy table |
 | `added_at` | `MG.created_at` | 1:1 |
+
+## F1 fix — jid prefix mismatch (VM-verified, blocking Phase 1)
+
+**VM repro on live DB**: naive `MG.channel_type ‖ ':' ‖ MG.platform_id`
+returns 0 matches against `registered_groups.jid`. Root cause:
+`v2-migrate-chats.ts:66` `channelKeyToType` maps short prefix `tg` →
+full name `telegram` when populating `MG.channel_type`. Legacy `rg.jid`
+kept the short prefix. So the join key needs the **inverse** map
+applied to the v2 side.
+
+**Live jid samples on rpi5** (verified 2026-05-16 04:24 GMT+8 via
+`messages.db / registered_groups`):
+
+```
+tg:8731187021                  → channelKey=tg,    platform_id=8731187021
+teams:a:1Rw3-S4Le_...          → channelKey=teams, platform_id=a:1Rw3-S4Le_...   (2 colons)
+tg:daily:8731187021            → channelKey=tg,    platform_id=daily:8731187021    (2 colons)
+tui:default                    → channelKey=tui,   platform_id=default
+teams:..., tui:..., dc:..., wa:..., etc.
+```
+
+Key insight: `splitJid` only splits at the **first** colon, so
+`platform_id` can legitimately contain colons (Teams thread IDs,
+daily-prefix Telegram chats). Inverse map must preserve that.
+
+### `synthLegacyJid` helper spec
+
+Add to `src/v2-chat-metadata.ts` (the new module created in Phase 1):
+
+```ts
+/** Inverse of channelKeyToType in v2-migrate-chats.ts:66.
+ *  MUST stay in sync with that map. */
+function typeToChannelKey(channelType: string): string {
+  switch (channelType) {
+    case 'telegram': return 'tg';
+    // teams, discord, whatsapp, slack, imessage, email, matrix, tui:
+    // legacy + v2 use the same string, no rewrite needed.
+    default: return channelType;
+  }
+}
+
+/** Compose a legacy-shaped jid from v2 (channel_type, platform_id).
+ *  Used as the lookup key when bridging legacy callers to v2 rows. */
+export function synthLegacyJid(channelType: string, platformId: string): string {
+  return `${typeToChannelKey(channelType)}:${platformId}`;
+}
+```
+
+**Phase 1 facade then becomes**:
+
+```ts
+function mgRowToLegacy(mg: MgRow, mga: MgaRow | null): RegisteredGroup & { jid: string } {
+  return {
+    jid: synthLegacyJid(mg.channel_type, mg.platform_id),
+    name: mg.name ?? '',
+    folder: deriveFolder(mg, mga),
+    trigger: mga?.engage_pattern ?? '',
+    requiresTrigger: (mga?.engage_mode ?? 'always') !== 'always',
+    addedAt: mg.created_at,
+  };
+}
+
+// Lookup: invert at query time, NOT at storage time
+export function getRegisteredGroupV2(jid: string): RegisteredGroup | undefined {
+  const [channelKey, platformId] = splitJidLegacy(jid);  // tg, 8731187021
+  const channelType = channelKeyToTypeShared(channelKey); // telegram
+  const mg = db.prepare(`SELECT * FROM messaging_groups WHERE channel_type=? AND platform_id=?`).get(channelType, platformId);
+  // ...
+}
+```
+
+### Cross-checks added to Phase 1 unit tests
+
+- `synthLegacyJid('telegram','8731187021')` === `'tg:8731187021'`
+- `synthLegacyJid('teams','a:1Rw3...')` === `'teams:a:1Rw3...'` (no rewrite)
+- `synthLegacyJid('tui','default')` === `'tui:default'`
+- Round-trip: every legacy jid in fixture DB ↔ (channel_type, platform_id) ↔ same legacy jid
+- Drift counter (F4 fix): doctor counts mismatched rows, reports `"v1↔v2 chat-metadata drift: N rows"`
+
+### Refactor `channelKeyToType` to shared module
+
+Currently duplicated at `v2-migrate-chats.ts:66` and `v2-reconcile.ts:75`.
+Phase 1 commit 0 = lift to `src/db/channel-key.ts` (no behavior change),
+Phase 1 commit 1 = add `synthLegacyJid` consumer. Keeps the inverse
+definition single-sourced — if anyone adds a new channel mapping
+(e.g. nostr → ns), both directions update together.
 
 ## Cutover plan (4 phases, mirrors the isMain bucket pattern)
 
@@ -128,6 +214,25 @@ Risk: medium-high. Rollback now requires backfill script. Add a one-shot
   separately (same pattern as the `is_main` column drop).
 
 Risk: irreversible. Owner sign-off required, separate PR.
+
+## Open questions for owner
+
+## Findings folded in (VM review of `1baba9f` / `6fa17cc`)
+
+- **F1** (jid prefix mismatch) — fixed above. Phase 1 blocker, resolved.
+- **F2** (hot-path perf, dual-read 3-table join × per-inbound) — add
+  facade-level memoization keyed on `MG.created_at MAX(MG.id)`
+  invalidation. Required before Phase 2 flip; Phase 1 baseline numbers
+  in PR description.
+- **F3** (cross-dep landing order) — accepted.
+  **Order: VM Phase 1 (additive `triggeringUserId` wiring) → Rpi5 Phase 1+2 (chat metadata cutover) → VM Phase 2 (isOwner flip)**.
+  Reason: VM's Phase 1 is additive sibling param, Rpi5's Phase 2 changes
+  `groupFolder` boot path; landing VM first avoids trampling wiring
+  still in flux.
+- **F4** (doctor blind to drift) — doctor adds dedicated
+  `"v1↔v2 chat-metadata drift: N rows"` counter line, mirrors the
+  retired `is_main` consistency check. Lands in same commit as Phase 1
+  facade.
 
 ## Open questions for owner
 
