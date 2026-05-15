@@ -194,3 +194,66 @@ Owner can override.
   flip is a separate cycle once we have telemetry that the new path is
   hit in real traffic.
 
+---
+
+## Gate-site verification (2026-05-16, third pass)
+
+The "~37 sites" figure in the first pass conflated three categories.
+Greping `isDefaultAgent`/`folderIsDefaultAgent`/`NANOCLAW_IS_DEFAULT_AGENT`
+yields **38 occurrences**, but only ~22 are *privilege gates* that flip
+with `isOwner`. The rest are wiring or mount-routing and **stay
+folder-keyed**.
+
+### A. Privilege gates (flip with `isOwner`) — 22 sites
+
+`src/ipc.ts` (12):
+- L77, L87, L95 — `send_message` / `send_file` cross-chat dispatch
+- L101 — `nanoclaw_control` (restart, config)
+- L110 — `nanoclaw_plugin` mutating actions
+- L238 — `processTaskIpc` cross-folder write guard
+- L305, L318, L331 — task pause/resume/cancel cross-folder
+- L348 — task update cross-folder
+- L390, L403 — task list scope (all vs own)
+
+`src/container-runner.ts` (2):
+- L762 — `formatTasksList` filter scope (all tasks vs own folder)
+- L790 — `formatGroupsList` visibility (all groups vs none)
+
+`container/agent-runner-ghc/src/mcp-tools/` (8):
+- `core.ts:117` — privileged tool gate
+- `scheduling.ts:126` — `target_group_jid` honored only when privileged
+- `scheduling.ts:174` — list-tasks scope filter
+- `scheduling.ts:200` — list-tasks output verbosity
+- `self-mod.ts:35` — self-modification gate
+- `scheduling.ts:224, 245, 266` — *embedded into IPC payload* for
+  pause/resume/cancel. Under Q3=(a) these become `triggeringUserId`
+  carriers; under Q3=(b) the field goes away and host correlates by
+  `task_id`. **Q3 answer changes the diff shape here.**
+
+### B. Wiring (signature / param plumb — not a gate) — 7 sites
+- `src/ipc.ts` L24, L60, L62, L218 — derivation + function params
+- `src/host-runner.ts` L408 — log-label `'main'` vs `'global'`
+- `container-runner.ts` L53, L284 — RunnerInput field + passthrough
+- `scheduling.ts:331` — env passthrough into spawn
+
+These stay; we just add a parallel `isOwner` plumb alongside.
+
+### C. Mount / folder routing (stays folder-keyed) — 5 sites
+- `container-runner.ts` L96, L102 — `buildVolumeMounts` per-folder
+- L381, L401, L593 — mount + label propagation
+- `agent-runner-ghc/server.ts` L35–37 — env read at container boot
+
+Mount layout is *physical*, not *privilege* — owner-based check is
+orthogonal as called out in the first pass.
+
+### Implications for Phase 1 commit size
+- Category A is the real change surface: ~22 line edits + tests.
+- Category B is mechanical plumb (add a sibling `triggeringUserId` /
+  `isOwner` param next to `isDefaultAgent`). ~7 lines plus signature
+  updates.
+- Category C: untouched.
+
+Revised estimate: Phase 1 dual-read PR is ~150–200 LOC of host/runner
+changes plus tests, **not** the "37-site rewrite" the first pass
+implied. Reviewable in a single sitting.
+
