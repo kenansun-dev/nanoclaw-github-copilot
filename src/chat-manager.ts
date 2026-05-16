@@ -1,110 +1,68 @@
 /**
- * Chat manager for nanoclaw.
- * Handles chat registration (pairing), pending chats, and chat CRUD.
- * Reads/writes chats section of nanoclaw.json + syncs with SQLite DB.
+ * Chat manager for nanoclaw (v2-only, post 2026-05-16 cutover).
+ *
+ * Source of truth: `messaging_groups` (MG) ⋈ `messaging_group_agents` (MGA)
+ * ⋈ `agent_groups`. There is no longer a `config.chats` section in
+ * nanoclaw.json — chat presence is implied by inbound traffic + pair flow,
+ * and managed via `nanoclaw chat add/remove/list`.
+ *
+ * The v1 facade in `db.ts` (`setRegisteredGroup` / `getAllRegisteredGroups`
+ * / `removeRegisteredGroup`) still delegates to v2 MG+MGA; this module
+ * uses it as a stable abstraction so consumers (CLI, status-text) keep
+ * a single API.
  */
 
-import { loadConfig, saveConfig, NanoclawConfig, nextChatId } from './config-loader.js';
 import { setRegisteredGroup, getAllRegisteredGroups, removeRegisteredGroup } from './db.js';
-import { reconcileChatRegistry } from './chat-reconcile.js';
 import { logger } from './log-extensions.js';
 import { uniqueIsMainFolder, isDefaultAgentDmFolder } from './session-routing.js';
+import { loadConfig } from './config-loader.js';
 
 export interface ChatInfo {
-  id?: number;
   jid: string;
   name: string;
   isDefaultAgent: boolean;
   channel?: string;
-  lastMessageTime?: string;
 }
 
 /**
  * Derive a unique group folder name from a chat JID and its config.
  *
- * For default-agent chats we generate a unique-per-jid folder so multiple
- * chats sharing that designation can coexist in the DB (the
- * `registered_groups.folder UNIQUE` constraint forbids two rows with the
- * same folder). They are *collapsed* back to a canonical 'main' (or
- * 'main-<agent>') at read time by `collapseMainDmFolder` in
- * session-routing.ts — only when authoritative `chats.is_group` says the
- * chat is a DM. Group chats marked default-agent keep their unique folder
- * and stay isolated.
+ * Default-agent chats get a unique-per-jid folder so multiple chats sharing
+ * that designation can coexist (folder UNIQUE constraint). They are
+ * collapsed back to a canonical 'main' (or 'main-<agent>') at read time
+ * by `collapseMainDmFolder` in session-routing.ts — only when authoritative
+ * `chats.is_group` says the chat is a DM. Group chats marked default-agent
+ * keep their unique folder and stay isolated.
  *
  * For other chats with an assigned agentId, the folder includes the
- * agent prefix to prevent session collisions when multiple agents share the
- * same chat (e.g. two Teams bots in one group conversation).
+ * agent prefix to prevent session collisions when multiple agents share
+ * the same chat.
  */
 export function deriveGroupFolder(jid: string, chatConfig?: { isDefaultAgent?: boolean; agentId?: string }): string {
   if (chatConfig?.isDefaultAgent) {
-    // Unique per jid in the DB; collapse-on-read maps DM defaults back to
-    // a shared canonical folder. Existing rows with folder='main' continue
-    // to work — collapse is a no-op for them.
     return uniqueIsMainFolder(jid, chatConfig.agentId);
   }
 
   const base = jid.replace(/[^a-zA-Z0-9-]/g, '-');
 
-  // Include agentId in folder name when assigned to ensure isolation
   if (chatConfig?.agentId) {
     const agentSlug = chatConfig.agentId.replace(/[^a-zA-Z0-9-]/g, '-');
     const combined = `${agentSlug}--${base}`;
-    // Group folder max length is 64 chars; truncate base if needed
     if (combined.length > 64) {
-      const maxBase = 64 - agentSlug.length - 2; // 2 for '--'
+      const maxBase = 64 - agentSlug.length - 2;
       return `${agentSlug}--${base.slice(0, Math.max(8, maxBase))}`;
     }
     return combined;
   }
 
-  // Truncate to 64 chars for non-agent folders too
   return base.slice(0, 64);
 }
 
 /**
- * Sync chats from nanoclaw.json into the SQLite DB.
- * Called on startup to ensure DB matches config.
+ * Add a chat to the v2 MG+MGA tables (via the v1 facade).
  *
- * Also runs `reconcileChatRegistry` first so DB-only chats (created by
- * inbound handlers, `pair`, or `tui-direct` without a corresponding
- * `addChat` call) are imported into config.chats with proper ids and the
- * "at most one isMain" invariant is enforced across both stores.
- * Without this, a fresh PR #14 deploy would see `config.chats = {}` and
- * `chat list` would print every id as `?` (kenansun, 2026-04-20 deploy).
- */
-export function syncChatsFromConfig(config: NanoclawConfig): void {
-  // Reconcile is best-effort: if it fails (e.g. partial DB during init)
-  // we still fall through to the legacy config→DB sync below.
-  try {
-    reconcileChatRegistry();
-    // Reload config for the loop below now that reconcile may have added entries.
-    config = loadConfig();
-  } catch (err: any) {
-    logger.warn({ err: err?.message }, 'Chat reconcile skipped — falling back to one-way config→DB sync');
-  }
-
-  const existing = getAllRegisteredGroups();
-
-  for (const [jid, chatConfig] of Object.entries(config.chats)) {
-    if (!existing[jid]) {
-      const folder = deriveGroupFolder(jid, {
-        isDefaultAgent: chatConfig.isMain ?? false,
-        agentId: (chatConfig as { agentId?: string }).agentId,
-      });
-      setRegisteredGroup(jid, {
-        name: chatConfig.name,
-        folder,
-        trigger: config.agents.defaults.triggerWord,
-        added_at: new Date().toISOString(),
-        requiresTrigger: chatConfig.requiresTrigger ?? false,
-      });
-      logger.info({ jid, name: chatConfig.name, folder }, 'Chat synced from config');
-    }
-  }
-}
-
-/**
- * Add a chat to nanoclaw.json and register it in the DB.
+ * Post-2026-05-16: no longer touches `nanoclaw.json`. Chats live solely
+ * in DB. Returns the assigned MG id (`mg-…` string) for caller convenience.
  */
 export function addChat(
   jid: string,
@@ -114,21 +72,8 @@ export function addChat(
     requiresTrigger?: boolean;
     agentId?: string;
   } = {},
-): { id: number } {
+): { jid: string } {
   const config = loadConfig();
-
-  // Reuse existing id if this jid is already in config; else assign next free.
-  const existingId = config.chats[jid]?.id;
-  const id = typeof existingId === 'number' ? existingId : nextChatId(config);
-
-  config.chats[jid] = {
-    id,
-    name,
-    requiresTrigger: options.requiresTrigger,
-  };
-
-  saveConfig(config);
-
   const folder = deriveGroupFolder(jid, {
     isDefaultAgent: options.isDefaultAgent,
     agentId: options.agentId,
@@ -141,46 +86,53 @@ export function addChat(
     requiresTrigger: options.requiresTrigger ?? false,
   });
 
-  logger.info({ id, jid, name, folder }, 'Chat added');
-  return { id };
+  logger.info({ jid, name, folder }, 'Chat added');
+  return { jid };
 }
 
 /**
- * Set or clear the main chat. Pass null to clear.
- * `target` is a jid (already validated by caller).
+ * Set or clear the default agent designation for a chat.
  *
- * v1 `isMain` cutover (PR #49): writes `chats[].isMain` for backcompat
- * with old configs/clients but the runtime no longer reads it. Default
- * agent designation now flows through `agents.list[].default` in v2.
+ * Post-2026-05-16 (v1 cutover): default-agent designation lives in v2
+ * via the chat's folder (`uniqueIsMainFolder`). To "set main" we re-add
+ * the chat with `isDefaultAgent: true` (which regenerates the folder);
+ * to clear we re-add with `isDefaultAgent: false`. Other v2 fields
+ * (engage_mode, sender allowlist) are preserved by the v1 facade's
+ * upsert path.
+ *
+ * `target=null` is a no-op (no global "main pointer" exists in v2 — every
+ * chat is independent; the share-session collapse on read picks one).
  */
 export function setMainChat(jid: string | null): void {
-  const config = loadConfig();
-  for (const [j, entry] of Object.entries(config.chats)) {
-    const shouldBeMain = jid !== null && j === jid;
-    if (shouldBeMain && !entry.isMain) entry.isMain = true;
-    else if (!shouldBeMain && entry.isMain) delete entry.isMain;
+  if (jid === null) {
+    logger.info('Main chat clear requested — no-op in v2 (no global pointer)');
+    return;
   }
-  saveConfig(config);
-  logger.info({ jid }, jid ? 'Main chat set' : 'Main chat cleared');
+  const groups = getAllRegisteredGroups();
+  const group = groups[jid];
+  if (!group) {
+    logger.warn({ jid }, 'setMainChat: jid not registered');
+    return;
+  }
+  const config = loadConfig();
+  const folder = deriveGroupFolder(jid, { isDefaultAgent: true });
+  setRegisteredGroup(jid, {
+    name: group.name,
+    folder,
+    trigger: group.trigger ?? config.agents.defaults.triggerWord,
+    added_at: group.added_at ?? new Date().toISOString(),
+    requiresTrigger: group.requiresTrigger ?? false,
+  });
+  logger.info({ jid, folder }, 'Default-agent chat set');
 }
 
 /**
- * Remove a chat from nanoclaw.json AND from the DB registered_groups
- * table. Without the DB delete the next `chat *` CLI call would re-run
- * reconcile and re-add the same jid with a new id, defeating the remove.
+ * Remove a chat from the v2 tables.
  */
 export function removeChat(jid: string): boolean {
-  const config = loadConfig();
-  const inConfig = !!config.chats[jid];
-  if (inConfig) {
-    delete config.chats[jid];
-    saveConfig(config);
-  }
-  const removedFromDb = removeRegisteredGroup(jid);
-
-  if (!inConfig && !removedFromDb) return false;
-  logger.info({ jid, fromConfig: inConfig, fromDb: removedFromDb }, 'Chat removed');
-  return true;
+  const removed = removeRegisteredGroup(jid);
+  if (removed) logger.info({ jid }, 'Chat removed');
+  return removed;
 }
 
 /**
@@ -188,10 +140,8 @@ export function removeChat(jid: string): boolean {
  */
 export function listChats(): ChatInfo[] {
   const groups = getAllRegisteredGroups();
-  const config = loadConfig();
   return Object.entries(groups)
     .map(([jid, g]) => ({
-      id: config.chats[jid]?.id,
       jid,
       name: g.name,
       isDefaultAgent: isDefaultAgentDmFolder(g.folder),
@@ -205,15 +155,13 @@ export function listChats(): ChatInfo[] {
               ? 'whatsapp'
               : 'unknown',
     }))
-    .sort((a, b) => (a.id ?? 1e9) - (b.id ?? 1e9));
+    .sort((a, b) => a.jid.localeCompare(b.jid));
 }
 
 /**
  * List pending (unregistered) chats that have sent messages.
- * These are in the chats table but not in registered_groups.
+ * Stub kept for API compatibility — not yet wired to v2.
  */
 export function listPendingChats(): ChatInfo[] {
-  // This requires direct DB access — import db module
-  // For now, return empty. Will be implemented when we wire up the DB query.
   return [];
 }

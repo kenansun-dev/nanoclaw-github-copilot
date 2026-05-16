@@ -2,7 +2,7 @@
  * nanoclaw pair — register a new chat
  */
 import readline from 'readline';
-import { loadConfig, saveConfig } from '../config-loader.js';
+import { loadConfig } from '../config-loader.js';
 import { getDb } from '../db/connection.js';
 import { redeemPairingCode, listPendingPairings, revokePairingCode } from '../v2-access.js';
 
@@ -118,7 +118,8 @@ export async function runPair(args: string[]): Promise<void> {
     return;
   }
 
-  const config = loadConfig();
+  // loadConfig kept for any future use; pair no longer mutates config.
+  loadConfig();
 
   // Direct mode: nanoclaw pair <jid> --name <name>
   // v2 cleanup: `--main`/`--no-main` flags are no longer accepted —
@@ -148,9 +149,10 @@ export async function runPair(args: string[]): Promise<void> {
 
     const channel = jid.startsWith('tg:') ? 'telegram' : jid.startsWith('teams:') ? 'teams' : 'unknown';
 
-    if (!config.chats) (config as any).chats = {};
-    (config.chats as any)[jid] = { name };
-    saveConfig(config);
+    // v2-only (2026-05-16): write to messaging_groups via the v1 facade
+    // instead of nanoclaw.json. config.chats is gone.
+    const { addChat } = await import('../chat-manager.js');
+    addChat(jid, name);
 
     console.log(`✅ Paired: ${jid}`);
     console.log(`   Name: ${name}`);
@@ -176,11 +178,9 @@ export async function runPair(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  if (!config.chats) (config as any).chats = {};
-  (config.chats as any)[jid] = {
-    name: name || jid,
-  };
-  saveConfig(config);
+  // v2-only (2026-05-16): write to messaging_groups via the v1 facade.
+  const { addChat } = await import('../chat-manager.js');
+  addChat(jid, name || jid);
 
   console.log(`\n✅ Paired: ${jid}`);
   console.log(`\nRestart nanoclaw to activate: nanoclaw restart`);

@@ -1520,26 +1520,13 @@ async function main(): Promise<void> {
     /* */
   }
 
-  // Sync chats from nanoclaw.json config into DB
+  // Chats config→DB sync retired 2026-05-16: nanoclaw.json no longer
+  // carries a `chats` section. Inbound traffic + pair flow populate v2
+  // messaging_groups directly, and `nanoclaw chat add` writes there too.
   try {
-    const { loadConfig } = await import('./config-loader.js');
-    const { syncChatsFromConfig } = await import('./chat-manager.js');
-    const config = loadConfig();
-    // v2 cleanup (PR-C step 10): legacy top-level `chats[]` is still parsed
-    // for backwards compat (mount perms, share-main DM collapse, migrator
-    // input) but NO LONGER drives routing — routing goes through
-    // `bindings` → `messaging_groups` → `agent_groups`. Warn once.
-    if (config.chats && Object.keys(config.chats).length > 0) {
-      logger.warn(
-        '[v2] legacy `chats[]` present in nanoclaw.json; ignored at runtime for routing, ' +
-          'migrate with `nanoclaw migrate-v2`.',
-      );
-    }
-    syncChatsFromConfig(config);
-    // Refresh in-memory groups after sync
     registeredGroups = getAllRegisteredGroups();
   } catch (err: any) {
-    logger.debug({ err }, 'Chat sync from config skipped');
+    logger.debug({ err }, 'getAllRegisteredGroups skipped');
   }
 
   // Auto-install plugins listed in nanoclaw.json `plugins.enabled[]`.
