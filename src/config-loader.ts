@@ -953,7 +953,9 @@ function migrateConfig(config: Record<string, any>): boolean {
         delete channels.tui;
         migrated = true;
       }
-      const tg = channels.telegram as { botToken?: string; accounts?: Record<string, { botToken?: string }> } | undefined;
+      const tg = channels.telegram as
+        | { botToken?: string; accounts?: Record<string, { botToken?: string }> }
+        | undefined;
       if (tg && tg.botToken && tg.accounts?.default?.botToken) {
         if (tg.accounts.default.botToken === tg.botToken) {
           delete tg.botToken;

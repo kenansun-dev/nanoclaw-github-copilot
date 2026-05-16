@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { setWorkspace, ensureWorkspace } from './workspace.js';
-import { loadConfig, saveConfig, readWorkspaceEnv, getEnabledPlugins } from './config-loader.js';
+import { loadConfig, saveConfig, readWorkspaceEnv, getEnabledPlugins, getDefaultAgent } from './config-loader.js';
 
 describe('config-loader', () => {
   const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-cfg-${Date.now()}`);
@@ -1067,5 +1067,49 @@ describe('getEnabledPlugins — bare-string entry normalization (kenan repro 202
         plugins: { enabled: [{ name: 'old', source: 'a/b' }] as any },
       }),
     ).toEqual([{ name: 'old', source: 'a/b' }]);
+  });
+});
+
+describe('getDefaultAgent — list[].default resolution (TUI consistency)', () => {
+  const baseDefaults = {
+    provider: 'github-copilot',
+    model: 'claude-sonnet-4',
+    name: 'Andy',
+    triggerWord: '@Andy',
+    hasOwnNumber: false,
+    mode: 'host' as const,
+  };
+
+  it('returns agents.defaults when list is empty', () => {
+    const cfg = { agents: { defaults: baseDefaults, list: [] } } as any;
+    expect(getDefaultAgent(cfg).model).toBe('claude-sonnet-4');
+  });
+
+  it('returns list[0] merged on defaults when no entry marked default', () => {
+    const cfg = {
+      agents: {
+        defaults: baseDefaults,
+        list: [{ id: 'a', model: 'claude-sonnet-4.6', name: 'A' }, { id: 'b', model: 'gpt-5' }],
+      },
+    } as any;
+    const got = getDefaultAgent(cfg);
+    expect(got.id).toBe('a');
+    expect(got.model).toBe('claude-sonnet-4.6');
+    expect(got.triggerWord).toBe('@Andy'); // inherited from defaults
+  });
+
+  it('honors agents.list[].default=true over list[0]', () => {
+    const cfg = {
+      agents: {
+        defaults: baseDefaults,
+        list: [
+          { id: 'first', model: 'claude-sonnet-4.6', name: 'First' },
+          { id: 'starred', model: 'gpt-5', name: 'Starred', default: true },
+        ],
+      },
+    } as any;
+    const got = getDefaultAgent(cfg);
+    expect(got.id).toBe('starred');
+    expect(got.model).toBe('gpt-5');
   });
 });

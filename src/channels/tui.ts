@@ -21,7 +21,7 @@ import path from 'path';
 
 import { ASSISTANT_NAME } from '../config.js';
 import { logger } from '../log-extensions.js';
-import { loadConfig } from '../config-loader.js';
+import { loadConfig, getDefaultAgent } from '../config-loader.js';
 import { resolveWorkspace } from '../workspace.js';
 import { deriveGroupFolder } from '../chat-manager.js';
 // registerGroup callback is provided via ChannelOpts
@@ -112,8 +112,10 @@ export class TuiChannel implements Channel {
     // — v2 routing goes through bindings.
     const config = loadConfig();
     const assistantName = config.agents?.defaults?.name || ASSISTANT_NAME;
-    const agentList: Array<{ id: string }> = (config as any).agents?.list ?? [];
-    const tuiAgentId = process.env.TUI_AGENT_ID || (agentList.length > 0 ? agentList[0].id : undefined);
+    // Resolve agent id consistently with other channels: env override →
+    // getDefaultAgent (list[].default → list[0] → agents.defaults). This
+    // lets users mark a non-first agent as default and have TUI honor it.
+    const tuiAgentId = process.env.TUI_AGENT_ID || getDefaultAgent(config).id;
 
     const existingGroups = this.opts.registeredGroups();
     if (!existingGroups[jid] && this.opts.registerGroup) {
