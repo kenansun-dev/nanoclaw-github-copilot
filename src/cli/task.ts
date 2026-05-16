@@ -384,6 +384,9 @@ export async function runTaskCommand(args: string[]): Promise<void> {
   // Open the shared SQLite handle. Idempotent + cheap; the daemon may
   // be running too — SQLite handles concurrent readers fine.
   initDatabase();
+  // Cutover (2026-05-16): v1 reads delegate to v2.
+  const { initAndReconcileV2 } = await import('../db/v2-boot.js');
+  initAndReconcileV2();
   const rest = args.slice(1);
   const { positional, flags } = parseFlags(rest);
   switch (sub) {

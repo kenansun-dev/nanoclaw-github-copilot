@@ -50,7 +50,6 @@ interface MgRow {
 
 interface MgaRow {
   messaging_group_id: string;
-  trigger_rules: string | null;
   // engage-modes columns (migration 010)
   engage_mode: string | null;
   engage_pattern: string | null;
@@ -68,7 +67,7 @@ function mgWithMgaToBridged(mg: MgRow, mga: MgaRow | null): BridgedRow {
   // engage_pattern is the v2 equivalent of v1 trigger_pattern.
   // The "always engage" flavor is encoded as engage_mode='pattern'
   // + engage_pattern='.' (matches everything) per migration 010.
-  const trigger = mga?.engage_pattern ?? mga?.trigger_rules ?? '';
+  const trigger = mga?.engage_pattern ?? '';
   let requiresTrigger: boolean | undefined;
   if (mga?.engage_mode != null) {
     const isAlways = mga.engage_mode === 'pattern' && mga.engage_pattern === '.';
@@ -101,7 +100,7 @@ export function getRegisteredGroupV2(jid: string): (BridgedRow & { folder: strin
 
   const mga = getDb()
     .prepare(
-      `SELECT messaging_group_id, trigger_rules, engage_mode, engage_pattern, agent_group_id
+      `SELECT messaging_group_id, engage_mode, engage_pattern, agent_group_id
          FROM messaging_group_agents
         WHERE messaging_group_id = ?
         LIMIT 1`,
@@ -122,7 +121,7 @@ export function getAllRegisteredGroupsV2(): Record<string, BridgedRow & { folder
 
   const mgaRows = getDb()
     .prepare(
-      `SELECT messaging_group_id, trigger_rules, engage_mode, engage_pattern, agent_group_id
+      `SELECT messaging_group_id, engage_mode, engage_pattern, agent_group_id
          FROM messaging_group_agents`,
     )
     .all() as Array<MgaRow & { agent_group_id: string }>;

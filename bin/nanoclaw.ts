@@ -359,6 +359,9 @@ async function runChat(args: string[]) {
   const sub = args[0];
   const { initDatabase } = await import('../dist/db.js');
   initDatabase();
+  // Cutover (2026-05-16): v1 reads delegate to v2; boot v2 too.
+  const { initAndReconcileV2 } = await import('../dist/db/v2-boot.js');
+  initAndReconcileV2();
 
   switch (sub) {
     case 'list': {

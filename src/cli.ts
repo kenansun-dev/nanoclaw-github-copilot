@@ -218,6 +218,9 @@ async function runDoctor(_args: string[]) {
   try {
     const { initDatabase } = await import('./db.js');
     initDatabase();
+    // Cutover (2026-05-16): v1 reads now hit v2 — boot v2 too.
+    const { initAndReconcileV2 } = await import('./db/v2-boot.js');
+    initAndReconcileV2();
     const { reconcileChatRegistry } = await import('./chat-reconcile.js');
     reconcileChatRegistry();
   } catch {
@@ -800,6 +803,12 @@ async function runChat(args: string[]) {
   const sub = args[0];
   const { initDatabase } = await import('./db.js');
   initDatabase();
+  // Cutover (2026-05-16): v1 `registered_groups` reads/writes now
+  // delegate to v2 MG+MGA, so the CLI must boot v2 too. Boot is
+  // idempotent (no-op on a hot DB) and includes config→MG migration
+  // for fresh workspaces.
+  const { initAndReconcileV2 } = await import('./db/v2-boot.js');
+  initAndReconcileV2();
 
   // Reconcile DB ↔ config.chats so `chat list`, `chat set-main`, etc. all
   // see the same picture. Cheap (idempotent) and prevents the "DB has 8
