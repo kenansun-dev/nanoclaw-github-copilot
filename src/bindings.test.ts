@@ -60,9 +60,9 @@ describe('resolveAgentIdFromBindings', () => {
     expect(resolveAgentIdFromBindings(config, 'tg:123')).toBeUndefined();
   });
 
-  it('returns chatConfig.agentId as legacy fallback', () => {
+  it('returns undefined when no bindings (legacy chatConfig fallback retired 2026-05-16)', () => {
     const config = makeConfig();
-    expect(resolveAgentIdFromBindings(config, 'tg:123', { agentId: 'coder' })).toBe('coder');
+    expect(resolveAgentIdFromBindings(config, 'tg:123')).toBeUndefined();
   });
 
   it('matches binding by channel', () => {

@@ -123,10 +123,10 @@ export function resolveAgentForChat(chatJid: string): AgentConfig {
   if (channel) {
     agentId = resolveBinding(table, { channel, accountId, peerId });
   }
-  // Legacy fallback chain: bindings (old shape) → chats[jid].agentId → default agent.
+  // Legacy fallback: bindings table only. config.chats[jid].agentId
+  // fallback retired 2026-05-16 alongside the chats schema removal.
   if (!agentId) {
-    const chat = config.chats?.[chatJid];
-    agentId = resolveAgentIdFromBindings(config, chatJid, chat) || chat?.agentId;
+    agentId = resolveAgentIdFromBindings(config, chatJid);
   }
   if (!agentId) {
     // Final fallback: first agent in agents.list, else defaults.

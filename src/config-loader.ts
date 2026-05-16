@@ -197,6 +197,13 @@ export interface NanoclawConfig {
     sweepIntervalMs?: number;
     engine?: 'node' | 'tsx'; // node = compiled dist (default), tsx = self-modifying
   };
+  /**
+   * Legacy chats section. Retired 2026-05-16: chat presence now lives
+   * in v2 `messaging_groups` (DB), not nanoclaw.json. The field stays in
+   * the schema as a required `Record` (always normalized to {} on load)
+   * so the v2 migrator and legacy parsers keep their type narrowing,
+   * but new code MUST NOT read it for routing/registration.
+   */
   chats: Record<
     string,
     {
@@ -1297,43 +1304,36 @@ export function resolveAgent(config: NanoclawConfig, agentId?: string): AgentCon
  * Checks bindings[] in order; first match wins.
  * Falls back to chatConfig.agentId (legacy) or undefined (use default agent).
  */
-export function resolveAgentIdFromBindings(
-  config: NanoclawConfig,
-  chatJid: string,
-  chatConfig?: { agentId?: string },
-): string | undefined {
-  if (config.bindings?.length) {
-    // Derive channel and accountId from JID
-    // Format: tg:<chatId> (default account) or tg:<accountId>:<chatId>
-    let channel: string | undefined;
-    let jidAccountId: string | undefined;
-    if (chatJid.startsWith('tg:')) {
-      channel = 'telegram';
-      const parts = chatJid.split(':');
-      if (parts.length >= 3) jidAccountId = parts[1]; // tg:accountId:chatId
-    } else if (chatJid.startsWith('teams:')) {
-      channel = 'teams';
-    } else if (chatJid.startsWith('dc:')) {
-      channel = 'discord';
-    } else if (chatJid.startsWith('wa:')) {
-      channel = 'whatsapp';
-    }
-
-    for (const binding of config.bindings) {
-      const m = binding.match;
-      if (m.channel && m.channel !== channel) continue;
-      if (m.accountId) {
-        // Match accountId: 'default' matches JIDs without accountId prefix
-        const effective = jidAccountId || 'default';
-        if (m.accountId !== effective) continue;
-      }
-      if (m.peer?.id && !chatJid.includes(m.peer.id)) continue;
-      return binding.agentId;
-    }
+export function resolveAgentIdFromBindings(config: NanoclawConfig, chatJid: string): string | undefined {
+  if (!config.bindings?.length) return undefined;
+  // Derive channel and accountId from JID
+  // Format: tg:<chatId> (default account) or tg:<accountId>:<chatId>
+  let channel: string | undefined;
+  let jidAccountId: string | undefined;
+  if (chatJid.startsWith('tg:')) {
+    channel = 'telegram';
+    const parts = chatJid.split(':');
+    if (parts.length >= 3) jidAccountId = parts[1]; // tg:accountId:chatId
+  } else if (chatJid.startsWith('teams:')) {
+    channel = 'teams';
+  } else if (chatJid.startsWith('dc:')) {
+    channel = 'discord';
+  } else if (chatJid.startsWith('wa:')) {
+    channel = 'whatsapp';
   }
 
-  // Legacy: chatConfig.agentId
-  return chatConfig?.agentId;
+  for (const binding of config.bindings) {
+    const m = binding.match;
+    if (m.channel && m.channel !== channel) continue;
+    if (m.accountId) {
+      // Match accountId: 'default' matches JIDs without accountId prefix
+      const effective = jidAccountId || 'default';
+      if (m.accountId !== effective) continue;
+    }
+    if (m.peer?.id && !chatJid.includes(m.peer.id)) continue;
+    return binding.agentId;
+  }
+  return undefined;
 }
 
 /**

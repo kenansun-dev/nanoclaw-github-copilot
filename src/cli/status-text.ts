@@ -200,7 +200,7 @@ export async function collectStatus(chatJid?: string): Promise<StatusInfo> {
     const { listChats } = await import('../chat-manager.js');
     chatCount = listChats().length;
   } catch {
-    chatCount = Object.keys(cfg.chats || {}).length;
+    chatCount = 0;
   }
 
   // DevTunnel

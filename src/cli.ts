@@ -811,8 +811,7 @@ async function runChat(args: string[]) {
   switch (sub) {
     case 'reconcile': {
       console.log(
-        'chat reconcile is retired — v2 messaging_groups is the sole source of truth.\n' +
-          'Use: nanoclaw chat list',
+        'chat reconcile is retired — v2 messaging_groups is the sole source of truth.\n' + 'Use: nanoclaw chat list',
       );
       break;
     }
