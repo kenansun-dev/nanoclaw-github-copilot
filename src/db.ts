@@ -965,15 +965,8 @@ function migrateJsonState(): void {
     }
   }
 
-  // Migrate registered_groups.json
-  const groups = migrateFile('registered_groups.json') as Record<string, RegisteredGroup> | null;
-  if (groups) {
-    for (const [jid, group] of Object.entries(groups)) {
-      try {
-        setRegisteredGroup(jid, group);
-      } catch (err) {
-        logger.warn({ jid, folder: group.folder, err }, 'Skipping migrated registered group with invalid folder');
-      }
-    }
-  }
+  // registered_groups.json migration retired 2026-05-16:
+  // fork's v0→v1 JSON→SQLite migration is years past. Old users have
+  // long since passed through it. Remaining JSON files (if any) are
+  // ignored at boot.
 }
