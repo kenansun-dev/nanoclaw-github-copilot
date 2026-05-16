@@ -45,6 +45,15 @@ export interface MigrateChatsOptions {
   /** Skip `saveConfig()` (used in tests that don't want to touch disk). */
   skipSaveConfig?: boolean;
   /**
+   * Legacy DB handle to read `chats` and `registered_groups` from. The
+   * tables only exist on the v1 file (`messages.db`); the v2 file
+   * (`v2.db`, passed as the main `db` arg) never carried them. Without
+   * this handle the DB-side migration silently no-ops and v1 users lose
+   * their chat/group registrations after upgrade. When omitted (fresh
+   * install w/o legacy file) the DB-side migration is skipped cleanly.
+   */
+  legacyDb?: Database.Database;
+  /**
    * Authoritative is-group map keyed by jid. When omitted the migrator falls
    * back to a heuristic per protocol (Telegram: rawId starts with `-`,
    * Teams: rawId contains `:`, other channels: assume DM unless name hints
@@ -169,10 +178,15 @@ export function migrateChatsToV2(
   }
 
   // ── Pre-compute DB-side row counts so we can short-circuit ────────────
-  const legacyChatsTablePresent = !!db
+  // Legacy tables (`chats`, `registered_groups`) live on the v1
+  // `messages.db` handle, never on `v2.db`. opts.legacyDb is the v1
+  // handle; tests/legacy fixtures may also set them on the main `db`
+  // handle so we fall through to it when not provided.
+  const legacyDb = opts.legacyDb ?? db;
+  const legacyChatsTablePresent = !!legacyDb
     .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='chats'`)
     .get();
-  const legacyRgTablePresent = !!db
+  const legacyRgTablePresent = !!legacyDb
     .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='registered_groups'`)
     .get();
 
@@ -310,12 +324,12 @@ export function migrateChatsToV2(
       if (legacyChatsTablePresent) {
         // Legacy chats table may be the createSchema() shape OR a tests' bespoke
         // shape. Detect columns first.
-        const cols = new Set((db.prepare(`PRAGMA table_info(chats)`).all() as { name: string }[]).map((c) => c.name));
+        const cols = new Set((legacyDb.prepare(`PRAGMA table_info(chats)`).all() as { name: string }[]).map((c) => c.name));
         if (cols.has('jid')) {
           const hasChannel = cols.has('channel');
           const hasIsGroup = cols.has('is_group');
           const hasName = cols.has('name');
-          const rows = db.prepare(`SELECT * FROM chats`).all() as Array<Record<string, unknown>>;
+          const rows = legacyDb.prepare(`SELECT * FROM chats`).all() as Array<Record<string, unknown>>;
           const insertMg = db.prepare(
             `INSERT OR IGNORE INTO messaging_groups (id, channel_type, account_key, platform_id, is_group, name, created_at)
              VALUES (?, ?, 'default', ?, ?, ?, ?)`,
@@ -341,10 +355,10 @@ export function migrateChatsToV2(
       // ── DB side: legacy registered_groups → agent_groups ──────────────
       if (legacyRgTablePresent) {
         const cols = new Set(
-          (db.prepare(`PRAGMA table_info(registered_groups)`).all() as { name: string }[]).map((c) => c.name),
+          (legacyDb.prepare(`PRAGMA table_info(registered_groups)`).all() as { name: string }[]).map((c) => c.name),
         );
         if (cols.has('folder') && cols.has('name')) {
-          const rows = db.prepare(`SELECT * FROM registered_groups`).all() as Array<Record<string, unknown>>;
+          const rows = legacyDb.prepare(`SELECT * FROM registered_groups`).all() as Array<Record<string, unknown>>;
           const insertAg = db.prepare(
             `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at)
              VALUES (?, ?, ?, ?, ?)`,

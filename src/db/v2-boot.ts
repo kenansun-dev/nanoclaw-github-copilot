@@ -11,6 +11,10 @@
  * Extracted from `index.ts main()` so the boot path is unit-testable
  * without standing up the full host process.
  */
+import fs from 'node:fs';
+
+import Database from 'better-sqlite3';
+
 import { loadConfig } from '../config-loader.js';
 import { workspacePath } from '../workspace.js';
 import { initDb } from './connection.js';
@@ -42,8 +46,32 @@ export function initAndReconcileV2(): V2BootResult {
   // Auto-migrate legacy v1 config (chats[]) → v2 shape (bindings[],
   // accounts.<k>.allowFrom, commands.ownerAllowFrom). Idempotent: no-op
   // when config has no `chats[]`. Snapshots nanoclaw.json before mutating.
+  //
+  // The DB half of the migration reads legacy `chats` and
+  // `registered_groups` tables from `messages.db` (the v1 file). Open
+  // it read-only here when present; without this handle the v1→v2
+  // upgrade silently loses every existing chat/group registration
+  // (regression caught on first deployment 2026-05-16).
   const cfgForMigrate = loadConfig();
-  const migrate = migrateChatsToV2(cfgForMigrate, db);
+  const legacyDbPath = workspacePath('store', 'messages.db');
+  let legacyDb: Database.Database | undefined;
+  if (fs.existsSync(legacyDbPath)) {
+    try {
+      legacyDb = new Database(legacyDbPath, { readonly: true, fileMustExist: true });
+    } catch {
+      // Best-effort: if we cannot open it (locked / corrupt), proceed
+      // without legacy backfill rather than blocking boot.
+      legacyDb = undefined;
+    }
+  }
+  const migrate = migrateChatsToV2(cfgForMigrate, db, { legacyDb });
+  if (legacyDb) {
+    try {
+      legacyDb.close();
+    } catch {
+      /* ignore */
+    }
+  }
   // Re-load after migrate so reconcile sees the updated config (saveConfig
   // writes to disk during migrate).
   const cfg = migrate.noop ? cfgForMigrate : loadConfig();

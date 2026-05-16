@@ -265,6 +265,29 @@ describe('migrateChatsToV2 — DB side (legacy tables → v2)', () => {
     expect(summary.noop).toBe(false);
   });
 
+  it('legacyDb opt: reads legacy tables from a separate handle (v2-boot wiring)', () => {
+    // Regression for 2026-05-16 deploy bug: in production v2.db never
+    // carries `chats`/`registered_groups`; those live on messages.db.
+    // v2-boot opens messages.db read-only and passes via opts.legacyDb.
+    const v2db = open();
+    const legacyDb = new Database(':memory:');
+    seedLegacyTables(legacyDb, { chats: true, rg: true });
+    const summary = migrateChatsToV2(makeConfig({}), v2db, {
+      skipSaveConfig: true,
+      skipSnapshot: true,
+      legacyDb,
+    });
+    expect(summary.legacyChatsMigrated).toBe(2);
+    expect(summary.legacyRegisteredGroupsMigrated).toBe(1);
+    const mgs = v2db.prepare(`SELECT COUNT(*) as n FROM messaging_groups`).get() as { n: number };
+    expect(mgs.n).toBe(2);
+    const ags = v2db.prepare(`SELECT COUNT(*) as n FROM agent_groups`).get() as { n: number };
+    expect(ags.n).toBe(1);
+    expect(
+      legacyDb.prepare(`SELECT name FROM sqlite_master WHERE name='messaging_groups'`).get(),
+    ).toBeUndefined();
+  });
+
   it('idempotent: second run with same inputs is a no-op (INSERT OR IGNORE)', () => {
     const db = open();
     seedLegacyTables(db, { chats: true, rg: true });
