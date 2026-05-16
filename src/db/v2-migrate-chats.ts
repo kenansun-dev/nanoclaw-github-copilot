@@ -404,14 +404,14 @@ export function migrateChatsToV2(
             if (!parsed) continue;
             const channelType = channelKeyToType(parsed[0]);
             const platformId = parsed[1];
-            const mg = findMgByPeer.get(channelType, platformId) as
-              | { id: string; is_group: number }
-              | undefined;
+            const mg = findMgByPeer.get(channelType, platformId) as { id: string; is_group: number } | undefined;
             if (!mg) continue;
             const isGroup = Number(mg.is_group) === 1;
             // Mirror v1 trigger semantics: groups stick on @mention; DMs
             // accept any message from allowed senders.
-            const requiresTrigger = hasRequiresTrigger ? Number(r.requires_trigger ?? (isGroup ? 1 : 0)) === 1 : isGroup;
+            const requiresTrigger = hasRequiresTrigger
+              ? Number(r.requires_trigger ?? (isGroup ? 1 : 0)) === 1
+              : isGroup;
             const engageMode = requiresTrigger ? 'mention-sticky' : 'pattern';
             const engagePattern: string | null = requiresTrigger ? null : '.';
             const mgaId = `mga:${mg.id}:${agId}`;

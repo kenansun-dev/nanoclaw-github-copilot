@@ -197,6 +197,12 @@ export async function collectStatus(chatJid?: string): Promise<StatusInfo> {
   // Chat count — same semantics as `nanoclaw chat list` and doctor.
   let chatCount = 0;
   try {
+    // listChats → getAllRegisteredGroups → v2 facade. The v2 DB must be
+    // initialized before that read. Status is invoked as a one-shot CLI
+    // process that does not run the daemon's full boot, so initialize
+    // here (idempotent: initAndReconcileV2 is re-entrant).
+    const { initAndReconcileV2 } = await import('../db/v2-boot.js');
+    initAndReconcileV2();
     const { listChats } = await import('../chat-manager.js');
     chatCount = listChats().length;
   } catch {
