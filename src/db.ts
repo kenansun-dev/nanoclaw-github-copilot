@@ -160,15 +160,14 @@ function createSchema(database: Database.Database): void {
       show_thinking TEXT,
       PRIMARY KEY (group_folder, provider)
     );
-    CREATE TABLE IF NOT EXISTS registered_groups (
-      jid TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      folder TEXT NOT NULL UNIQUE,
-      trigger_pattern TEXT NOT NULL,
-      added_at TEXT NOT NULL,
-      container_config TEXT,
-      requires_trigger INTEGER DEFAULT 1
-    );
+    -- registered_groups table retired 2026-05-16 (VM check-in directive item 1):
+    -- v1 facade in db.ts now delegates 100% to v2 MG/MGA via
+    -- setRegisteredGroupV2 / getAllRegisteredGroupsV2 (v2.db). The legacy
+    -- table in messages.db is never read or written in production code.
+    -- v2-migrate-chats.ts:347 still SELECTs from it on legacy DBs that have
+    -- the table on disk (gated by legacyRgTablePresent check), so we leave
+    -- existing rows untouched on disk for that one-shot migration path,
+    -- but stop creating the table on fresh installs.
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs).
