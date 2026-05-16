@@ -613,7 +613,7 @@ describe('config-loader / chat numeric ids', () => {
     expect(() => loadConfig()).not.toThrow();
   });
 
-  it('findExtraMainChats flags multi-isMain *groups* when isGroup info is given', () => {
+  it('findExtraMainChats stub returns [] (isMain invariant retired 2026-05-16)', () => {
     fs.writeFileSync(
       path.join(tmpDir, 'nanoclaw.json'),
       JSON.stringify({
@@ -630,7 +630,7 @@ describe('config-loader / chat numeric ids', () => {
     );
     const config = loadConfig();
     const isGroupByJid = { 'tg:g1': true, 'tg:g2': true };
-    expect(findExtraMainChats(config, isGroupByJid)).toEqual(['tg:g1', 'tg:g2']);
+    expect(findExtraMainChats(config, isGroupByJid)).toEqual([]);
   });
 
   it('findExtraMainChats does NOT flag multi-isMain DMs', () => {

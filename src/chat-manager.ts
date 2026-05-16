@@ -38,8 +38,20 @@ export interface ChatInfo {
  * agent prefix to prevent session collisions when multiple agents share
  * the same chat.
  */
-export function deriveGroupFolder(jid: string, chatConfig?: { isDefaultAgent?: boolean; agentId?: string }): string {
-  if (chatConfig?.isDefaultAgent) {
+/**
+ * Compute the v2 folder for a chat.
+ *
+ * - `shareDefaultAgentSession=true` → mint a folder via `uniqueIsMainFolder`
+ *   so DM consumers (TUI, default-agent DMs) collapse to a shared session
+ *   at read time (see `collapseMainDmFolder`). 'Main chat' wording retired
+ *   2026-05-16.
+ * - Otherwise: deterministic per-jid folder (groups stay isolated).
+ */
+export function deriveGroupFolder(
+  jid: string,
+  chatConfig?: { shareDefaultAgentSession?: boolean; agentId?: string },
+): string {
+  if (chatConfig?.shareDefaultAgentSession) {
     return uniqueIsMainFolder(jid, chatConfig.agentId);
   }
 
@@ -63,19 +75,24 @@ export function deriveGroupFolder(jid: string, chatConfig?: { isDefaultAgent?: b
  *
  * Post-2026-05-16: no longer touches `nanoclaw.json`. Chats live solely
  * in DB. Returns the assigned MG id (`mg-…` string) for caller convenience.
+ *
+ * `shareDefaultAgentSession=true` opts the chat into the default-agent
+ * DM session collapse (TUI + default-agent DMs). v1 'main chat' wording
+ * is retired — default agent identity itself comes from
+ * `agents.list[].default` in nanoclaw.json, not from any chat row.
  */
 export function addChat(
   jid: string,
   name: string,
   options: {
-    isDefaultAgent?: boolean;
+    shareDefaultAgentSession?: boolean;
     requiresTrigger?: boolean;
     agentId?: string;
   } = {},
 ): { jid: string } {
   const config = loadConfig();
   const folder = deriveGroupFolder(jid, {
-    isDefaultAgent: options.isDefaultAgent,
+    shareDefaultAgentSession: options.shareDefaultAgentSession,
     agentId: options.agentId,
   });
   setRegisteredGroup(jid, {
@@ -91,39 +108,15 @@ export function addChat(
 }
 
 /**
- * Set or clear the default agent designation for a chat.
+ * setMainChat / 'main chat' concept retired 2026-05-16.
  *
- * Post-2026-05-16 (v1 cutover): default-agent designation lives in v2
- * via the chat's folder (`uniqueIsMainFolder`). To "set main" we re-add
- * the chat with `isDefaultAgent: true` (which regenerates the folder);
- * to clear we re-add with `isDefaultAgent: false`. Other v2 fields
- * (engage_mode, sender allowlist) are preserved by the v1 facade's
- * upsert path.
- *
- * `target=null` is a no-op (no global "main pointer" exists in v2 — every
- * chat is independent; the share-session collapse on read picks one).
+ * v2 has no global 'main chat' pointer. Default agent identity is
+ * configured via `agents.list[].default` in nanoclaw.json. Per-chat
+ * session collapse for DMs is opt-in at registration time via
+ * `addChat(jid, name, { shareDefaultAgentSession: true })`.
  */
-export function setMainChat(jid: string | null): void {
-  if (jid === null) {
-    logger.info('Main chat clear requested — no-op in v2 (no global pointer)');
-    return;
-  }
-  const groups = getAllRegisteredGroups();
-  const group = groups[jid];
-  if (!group) {
-    logger.warn({ jid }, 'setMainChat: jid not registered');
-    return;
-  }
-  const config = loadConfig();
-  const folder = deriveGroupFolder(jid, { isDefaultAgent: true });
-  setRegisteredGroup(jid, {
-    name: group.name,
-    folder,
-    trigger: group.trigger ?? config.agents.defaults.triggerWord,
-    added_at: group.added_at ?? new Date().toISOString(),
-    requiresTrigger: group.requiresTrigger ?? false,
-  });
-  logger.info({ jid, folder }, 'Default-agent chat set');
+export function setMainChat(_jid: string | null): void {
+  logger.info('setMainChat is a no-op (v2 has no main chat concept)');
 }
 
 /**

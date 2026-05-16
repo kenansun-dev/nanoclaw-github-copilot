@@ -847,37 +847,26 @@ async function runChat(args: string[]) {
     case 'add': {
       const jid = args[1];
       const name = args[2] || 'unnamed';
-      const isMain = args.includes('--default-agent') || args.includes('--main');
-      if (args.includes('--main') && !args.includes('--default-agent')) {
-        console.warn('⚠️  --main is deprecated; use --default-agent instead.');
+      if (args.includes('--default-agent') || args.includes('--main')) {
+        console.warn(
+          '⚠️  --default-agent / --main is retired. Default agent is set in nanoclaw.json under agents.list[].default. Flag ignored.',
+        );
       }
       if (!jid) {
-        console.error('Usage: nanoclaw chat add <jid> <name> [--default-agent]');
+        console.error('Usage: nanoclaw chat add <jid> <name>');
         process.exit(1);
       }
       const { addChat } = await import('./chat-manager.js');
-      addChat(jid, name, { isDefaultAgent: isMain });
-      console.log(`Chat registered: ${jid} (${name})${isMain ? ' [default]' : ''}`);
+      addChat(jid, name);
+      console.log(`Chat registered: ${jid} (${name})`);
       break;
     }
-    case 'set-main': {
-      const handle = args[1];
-      if (!handle) {
-        console.error('Usage: nanoclaw chat set-main <jid>');
-        process.exit(1);
-      }
-      const { setMainChat, listChats } = await import('./chat-manager.js');
-      const known = listChats().some((c) => c.jid === handle);
-      if (!known) {
-        console.error(`No chat matches "${handle}". Run \`nanoclaw chat list\` to see jids.`);
-        process.exit(1);
-      }
-      setMainChat(handle);
-      console.log(`Default-agent chat set: ${handle}`);
-      break;
-    }
+    case 'set-main':
     case 'unset-main': {
-      console.log('unset-main is a no-op in v2 — every chat is independent.');
+      console.log(
+        `chat ${sub} is retired — v2 has no "main chat" concept. ` +
+          `Default agent is configured in nanoclaw.json under agents.list[].default.`,
+      );
       break;
     }
     case 'remove': {
@@ -892,7 +881,7 @@ async function runChat(args: string[]) {
       break;
     }
     default:
-      console.log('Usage: nanoclaw chat <list|pending|add|remove|set-main> [args]');
+      console.log('Usage: nanoclaw chat <list|pending|add|remove> [args]');
   }
 }
 
