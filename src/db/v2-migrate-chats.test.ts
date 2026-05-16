@@ -283,9 +283,27 @@ describe('migrateChatsToV2 — DB side (legacy tables → v2)', () => {
     expect(mgs.n).toBe(2);
     const ags = v2db.prepare(`SELECT COUNT(*) as n FROM agent_groups`).get() as { n: number };
     expect(ags.n).toBe(1);
-    expect(
-      legacyDb.prepare(`SELECT name FROM sqlite_master WHERE name='messaging_groups'`).get(),
-    ).toBeUndefined();
+    expect(legacyDb.prepare(`SELECT name FROM sqlite_master WHERE name='messaging_groups'`).get()).toBeUndefined();
+  });
+
+  it('MGA bridge: legacy registered_groups (jid+folder) → messaging_group_agents row', () => {
+    // Without this bridge, post-migrate /status reports "not paired" for
+    // every chat the v1 install had registered (caught 2026-05-16 deploy).
+    const v2db = open();
+    const legacyDb = new Database(':memory:');
+    seedLegacyTables(legacyDb, { chats: true, rg: true });
+    migrateChatsToV2(makeConfig({}), v2db, {
+      skipSaveConfig: true,
+      skipSnapshot: true,
+      legacyDb,
+    });
+    const mgas = v2db
+      .prepare(`SELECT messaging_group_id, agent_group_id, engage_mode FROM messaging_group_agents`)
+      .all() as Array<{ messaging_group_id: string; agent_group_id: string; engage_mode: string }>;
+    expect(mgas).toHaveLength(1);
+    expect(mgas[0].agent_group_id).toBe('crew-main');
+    expect(mgas[0].messaging_group_id).toBe('mg:telegram:default:-100crew');
+    expect(mgas[0].engage_mode).toBe('mention-sticky');
   });
 
   it('idempotent: second run with same inputs is a no-op (INSERT OR IGNORE)', () => {

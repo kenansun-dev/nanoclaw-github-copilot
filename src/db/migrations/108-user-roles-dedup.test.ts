@@ -15,9 +15,7 @@ function open(): Database.Database {
 describe('migration 108 — user_roles dedup', () => {
   it('partial unique index blocks duplicate global-scope inserts', () => {
     const db = open();
-    db.prepare(
-      `INSERT INTO users (id, kind, created_at) VALUES ('telegram:1', 'telegram', datetime('now'))`,
-    ).run();
+    db.prepare(`INSERT INTO users (id, kind, created_at) VALUES ('telegram:1', 'telegram', datetime('now'))`).run();
     const ins = db.prepare(
       `INSERT OR IGNORE INTO user_roles (user_id, role, agent_group_id, granted_at)
        VALUES ('telegram:1', 'owner', NULL, datetime('now'))`,
@@ -38,9 +36,7 @@ describe('migration 108 — user_roles dedup', () => {
     // body manually.
     runMigrations(db);
     db.exec(`DROP INDEX IF EXISTS idx_user_roles_global_unique`);
-    db.prepare(
-      `INSERT INTO users (id, kind, created_at) VALUES ('telegram:1', 'telegram', datetime('now'))`,
-    ).run();
+    db.prepare(`INSERT INTO users (id, kind, created_at) VALUES ('telegram:1', 'telegram', datetime('now'))`).run();
     for (let i = 0; i < 5; i++) {
       db.prepare(
         `INSERT OR IGNORE INTO user_roles (user_id, role, agent_group_id, granted_at)
@@ -69,12 +65,8 @@ describe('migration 108 — user_roles dedup', () => {
   it('per-group scoping still allows distinct (user, role, group_id) rows', () => {
     const db = open();
     db.prepare(`INSERT INTO users (id, kind, created_at) VALUES ('telegram:1', 'telegram', datetime('now'))`).run();
-    db.prepare(
-      `INSERT INTO agent_groups (id, name, folder, created_at) VALUES ('a', 'A', 'a', datetime('now'))`,
-    ).run();
-    db.prepare(
-      `INSERT INTO agent_groups (id, name, folder, created_at) VALUES ('b', 'B', 'b', datetime('now'))`,
-    ).run();
+    db.prepare(`INSERT INTO agent_groups (id, name, folder, created_at) VALUES ('a', 'A', 'a', datetime('now'))`).run();
+    db.prepare(`INSERT INTO agent_groups (id, name, folder, created_at) VALUES ('b', 'B', 'b', datetime('now'))`).run();
     const ins = db.prepare(
       `INSERT OR IGNORE INTO user_roles (user_id, role, agent_group_id, granted_at) VALUES (?, ?, ?, datetime('now'))`,
     );

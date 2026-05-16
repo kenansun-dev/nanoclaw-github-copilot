@@ -324,7 +324,9 @@ export function migrateChatsToV2(
       if (legacyChatsTablePresent) {
         // Legacy chats table may be the createSchema() shape OR a tests' bespoke
         // shape. Detect columns first.
-        const cols = new Set((legacyDb.prepare(`PRAGMA table_info(chats)`).all() as { name: string }[]).map((c) => c.name));
+        const cols = new Set(
+          (legacyDb.prepare(`PRAGMA table_info(chats)`).all() as { name: string }[]).map((c) => c.name),
+        );
         if (cols.has('jid')) {
           const hasChannel = cols.has('channel');
           const hasIsGroup = cols.has('is_group');
@@ -363,6 +365,23 @@ export function migrateChatsToV2(
             `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at)
              VALUES (?, ?, ?, ?, ?)`,
           );
+          // Also bridge the chat↔agent pairing into messaging_group_agents.
+          // In v1 the (registered_groups.jid, registered_groups.folder) tuple
+          // implicitly meant "this chat is paired and routed to this agent
+          // group". In v2 that pairing is an MGA row. Without this bridge,
+          // post-migrate `/status` reports "not paired" for every legacy
+          // chat (caught on first deployment 2026-05-16).
+          const findMgByPeer = db.prepare(
+            `SELECT id, is_group FROM messaging_groups WHERE channel_type = ? AND platform_id = ?`,
+          );
+          const insertMga = db.prepare(
+            `INSERT OR IGNORE INTO messaging_group_agents
+               (id, messaging_group_id, agent_group_id, engage_mode, engage_pattern,
+                sender_scope, ignored_message_policy, session_mode, priority, created_at)
+             VALUES (?, ?, ?, ?, ?, 'all', 'drop', 'shared', 0, ?)`,
+          );
+          const hasJid = cols.has('jid');
+          const hasRequiresTrigger = cols.has('requires_trigger');
           for (const r of rows) {
             const folder = String(r.folder ?? '');
             const name = String(r.name ?? folder);
@@ -376,6 +395,27 @@ export function migrateChatsToV2(
             const agId = folder;
             const info = insertAg.run(agId, name, folder, null, now);
             if (info.changes > 0) summary.legacyRegisteredGroupsMigrated++;
+
+            // Bridge to MGA: needs a messaging_groups row keyed by the same
+            // jid (channelType + platformId). Skip if the legacy chat row
+            // wasn't migrated (e.g. messages.db.chats missing).
+            if (!hasJid || !r.jid) continue;
+            const parsed = splitJid(String(r.jid));
+            if (!parsed) continue;
+            const channelType = channelKeyToType(parsed[0]);
+            const platformId = parsed[1];
+            const mg = findMgByPeer.get(channelType, platformId) as
+              | { id: string; is_group: number }
+              | undefined;
+            if (!mg) continue;
+            const isGroup = Number(mg.is_group) === 1;
+            // Mirror v1 trigger semantics: groups stick on @mention; DMs
+            // accept any message from allowed senders.
+            const requiresTrigger = hasRequiresTrigger ? Number(r.requires_trigger ?? (isGroup ? 1 : 0)) === 1 : isGroup;
+            const engageMode = requiresTrigger ? 'mention-sticky' : 'pattern';
+            const engagePattern: string | null = requiresTrigger ? null : '.';
+            const mgaId = `mga:${mg.id}:${agId}`;
+            insertMga.run(mgaId, mg.id, agId, engageMode, engagePattern, now);
           }
         }
       }
