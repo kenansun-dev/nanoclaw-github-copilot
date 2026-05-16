@@ -70,7 +70,10 @@ describe('config-loader', () => {
     saveConfig(config);
 
     const saved = JSON.parse(fs.readFileSync(path.join(tmpDir, 'nanoclaw.json'), 'utf-8'));
-    expect(saved.channels.telegram.botToken).toBe('${TELEGRAM_BOT_TOKEN}');
+    // v9 dedupe: when accounts.default.botToken is set (auto-backfilled by
+    // loadConfig normalization), the legacy top-level mirror is dropped.
+    expect(saved.channels.telegram.botToken).toBeUndefined();
+    expect(saved.channels.telegram.accounts.default.botToken).toBe('${TELEGRAM_BOT_TOKEN}');
     expect(saved.channels.teams.appPassword).toBe('${MSTEAMS_APP_PASSWORD}');
   });
 
@@ -786,7 +789,7 @@ describe('config migration v4→v5: TUI chat consolidation', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(8);
+    expect(config.configVersion).toBe(9);
     expect(config.chats['tui:1']).toBeUndefined();
     expect(config.chats['tui:2']).toBeUndefined();
     expect(config.chats['tui:3']).toBeUndefined();
@@ -806,7 +809,7 @@ describe('config migration v4→v5: TUI chat consolidation', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(8);
+    expect(config.configVersion).toBe(9);
     expect(config.chats['tui:default']).toBeUndefined();
     expect(config.chats['tg:999']).toBeDefined();
   });
@@ -857,7 +860,7 @@ describe('config migration v5→v6: plugins block seed', () => {
   it('seeds default marketplaces and empty enabledPlugins[] when missing', () => {
     fs.writeFileSync(path.join(tmpDir, 'nanoclaw.json'), JSON.stringify({ configVersion: 5 }));
     const config = loadConfig();
-    expect(config.configVersion).toBe(8);
+    expect(config.configVersion).toBe(9);
     expect(config.plugins).toBeDefined();
     expect(config.plugins?.enabledPlugins).toEqual([]);
     expect(config.plugins?.extraKnownMarketplaces).toEqual([
@@ -886,7 +889,7 @@ describe('config migration v5→v6: plugins block seed', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(8);
+    expect(config.configVersion).toBe(9);
     // v8 renamed enabled → enabledPlugins
     expect(config.plugins?.enabledPlugins).toHaveLength(1);
     expect(config.plugins?.enabledPlugins?.[0].name).toBe('workiq');
@@ -940,7 +943,7 @@ describe('config migration v5→v6: plugins block seed', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(8);
+    expect(config.configVersion).toBe(9);
     expect(Object.keys(config.chats)).toHaveLength(0);
   });
 
@@ -960,10 +963,39 @@ describe('config migration v5→v6: plugins block seed', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(8);
+    expect(config.configVersion).toBe(9);
     expect(config.chats['tui:default']).toBeUndefined();
     expect(config.chats['telegram:12345']).toBeDefined();
     expect(config.chats['discord:67890']).toBeDefined();
+  });
+
+  it('v9 migration: drops channels.tui block and dedupes telegram botToken', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 8,
+        channels: {
+          telegram: {
+            enabled: true,
+            botToken: '${TELEGRAM_BOT_TOKEN}',
+            accounts: { default: { botToken: '${TELEGRAM_BOT_TOKEN}', allowFrom: ['1'] } },
+          },
+          tui: {
+            enabled: false,
+            accounts: { default: { allowFrom: ['default'] } },
+            roleBindings: { default: 'owner' },
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.configVersion).toBe(9);
+    // tui block fully removed
+    expect((config.channels as Record<string, unknown>).tui).toBeUndefined();
+    // top-level telegram.botToken removed (duplicate of accounts.default.botToken)
+    expect(config.channels.telegram?.botToken).toBeUndefined();
+    // accounts.default.botToken preserved
+    expect(config.channels.telegram?.accounts?.default?.botToken).toBe('${TELEGRAM_BOT_TOKEN}');
   });
 });
 

@@ -622,7 +622,7 @@ function distributeChatsToChannels(toSave: any, flat: Record<string, any>): void
 
 // ─── Config Migration ────────────────────────────────────────────────────────
 
-const CURRENT_CONFIG_VERSION = 8;
+const CURRENT_CONFIG_VERSION = 9;
 
 /**
  * Migrate config from older versions. Returns true if migration occurred.
@@ -929,6 +929,42 @@ function migrateConfig(config: Record<string, any>): boolean {
     migrated = true;
   }
 
+  if (version < 9) {
+    // v9: clean up two long-standing config artifacts the user flagged
+    // on 2026-05-16:
+    //
+    //   (a) `channels.tui` is dead config. No code reads
+    //       channels.tui.enabled / .accounts / .roleBindings — the TUI
+    //       channel listens on a local unix socket and infers owner
+    //       from the socket peer. The block was a side-effect of an
+    //       early `nanoclaw channel add tui` flow that no longer
+    //       exists. Drop it.
+    //
+    //   (b) Duplicate `botToken` on telegram. Older user configs ship
+    //       both `channels.telegram.botToken` AND
+    //       `channels.telegram.accounts.default.botToken` pointing at
+    //       the same env (`${TELEGRAM_BOT_TOKEN}`). The v2 accounts
+    //       shape is the canonical one (multi-account ready); the
+    //       top-level field is legacy. If both are set and identical
+    //       (or both unset on accounts), drop the top-level mirror.
+    if (config.channels && typeof config.channels === 'object') {
+      const channels = config.channels as Record<string, unknown>;
+      if ('tui' in channels) {
+        delete channels.tui;
+        migrated = true;
+      }
+      const tg = channels.telegram as { botToken?: string; accounts?: Record<string, { botToken?: string }> } | undefined;
+      if (tg && tg.botToken && tg.accounts?.default?.botToken) {
+        if (tg.accounts.default.botToken === tg.botToken) {
+          delete tg.botToken;
+          migrated = true;
+        }
+      }
+    }
+    config.configVersion = 9;
+    migrated = true;
+  }
+
   return migrated;
 }
 
@@ -1187,6 +1223,13 @@ export function saveConfig(
   }
   // Strip secrets before saving — they stay in .env
   const toSave = JSON.parse(JSON.stringify(config));
+  // v9 cleanup at write time (defensive — migrateConfig also handles
+  // this on load, but saveConfig is a separate entry point that
+  // shouldn't re-introduce the dupes if a caller hands us a
+  // freshly-mutated config object).
+  if (toSave.channels?.tui) {
+    delete toSave.channels.tui;
+  }
   // Strip top-level channel secrets
   // Replace secrets with ${ENV_VAR} references (explicit, visible in json)
   if (toSave.channels?.telegram?.botToken && !toSave.channels.telegram.botToken.startsWith('${')) {
@@ -1218,6 +1261,14 @@ export function saveConfig(
         delete acc.certPrivateKeyPath;
       }
     }
+  }
+
+  // Dedupe: if accounts.default.botToken is set, drop the legacy top-level
+  // mirror. Both ultimately resolve to `${TELEGRAM_BOT_TOKEN}` so the
+  // top-level is pure noise. (Reader fallback still works for configs
+  // that ship only the legacy shape.)
+  if (toSave.channels?.telegram?.accounts?.default?.botToken && toSave.channels.telegram.botToken) {
+    delete toSave.channels.telegram.botToken;
   }
 
   // Distribute chats into channels.<name>.chats
