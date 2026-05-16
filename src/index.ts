@@ -1446,9 +1446,12 @@ async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
-  loadState();
 
   // ─── v2 central DB init + migrations + config reconcile ───
+  // Must run BEFORE loadState() — post-cutover (PR #49), `loadState`
+  // → `getAllRegisteredGroups` → v2 facade → v2.db, which is opened
+  // here. Pre-cutover ordering (loadState first) crashes boot with
+  // 'Database not initialized'.
   // Separate file `<workspace>/store/v2.db` (legacy v1 keeps `messages.db`)
   // — avoids double-connection-on-same-file gotchas with WAL prepared-stmt
   // caches. After migrations, reconcile projects declared config (agents,
@@ -1492,6 +1495,9 @@ async function main(): Promise<void> {
     logger.fatal({ err }, 'v2 DB init failed — refusing to start (fail-fast, systemd will restart)');
     process.exit(1);
   }
+
+  // Now safe to load v1 facade state — v2.db open + reconciled.
+  loadState();
 
   // Apply config.logLevel as early as possible so subsequent startup logs
   // reflect the user's preferred verbosity. env LOG_LEVEL still wins inside
