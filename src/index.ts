@@ -1954,8 +1954,26 @@ async function main(): Promise<void> {
   });
 }
 
-// Guard: only run when executed directly, not when imported by tests
-const isDirectRun = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+// Guard: only run when executed directly, not when imported by tests.
+//
+// Symlink-safety (2026-05-17 systemd repro): `import.meta.url` is resolved
+// through symlinks, while `process.argv[1]` is the literal launch path.
+// `npm link` / global installs leave argv[1] pointing at the symlink and
+// import.meta.url at the realpath, so a naive `===` check returned false
+// and main() never ran (Node then exited 0 silently). Resolve both ends
+// through `fs.realpathSync` before comparing.
+const isDirectRun = (() => {
+  if (!process.argv[1]) return false;
+  try {
+    const lhs = fs.realpathSync(fileURLToPath(import.meta.url));
+    const rhs = fs.realpathSync(path.resolve(process.argv[1]));
+    return lhs === rhs;
+  } catch {
+    // realpath can throw on Windows or for ephemeral entry paths; fall back
+    // to the pre-fix comparison so we don't worsen any working setup.
+    return fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+  }
+})();
 
 if (isDirectRun) {
   main().catch((err: any) => {

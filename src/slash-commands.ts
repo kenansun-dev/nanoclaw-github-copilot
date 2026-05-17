@@ -891,12 +891,26 @@ async function handleThink(
 /**
  * Register commands with Telegram Bot API (setMyCommands).
  * Call once after bot connects. Non-invasive — uses HTTP API directly.
+ *
+ * Includes Telegram-only utility commands (`/chatid`, `/ping`) that are not
+ * in the canonical `COMMANDS` registry but live as bot-side handlers in
+ * `channels/telegram.ts`. Single source of truth for the rendered menu —
+ * channel adapters must NOT call `setMyCommands` directly (drift hazard:
+ * race-condition overwrite of this list).
  */
 export async function registerTelegramCommands(botToken: string): Promise<void> {
-  const commands = COMMANDS.map((c) => ({
-    command: c.name,
-    description: c.description + (c.args ? ` (${c.args})` : ''),
-  }));
+  const tgOnly = [
+    { command: 'chatid', description: 'Get chat registration ID' },
+    { command: 'ping', description: 'Check if bot is online' },
+  ];
+  const fromRegistry = COMMANDS.map((c) => {
+    const desc = c.description + (c.args ? ` (${c.args})` : '');
+    return {
+      command: c.name,
+      description: desc.length > 256 ? desc.slice(0, 253) + '…' : desc,
+    };
+  });
+  const commands = [...tgOnly, ...fromRegistry];
 
   try {
     const resp = await fetch(`https://api.telegram.org/bot${botToken}/setMyCommands`, {
