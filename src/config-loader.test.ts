@@ -1089,7 +1089,10 @@ describe('getDefaultAgent — list[].default resolution (TUI consistency)', () =
     const cfg = {
       agents: {
         defaults: baseDefaults,
-        list: [{ id: 'a', model: 'claude-sonnet-4.6', name: 'A' }, { id: 'b', model: 'gpt-5' }],
+        list: [
+          { id: 'a', model: 'claude-sonnet-4.6', name: 'A' },
+          { id: 'b', model: 'gpt-5' },
+        ],
       },
     } as any;
     const got = getDefaultAgent(cfg);
