@@ -4,7 +4,16 @@
  *
  * These functions are the glue between config and runtime behavior.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Mock child_process so isCopilotAuthenticated never shells out during tests.
+// Real snap/npm host behavior is exercised by smoke runs (VM + rpi5) — unit
+// suite must stay hermetic + fast (no 5s timeouts under parallel load).
+const execSyncMock = vi.fn();
+vi.mock('child_process', async () => {
+  const real = await vi.importActual<typeof import('child_process')>('child_process');
+  return { ...real, execSync: (...args: unknown[]) => execSyncMock(...args) };
+});
 import {
   getProvider,
   getModelName,
@@ -355,12 +364,38 @@ describe('resolveAgentForChat — Teams jid parse regression', () => {
 
 // ─── isCopilotAuthenticated snap-awareness (2026-05-17 fix) ─────────────────
 describe('isCopilotAuthenticated snap detection', () => {
-  it('returns boolean (smoke)', () => {
-    // We can't easily mock `command -v copilot` resolution here without
-    // hijacking child_process. This is purely a contract test: the function
-    // must not throw and must return a boolean regardless of host config.
-    // Real snap-vs-npm behavior is verified by host smoke (VM tgz install).
-    const result = isCopilotAuthenticated();
-    expect(typeof result).toBe('boolean');
+  beforeEach(() => execSyncMock.mockReset());
+  afterEach(() => execSyncMock.mockReset());
+
+  it('returns true when `command -v copilot` resolves under /snap/', () => {
+    execSyncMock.mockImplementation((cmd: string) => {
+      if (cmd.startsWith('command -v copilot')) return '/snap/bin/copilot\n';
+      throw new Error('should not reach subcommand probe');
+    });
+    expect(isCopilotAuthenticated()).toBe(true);
+  });
+
+  it('falls back to subcommand probe for non-snap installs', () => {
+    execSyncMock.mockImplementation((cmd: string) => {
+      if (cmd.startsWith('command -v copilot')) return '/home/x/.npm-global/bin/copilot\n';
+      if (cmd === 'copilot auth whoami') return 'Logged in as user@example.com\n';
+      throw new Error('not reached');
+    });
+    expect(isCopilotAuthenticated()).toBe(true);
+  });
+
+  it('returns false when binary present but all subcommands fail', () => {
+    execSyncMock.mockImplementation((cmd: string) => {
+      if (cmd.startsWith('command -v copilot')) return '/home/x/.npm-global/bin/copilot\n';
+      throw new Error('command failed');
+    });
+    expect(isCopilotAuthenticated()).toBe(false);
+  });
+
+  it('returns false when `command -v copilot` itself throws and probes fail', () => {
+    execSyncMock.mockImplementation(() => {
+      throw new Error('command unavailable');
+    });
+    expect(isCopilotAuthenticated()).toBe(false);
   });
 });
