@@ -58,16 +58,24 @@ cat /workspace/project/nanoclaw.json 2>/dev/null
 
 ## Slash commands (in-chat)
 
-| Command                                  | Description                                           |
-| ---------------------------------------- | ----------------------------------------------------- |
-| `/think [off\|low\|medium\|high\|xhigh]` | Set reasoning effort level                            |
-| `/reasoning [on\|off]`                   | Show or hide reasoning/thinking output in messages    |
-| `/new`                                   | Reset session — start fresh conversation              |
-| `/status`                                | Show agent status and config                          |
-| `/capabilities`                          | Show available tools and skills                       |
-| `/tasks`                                 | List scheduled tasks                                  |
-| `/wiki [topic]`                          | Knowledge base — ingest, query, or maintain your wiki |
-| `/help`                                  | Show available commands                               |
+> **Source of truth**: `src/slash-commands.ts` exports the `COMMANDS` array.
+> Run `/help` in chat for the live auto-generated list — this table is a
+> snapshot and may lag the registry.
+
+| Command                                                      | Description                                                       |
+| ------------------------------------------------------------ | ----------------------------------------------------------------- |
+| `/think [off\|low\|medium\|high\|xhigh]`                     | Set reasoning effort level                                        |
+| `/reasoning [on\|off\|flash]`                                | Show, hide, or flash-stream reasoning in messages                 |
+| `/new` (alias `/reset`)                                      | Reset session — start fresh conversation                          |
+| `/status`                                                    | Show agent status, auth, models, channels (file-only, <50ms)      |
+| `/capabilities`                                              | Show available tools and skills                                   |
+| `/tasks`                                                     | List scheduled tasks                                              |
+| `/wiki [topic]`                                              | Knowledge base — ingest, query, or maintain your wiki             |
+| `/model [id] [--default]`                                    | Show or set active model (per-session, or `--default` for global) |
+| `/models`                                                    | List available models from the provider catalog                   |
+| `/mcp`                                                       | List configured MCP servers (parity with CC `/mcp`)               |
+| `/plugin [list\|install\|remove\|info\|marketplace\|reload]` | Manage plugins from chat                                          |
+| `/help`                                                      | Show all available commands (auto-generated from `COMMANDS`)      |
 
 ## CLI commands
 

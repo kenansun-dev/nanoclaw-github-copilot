@@ -260,30 +260,29 @@ export class TelegramChannel implements Channel {
           console.log(`\n  Telegram bot: @${botInfo.username}`);
           console.log(`  Send /chatid to the bot to get a chat's registration ID\n`);
 
-          // Register slash command menu in Telegram
+          // Register slash command menu in Telegram from the canonical
+          // COMMANDS registry (drift-proof: previously this was a hard-coded
+          // list that fell ~7 commands behind COMMANDS — kenan 2026-05-17).
+          // We always include /chatid and /ping (telegram-only utility cmds)
+          // even though they are not in COMMANDS.
+          //
+          // Lazy-import to avoid pulling slash-commands -> config.js into the
+          // telegram module-load graph (existing tests mock config.js with a
+          // narrow surface).
           try {
-            await this.bot!.api.setMyCommands([
+            const { COMMANDS } = await import('../slash-commands.js');
+            const tgOnly = [
               { command: 'chatid', description: 'Get chat registration ID' },
               { command: 'ping', description: 'Check if bot is online' },
-              { command: 'status', description: 'Show agent status' },
-              { command: 'new', description: 'Start a new conversation' },
-              { command: 'think', description: 'Set reasoning level' },
-              {
-                command: 'reasoning',
-                description: 'Show/hide reasoning output',
-              },
-              { command: 'tasks', description: 'List scheduled tasks' },
-              {
-                command: 'capabilities',
-                description: 'Show available tools and skills',
-              },
-              {
-                command: 'wiki',
-                description: 'Knowledge base — ingest, query, or maintain',
-              },
-              { command: 'help', description: 'Show available commands' },
-            ]);
-            logger.info('Telegram slash commands registered');
+            ];
+            // Telegram caps each description at 256 chars and command names
+            // at 1–32 chars matching `[a-z0-9_]`. COMMANDS already conforms.
+            const fromRegistry = COMMANDS.map((c) => ({
+              command: c.name,
+              description: c.description.length > 256 ? c.description.slice(0, 253) + '…' : c.description,
+            }));
+            await this.bot!.api.setMyCommands([...tgOnly, ...fromRegistry]);
+            logger.info({ count: tgOnly.length + fromRegistry.length }, 'Telegram slash commands registered');
           } catch (err: any) {
             logger.debug({ err: err.message }, 'Failed to register slash commands');
           }

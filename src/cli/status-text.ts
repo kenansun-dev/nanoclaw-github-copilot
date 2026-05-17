@@ -72,6 +72,24 @@ export async function collectStatus(chatJid?: string): Promise<StatusInfo> {
   const { resolveGithubToken, isCopilotAuthenticated } = await import('../config-extensions.js');
 
   const ws = resolveWorkspace();
+
+  // 2026-05-17 fix: `nanoclaw status` runs in a fresh shell that has not
+  // sourced `~/.nanoclaw/.env`, so `process.env.COPILOT_GITHUB_TOKEN` (and
+  // friends) are empty even though the running daemon was started with the
+  // env loaded (`runService('start')` calls `loadWorkspaceEnv()` before
+  // spawn). Without this load, `resolveGithubToken()` falls back to
+  // `~/.copilot/config.json` / `isCopilotAuthenticated()` and falsely
+  // reports `not configured` on hosts where copilot stores tokens outside
+  // the JSON config (e.g. snap copilot's sandbox). Loading the workspace
+  // .env into `process.env` here makes `status` see the same auth source
+  // as the daemon. Safe: this is a short-lived CLI process, no daemon side
+  // effects. Only sets env vars that are currently unset (no override).
+  try {
+    const { loadWorkspaceEnv } = await import('../env-loader.js');
+    loadWorkspaceEnv(ws);
+  } catch {
+    /* env file absent or unreadable — fall through to existing fallbacks */
+  }
   const pidFile = join(ws, 'state', 'nanoclaw.pid');
   // B.5 + 2026-05-09 followup: daily-rotated daemon log
   // (`nanoclaw-YYYY-MM-DD.log`). `/status` displays the logs *directory*

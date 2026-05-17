@@ -115,21 +115,11 @@ export const COMMANDS: SlashCommand[] = [
       'List configured MCP servers (parity with CC `/mcp` and `gh copilot mcp list`). File-only read, <50ms.',
     args: '',
   },
-  {
-    name: 'pair-approve',
-    description: 'Owner-only: redeem a pending pairing code (XXXX-XXXX) to allow a stranger’s queued DMs to dispatch.',
-    args: '<code>',
-  },
-  {
-    name: 'pair-pending',
-    description: 'Owner-only: list pending pairing codes awaiting approval.',
-    noArgs: true,
-  },
-  {
-    name: 'pair-revoke',
-    description: 'Owner-only: cancel a pending pairing code and drop its held messages.',
-    args: '<code>',
-  },
+  // Note: /pair-approve, /pair-pending, /pair-revoke removed 2026-05-17.
+  // Pairing flow is auto-triggered and infrequent; owner CLI
+  // `nanoclaw pair approve <code>` remains for operator-side approval.
+  // Removing these from the chat surface reduces stranger-visible footprint
+  // and trims TG/Discord menu clutter (kenan 2026-05-17).
 ];
 
 // ─── Command execution ───────────────────────────────────────────────────────
@@ -143,13 +133,22 @@ export interface SlashCommandResult {
 /**
  * Normalize raw message text into a slash command string.
  * Strips @mentions, lowercases, trims.
+ *
+ * Bug fix (2026-05-17, kenan): the previous `^@\S+\s*` pattern greedily
+ * consumed `/` because slash is non-whitespace, so `@bot/help` (no space
+ * between mention and command) became `''` and the command was dropped.
+ * Use the Telegram-bot username charset (`[A-Za-z0-9_]`, 1+ chars) so the
+ * mention stops at the first non-username character (slash, colon, etc).
+ * That charset is a superset of Telegram's documented `5..32` length rule
+ * and is also valid for Discord usernames the bot might see, so a single
+ * pattern covers every channel.
  */
 export function normalizeSlashInput(text: string): string {
   return text
     .trim()
     .toLowerCase()
-    .replace(/^@\S+\s*/, '') // strip leading @mention
-    .replace(/@\S+$/, ''); // strip trailing @botname (Telegram adds @bot_username)
+    .replace(/^@[a-z0-9_]+\s*/i, '') // strip leading @mention (charset-bounded; stops at '/')
+    .replace(/@[a-z0-9_]+$/i, ''); // strip trailing @botname (Telegram adds @bot_username)
 }
 
 /**
@@ -380,18 +379,9 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
     return { handled: true };
   }
 
-  // /pair-approve <code> — owner-only: redeem a pending pairing code.
-  // /pair-pending          — owner-only: list pending pairing codes.
-  if (
-    input === '/pair-pending' ||
-    input.startsWith('/pair-approve ') ||
-    input === '/pair-approve' ||
-    input.startsWith('/pair-revoke ') ||
-    input === '/pair-revoke'
-  ) {
-    await handlePairSlash(input, ctx);
-    return { handled: true };
-  }
+  // /pair-* removed 2026-05-17: owner pairing now CLI-only (`nanoclaw pair`).
+  // The router intentionally does NOT recognize /pair-approve, /pair-pending,
+  // or /pair-revoke — they fall through to normal message dispatch.
 
   // /wiki [topic|search <query>] — pass to agent with wiki skill context
   if (input === '/wiki' || input.startsWith('/wiki ')) {
@@ -452,110 +442,13 @@ async function captureStdout(fn: () => Promise<void> | void): Promise<string> {
   return chunks.join('\n');
 }
 
-// ─── /pair-approve + /pair-pending implementation ─────────────────────────────
-
-/**
- * Owner-only check for /pair-* slash commands.
- *
- * Uses the same `user_roles.role='owner'` row that `v2-access` consults
- * (see isOwner there). The caller id is derived from `ctx.chatJid` — in
- * DM contexts the jid is `<channel>:<senderId>`; in groups we cannot
- * reliably attribute the slash sender from ctx alone, so we conservatively
- * reject group invocations here. CLI invocations (`nanoclaw pair approve`)
- * bypass this slash gate entirely.
- */
-async function handlePairSlash(input: string, ctx: SlashCommandContext): Promise<void> {
-  if (!ctx.channel) return;
-
-  // Lazy imports: keeps slash-commands lightweight for the non-pair paths.
-  const { getDb } = await import('./db/connection.js');
-  const { redeemPairingCode, listPendingPairings, revokePairingCode } = await import('./v2-access.js');
-
-  let db: import('better-sqlite3').Database;
-  try {
-    db = getDb();
-  } catch (err) {
-    await ctx.channel.sendMessage(ctx.chatJid, `❌ Pairing DB unavailable: ${(err as Error).message ?? String(err)}`);
-    return;
-  }
-
-  // Derive caller id from chatJid (`<channel>:<senderId>`). Strict v1 jid
-  // shapes like `tg:<chatId>` collapse to a single segment after the prefix,
-  // and there's no slash-level sender attribution in those flows — reject.
-  const callerOwnerId = ctx.chatJid;
-  const isOwner = (() => {
-    try {
-      const row = db
-        .prepare(`SELECT 1 AS hit FROM user_roles WHERE user_id = ? AND role = 'owner' LIMIT 1`)
-        .get(callerOwnerId) as { hit: number } | undefined;
-      return !!row;
-    } catch {
-      return false;
-    }
-  })();
-  if (!isOwner) {
-    await ctx.channel.sendMessage(
-      ctx.chatJid,
-      '❌ /pair-approve, /pair-pending and /pair-revoke are owner-only. Use `nanoclaw pair approve <code>` from a shell with operator access.',
-    );
-    return;
-  }
-
-  // /pair-revoke <code>
-  {
-    const mr = input.match(/^\/pair-revoke(?:\s+(\S+))?\s*$/);
-    if (mr) {
-      const rawCode = mr[1];
-      if (!rawCode) {
-        await ctx.channel.sendMessage(ctx.chatJid, 'Usage: /pair-revoke <CODE>  (e.g. /pair-revoke ABCD-EFGH)');
-        return;
-      }
-      const rev = revokePairingCode(db, rawCode);
-      if (!rev.ok) {
-        await ctx.channel.sendMessage(ctx.chatJid, `❌ Revoke failed: ${rev.error ?? 'unknown'}`);
-        return;
-      }
-      await ctx.channel.sendMessage(
-        ctx.chatJid,
-        `🗑️ Revoked ${rev.channelType}/${rev.accountKey} peer=${rev.peerId} — removed ${rev.removed ?? 0} held message${rev.removed === 1 ? '' : 's'}.`,
-      );
-      return;
-    }
-  }
-
-  if (input === '/pair-pending') {
-    const rows = listPendingPairings(db);
-    if (rows.length === 0) {
-      await ctx.channel.sendMessage(ctx.chatJid, '✅ No pending pairing codes.');
-      return;
-    }
-    const lines = rows.map((r) => {
-      const codeShown = `${r.code.slice(0, 4)}-${r.code.slice(4)}`;
-      return `• \`${codeShown}\` — ${r.channelType}/${r.accountKey} peer=${r.peerId} (${r.messageCount} msg, expires ${r.expiresAt})`;
-    });
-    await ctx.channel.sendMessage(ctx.chatJid, `🔐 Pending pairings (${rows.length}):\n${lines.join('\n')}`);
-    return;
-  }
-
-  // /pair-approve <code>
-  const m = input.match(/^\/pair-approve(?:\s+(\S+))?\s*$/);
-  const rawCode = m?.[1];
-  if (!rawCode) {
-    await ctx.channel.sendMessage(ctx.chatJid, 'Usage: /pair-approve <CODE>  (e.g. /pair-approve ABCD-EFGH)');
-    return;
-  }
-
-  const result = redeemPairingCode(db, rawCode, callerOwnerId);
-  if (!result.ok) {
-    await ctx.channel.sendMessage(ctx.chatJid, `❌ Pairing failed: ${result.error ?? 'unknown'}`);
-    return;
-  }
-  const n = result.replayed?.length ?? 0;
-  await ctx.channel.sendMessage(
-    ctx.chatJid,
-    `✅ Paired ${result.channelType}/${result.accountKey} peer=${result.peerId} — ${n} held message${n === 1 ? '' : 's'} ready to dispatch.`,
-  );
-}
+// ─── /pair-* removed 2026-05-17 ─────────────────────────────────────────────
+// The chat-side /pair-approve, /pair-pending, /pair-revoke commands were
+// removed in favour of the operator CLI (`nanoclaw pair approve <code>`).
+// Rationale: pairing is auto-triggered and infrequent; exposing the surface
+// to every chat user added stranger-visible footprint and menu clutter.
+// All pairing primitives (`redeemPairingCode`, `listPendingPairings`,
+// `revokePairingCode`) still live in `v2-access.ts` for CLI callers.
 
 async function handlePluginSlash(argv: string[], ctx: SlashCommandContext): Promise<void> {
   if (!ctx.channel) return;
