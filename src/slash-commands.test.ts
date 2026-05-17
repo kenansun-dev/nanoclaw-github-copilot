@@ -719,10 +719,16 @@ describe('registerTelegramCommands', () => {
     expect(url).toContain('api.telegram.org/botfake-token-123/setMyCommands');
     expect(opts.method).toBe('POST');
 
-    // Body should contain command definitions
+    // Body should contain command definitions: tg-only (chatid, ping) +
+    // every entry in COMMANDS. Assert both surfaces to lock the contract.
     const body = JSON.parse(opts.body);
     expect(body.commands).toBeDefined();
     expect(body.commands.length).toBeGreaterThanOrEqual(3);
+    const names = body.commands.map((c: { command: string }) => c.command);
+    expect(names).toContain('chatid'); // tg-only utility, not in COMMANDS
+    expect(names).toContain('ping'); // tg-only utility, not in COMMANDS
+    expect(names).toContain('help'); // from COMMANDS
+    expect(names).toContain('status'); // from COMMANDS
 
     vi.unstubAllGlobals();
   });
