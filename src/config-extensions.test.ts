@@ -14,6 +14,7 @@ import {
   getAgentModelName,
   getAgentProvider,
   resolveAgentForChat,
+  isCopilotAuthenticated,
 } from './config-extensions.js';
 import { AgentConfig } from './config-loader.js';
 
@@ -349,5 +350,17 @@ describe('resolveAgentForChat — Teams jid parse regression', () => {
       else process.env.NANOCLAW_WORKSPACE = origWs;
       fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
+  });
+});
+
+// ─── isCopilotAuthenticated snap-awareness (2026-05-17 fix) ─────────────────
+describe('isCopilotAuthenticated snap detection', () => {
+  it('returns boolean (smoke)', () => {
+    // We can't easily mock `command -v copilot` resolution here without
+    // hijacking child_process. This is purely a contract test: the function
+    // must not throw and must return a boolean regardless of host config.
+    // Real snap-vs-npm behavior is verified by host smoke (VM tgz install).
+    const result = isCopilotAuthenticated();
+    expect(typeof result).toBe('boolean');
   });
 });

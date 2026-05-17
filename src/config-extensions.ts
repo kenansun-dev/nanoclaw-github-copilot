@@ -177,8 +177,36 @@ import { resolveGithubToken } from './github-token-provider.js';
 /**
  * Check if copilot CLI reports authenticated status.
  * This detects tokens stored in OS credential manager that we can't read directly.
+ *
+ * Snap-aware (2026-05-17): snap-packaged copilot stores its auth state
+ * inside the snap sandbox (`~/snap/copilot/current/`), inaccessible to
+ * `~/.copilot/config.json` reads. Its `whoami`/`auth status` subcommands
+ * also require interactive (`-i`) mode and exit `Invalid command format`
+ * non-interactively. For snap installs we therefore trust that if the
+ * binary resolves at all, the user logged in via `copilot -i` separately.
+ * The daemon was started with `loadWorkspaceEnv()` so it has its own
+ * `COPILOT_GITHUB_TOKEN`; this function is only consulted as a fallback
+ * display heuristic, never gates real auth.
  */
 export function isCopilotAuthenticated(): boolean {
+  // Snap-installed copilot: treat presence of the binary in `/snap/` as
+  // authenticated. We deliberately do not exec the binary because its
+  // non-interactive subcommands fail (see jsdoc above), which would mask
+  // a legitimate login behind a confusing `❌ not configured`.
+  try {
+    const which = execSyncFn('command -v copilot 2>/dev/null', {
+      encoding: 'utf-8',
+      timeout: 2000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: '/bin/sh',
+    }).trim();
+    if (which && /(^|\/)snap\//.test(which)) {
+      return true;
+    }
+  } catch {
+    /* `command -v` unavailable — fall through to subcommand probe */
+  }
+
   // Try multiple CLI commands — different copilot versions use different subcommands
   const commands = ['copilot auth whoami', 'copilot auth status', 'copilot status'];
   for (const cmd of commands) {
