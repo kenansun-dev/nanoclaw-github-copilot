@@ -46,6 +46,10 @@ vi.mock('./db.js', () => ({
   getAllTasks: vi.fn(() => []),
 }));
 
+vi.mock('./modules/permissions/db/user-roles.js', () => ({
+  isOwner: vi.fn(() => false),
+}));
+
 // ─── Mock context factory ────────────────────────────────────────────────────
 
 function makeCtx(overrides: Partial<SlashCommandContext> = {}): SlashCommandContext {
@@ -238,14 +242,42 @@ describe('handleSlashCommand', () => {
     // group-A; should only see group-A tasks (1 of 3), even though
     // task-c shares the same chat_jid (collapse-on-read scenario).
     const fixtures = [
-      { id: 'task-a', group_folder: 'group-A', chat_jid: 'tg:A1', prompt: 'a', schedule_type: 'cron', schedule_value: '0 * * * *', next_run: null, status: 'active' },
-      { id: 'task-b', group_folder: 'group-B', chat_jid: 'tg:B1', prompt: 'b', schedule_type: 'cron', schedule_value: '0 * * * *', next_run: null, status: 'active' },
-      { id: 'task-c', group_folder: 'group-B', chat_jid: 'tg:A1', prompt: 'c', schedule_type: 'cron', schedule_value: '0 * * * *', next_run: null, status: 'active' },
+      {
+        id: 'task-a',
+        group_folder: 'group-A',
+        chat_jid: 'tg:A1',
+        prompt: 'a',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
+      {
+        id: 'task-b',
+        group_folder: 'group-B',
+        chat_jid: 'tg:B1',
+        prompt: 'b',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
+      {
+        id: 'task-c',
+        group_folder: 'group-B',
+        chat_jid: 'tg:A1',
+        prompt: 'c',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
     ];
     (db.getAllTasks as any).mockReturnValueOnce(fixtures);
     (db.getRegisteredGroup as any).mockReturnValueOnce(undefined); // not main
     const ctx = makeCtx({ chatJid: 'tg:A1', groupFolder: 'group-A' });
-    await handleSlashCommand('/tasks', ctx);    const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    await handleSlashCommand('/tasks', ctx);
+    const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
     expect(sentText).toContain('task-a');
     expect(sentText).not.toContain('task-b');
     expect(sentText).not.toContain('task-c'); // would slip in with chat_jid filter
@@ -254,16 +286,120 @@ describe('handleSlashCommand', () => {
   it('/tasks from main chat shows ALL groups (parity with old MCP isMain branch)', async () => {
     const db = await import('./db.js');
     const fixtures = [
-      { id: 'task-a', group_folder: 'group-A', chat_jid: 'tg:A1', prompt: 'a', schedule_type: 'cron', schedule_value: '0 * * * *', next_run: null, status: 'active' },
-      { id: 'task-b', group_folder: 'group-B', chat_jid: 'tg:B1', prompt: 'b', schedule_type: 'cron', schedule_value: '0 * * * *', next_run: null, status: 'active' },
+      {
+        id: 'task-a',
+        group_folder: 'group-A',
+        chat_jid: 'tg:A1',
+        prompt: 'a',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
+      {
+        id: 'task-b',
+        group_folder: 'group-B',
+        chat_jid: 'tg:B1',
+        prompt: 'b',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
     ];
     (db.getAllTasks as any).mockReturnValueOnce(fixtures);
-    (db.getRegisteredGroup as any).mockReturnValueOnce({ jid: 'tg:main', name: 'main', folder: 'main', isMain: true } as any);
+    (db.getRegisteredGroup as any).mockReturnValueOnce({
+      jid: 'tg:main',
+      name: 'main',
+      folder: 'main',
+      isMain: true,
+    } as any);
     const ctx = makeCtx({ chatJid: 'tg:main', groupFolder: 'main' });
     await handleSlashCommand('/tasks', ctx);
     const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
     expect(sentText).toContain('task-a');
     expect(sentText).toContain('task-b');
+  });
+
+  it('/tasks scopes via v2 isOwner(senderId) when senderId is threaded (Bucket B)', async () => {
+    const db = await import('./db.js');
+    const userRoles = await import('./modules/permissions/db/user-roles.js');
+    const fixtures = [
+      {
+        id: 'task-a',
+        group_folder: 'group-A',
+        chat_jid: 'tg:A1',
+        prompt: 'a',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
+      {
+        id: 'task-b',
+        group_folder: 'group-B',
+        chat_jid: 'tg:B1',
+        prompt: 'b',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
+    ];
+    (db.getAllTasks as any).mockReturnValueOnce(fixtures);
+    // Owner caller: should see ALL tasks even though chat is not isMain
+    // (legacy v1 lookup would only return the chat's own folder).
+    (db.getRegisteredGroup as any).mockReturnValue(undefined);
+    (userRoles.isOwner as any).mockReturnValueOnce(true);
+    const ctx = makeCtx({
+      chatJid: 'tg:A1',
+      groupFolder: 'group-A',
+      senderId: 'telegram:8731187021',
+    });
+    await handleSlashCommand('/tasks', ctx);
+    const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    expect(sentText).toContain('task-a');
+    expect(sentText).toContain('task-b'); // owner sees other group's tasks
+    expect(userRoles.isOwner as any).toHaveBeenCalledWith('telegram:8731187021');
+  });
+
+  it('/tasks v2 non-owner senderId scopes to own folder (Bucket B)', async () => {
+    const db = await import('./db.js');
+    const userRoles = await import('./modules/permissions/db/user-roles.js');
+    const fixtures = [
+      {
+        id: 'task-a',
+        group_folder: 'group-A',
+        chat_jid: 'tg:A1',
+        prompt: 'a',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
+      {
+        id: 'task-b',
+        group_folder: 'group-B',
+        chat_jid: 'tg:B1',
+        prompt: 'b',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+      },
+    ];
+    (db.getAllTasks as any).mockReturnValueOnce(fixtures);
+    (db.getRegisteredGroup as any).mockReturnValue(undefined);
+    (userRoles.isOwner as any).mockReturnValueOnce(false);
+    const ctx = makeCtx({
+      chatJid: 'tg:A1',
+      groupFolder: 'group-A',
+      senderId: 'telegram:99',
+    });
+    await handleSlashCommand('/tasks', ctx);
+    const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    expect(sentText).toContain('task-a');
+    expect(sentText).not.toContain('task-b');
   });
 
   it('/capabilities returns handled: false (passthrough to agent)', async () => {
@@ -385,6 +521,13 @@ describe('COMMANDS registry', () => {
     const names = COMMANDS.map((c) => c.name);
     expect(names).toContain('model');
     expect(names).toContain('models');
+  });
+
+  it('includes pair-approve, pair-pending, and pair-revoke (owner pairing surface)', () => {
+    const names = COMMANDS.map((c) => c.name);
+    expect(names).toContain('pair-approve');
+    expect(names).toContain('pair-pending');
+    expect(names).toContain('pair-revoke');
   });
 });
 

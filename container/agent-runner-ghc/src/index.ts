@@ -26,7 +26,9 @@ interface ContainerInput {
   sessionId?: string;
   groupFolder: string;
   chatJid: string;
-  isMain: boolean;
+  isDefaultAgent: boolean;
+  /** Channel-qualified user id of the latest sender (e.g. `telegram:123`). */
+  triggeringUserId?: string;
   isScheduledTask?: boolean;
   assistantName?: string;
   model?: string;
@@ -215,7 +217,7 @@ async function main(): Promise<void> {
     runtimeLines.push(`- **Agent ID**: ${containerInput.agentId}`);
   }
   runtimeLines.push(
-    `- **Main chat**: ${containerInput.isMain ? 'Yes — you can use nanoclaw_control to change config and restart' : 'No — nanoclaw_control is not available (config changes require the main chat)'}`,
+    `- **Main chat**: ${containerInput.isDefaultAgent ? 'Yes — you can use nanoclaw_control to change config and restart' : 'No — nanoclaw_control is not available (config changes require the main chat)'}`,
   );
 
   // Scheduled-tasks capability hint (kenan 2026-05-11): the SDK already
@@ -255,7 +257,7 @@ async function main(): Promise<void> {
     const claudePath = '/workspace/global/CLAUDE.md';
     globalPromptPath = fs.existsSync(copilotPath) ? copilotPath : claudePath;
   }
-  if (!containerInput.isMain && fs.existsSync(globalPromptPath)) {
+  if (!containerInput.isDefaultAgent && fs.existsSync(globalPromptPath)) {
     systemMessage = {
       mode: 'append',
       content: identityPrompt + '\n\n' + fs.readFileSync(globalPromptPath, 'utf-8'),
@@ -421,7 +423,10 @@ async function main(): Promise<void> {
             env: {
               NANOCLAW_CHAT_JID: containerInput.chatJid,
               NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-              NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+              // v2-only (PR #49): only NANOCLAW_IS_DEFAULT_AGENT remains;
+              // legacy NANOCLAW_IS_MAIN was retired with the v1 isMain field.
+              NANOCLAW_IS_DEFAULT_AGENT: containerInput.isDefaultAgent ? '1' : '0',
+              NANOCLAW_TRIGGERING_USER_ID: containerInput.triggeringUserId ?? '',
             },
             tools: ['*'],
           },

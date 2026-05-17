@@ -21,7 +21,7 @@ import path from 'path';
 
 import { ASSISTANT_NAME } from '../config.js';
 import { logger } from '../log-extensions.js';
-import { loadConfig } from '../config-loader.js';
+import { loadConfig, getDefaultAgent } from '../config-loader.js';
 import { resolveWorkspace } from '../workspace.js';
 import { deriveGroupFolder } from '../chat-manager.js';
 // registerGroup callback is provided via ChannelOpts
@@ -101,23 +101,34 @@ export class TuiChannel implements Channel {
 
     // Auto-register the TUI group on the FIRST connect ever (or first
     // connect after this process started). Idempotent: already-present
-    // jid skips registration. isMain=true so the share-main collapse
-    // rule routes it onto the canonical 'main' (or 'main-<agent>') folder.
+    // jid skips registration.
+    //
+    // v2 cleanup (PR-C step 9): the TUI is a single-agent attach. Pick the
+    // agent from `TUI_AGENT_ID` env (override) or fall back to the first
+    // entry in `agents.list[]`. The legacy `isMain: true` on the group
+    // is retained ONLY so the share-main DM collapse + mount-perm code in
+    // `db.ts`/`session-routing.ts` keeps a stable session folder until
+    // those code paths get rewritten in PR-D. It no longer drives routing
+    // — v2 routing goes through bindings.
     const config = loadConfig();
     const assistantName = config.agents?.defaults?.name || ASSISTANT_NAME;
+    // Resolve agent id consistently with other channels: env override →
+    // getDefaultAgent (list[].default → list[0] → agents.defaults). This
+    // lets users mark a non-first agent as default and have TUI honor it.
+    const tuiAgentId = process.env.TUI_AGENT_ID || getDefaultAgent(config).id;
 
     const existingGroups = this.opts.registeredGroups();
     if (!existingGroups[jid] && this.opts.registerGroup) {
-      const folder = deriveGroupFolder(jid, { isMain: true });
+      const folder = deriveGroupFolder(jid, { shareDefaultAgentSession: true });
       const tuiGroup = {
         name: 'tui',
         folder,
-        isMain: true,
         trigger: '',
         added_at: new Date().toISOString(),
+        ...(tuiAgentId ? { agentId: tuiAgentId } : {}),
       };
       this.opts.registerGroup(jid, tuiGroup);
-      logger.info({ jid, folder, isMain: true }, 'Auto-registered TUI group (single shared entry)');
+      logger.info({ jid, folder, agentId: tuiAgentId }, 'Auto-registered TUI group');
     }
 
     // Notify chat metadata. isGroup=false so the share-main collapse

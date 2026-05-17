@@ -212,14 +212,12 @@ async function runInit(args: string[]) {
 }
 
 async function runDoctor(_args: string[]) {
-  // Reconcile first so doctor's main-chat singleton check sees DB-only
-  // chats too (otherwise we miss the very mount-collision case the check
-  // exists to catch).
+  // Reconcile retired 2026-05-16: v2 is sole source of truth.
   try {
     const { initDatabase } = await import('./db.js');
     initDatabase();
-    const { reconcileChatRegistry } = await import('./chat-reconcile.js');
-    reconcileChatRegistry();
+    const { initAndReconcileV2 } = await import('./db/v2-boot.js');
+    initAndReconcileV2();
   } catch {
     // best effort — doctor still runs and will report the underlying issue
   }
@@ -800,25 +798,21 @@ async function runChat(args: string[]) {
   const sub = args[0];
   const { initDatabase } = await import('./db.js');
   initDatabase();
+  // Cutover (2026-05-16): v1 `registered_groups` reads/writes now
+  // delegate to v2 MG+MGA, so the CLI must boot v2 too. Boot is
+  // idempotent (no-op on a hot DB) and includes config→MG migration
+  // for fresh workspaces.
+  const { initAndReconcileV2 } = await import('./db/v2-boot.js');
+  initAndReconcileV2();
 
-  // Reconcile DB ↔ config.chats so `chat list`, `chat set-main`, etc. all
-  // see the same picture. Cheap (idempotent) and prevents the "DB has 8
-  // chats but config.chats is empty" deploy hazard.
-  if (sub !== 'reconcile') {
-    const { reconcileChatRegistry } = await import('./chat-reconcile.js');
-    reconcileChatRegistry();
-  }
+  // 'chat reconcile' subcommand retired 2026-05-16 alongside
+  // chat-reconcile.ts removal: v2 messaging_groups is sole source.
 
   switch (sub) {
     case 'reconcile': {
-      const { reconcileChatRegistry } = await import('./chat-reconcile.js');
-      const r = reconcileChatRegistry();
       console.log(
-        `Reconciled: added ${r.added.length}, deduped main on ${r.dedupedMains.length}, mirrored to DB ${r.mirroredToDb.length}.`,
+        'chat reconcile is retired — v2 messaging_groups is the sole source of truth.\n' + 'Use: nanoclaw chat list',
       );
-      if (r.added.length > 0) console.log('  added: ' + r.added.join(', '));
-      if (r.dedupedMains.length > 0) console.log('  cleared isMain: ' + r.dedupedMains.join(', '));
-      if (r.keptMain) console.log('  kept main: ' + r.keptMain);
       break;
     }
     case 'list': {
@@ -827,14 +821,13 @@ async function runChat(args: string[]) {
       if (chats.length === 0) {
         console.log('No registered chats. Add one with: nanoclaw chat add <jid> <name>');
       } else {
-        console.log('  ID  | CHANNEL    | JID                       | NAME');
-        console.log('  ----+------------+---------------------------+------');
+        console.log('  CHANNEL    | JID                                | NAME');
+        console.log('  -----------+------------------------------------+------');
         for (const c of chats) {
-          const idCol = String(c.id ?? '?').padStart(3);
           const chCol = (c.channel || '?').padEnd(10);
-          const jidCol = c.jid.padEnd(25).slice(0, 25);
-          const main = c.isMain ? ' [main]' : '';
-          console.log(`  ${idCol} | ${chCol} | ${jidCol} | ${c.name}${main}`);
+          const jidCol = c.jid.padEnd(34).slice(0, 34);
+          const main = c.isDefaultAgent ? ' [default]' : '';
+          console.log(`  ${chCol} | ${jidCol} | ${c.name}${main}`);
         }
       }
       break;
@@ -854,70 +847,41 @@ async function runChat(args: string[]) {
     case 'add': {
       const jid = args[1];
       const name = args[2] || 'unnamed';
-      const isMain = args.includes('--main');
+      if (args.includes('--default-agent') || args.includes('--main')) {
+        console.warn(
+          '⚠️  --default-agent / --main is retired. Default agent is set in nanoclaw.json under agents.list[].default. Flag ignored.',
+        );
+      }
       if (!jid) {
-        console.error('Usage: nanoclaw chat add <jid> <name> [--main]');
+        console.error('Usage: nanoclaw chat add <jid> <name>');
         process.exit(1);
       }
       const { addChat } = await import('./chat-manager.js');
-      addChat(jid, name, { isMain });
-      console.log(`Chat registered: ${jid} (${name})${isMain ? ' [main]' : ''}`);
+      addChat(jid, name);
+      console.log(`Chat registered: ${jid} (${name})`);
       break;
     }
-    case 'add': {
-      const jid = args[1];
-      const name = args[2] || 'unnamed';
-      const isMain = args.includes('--main');
-      if (!jid) {
-        console.error('Usage: nanoclaw chat add <jid> <name> [--main]');
-        process.exit(1);
-      }
-      const { addChat } = await import('./chat-manager.js');
-      const { id } = addChat(jid, name, { isMain });
-      console.log(`Chat registered: #${id} ${jid} (${name})${isMain ? ' [main]' : ''}`);
-      break;
-    }
-    case 'set-main': {
-      const handle = args[1];
-      if (!handle) {
-        console.error('Usage: nanoclaw chat set-main <id-or-jid>');
-        process.exit(1);
-      }
-      const { loadConfig, resolveChatHandle } = await import('./config-loader.js');
-      const { setMainChat } = await import('./chat-manager.js');
-      const config = loadConfig();
-      const jid = resolveChatHandle(config, handle);
-      if (!jid) {
-        console.error(`No chat matches "${handle}". Run \`nanoclaw chat list\` to see ids.`);
-        process.exit(1);
-      }
-      setMainChat(jid);
-      const entry = config.chats[jid];
-      console.log(`Main chat set: #${entry?.id ?? '?'} ${jid} (${entry?.name ?? '?'})`);
-      break;
-    }
+    case 'set-main':
     case 'unset-main': {
-      const { setMainChat } = await import('./chat-manager.js');
-      setMainChat(null);
-      console.log('Main chat cleared.');
+      console.log(
+        `chat ${sub} is retired — v2 has no "main chat" concept. ` +
+          `Default agent is configured in nanoclaw.json under agents.list[].default.`,
+      );
       break;
     }
     case 'remove': {
       const handle = args[1];
       if (!handle) {
-        console.error('Usage: nanoclaw chat remove <id-or-jid>');
+        console.error('Usage: nanoclaw chat remove <jid>');
         process.exit(1);
       }
-      const { loadConfig, resolveChatHandle } = await import('./config-loader.js');
       const { removeChat } = await import('./chat-manager.js');
-      const config = loadConfig();
-      const jid = resolveChatHandle(config, handle) ?? handle;
-      const removed = removeChat(jid);
-      console.log(removed ? `Chat removed: ${jid}` : `Chat not found: ${handle}`);
+      const removed = removeChat(handle);
+      console.log(removed ? `Chat removed: ${handle}` : `Chat not found: ${handle}`);
       break;
     }
     default:
-      console.log('Usage: nanoclaw chat <list|pending|add|remove|set-main|unset-main> [args]');
+      console.log('Usage: nanoclaw chat <list|pending|add|remove> [args]');
   }
 }
 
@@ -1053,7 +1017,8 @@ Channels
   channel test <name>               Test a channel connection
 
 Chats
-  pair [<jid>] [--name <n>] [--main] Pair a new chat
+  pair [<jid>] [--name <n>]         Pair a new chat
+  chat add <jid> <name> [--default-agent]  Register a chat (--main accepted, deprecated)
   chat list                         List registered chats
   chat pending                      Show unregistered chats
   chat add <jid> --name <name>      Register a chat

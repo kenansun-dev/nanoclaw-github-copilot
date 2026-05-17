@@ -23,6 +23,7 @@ import {
   type ShowThinking,
 } from './session-overrides.js';
 import { Channel } from './types-extensions.js';
+import { logger as log } from './log-extensions.js';
 
 // ─── Command definitions ─────────────────────────────────────────────────────
 
@@ -114,6 +115,21 @@ export const COMMANDS: SlashCommand[] = [
       'List configured MCP servers (parity with CC `/mcp` and `gh copilot mcp list`). File-only read, <50ms.',
     args: '',
   },
+  {
+    name: 'pair-approve',
+    description: 'Owner-only: redeem a pending pairing code (XXXX-XXXX) to allow a stranger’s queued DMs to dispatch.',
+    args: '<code>',
+  },
+  {
+    name: 'pair-pending',
+    description: 'Owner-only: list pending pairing codes awaiting approval.',
+    noArgs: true,
+  },
+  {
+    name: 'pair-revoke',
+    description: 'Owner-only: cancel a pending pairing code and drop its held messages.',
+    args: '<code>',
+  },
 ];
 
 // ─── Command execution ───────────────────────────────────────────────────────
@@ -143,6 +159,16 @@ export interface SlashCommandContext {
   chatJid: string;
   groupFolder: string;
   channel: Channel | undefined;
+  /**
+   * Fully-qualified sender id (`<channelType>:<rawId>`, e.g. `telegram:8731187021`)
+   * for the message being processed. Set per-iteration by the dispatch loop
+   * since one ctx is shared across multiple messages in a batch.
+   *
+   * Optional: legacy callers (cli/task, older tests) may omit; the v2
+   * owner check then falls back to `folderIsDefaultAgent(group.folder)`
+   * with a warn (PR #49).
+   */
+  senderId?: string;
   /** Delete in-memory session entry (e.g., `delete sessions[folder]`) */
   clearSession: (folder: string) => void;
   /**
@@ -281,29 +307,42 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
   if (input === '/tasks') {
     if (ctx.channel) {
       try {
-        const [{ getAllTasks, getRegisteredGroup }, { formatTasksText }] = await Promise.all([
-          import('./db.js'),
-          import('./cli/task-format.js'),
-        ]);
-        // Parity with the prior MCP `list_tasks` (container/.../mcp-tools/scheduling.ts:174):
-        //   * Filter by `group_folder` (NOT `chat_jid`) so isMain DMs that
+        const [{ getAllTasks }, { formatTasksText }, { isOwner: v2IsOwner }, { folderIsDefaultAgent }] =
+          await Promise.all([
+            import('./db.js'),
+            import('./cli/task-format.js'),
+            import('./modules/permissions/db/user-roles.js'),
+            import('./v2-default-agent.js'),
+          ]);
+        // Parity with the prior MCP `list_tasks` (container/.../mcp-tools/scheduling.ts):
+        //   * Filter by `group_folder` (NOT `chat_jid`) so default-agent DMs that
         //     collapse onto a shared session see all of their sibling DM
-        //     tasks (db.ts:51-86 collapse-on-read).
-        //   * Main chat sees ALL groups' tasks (operator view).
-        const isMain = !!getRegisteredGroup(ctx.chatJid)?.isMain;
+        //     tasks (db.ts collapse-on-read).
+        //   * Owner sees ALL groups' tasks (operator view).
+        //
+        // v2-only (PR #49): prefer `isOwner(senderId)`. Fall back to
+        // `folderIsDefaultAgent(group.folder)` when senderId is unavailable
+        // (legacy callers) — the default-agent's own folder is treated as
+        // the operator scope.
+        const isOperator = (() => {
+          if (ctx.senderId) return v2IsOwner(ctx.senderId);
+          log.warn(
+            { chatJid: ctx.chatJid, groupFolder: ctx.groupFolder },
+            '/tasks invoked without ctx.senderId; falling back to folder-default-agent (PR #49)',
+          );
+          return folderIsDefaultAgent(ctx.groupFolder) === true;
+        })();
         const all = getAllTasks();
-        const rows = (isMain ? all : all.filter((t) => t.group_folder === ctx.groupFolder))
-          .slice()
-          .sort((a, b) => {
-            if (a.status !== b.status) return a.status < b.status ? -1 : 1;
-            const an = a.next_run ? new Date(a.next_run).getTime() : Infinity;
-            const bn = b.next_run ? new Date(b.next_run).getTime() : Infinity;
-            return an - bn;
-          });
+        const rows = (isOperator ? all : all.filter((t) => t.group_folder === ctx.groupFolder)).slice().sort((a, b) => {
+          if (a.status !== b.status) return a.status < b.status ? -1 : 1;
+          const an = a.next_run ? new Date(a.next_run).getTime() : Infinity;
+          const bn = b.next_run ? new Date(b.next_run).getTime() : Infinity;
+          return an - bn;
+        });
         const text = formatTasksText(rows, {
-          // Compact for non-main (chat-scoped); verbose for main (multi-group view).
-          compact: !isMain,
-          filterDesc: isMain ? 'all groups' : `group=${ctx.groupFolder}`,
+          // Compact for non-operator (chat-scoped); verbose for operator (multi-group view).
+          compact: !isOperator,
+          filterDesc: isOperator ? 'all groups' : `group=${ctx.groupFolder}`,
         });
         await ctx.channel.sendMessage(ctx.chatJid, '```\n' + text.trim() + '\n```');
       } catch (err: any) {
@@ -338,6 +377,19 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
   if (input === '/plugin' || input.startsWith('/plugin ')) {
     const argv = input.slice('/plugin'.length).trim().split(/\s+/).filter(Boolean);
     await handlePluginSlash(argv, ctx);
+    return { handled: true };
+  }
+
+  // /pair-approve <code> — owner-only: redeem a pending pairing code.
+  // /pair-pending          — owner-only: list pending pairing codes.
+  if (
+    input === '/pair-pending' ||
+    input.startsWith('/pair-approve ') ||
+    input === '/pair-approve' ||
+    input.startsWith('/pair-revoke ') ||
+    input === '/pair-revoke'
+  ) {
+    await handlePairSlash(input, ctx);
     return { handled: true };
   }
 
@@ -398,6 +450,111 @@ async function captureStdout(fn: () => Promise<void> | void): Promise<string> {
     console.warn = origWarn;
   }
   return chunks.join('\n');
+}
+
+// ─── /pair-approve + /pair-pending implementation ─────────────────────────────
+
+/**
+ * Owner-only check for /pair-* slash commands.
+ *
+ * Uses the same `user_roles.role='owner'` row that `v2-access` consults
+ * (see isOwner there). The caller id is derived from `ctx.chatJid` — in
+ * DM contexts the jid is `<channel>:<senderId>`; in groups we cannot
+ * reliably attribute the slash sender from ctx alone, so we conservatively
+ * reject group invocations here. CLI invocations (`nanoclaw pair approve`)
+ * bypass this slash gate entirely.
+ */
+async function handlePairSlash(input: string, ctx: SlashCommandContext): Promise<void> {
+  if (!ctx.channel) return;
+
+  // Lazy imports: keeps slash-commands lightweight for the non-pair paths.
+  const { getDb } = await import('./db/connection.js');
+  const { redeemPairingCode, listPendingPairings, revokePairingCode } = await import('./v2-access.js');
+
+  let db: import('better-sqlite3').Database;
+  try {
+    db = getDb();
+  } catch (err) {
+    await ctx.channel.sendMessage(ctx.chatJid, `❌ Pairing DB unavailable: ${(err as Error).message ?? String(err)}`);
+    return;
+  }
+
+  // Derive caller id from chatJid (`<channel>:<senderId>`). Strict v1 jid
+  // shapes like `tg:<chatId>` collapse to a single segment after the prefix,
+  // and there's no slash-level sender attribution in those flows — reject.
+  const callerOwnerId = ctx.chatJid;
+  const isOwner = (() => {
+    try {
+      const row = db
+        .prepare(`SELECT 1 AS hit FROM user_roles WHERE user_id = ? AND role = 'owner' LIMIT 1`)
+        .get(callerOwnerId) as { hit: number } | undefined;
+      return !!row;
+    } catch {
+      return false;
+    }
+  })();
+  if (!isOwner) {
+    await ctx.channel.sendMessage(
+      ctx.chatJid,
+      '❌ /pair-approve, /pair-pending and /pair-revoke are owner-only. Use `nanoclaw pair approve <code>` from a shell with operator access.',
+    );
+    return;
+  }
+
+  // /pair-revoke <code>
+  {
+    const mr = input.match(/^\/pair-revoke(?:\s+(\S+))?\s*$/);
+    if (mr) {
+      const rawCode = mr[1];
+      if (!rawCode) {
+        await ctx.channel.sendMessage(ctx.chatJid, 'Usage: /pair-revoke <CODE>  (e.g. /pair-revoke ABCD-EFGH)');
+        return;
+      }
+      const rev = revokePairingCode(db, rawCode);
+      if (!rev.ok) {
+        await ctx.channel.sendMessage(ctx.chatJid, `❌ Revoke failed: ${rev.error ?? 'unknown'}`);
+        return;
+      }
+      await ctx.channel.sendMessage(
+        ctx.chatJid,
+        `🗑️ Revoked ${rev.channelType}/${rev.accountKey} peer=${rev.peerId} — removed ${rev.removed ?? 0} held message${rev.removed === 1 ? '' : 's'}.`,
+      );
+      return;
+    }
+  }
+
+  if (input === '/pair-pending') {
+    const rows = listPendingPairings(db);
+    if (rows.length === 0) {
+      await ctx.channel.sendMessage(ctx.chatJid, '✅ No pending pairing codes.');
+      return;
+    }
+    const lines = rows.map((r) => {
+      const codeShown = `${r.code.slice(0, 4)}-${r.code.slice(4)}`;
+      return `• \`${codeShown}\` — ${r.channelType}/${r.accountKey} peer=${r.peerId} (${r.messageCount} msg, expires ${r.expiresAt})`;
+    });
+    await ctx.channel.sendMessage(ctx.chatJid, `🔐 Pending pairings (${rows.length}):\n${lines.join('\n')}`);
+    return;
+  }
+
+  // /pair-approve <code>
+  const m = input.match(/^\/pair-approve(?:\s+(\S+))?\s*$/);
+  const rawCode = m?.[1];
+  if (!rawCode) {
+    await ctx.channel.sendMessage(ctx.chatJid, 'Usage: /pair-approve <CODE>  (e.g. /pair-approve ABCD-EFGH)');
+    return;
+  }
+
+  const result = redeemPairingCode(db, rawCode, callerOwnerId);
+  if (!result.ok) {
+    await ctx.channel.sendMessage(ctx.chatJid, `❌ Pairing failed: ${result.error ?? 'unknown'}`);
+    return;
+  }
+  const n = result.replayed?.length ?? 0;
+  await ctx.channel.sendMessage(
+    ctx.chatJid,
+    `✅ Paired ${result.channelType}/${result.accountKey} peer=${result.peerId} — ${n} held message${n === 1 ? '' : 's'} ready to dispatch.`,
+  );
 }
 
 async function handlePluginSlash(argv: string[], ctx: SlashCommandContext): Promise<void> {

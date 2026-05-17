@@ -32,7 +32,16 @@ export const RESPONSES_DIR = path.join(IPC_DIR, 'responses');
 
 export const chatJid = process.env.NANOCLAW_CHAT_JID!;
 export const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
-export const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+// v2-only (PR #49): NANOCLAW_IS_DEFAULT_AGENT is the sole signal.
+// Legacy NANOCLAW_IS_MAIN env was retired alongside the v1 isMain field.
+export const isDefaultAgent = process.env.NANOCLAW_IS_DEFAULT_AGENT === '1';
+
+// Channel-qualified user id of the user whose latest message triggered
+// this turn (e.g. `telegram:8731187021`). Stamped onto IPC payloads so
+// the host can apply isOwner privilege gates without re-deriving identity.
+// Empty env => undefined (HR list #3, 2026-05-16 isOwner phase 1).
+export const triggeringUserId: string | undefined =
+  process.env.NANOCLAW_TRIGGERING_USER_ID || undefined;
 
 // ---------------------------------------------------------------------------
 // Atomic IPC file write (preserved verbatim)

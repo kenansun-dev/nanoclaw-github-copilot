@@ -16,7 +16,8 @@ import {
   TASKS_DIR,
   chatJid,
   groupFolder,
-  isMain,
+  isDefaultAgent,
+  triggeringUserId,
 } from './server.js';
 
 const server = getServer();
@@ -40,6 +41,7 @@ server.tool(
       text: args.text,
       sender: args.sender || undefined,
       groupFolder,
+      triggeringUserId,
       timestamp: new Date().toISOString(),
     };
 
@@ -65,6 +67,7 @@ server.tool(
       chatJid,
       emoji: args.emoji,
       messageId: args.messageId,
+      triggeringUserId,
       timestamp: new Date().toISOString(),
     };
     writeIpcFile(TASKS_DIR, data);
@@ -87,6 +90,7 @@ server.tool(
       chatJid,
       filePath: args.file_path,
       filename: args.filename,
+      triggeringUserId,
       timestamp: new Date().toISOString(),
     };
     writeIpcFile(MESSAGES_DIR, data);
@@ -114,7 +118,7 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
   },
   async (args) => {
-    if (!isMain) {
+    if (!isDefaultAgent) {
       return {
         content: [
           { type: 'text' as const, text: 'Only the main group can register new groups.' },
@@ -129,6 +133,7 @@ Use available_groups.json to find the JID for a group. The folder name must be c
       name: args.name,
       folder: args.folder,
       trigger: args.trigger,
+      triggeringUserId,
       timestamp: new Date().toISOString(),
     };
 

@@ -11,7 +11,7 @@ import readline from 'readline';
 import { spawn, ChildProcess } from 'child_process';
 import { fileURLToPath } from 'url';
 
-import { loadConfig, saveConfig } from '../config-loader.js';
+import { loadConfig, saveConfig, getDefaultAgent } from '../config-loader.js';
 import { resolveGithubToken, isGHCProvider } from '../config-extensions.js';
 import { resolveWorkspace, paths as wsPaths } from '../workspace.js';
 import { resolveGroupIpcPath } from '../group-folder.js';
@@ -25,7 +25,7 @@ interface ContainerInput {
   sessionId?: string;
   groupFolder: string;
   chatJid: string;
-  isMain: boolean;
+  isDefaultAgent: boolean;
   assistantName?: string;
   model?: string;
 }
@@ -63,7 +63,11 @@ export async function runTuiDirect(_args: string[]): Promise<void> {
   const thinkOverride = thinkIdx !== -1 ? _args[thinkIdx + 1] : undefined;
 
   const config = loadConfig();
-  const agent = config.agents.defaults;
+  // Align with other channels (telegram/discord/teams): resolve the
+  // active agent via getDefaultAgent() so `agents.list[].default=true`
+  // wins over the bare `agents.defaults` block. Falls back to defaults
+  // when no list entry is marked default. (User audit 2026-05-16.)
+  const agent = getDefaultAgent(config);
   const tuiCfg = config.tui || {};
 
   const ws = resolveWorkspace();
@@ -361,7 +365,7 @@ export async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
     sessionId: opts.sessionId,
     groupFolder: opts.groupFolder,
     chatJid: 'tui-local',
-    isMain: true,
+    isDefaultAgent: true,
     assistantName: opts.assistantName,
     model: opts.model.includes('/') ? opts.model.split('/')[1] : opts.model,
   };
@@ -516,7 +520,7 @@ export async function runSandboxQuery(opts: QueryOptions): Promise<ContainerOutp
       sessionId: opts.sessionId,
       groupFolder: opts.groupFolder,
       chatJid: 'tui-local',
-      isMain: true,
+      isDefaultAgent: true,
       assistantName: opts.assistantName,
       model: opts.model.includes('/') ? opts.model.split('/')[1] : opts.model,
     };
@@ -524,7 +528,7 @@ export async function runSandboxQuery(opts: QueryOptions): Promise<ContainerOutp
     const group = {
       name: 'tui',
       folder: opts.groupFolder,
-      isMain: true,
+      isDefaultAgent: true,
       trigger: '',
       added_at: new Date().toISOString(),
     };

@@ -25,12 +25,51 @@ export interface AgentConfig {
   githubMcp?: boolean; // GHC: register GitHub MCP server (web_search, issues, PRs, etc.)
 }
 
-// Per-account credentials for multi-bot support
-export interface TelegramAccountConfig {
+// Per-account credentials for multi-bot support.
+//
+// v2 config-shape additions (docs/proposals/2026-05-12-config-shape-v2.md):
+//   - dmPolicy / allowFrom — DM access control
+//   - groupPolicy / groupAllowFrom / groups — group access control
+// All v2 fields are optional; legacy configs without them continue to parse
+// unchanged. The router still reads `chats[]` (PR-B not yet landed).
+export type DmPolicy = 'pairing' | 'open' | 'strict';
+export type GroupPolicy = 'allowlist' | 'open' | 'strict';
+
+/** Per-group override under accounts.<key>.groups.<groupId>. */
+export interface AccountGroupEntry {
+  requireMention?: boolean;
+  engageMode?: string;
+  allowFrom?: string[];
+}
+
+/** Common v2 access-control fields shared across protocol accounts. */
+export interface AccountAccessConfig {
+  dmPolicy?: DmPolicy;
+  allowFrom?: string[];
+  groupPolicy?: GroupPolicy;
+  /**
+   * @deprecated v2 cutover: prefer including these ids in `allowFrom`.
+   * Reconcile auto-merges any remaining entries into `allowFrom` and emits
+   * a one-shot deprecation warning per boot.
+   */
+  groupAllowFrom?: string[];
+  /** Per-group overrides. The wildcard key `"*"` is a fallback for any group. */
+  groups?: Record<string, AccountGroupEntry>;
+}
+
+/**
+ * Channel-level role assignments. Sibling to `accounts` on each channel
+ * config. Key = raw platform id (e.g. "8731187021"); value = role.
+ * Both `owner` and `admin` are global (agent_group_id IS NULL) for now;
+ * scoped admin will land in a later step.
+ */
+export type RoleBindings = Record<string, 'owner' | 'admin'>;
+
+export interface TelegramAccountConfig extends AccountAccessConfig {
   botToken?: string;
 }
 
-export interface TeamsAccountConfig {
+export interface TeamsAccountConfig extends AccountAccessConfig {
   appId?: string;
   appPassword?: string;
   tenantId?: string;
@@ -38,6 +77,10 @@ export interface TeamsAccountConfig {
   authMode?: 'secret' | 'certificate';
   certThumbprint?: string;
   certPrivateKeyPath?: string;
+}
+
+export interface DiscordAccountConfig extends AccountAccessConfig {
+  botToken?: string;
 }
 
 // Binding: route (channel, accountId, peer) -> agentId
@@ -58,6 +101,13 @@ export interface ChatEntry {
   id?: number;
   jid: string;
   name: string;
+  /**
+   * @deprecated v2: routing no longer reads `isMain`. Use bindings
+   * (`channel` + `accountKey` + `peerId`) → `agent_groups` instead.
+   * Kept on the legacy v1 path for mount-permission + share-main DM
+   * collapse (see `src/db.ts`, `src/session-routing.ts`). v2-migrate-chats
+   * also consults it to promote the owner DM into `user_roles`.
+   */
   isMain?: boolean;
   requiresTrigger?: boolean;
   agentId?: string;
@@ -80,11 +130,14 @@ export interface NanoclawConfig {
     discord: {
       enabled: boolean;
       botToken?: string;
+      accounts?: Record<string, DiscordAccountConfig>;
+      roleBindings?: RoleBindings;
     };
     telegram: {
       enabled: boolean;
       botToken?: string;
       accounts?: Record<string, TelegramAccountConfig>;
+      roleBindings?: RoleBindings;
     };
     teams: {
       enabled: boolean;
@@ -96,6 +149,7 @@ export interface NanoclawConfig {
       certThumbprint?: string;
       certPrivateKeyPath?: string;
       accounts?: Record<string, TeamsAccountConfig>;
+      roleBindings?: RoleBindings;
     };
     [key: string]: { enabled: boolean; [k: string]: unknown };
   };
@@ -143,6 +197,13 @@ export interface NanoclawConfig {
     sweepIntervalMs?: number;
     engine?: 'node' | 'tsx'; // node = compiled dist (default), tsx = self-modifying
   };
+  /**
+   * Legacy chats section. Retired 2026-05-16: chat presence now lives
+   * in v2 `messaging_groups` (DB), not nanoclaw.json. The field stays in
+   * the schema as a required `Record` (always normalized to {} on load)
+   * so the v2 migrator and legacy parsers keep their type narrowing,
+   * but new code MUST NOT read it for routing/registration.
+   */
   chats: Record<
     string,
     {
@@ -486,40 +547,15 @@ export function nextChatId(config: NanoclawConfig): number {
 }
 
 /**
- * Validate the isMain invariant.
- *
- * After the share-main feature: multiple isMain *DMs* are allowed and
- * intentionally collapse onto a shared session per agent (see
- * src/session-routing.ts). Multiple isMain *groups* still violate the
- * invariant — group sessions must stay isolated.
- *
- * Without authoritative is-group info we conservatively treat ALL chats
- * as DMs (the share-main case), so config loading never blocks the user
- * just because we can't resolve isGroup yet. The doctor check
- * (`mainChatSingletonCheck`) provides the stricter group-aware view
- * once chats.is_group is populated.
- *
- * @param config         The loaded config.
- * @param isGroupByJid   Optional authoritative is-group map. When
- *                       provided, only multi-isMain *groups* are flagged.
- * @returns The offending jids when there are too many; empty array when fine.
+ * findExtraMainChats retired 2026-05-16: v2 has no 'main chat' concept.
+ * Default agent identity comes from `agents.list[].default`. Stub kept
+ * temporarily so any external callers compile; returns empty array.
  */
 export function findExtraMainChats(
-  config: NanoclawConfig,
-  isGroupByJid?: Record<string, boolean | undefined>,
+  _config: NanoclawConfig,
+  _isGroupByJid?: Record<string, boolean | undefined>,
 ): string[] {
-  const mains: string[] = [];
-  for (const [jid, entry] of Object.entries(config.chats)) {
-    if (entry.isMain) mains.push(jid);
-  }
-  if (mains.length <= 1) return [];
-
-  // No isGroup info → assume all are DMs (allowed). Be conservative
-  // here: false-negatives at this layer are caught by the doctor check.
-  if (!isGroupByJid) return [];
-
-  const mainGroups = mains.filter((jid) => isGroupByJid[jid] === true);
-  return mainGroups.length > 1 ? mainGroups : [];
+  return [];
 }
 
 /**
@@ -586,7 +622,7 @@ function distributeChatsToChannels(toSave: any, flat: Record<string, any>): void
 
 // ─── Config Migration ────────────────────────────────────────────────────────
 
-const CURRENT_CONFIG_VERSION = 8;
+const CURRENT_CONFIG_VERSION = 9;
 
 /**
  * Migrate config from older versions. Returns true if migration occurred.
@@ -893,6 +929,44 @@ function migrateConfig(config: Record<string, any>): boolean {
     migrated = true;
   }
 
+  if (version < 9) {
+    // v9: clean up two long-standing config artifacts the user flagged
+    // on 2026-05-16:
+    //
+    //   (a) `channels.tui` is dead config. No code reads
+    //       channels.tui.enabled / .accounts / .roleBindings — the TUI
+    //       channel listens on a local unix socket and infers owner
+    //       from the socket peer. The block was a side-effect of an
+    //       early `nanoclaw channel add tui` flow that no longer
+    //       exists. Drop it.
+    //
+    //   (b) Duplicate `botToken` on telegram. Older user configs ship
+    //       both `channels.telegram.botToken` AND
+    //       `channels.telegram.accounts.default.botToken` pointing at
+    //       the same env (`${TELEGRAM_BOT_TOKEN}`). The v2 accounts
+    //       shape is the canonical one (multi-account ready); the
+    //       top-level field is legacy. If both are set and identical
+    //       (or both unset on accounts), drop the top-level mirror.
+    if (config.channels && typeof config.channels === 'object') {
+      const channels = config.channels as Record<string, unknown>;
+      if ('tui' in channels) {
+        delete channels.tui;
+        migrated = true;
+      }
+      const tg = channels.telegram as
+        | { botToken?: string; accounts?: Record<string, { botToken?: string }> }
+        | undefined;
+      if (tg && tg.botToken && tg.accounts?.default?.botToken) {
+        if (tg.accounts.default.botToken === tg.botToken) {
+          delete tg.botToken;
+          migrated = true;
+        }
+      }
+    }
+    config.configVersion = 9;
+    migrated = true;
+  }
+
   return migrated;
 }
 
@@ -986,26 +1060,8 @@ export function loadConfig(): NanoclawConfig {
   // Normalize chats: convert grouped format to flat Record<jid, config>
   config.chats = normalizeChats(config.chats, config.channels) as any;
 
-  // Singleton invariant: at most one *group* may be isMain. Multiple
-  // isMain DMs are allowed and intentionally share a session per agent
-  // (see src/session-routing.ts and features/dm-session-sharing.md).
-  // Without isGroup info here we skip the strict check; the doctor
-  // check enforces the group-aware view at runtime.
-  const extraMains = findExtraMainChats(config);
-  if (extraMains.length > 0) {
-    const lines = extraMains
-      .map((j) => {
-        const e = config.chats[j];
-        return `    • #${e.id ?? '?'}  ${j}  (${e.name || '?'})`;
-      })
-      .join('\n');
-    throw new Error(
-      `nanoclaw config: ${extraMains.length} group chats marked isMain:\n${lines}\n` +
-        `Group chats must keep isolated sessions — at most one may be the main group. ` +
-        `Edit ~/.nanoclaw/nanoclaw.json or run \`nanoclaw chat set-main <id>\` ` +
-        `to choose one and clear the rest. (Multiple DM chats may share a main session.)`,
-    );
-  }
+  // isMain singleton invariant retired 2026-05-16: v2 has no "main chat"
+  // concept (default agent is config-driven via agents.list[].default).
 
   // Merge MCP servers from mcp.json if it exists
   if (fs.existsSync(paths.mcpConfig)) {
@@ -1169,6 +1225,13 @@ export function saveConfig(
   }
   // Strip secrets before saving — they stay in .env
   const toSave = JSON.parse(JSON.stringify(config));
+  // v9 cleanup at write time (defensive — migrateConfig also handles
+  // this on load, but saveConfig is a separate entry point that
+  // shouldn't re-introduce the dupes if a caller hands us a
+  // freshly-mutated config object).
+  if (toSave.channels?.tui) {
+    delete toSave.channels.tui;
+  }
   // Strip top-level channel secrets
   // Replace secrets with ${ENV_VAR} references (explicit, visible in json)
   if (toSave.channels?.telegram?.botToken && !toSave.channels.telegram.botToken.startsWith('${')) {
@@ -1200,6 +1263,14 @@ export function saveConfig(
         delete acc.certPrivateKeyPath;
       }
     }
+  }
+
+  // Dedupe: if accounts.default.botToken is set, drop the legacy top-level
+  // mirror. Both ultimately resolve to `${TELEGRAM_BOT_TOKEN}` so the
+  // top-level is pure noise. (Reader fallback still works for configs
+  // that ship only the legacy shape.)
+  if (toSave.channels?.telegram?.accounts?.default?.botToken && toSave.channels.telegram.botToken) {
+    delete toSave.channels.telegram.botToken;
   }
 
   // Distribute chats into channels.<name>.chats
@@ -1243,43 +1314,36 @@ export function resolveAgent(config: NanoclawConfig, agentId?: string): AgentCon
  * Checks bindings[] in order; first match wins.
  * Falls back to chatConfig.agentId (legacy) or undefined (use default agent).
  */
-export function resolveAgentIdFromBindings(
-  config: NanoclawConfig,
-  chatJid: string,
-  chatConfig?: { agentId?: string },
-): string | undefined {
-  if (config.bindings?.length) {
-    // Derive channel and accountId from JID
-    // Format: tg:<chatId> (default account) or tg:<accountId>:<chatId>
-    let channel: string | undefined;
-    let jidAccountId: string | undefined;
-    if (chatJid.startsWith('tg:')) {
-      channel = 'telegram';
-      const parts = chatJid.split(':');
-      if (parts.length >= 3) jidAccountId = parts[1]; // tg:accountId:chatId
-    } else if (chatJid.startsWith('teams:')) {
-      channel = 'teams';
-    } else if (chatJid.startsWith('dc:')) {
-      channel = 'discord';
-    } else if (chatJid.startsWith('wa:')) {
-      channel = 'whatsapp';
-    }
-
-    for (const binding of config.bindings) {
-      const m = binding.match;
-      if (m.channel && m.channel !== channel) continue;
-      if (m.accountId) {
-        // Match accountId: 'default' matches JIDs without accountId prefix
-        const effective = jidAccountId || 'default';
-        if (m.accountId !== effective) continue;
-      }
-      if (m.peer?.id && !chatJid.includes(m.peer.id)) continue;
-      return binding.agentId;
-    }
+export function resolveAgentIdFromBindings(config: NanoclawConfig, chatJid: string): string | undefined {
+  if (!config.bindings?.length) return undefined;
+  // Derive channel and accountId from JID
+  // Format: tg:<chatId> (default account) or tg:<accountId>:<chatId>
+  let channel: string | undefined;
+  let jidAccountId: string | undefined;
+  if (chatJid.startsWith('tg:')) {
+    channel = 'telegram';
+    const parts = chatJid.split(':');
+    if (parts.length >= 3) jidAccountId = parts[1]; // tg:accountId:chatId
+  } else if (chatJid.startsWith('teams:')) {
+    channel = 'teams';
+  } else if (chatJid.startsWith('dc:')) {
+    channel = 'discord';
+  } else if (chatJid.startsWith('wa:')) {
+    channel = 'whatsapp';
   }
 
-  // Legacy: chatConfig.agentId
-  return chatConfig?.agentId;
+  for (const binding of config.bindings) {
+    const m = binding.match;
+    if (m.channel && m.channel !== channel) continue;
+    if (m.accountId) {
+      // Match accountId: 'default' matches JIDs without accountId prefix
+      const effective = jidAccountId || 'default';
+      if (m.accountId !== effective) continue;
+    }
+    if (m.peer?.id && !chatJid.includes(m.peer.id)) continue;
+    return binding.agentId;
+  }
+  return undefined;
 }
 
 /**

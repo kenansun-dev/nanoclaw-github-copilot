@@ -32,9 +32,7 @@ describe('formatTasksText', () => {
   };
 
   it('empty list with filterDesc renders human-friendly empty state', () => {
-    expect(formatTasksText([], { filterDesc: 'chat=tg:1' })).toBe(
-      'No scheduled tasks (chat=tg:1).',
-    );
+    expect(formatTasksText([], { filterDesc: 'chat=tg:1' })).toBe('No scheduled tasks (chat=tg:1).');
   });
 
   it('empty list without filter renders bare empty state', () => {
@@ -42,10 +40,7 @@ describe('formatTasksText', () => {
   });
 
   it('always shows standalone (legacy group rows render as standalone too)', () => {
-    const out = formatTasksText([
-      baseRow,
-      { ...baseRow, id: 'task-y', context_mode: 'group' },
-    ]);
+    const out = formatTasksText([baseRow, { ...baseRow, id: 'task-y', context_mode: 'group' }]);
     // Both rows render as standalone after PR #46 deprecation.
     expect(out.match(/mode:standalone/g)?.length).toBe(2);
     expect(out).not.toContain('mode:attached');

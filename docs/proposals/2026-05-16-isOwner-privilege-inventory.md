@@ -1,0 +1,315 @@
+# IPC Cross-Chat Privilege → `isOwner(userId)` — Inventory
+
+**Status**: research-only, no code changes
+**Branch**: `chore/2026-05-12-v2-schema-proposal` (#49)
+**Author**: Kenan VM Claw, 2026-05-16
+**Context**: HR list item #3 ("IPC 跨 chat 特权检查 → `isOwner(userId)`")
+
+## Current model (post-PR #49 / Path A)
+
+The privilege predicate is **`isDefaultAgent: boolean`**, derived
+*per-IPC-message* from the **source directory** (`ipcBaseDir/<folder>/...`).
+Resolution path:
+
+1. `ipc.ts` watcher reads `<folder>` from the path.
+2. `folderIsDefaultAgent(folder)` (v2) returns true iff folder == chosen
+   `agents.list[].default` id (or v2 `defaults.id`, fallback `'main'`).
+3. The boolean is threaded through `processTaskIpc()`, `handleControlIpc()`,
+   `handlePluginIpc()` and `container-runner` mount/task-filter code.
+
+**Trust source**: filesystem path of the IPC drop. Whoever can write to
+`ipc/<defaultAgentFolder>/messages/` is "main". No user identity check —
+purely directory-keyed.
+
+## Where `isDefaultAgent` gates today
+
+### `src/ipc.ts` (host)
+- `send_message` / `send_file` (dispatch to **other** chats) — line 77, 87, 95
+- `nanoclaw_control` (restart, config changes) — line 101
+- `nanoclaw_plugin` mutating actions (install/uninstall/marketplace_add/remove) — line 110
+- Task IPC: `pause/resume/cancel/update/list` cross-folder access — lines 305, 318, 331, 348, 390, 403
+- `register_group` self-write vs cross-write — line 412 area
+
+### `src/host-runner.ts`
+- groupType label `'main'` vs `'global'` (line 408) — affects logging/mount path
+
+### `src/container-runner.ts`
+- `buildVolumeMounts(group, isDefaultAgent, …)` — different mount set for default agent (line 96, 102)
+- `RunnerInput.isDefaultAgent` env propagation to container (line 53, 281, 401)
+- `formatTasksList` / `formatGroupsList` filter scope (lines 740–795) — default agent sees all groups/tasks
+
+### `container/agent-runner-ghc/src/mcp-tools/`
+- `core.ts:117` — gates a privileged tool (cross-chat)
+- `scheduling.ts:126,174,200,224,245,266` — `target_group_jid` arg only honored when isDefaultAgent; task list scope; broadcast schedule
+
+Total ≈ **37 sites** across host + container runner + GHC MCP tools.
+
+## What changes with `isOwner(userId)`
+
+The predicate switches from **"this folder is the default agent's"** to
+**"the human triggering this action is the configured owner"**.
+
+Consequences worth flagging *before writing code*:
+
+### What's gained
+- Decouples privilege from "default agent" naming. A non-default agent
+  invoked by the owner can still do cross-chat / control ops.
+- Enables multi-agent setups where the owner reaches privileged actions
+  via the agent that's most ergonomic, not whichever one is `default: true`.
+- Removes the last semantic dependency on the default-agent folder name
+  for security decisions (after I-4..I-6 we still leak the concept here).
+
+### What needs designing (open questions)
+1. **Source of `userId` per IPC message.** Today IPC messages don't carry
+   a user id — they're written by the agent container *on behalf of* a
+   human turn. We need either:
+   - a) Container records `triggering_user_id` per turn and stamps every
+     IPC drop with it; host trusts the drop to be honest because the
+     mount is per-folder and only that agent writes there.
+   - b) Host correlates the IPC drop to the inbound message that started
+     the turn (via run id / task id).
+   - (a) is cheaper; (b) is more defensible against a compromised agent.
+2. **Owner config schema.** Channels currently identify users with
+   per-channel ids (`tg:123`, `dc:456`, `wa:+...`). `isOwner(userId)`
+   needs a normalized id or a list of `{channel, id}` pairs in
+   `config.access.owners` (or similar).
+3. **Multi-owner**: are we OK with a list, or strictly one owner?
+4. **Group chats with multiple humans**: if a non-owner triggers a turn
+   in a group the agent watches, the IPC drops are not on behalf of the
+   owner. Today this is fine because privilege is folder-keyed (group
+   chats are not the default-agent folder). With user-keyed privilege,
+   we must still gate group-chat invocations on owner identity.
+5. **Container-side gates** (`agent-runner-ghc/mcp-tools`): same predicate
+   currently boolean from env (`NANOCLAW_IS_DEFAULT_AGENT`). New env
+   would be `NANOCLAW_TRIGGERED_BY_OWNER` per turn (re-set every dispatch),
+   not at container start. That's a non-trivial wiring change vs the
+   current static-env model.
+6. **TUI** (Rpi5's dechannel work): TUI runs as the human directly — it
+   should always be `isOwner=true`. Makes the in-process bridge cleaner.
+7. **Doctor / mount-security**: these still rely on folder identity.
+   Owner check is orthogonal — privilege is "what can run", not "where
+   files live". Folder-based mount layout stays.
+
+### Migration sketch
+- **Phase 1**: introduce `isOwner` *alongside* `isDefaultAgent` (dual-read
+  similar to Bucket H pattern). All gate sites become
+  `isOwner || isDefaultAgent` so behavior is non-regressing for current
+  deployments where the owner only talks to the default agent.
+- **Phase 2**: add owner id config + per-turn user id propagation
+  (decision needed: container-stamped or host-correlated).
+- **Phase 3**: flip authoritative read to `isOwner`; keep
+  `isDefaultAgent` only for folder-mount routing (not privilege).
+- **Phase 4**: remove `isDefaultAgent` from the privilege predicate
+  entirely; container env stops carrying it.
+
+## Recommended call
+
+Don't start until owner answers:
+- (Q1) one owner or list?
+- (Q2) which channel ids count as the same owner — explicit `{channel, id}` map vs first-class owner identity that channels declare into?
+- (Q3) per-turn user id source — container-stamped (cheap) or host-correlated (robust)?
+
+I'm parking here until owner replies. No code edits in this commit.
+
+---
+
+## Follow-up (2026-05-16, second pass)
+
+After re-reading existing v2 RBAC code (`src/modules/permissions/db/user-roles.ts`,
+`src/v2-access.ts`, `src/db/v2-reconcile.ts`), Q1 and Q2 are **already
+answered by the schema we shipped**. Only Q3 actually blocks.
+
+### Q1 — one owner or list? → **list, already supported**
+- `user_roles` is a multi-row table keyed `(user_id, role, agent_group_id)`.
+- `isOwner(userId)` (`user-roles.ts:36`) returns true iff *any* row exists
+  with `role='owner' AND agent_group_id IS NULL`. No singleton constraint.
+- `v2-reconcile.ts:151–188` syncs `commands.ownerAllowFrom: string[]` and
+  `channels.<type>.roleBindings: Record<id, 'owner'|'admin'>` *as sets*.
+- VM's live DB already has 2 owner rows (`telegram:8731187021`, `tui:default`)
+  proving multi-owner runs.
+- **Action**: drop Q1 from the open list.
+
+### Q2 — channel-id normalization → **channel-qualified ids, already standard**
+- Config schema already uses `<channel>:<id>` strings throughout
+  (`telegram:8731187021`, `teams:29:abc`, `tui:default`). See
+  `v2-reconcile.test.ts:284`.
+- Same shape persists into `users.id` PK — no separate normalized identity
+  layer needed.
+- For cross-channel "same human" we don't need to invent identity
+  unification: owner adds each channel-qualified id they want recognized.
+  This is exactly what `commands.ownerAllowFrom` / `roleBindings` already do.
+- **Action**: drop Q2 from the open list. If/when we want true identity
+  unification (one human → many channel ids → single canonical owner row),
+  that's a separate `accounts.<owner>.identities[]` proposal — out of scope
+  for IPC privilege swap.
+
+### Q3 — per-turn user id source → **still open, owner pick required**
+
+This is the only real fork. Two options in detail:
+
+**Option (a) Container-stamped**
+- `agent-runner-ghc` records `triggering_user_id` from the inbound
+  payload it processes for the current turn, then stamps every IPC drop
+  it writes (`writeIpcFile` adds `triggering_user_id` field) before host
+  reads it.
+- Host trusts the field because the IPC dir is mounted per-folder and
+  only that container writes there.
+- Wire-format change: additive optional field; old host ignores it,
+  new host treats missing field as "unknown user" → falls back to
+  `isDefaultAgent` predicate (Phase 1 migration).
+- Cost: ~30 LOC in `ipc-mcp-stdio.ts` + a per-turn ambient on the GHC
+  runner.
+- Risk: a compromised agent container can lie about `triggering_user_id`.
+  But a compromised default-agent container can already do anything via
+  the existing folder-keyed predicate — trust boundary unchanged.
+
+**Option (b) Host-correlated**
+- IPC drop carries only `task_id` / `run_id`. Host maintains a map
+  `run_id → triggering_user_id` populated when the inbound message kicks
+  off the run, looked up at IPC read time.
+- No container wire change.
+- More defensible: container can't lie, host alone authoritative.
+- Cost: ~80 LOC + persistent map (or ephemeral but then host restarts
+  lose privilege mid-task). State management is the real cost.
+- Risk: race conditions between long-running tasks and host restarts.
+  Either we persist the map (extra schema) or we accept that mid-task
+  IPC after a host restart drops to `isDefaultAgent` fallback.
+
+**My recommendation**: (a). The trust argument for (b) doesn't actually
+buy us anything we don't already concede to the default-agent container,
+and (a) is roughly 3× cheaper to ship + has zero new persistent state.
+Owner can override.
+
+### Open list, current state
+- ~~Q1~~ resolved (list)
+- ~~Q2~~ resolved (channel-qualified ids)
+- **Q3** — owner pick: (a) container-stamped, or (b) host-correlated
+
+### What I'll do once Q3 is answered
+- Phase 1 commit: add `isOwner` predicate next to `isDefaultAgent` in
+  every gate site listed above (`isOwner || isDefaultAgent`). Wire either
+  the container-stamp field or the host-correlation map per Q3 answer.
+  Tests for both branches of the OR.
+- I will *not* flip the authoritative predicate in the same PR. Phase 3
+  flip is a separate cycle once we have telemetry that the new path is
+  hit in real traffic.
+
+---
+
+## Gate-site verification (2026-05-16, third pass)
+
+The "~37 sites" figure in the first pass conflated three categories.
+Greping `isDefaultAgent`/`folderIsDefaultAgent`/`NANOCLAW_IS_DEFAULT_AGENT`
+yields **38 occurrences**, but only ~22 are *privilege gates* that flip
+with `isOwner`. The rest are wiring or mount-routing and **stay
+folder-keyed**.
+
+### A. Privilege gates (flip with `isOwner`) — 22 sites
+
+`src/ipc.ts` (12):
+- L77, L87, L95 — `send_message` / `send_file` cross-chat dispatch
+- L101 — `nanoclaw_control` (restart, config)
+- L110 — `nanoclaw_plugin` mutating actions
+- L238 — `processTaskIpc` cross-folder write guard
+- L305, L318, L331 — task pause/resume/cancel cross-folder
+- L348 — task update cross-folder
+- L390, L403 — task list scope (all vs own)
+
+`src/container-runner.ts` (2):
+- L762 — `formatTasksList` filter scope (all tasks vs own folder)
+- L790 — `formatGroupsList` visibility (all groups vs none)
+
+`container/agent-runner-ghc/src/mcp-tools/` (8):
+- `core.ts:117` — privileged tool gate
+- `scheduling.ts:126` — `target_group_jid` honored only when privileged
+- `scheduling.ts:174` — list-tasks scope filter
+- `scheduling.ts:200` — list-tasks output verbosity
+- `self-mod.ts:35` — self-modification gate
+- `scheduling.ts:224, 245, 266` — *embedded into IPC payload* for
+  pause/resume/cancel. Under Q3=(a) these become `triggeringUserId`
+  carriers; under Q3=(b) the field goes away and host correlates by
+  `task_id`. **Q3 answer changes the diff shape here.**
+
+### B. Wiring (signature / param plumb — not a gate) — 7 sites
+- `src/ipc.ts` L24, L60, L62, L218 — derivation + function params
+- `src/host-runner.ts` L408 — log-label `'main'` vs `'global'`
+- `container-runner.ts` L53, L284 — RunnerInput field + passthrough
+- `scheduling.ts:331` — env passthrough into spawn
+
+These stay; we just add a parallel `isOwner` plumb alongside.
+
+### C. Mount / folder routing (stays folder-keyed) — 5 sites
+- `container-runner.ts` L96, L102 — `buildVolumeMounts` per-folder
+- L381, L401, L593 — mount + label propagation
+- `agent-runner-ghc/server.ts` L35–37 — env read at container boot
+
+Mount layout is *physical*, not *privilege* — owner-based check is
+orthogonal as called out in the first pass.
+
+### Implications for Phase 1 commit size
+- Category A is the real change surface: ~22 line edits + tests.
+- Category B is mechanical plumb (add a sibling `triggeringUserId` /
+  `isOwner` param next to `isDefaultAgent`). ~7 lines plus signature
+  updates.
+- Category C: untouched.
+
+Revised estimate: Phase 1 dual-read PR is ~150–200 LOC of host/runner
+changes plus tests, **not** the "37-site rewrite" the first pass
+implied. Reviewable in a single sitting.
+
+---
+
+## Cross-ref: F1 finding for Rpi5's task 2 (companion proposal)
+
+During review of `2026-05-16-chat-metadata-via-mg-mga.md` I found a
+100% jid-prefix mismatch between legacy `registered_groups.jid` and the
+v2 `messaging_groups` synthetic jid the doc proposes to join on.
+Documenting here so the finding survives Discord scroll and is attached
+to PR #49.
+
+### Evidence (live VM DB, 2026-05-16)
+
+```sh
+sqlite3 ~/.nanoclaw/store/messages.db \
+  "ATTACH '/home/kenan/.nanoclaw/store/v2.db' AS v2;
+   SELECT rg.jid, mg.channel_type||':'||mg.platform_id
+   FROM registered_groups rg
+   LEFT JOIN v2.messaging_groups mg
+     ON (mg.channel_type||':'||mg.platform_id) = rg.jid;"
+```
+
+Result — every right-side column is NULL:
+```
+tg:8731187021     | <<MISS>>
+tui:default       | <<MISS>>
+```
+
+### Root cause
+
+`src/db/v2-migrate-chats.ts:66` `channelKeyToType()`:
+- `'tg'` → `'telegram'`
+- `'dc'` → `'discord'` (etc.)
+
+Legacy `registered_groups.jid` uses the **short** prefix; v2
+`messaging_groups.channel_type` uses the **full** name. Naive equality
+on `channel_type || ':' || platform_id` returns 0 rows for every chat.
+
+### Fix recommendation — (a) read-side helper
+
+Add `synthLegacyJid(channelType, platformId)` in `v2-chat-metadata.ts`
+using the inverse of `channelKeyToType` (single switch table). Use it
+in both directions:
+- v2 → legacy lookup key for `getRegisteredGroup(jid)` facade
+- bidirectional warn for drift detection
+
+No legacy data mutation. No new column. ~10 LOC plus a test.
+
+### Status
+
+- F1 was flagged in initial review of `1baba9f`
+- Verified concrete on live DB before Rpi5's `6fa17cc` update
+- `6fa17cc` improves inventory accuracy (11 reads / 3 writes / 4-fn
+  waist) but does **not** yet incorporate the prefix fix
+- Rpi5 to update field-mapping section + add `synthLegacyJid` helper
+  spec before Phase 1 commit
+

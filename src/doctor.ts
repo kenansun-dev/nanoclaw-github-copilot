@@ -3,7 +3,6 @@
  */
 
 import { execSync } from 'child_process';
-import { createRequire } from 'module';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -39,119 +38,13 @@ export function check(
 }
 
 /**
- * Pure decision logic for the "Registered chats" check. Extracted so we
- * can unit-test the severity matrix without standing up a full config.
- *
- * Severity rules:
- * - chats > 0  → ok
- * - chats = 0 + at least one channel enabled (telegram/teams accept
- *   incoming without explicit chat registration) → warn
- * - chats = 0 + no channel enabled → error (truly unconfigured)
+ * Chat-related doctor checks (chatsCheck, chatDriftCheck,
+ * mainChatSingletonCheck) retired 2026-05-16 alongside the v1
+ * cutover. Owner asked to drop all `chats`/`isMain` diagnostics:
+ * `nanoclaw chat list` is the source of truth, default-agent lives
+ * in `agents.list[].default`, and the singleton invariant moved
+ * out of doctor entirely.
  */
-/**
- * Pure decision logic for the "Chat registry drift" doctor check.
- * Inputs are the counts/jids returned by `detectChatDrift()`.
- *
- * Severity rules:
- * - dirty=false                                 → ok ("in sync")
- * - added>0 only                                → warn (DB-only chats; reconcile will fix non-destructively)
- * - dedupedMains>0 OR mirroredToDb>0            → error (mount collision risk; surface immediately)
- */
-export function chatDriftCheck(d: { added: string[]; dedupedMains: string[]; mirroredToDb: string[] }): {
-  ok: boolean;
-  status?: 'ok' | 'warn' | 'error';
-  msg: string;
-} {
-  const dirty = d.added.length + d.dedupedMains.length + d.mirroredToDb.length;
-  if (dirty === 0) {
-    return { ok: true, msg: 'config.chats and registered_groups in sync' };
-  }
-  if (d.dedupedMains.length > 0 || d.mirroredToDb.length > 0) {
-    return {
-      ok: false,
-      status: 'error',
-      msg:
-        `${d.dedupedMains.length} duplicate main(s), ${d.mirroredToDb.length} ` +
-        `isMain mismatch(es) — chats compete for main/ mount. ` +
-        'Run: nanoclaw chat reconcile',
-    };
-  }
-  return {
-    ok: false,
-    status: 'warn',
-    msg:
-      `${d.added.length} chat(s) only in DB (no id, not in nanoclaw.json). ` +
-      'Run: nanoclaw chat reconcile to backfill ids.',
-  };
-}
-
-export function chatsCheck(
-  chatCount: number,
-  enabledChannels: string[],
-): { ok: boolean; status?: 'ok' | 'warn' | 'error'; msg: string } {
-  if (chatCount > 0) {
-    return { ok: true, msg: `${chatCount} chat(s)` };
-  }
-  if (enabledChannels.length > 0) {
-    return {
-      ok: false,
-      status: 'warn',
-      msg: `0 explicit — ${enabledChannels.join(', ')} accept incoming without registration; add with: nanoclaw chat add`,
-    };
-  }
-  return {
-    ok: false,
-    msg: 'none and no channels enabled — add with: nanoclaw chat add',
-  };
-}
-
-/**
- * Pure decision logic for the "Main chat singleton" check.
- *
- * Multiple chats marked isMain DMs are allowed and intentionally collapse
- * onto a shared session per agent (see `collapseMainDmFolder` in
- * session-routing.ts). Multiple isMain *groups* are still flagged — group
- * sessions must stay isolated to prevent cross-context bleed.
- *
- * Severity rules:
- * - 0 main chats and any chats exist → warn (no main picked)
- * - >=1 main DMs (any count) and <=1 main group → ok
- * - >1 main groups → error (group session collision)
- */
-export function mainChatSingletonCheck(
-  mainJids: string[],
-  totalChatCount: number,
-  isGroupByJid: Record<string, boolean | undefined> = {},
-): { ok: boolean; status?: 'ok' | 'warn' | 'error'; msg: string } {
-  const mainGroups = mainJids.filter((jid) => isGroupByJid[jid] === true);
-  const mainDms = mainJids.filter((jid) => isGroupByJid[jid] !== true);
-
-  if (mainGroups.length > 1) {
-    return {
-      ok: false,
-      status: 'error',
-      msg:
-        `${mainGroups.length} group chats marked isMain — group sessions must stay isolated. ` +
-        `Run: nanoclaw chat set-main <id> to pick one and clear the rest. ` +
-        `(Multiple isMain DMs are allowed and share a session.)`,
-    };
-  }
-  if (mainJids.length >= 1) {
-    const dmsNote = mainDms.length > 1 ? ` (${mainDms.length} DMs share session)` : '';
-    return {
-      ok: true,
-      msg: `${mainJids.length} main chat${mainJids.length === 1 ? '' : 's'}${dmsNote}`,
-    };
-  }
-  if (totalChatCount > 0) {
-    return {
-      ok: false,
-      status: 'warn',
-      msg: 'no main chat picked — run: nanoclaw chat set-main <id>',
-    };
-  }
-  return { ok: true, msg: 'no chats registered' };
-}
 
 export function runDoctor(): CheckResult[] {
   const results: CheckResult[] = [];
@@ -308,55 +201,11 @@ export function runDoctor(): CheckResult[] {
       );
     }
 
-    // Chats
-    // Canonical format: channels.<name>.chats[]; legacy: top-level chats
-    // (loadConfig normalizes both into config.chats). Surface a per-channel
-    // breakdown so empty deployments aren't flagged red — telegram bots and
-    // teams webhooks accept DMs/mentions without explicit chat registration,
-    // so "none" is a warning, not a failure.
-    const chatCount = Object.keys(config.chats).length;
-    const enabledChannels = Object.entries(config.channels ?? {})
-      .filter(([, c]: any[]) => c?.enabled)
-      .map(([name]) => name);
-    results.push(check('Registered chats', () => chatsCheck(chatCount, enabledChannels)));
-
-    // Main chat singleton: catches the silent mount-collision bug for
-    // group chats. Multiple isMain DMs are allowed and intentionally
-    // share a session (see session-routing.ts).
-    const mainJids = Object.entries(config.chats)
-      .filter(([, e]: any[]) => e?.isMain)
-      .map(([jid]) => jid);
-    // Build is-group map from the chats table (channel adapters populate this).
-    let isGroupByJid: Record<string, boolean | undefined> = {};
-    try {
-      const { getAllChats } = require('./db.js');
-      const allChats = getAllChats() as Array<{
-        jid: string;
-        is_group?: number | null;
-      }>;
-      for (const c of allChats) {
-        isGroupByJid[c.jid] = c.is_group === null || c.is_group === undefined ? undefined : c.is_group === 1;
-      }
-    } catch {
-      /* db not ready — fall back to no info, conservative warn */
-    }
-    results.push(check('Main chat singleton', () => mainChatSingletonCheck(mainJids, chatCount, isGroupByJid)));
-
-    // Chat registry drift: catches the production bug found post-PR-#14
-    // deploy where inbound-registered chats live only in registered_groups
-    // and silently bypass the singleton invariant. Dry-run reconcile, no
-    // writes — points at `nanoclaw chat reconcile` for the actual fix.
-    try {
-      // runDoctor is sync; chat-reconcile is fork-only ESM, so use
-      // createRequire for a sync load instead of converting the whole
-      // function (and 4+ tests) to async.
-      const req = createRequire(import.meta.url);
-      const { detectChatDrift } = req('./chat-reconcile.js');
-      const drift = detectChatDrift();
-      results.push(check('Chat registry drift', () => chatDriftCheck(drift)));
-    } catch {
-      /* DB unavailable or chat-reconcile not built; skip silently */
-    }
+    // Chats / main-chat doctor checks retired 2026-05-16:
+    // owner asked to drop all `chats`/`isMain`-related diagnostics
+    // alongside the v1 cutover. Chat presence is now visible via
+    // `nanoclaw chat list`; default-agent designation lives in
+    // `agents.list[].default`. Doctor no longer second-guesses either.
   } catch {
     /* ignore */
   }

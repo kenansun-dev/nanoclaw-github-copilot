@@ -13,6 +13,7 @@ import {
   getAgentSessionDir,
   getAgentModelName,
   getAgentProvider,
+  resolveAgentForChat,
 } from './config-extensions.js';
 import { AgentConfig } from './config-loader.js';
 
@@ -276,6 +277,74 @@ describe('buildProviderMounts', () => {
     } finally {
       if (origHome === undefined) delete process.env.HOME;
       else process.env.HOME = origHome;
+      if (origWs === undefined) delete process.env.NANOCLAW_WORKSPACE;
+      else process.env.NANOCLAW_WORKSPACE = origWs;
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── resolveAgentForChat: Teams jid parsing regression ──────────────────────
+//
+// Teams user/thread ids contain ':' (e.g. '29:abc-def', '19:xxx@thread.v2').
+// A previous implementation split chatJid on ':' and treated a 3+ segment
+// jid as `<channel>:<accountKey>:<peerId>`, which mis-attributed the Teams
+// id's leading prefix (e.g. '29') to `accountId`. Bindings keyed on the
+// real peer id (e.g. '29:abc-def') therefore never matched, and every
+// inbound Teams message fell through to the default agent.
+//
+// Fix: always treat first segment as channel, rest as peerId. accountId is
+// undefined until v2-multi-account routing lands (see TODO in src/router.ts).
+
+describe('resolveAgentForChat — Teams jid parse regression', () => {
+  it('binds to a Teams peer whose raw id contains a colon (29:abc-def)', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const pathMod = await import('node:path');
+    const { setWorkspace } = await import('./workspace.js');
+
+    const tmpRoot = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'nc-teams-jid-'));
+    const wsDir = pathMod.join(tmpRoot, 'workspace');
+    fs.mkdirSync(wsDir, { recursive: true });
+
+    const cfg = {
+      agents: {
+        defaults: { name: 'Default', model: 'anthropic/x', triggerWord: '@d', hasOwnNumber: false, mode: 'host' },
+        list: [
+          {
+            id: 'default-agent',
+            name: 'Default',
+            model: 'anthropic/x',
+            triggerWord: '@d',
+            hasOwnNumber: false,
+            mode: 'host',
+          },
+          {
+            id: 'teams-agent',
+            name: 'Teams',
+            model: 'anthropic/x',
+            triggerWord: '@t',
+            hasOwnNumber: false,
+            mode: 'host',
+          },
+        ],
+      },
+      bindings: [
+        // Binding keyed on the *full* Teams peer id (with embedded colon).
+        { agentId: 'teams-agent', match: { channel: 'teams', peer: { id: '29:abc-def' } } },
+      ],
+    };
+    fs.writeFileSync(pathMod.join(wsDir, 'nanoclaw.json'), JSON.stringify(cfg));
+
+    const origWs = process.env.NANOCLAW_WORKSPACE;
+    process.env.NANOCLAW_WORKSPACE = wsDir;
+    setWorkspace(wsDir);
+    try {
+      const agent = resolveAgentForChat('teams:29:abc-def');
+      // Pre-fix this would return 'default-agent' because accountId='29',
+      // peerId='abc-def' fails to match the binding keyed on '29:abc-def'.
+      expect(agent.name).toBe('Teams');
+    } finally {
       if (origWs === undefined) delete process.env.NANOCLAW_WORKSPACE;
       else process.env.NANOCLAW_WORKSPACE = origWs;
       fs.rmSync(tmpRoot, { recursive: true, force: true });

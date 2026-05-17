@@ -12,6 +12,7 @@ import { CONTAINER_IMAGE } from './config.js';
 import { resolveWorkspace } from './workspace.js';
 import { resolveAgentIdFromBindings } from './config-loader.js';
 import { loadConfig, resolveAgent, AgentConfig, NanoclawConfig } from './config-loader.js';
+import { loadBindings, resolveBinding } from './bindings-loader.js';
 
 // ─── Provider detection ──────────────────────────────────────────────────────
 
@@ -101,9 +102,39 @@ export const GHC_CONTAINER_IMAGE = IS_GHC_PROVIDER ? 'nanoclaw-agent-ghc:latest'
 
 export function resolveAgentForChat(chatJid: string): AgentConfig {
   const config = loadConfig();
-  const chat = config.chats[chatJid];
-  // Check bindings first, then legacy chatConfig.agentId
-  const agentId = resolveAgentIdFromBindings(config, chatJid, chat) || chat?.agentId;
+  // v2 read path: build bindings table and look up by (channel, accountId, peerId).
+  // chatJid format: '<proto>:<peerId>'. peerId itself may contain ':' (e.g. Teams
+  // ids like '29:abc-def' or '19:xxx@thread.v2'). We deliberately do NOT try to
+  // pull an accountKey out of a colon-split prefix — that mis-attributed the
+  // first segment of Teams ids to accountId and broke binding lookups.
+  // TODO(v2-multi-account): when introducing per-account routing, plumb a
+  // structured ChatRef { channel, account, peer } through the call sites instead
+  // of re-splitting a string here.
+  const parts = chatJid.split(':');
+  let channel: string | undefined;
+  const accountId: string | undefined = undefined;
+  let peerId: string | undefined;
+  if (parts.length >= 2) {
+    channel = parts[0] === 'tg' ? 'telegram' : parts[0];
+    peerId = parts.slice(1).join(':');
+  }
+  const table = loadBindings(config);
+  let agentId: string | undefined;
+  if (channel) {
+    agentId = resolveBinding(table, { channel, accountId, peerId });
+  }
+  // Legacy fallback: bindings table only. config.chats[jid].agentId
+  // fallback retired 2026-05-16 alongside the chats schema removal.
+  if (!agentId) {
+    agentId = resolveAgentIdFromBindings(config, chatJid);
+  }
+  if (!agentId) {
+    // Final fallback: first agent in agents.list, else defaults.
+    const list = config.agents?.list;
+    if (list && list.length > 0 && list[0].id) {
+      agentId = list[0].id;
+    }
+  }
   return resolveAgent(config, agentId);
 }
 

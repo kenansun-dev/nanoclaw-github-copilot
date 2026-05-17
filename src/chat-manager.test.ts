@@ -3,7 +3,7 @@ import { deriveGroupFolder } from './chat-manager.js';
 
 describe('deriveGroupFolder', () => {
   it('returns a unique-per-jid main folder for isMain chats (no agent)', () => {
-    const folder = deriveGroupFolder('tg:123', { isMain: true });
+    const folder = deriveGroupFolder('tg:123', { shareDefaultAgentSession: true });
     // Format: main-<channel>-<jidHash>; collapse-on-read maps it back to 'main'.
     expect(folder).toMatch(/^main-tg-[0-9a-f]{8}$/);
     expect(folder.length).toBeLessThanOrEqual(64);
@@ -11,7 +11,7 @@ describe('deriveGroupFolder', () => {
 
   it('returns a unique-per-jid main folder for isMain chats with agentId', () => {
     const folder = deriveGroupFolder('tg:123', {
-      isMain: true,
+      shareDefaultAgentSession: true,
       agentId: 'my-agent',
     });
     expect(folder).toMatch(/^main-my-agent-tg-[0-9a-f]{8}$/);
@@ -19,14 +19,14 @@ describe('deriveGroupFolder', () => {
   });
 
   it('produces distinct folders for two isMain chats on different jids (same agent)', () => {
-    const a = deriveGroupFolder('tg:111', { isMain: true });
-    const b = deriveGroupFolder('dc:222', { isMain: true });
+    const a = deriveGroupFolder('tg:111', { shareDefaultAgentSession: true });
+    const b = deriveGroupFolder('dc:222', { shareDefaultAgentSession: true });
     expect(a).not.toBe(b);
   });
 
   it('produces deterministic folders for the same jid+agent', () => {
-    const a = deriveGroupFolder('tg:123', { isMain: true });
-    const b = deriveGroupFolder('tg:123', { isMain: true });
+    const a = deriveGroupFolder('tg:123', { shareDefaultAgentSession: true });
+    const b = deriveGroupFolder('tg:123', { shareDefaultAgentSession: true });
     expect(a).toBe(b);
   });
 

@@ -1,60 +1,53 @@
 import { describe, it, expect } from 'vitest';
 import { collapseMainDmFolder, uniqueIsMainFolder, agentSlug } from './session-routing.js';
-import { RegisteredGroup } from './types-extensions.js';
 
-function group(folder: string, isMain = true): RegisteredGroup {
-  return {
-    name: 'test',
-    folder,
-    trigger: 'hey',
-    added_at: '2026-04-21T00:00:00Z',
-    isMain,
-  };
-}
+// PR #49 (Path A) cutover: collapseMainDmFolder now takes a folder string
+// directly (no RegisteredGroup) and uses pattern-based detection of
+// default-agent DM folders (`main(-<agent>)?-<channel>-<8hex>` plus the
+// legacy literal 'main').
 
 describe('collapseMainDmFolder', () => {
-  it('returns "main" for isMain DM with no agent', () => {
-    expect(collapseMainDmFolder(group('main-tg-deadbeef'), undefined, false)).toBe('main');
+  it('returns "main" for default-agent DM with no agent', () => {
+    expect(collapseMainDmFolder('main-tg-deadbeef', undefined, false)).toBe('main');
   });
 
-  it('returns "main-<agent>" for isMain DM with agent', () => {
-    expect(collapseMainDmFolder(group('main-atlas-tg-deadbeef'), { agentId: 'atlas' }, false)).toBe('main-atlas');
+  it('returns "main-<agent>" for default-agent DM with agent', () => {
+    expect(collapseMainDmFolder('main-atlas-tg-deadbeef', { agentId: 'atlas' }, false)).toBe('main-atlas');
   });
 
-  it('does NOT collapse non-isMain chats', () => {
-    expect(collapseMainDmFolder(group('teams-conv-123', false), undefined, false)).toBe('teams-conv-123');
+  it('does NOT collapse non-default-agent folders', () => {
+    expect(collapseMainDmFolder('teams-conv-123', undefined, false)).toBe('teams-conv-123');
   });
 
-  it('does NOT collapse isMain groups (isGroup=true)', () => {
-    expect(collapseMainDmFolder(group('main-tg-deadbeef'), undefined, true)).toBe('main-tg-deadbeef');
+  it('does NOT collapse default-agent folders when isGroup=true', () => {
+    expect(collapseMainDmFolder('main-tg-deadbeef', undefined, true)).toBe('main-tg-deadbeef');
   });
 
   it('does NOT collapse when isGroup is unknown (conservative)', () => {
-    // Channel adapter hasn't recorded chats.is_group yet — stay raw.
-    expect(collapseMainDmFolder(group('main-tg-deadbeef'), undefined, undefined)).toBe('main-tg-deadbeef');
+    expect(collapseMainDmFolder('main-tg-deadbeef', undefined, undefined)).toBe('main-tg-deadbeef');
   });
 
   it('isolates different agents', () => {
-    const atlas = collapseMainDmFolder(group('main-atlas-tg-aaa'), { agentId: 'atlas' }, false);
-    const beta = collapseMainDmFolder(group('main-beta-tg-bbb'), { agentId: 'beta' }, false);
-    const def = collapseMainDmFolder(group('main-tg-ccc'), undefined, false);
+    const atlas = collapseMainDmFolder('main-atlas-tg-aaaaaaaa', { agentId: 'atlas' }, false);
+    const beta = collapseMainDmFolder('main-beta-tg-bbbbbbbb', { agentId: 'beta' }, false);
+    const def = collapseMainDmFolder('main-tg-cccccccc', undefined, false);
     expect(atlas).toBe('main-atlas');
     expect(beta).toBe('main-beta');
     expect(def).toBe('main');
     expect(new Set([atlas, beta, def]).size).toBe(3);
   });
 
-  it('multiple isMain DMs (same agent) collapse to the same canonical', () => {
-    const tg = collapseMainDmFolder(group('main-tg-deadbeef'), undefined, false);
-    const dc = collapseMainDmFolder(group('main-dc-cafebabe'), undefined, false);
-    const tui = collapseMainDmFolder(group('main-tui-12345678'), undefined, false);
+  it('multiple default-agent DMs (same agent) collapse to the same canonical', () => {
+    const tg = collapseMainDmFolder('main-tg-deadbeef', undefined, false);
+    const dc = collapseMainDmFolder('main-dc-cafebabe', undefined, false);
+    const tui = collapseMainDmFolder('main-tui-12345678', undefined, false);
     expect(tg).toBe('main');
     expect(dc).toBe('main');
     expect(tui).toBe('main');
   });
 
-  it('treats existing folder="main" rows as a no-op (backwards compat)', () => {
-    expect(collapseMainDmFolder(group('main'), undefined, false)).toBe('main');
+  it('treats existing folder="main" rows as collapsible (backwards compat)', () => {
+    expect(collapseMainDmFolder('main', undefined, false)).toBe('main');
   });
 });
 

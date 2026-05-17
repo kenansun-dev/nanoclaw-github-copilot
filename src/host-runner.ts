@@ -184,7 +184,6 @@ export async function runHostAgent(
   group: {
     name: string;
     folder: string;
-    isMain?: boolean;
     containerConfig?: { timeout?: number };
   },
   input: ContainerInput,
@@ -230,9 +229,7 @@ export async function runHostAgent(
           // JSONC-tolerant: Copilot CLI writes a `// banner` at the top.
           // Bare JSON.parse silently drops the user's loggedInUsers /
           // copilotTokens into the container config (PR #47, 2026-05-12).
-          baseConfig = parseJsonc<Record<string, unknown>>(
-            fs.readFileSync(hostCopilotConfig, 'utf-8'),
-          );
+          baseConfig = parseJsonc<Record<string, unknown>>(fs.readFileSync(hostCopilotConfig, 'utf-8'));
         } catch {
           // Ignore parse errors
         }
@@ -260,6 +257,14 @@ export async function runHostAgent(
     NANOCLAW_HOST_MODE: '1',
     HOME: process.env.HOME || process.env.USERPROFILE || os.homedir(),
   };
+
+  // Channel-qualified user id of the user whose latest message triggered
+  // this turn — see ContainerInput.triggeringUserId. The in-process MCP
+  // server reads this from env to stamp IPC payloads for host-side isOwner
+  // privilege gates (HR list #3, 2026-05-16 isOwner phase 1).
+  if (input.triggeringUserId) {
+    env.NANOCLAW_TRIGGERING_USER_ID = input.triggeringUserId;
+  }
 
   // Auth token
   if (isAgentGHC(agent)) {
@@ -406,7 +411,9 @@ export async function runHostAgent(
 
   // Global agent prompt template
   // GHC uses COPILOT.md if available, CC uses CLAUDE.md
-  const groupType = group.isMain ? 'main' : 'global';
+  // v2-only (PR #49): use the dual-read'd default-agent flag plumbed via
+  // `input.isDefaultAgent`. v1 `group.isMain` was retired with the field.
+  const groupType = input.isDefaultAgent ? 'main' : 'global';
   const promptFilename = isAgentGHC(agent)
     ? fs.existsSync(path.join(pkgRoot, 'groups', groupType, 'COPILOT.md'))
       ? 'COPILOT.md'

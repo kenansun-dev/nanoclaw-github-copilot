@@ -7,6 +7,16 @@ import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './log-extensions.js';
 import { collapseMainDmFolder } from './session-routing.js';
 import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types-extensions.js';
+// v2 chat-metadata Phase 1 dual-read (proposal 2026-05-16). Read paths
+// only — v1 is still primary; v2 is read in parallel and any drift logged.
+// `safelyDualRead*` swallows errors when v2 db is uninitialized (very
+// early boot, tests without v2 bootstrap) so it never breaks v1 readers.
+import {
+  getRegisteredGroupV2,
+  getAllRegisteredGroupsV2,
+  setRegisteredGroupV2,
+  removeRegisteredGroupV2,
+} from './db/v2-chat-metadata.js';
 
 let db: Database.Database;
 
@@ -48,13 +58,13 @@ export function getAllChatIsGroup(): Map<string, boolean | undefined> {
  * nanoclaw.json or undefined if config can't be loaded. Wrapped so we
  * can call it once outside hot loops in `getAllRegisteredGroups`.
  */
-function loadChatsConfigSnapshot(): Record<string, { agentId?: string; isMain?: boolean }> | undefined {
+function loadChatsConfigSnapshot(): Record<string, { agentId?: string }> | undefined {
   try {
     // Lazy require to avoid pulling config-loader during early db init.
     // config-loader does not import from db.ts, so this is acyclic.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { loadConfig } = require('./config-loader.js');
-    return loadConfig().chats as Record<string, { agentId?: string; isMain?: boolean }> | undefined;
+    return loadConfig().chats as Record<string, { agentId?: string }> | undefined;
   } catch {
     return undefined;
   }
@@ -69,9 +79,8 @@ function loadChatsConfigSnapshot(): Record<string, { agentId?: string; isMain?: 
  * `resolveCollapsedFolderBatch` to avoid N+1 SQL/fs reads.
  */
 function resolveCollapsedFolder(group: RegisteredGroup & { jid: string }): string {
-  if (!group.isMain) return group.folder;
   const chats = loadChatsConfigSnapshot();
-  return collapseMainDmFolder(group, chats?.[group.jid], getChatIsGroup(group.jid));
+  return collapseMainDmFolder(group.folder, chats?.[group.jid], getChatIsGroup(group.jid));
 }
 
 /**
@@ -80,11 +89,10 @@ function resolveCollapsedFolder(group: RegisteredGroup & { jid: string }): strin
  */
 function resolveCollapsedFolderBatch(
   group: RegisteredGroup & { jid: string },
-  chatsConfig: Record<string, { agentId?: string; isMain?: boolean }> | undefined,
+  chatsConfig: Record<string, { agentId?: string }> | undefined,
   isGroupMap: Map<string, boolean | undefined>,
 ): string {
-  if (!group.isMain) return group.folder;
-  return collapseMainDmFolder(group, chatsConfig?.[group.jid], isGroupMap.get(group.jid));
+  return collapseMainDmFolder(group.folder, chatsConfig?.[group.jid], isGroupMap.get(group.jid));
 }
 
 function createSchema(database: Database.Database): void {
@@ -244,14 +252,11 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
-  // Add is_main column if it doesn't exist (migration for existing DBs)
-  try {
-    database.exec(`ALTER TABLE registered_groups ADD COLUMN is_main INTEGER DEFAULT 0`);
-    // Backfill: existing rows with folder = 'main' are the main group
-    database.exec(`UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`);
-  } catch {
-    /* column already exists */
-  }
+  // (Removed 2026-05-16): the `is_main` column on `registered_groups`
+  // is no longer projected from registered_groups (the v1 reads now go
+  // straight to v2 MG⋈MGA). The ALTER/UPDATE block was a 2024-era
+  // backfill safe to skip on fresh tables. The column itself stays on
+  // any existing DB; we just stopped touching it.
 
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
@@ -845,36 +850,32 @@ export function getAllSessions(): Record<string, Record<string, string>> {
 }
 
 // --- Registered group accessors ---
+//
+// Cutover (2026-05-16, owner-approved): these now read/write v2
+// `messaging_groups` + `messaging_group_agents` only. The legacy
+// `registered_groups` *table* is retained (untouched on disk) so we
+// can roll back the deploy without backfill, but no code path in this
+// process touches it any more. Boot migration (`initAndReconcileV2`)
+// projects existing `registered_groups` rows into MG+MGA on first
+// start, so live deployments converge automatically.
 
 export function getRegisteredGroup(jid: string): (RegisteredGroup & { jid: string }) | undefined {
-  const row = db.prepare('SELECT * FROM registered_groups WHERE jid = ?').get(jid) as
-    | {
-        jid: string;
-        name: string;
-        folder: string;
-        trigger_pattern: string;
-        added_at: string;
-        container_config: string | null;
-        requires_trigger: number | null;
-        is_main: number | null;
-      }
-    | undefined;
-  if (!row) return undefined;
-  if (!isValidGroupFolder(row.folder)) {
-    logger.warn({ jid: row.jid, folder: row.folder }, 'Skipping registered group with invalid folder');
+  const v2 = getRegisteredGroupV2(jid);
+  if (!v2 || !v2.folder) return undefined;
+  if (!isValidGroupFolder(v2.folder)) {
+    logger.warn({ jid, folder: v2.folder }, 'Skipping registered group with invalid folder');
     return undefined;
   }
   const baseGroup: RegisteredGroup & { jid: string } = {
-    jid: row.jid,
-    name: row.name,
-    folder: row.folder,
-    trigger: row.trigger_pattern,
-    added_at: row.added_at,
-    containerConfig: row.container_config ? JSON.parse(row.container_config) : undefined,
-    requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
-    isMain: row.is_main === 1 ? true : undefined,
+    jid,
+    name: v2.name,
+    folder: v2.folder,
+    trigger: v2.trigger,
+    added_at: v2.added_at,
+    requiresTrigger: v2.requiresTrigger,
   };
-  // Collapse-on-read: isMain DMs share a canonical session per agent.
+  // Collapse-on-read: default-agent DMs share a canonical session per agent.
+  // Folder pattern (`main(-<agent>)?-<channel>-<8hex>`) drives detection.
   // See src/session-routing.ts and features/dm-session-sharing.md.
   return { ...baseGroup, folder: resolveCollapsedFolder(baseGroup) };
 }
@@ -883,19 +884,7 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   if (!isValidGroupFolder(group.folder)) {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
-  db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    jid,
-    group.name,
-    group.folder,
-    group.trigger,
-    group.added_at,
-    group.containerConfig ? JSON.stringify(group.containerConfig) : null,
-    group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
-    group.isMain ? 1 : 0,
-  );
+  setRegisteredGroupV2(jid, group);
 }
 
 /**
@@ -905,46 +894,33 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
  * config↔DB dual-store doesn't get re-populated by reconcile-on-CLI.
  */
 export function removeRegisteredGroup(jid: string): boolean {
-  const info = db.prepare('DELETE FROM registered_groups WHERE jid = ?').run(jid);
-  return info.changes > 0;
+  return removeRegisteredGroupV2(jid);
 }
 
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
-  const rows = db.prepare('SELECT * FROM registered_groups').all() as Array<{
-    jid: string;
-    name: string;
-    folder: string;
-    trigger_pattern: string;
-    added_at: string;
-    container_config: string | null;
-    requires_trigger: number | null;
-    is_main: number | null;
-  }>;
+  const v2Map = getAllRegisteredGroupsV2();
   const result: Record<string, RegisteredGroup> = {};
   // Pre-fetch chats.is_group + nanoclaw.json once so the per-row
   // collapse stays O(1). Avoids N+1 SQL/fs reads when many chats
   // are registered.
   const isGroupMap = getAllChatIsGroup();
   const chatsConfig = loadChatsConfigSnapshot();
-  for (const row of rows) {
-    if (!isValidGroupFolder(row.folder)) {
-      logger.warn({ jid: row.jid, folder: row.folder }, 'Skipping registered group with invalid folder');
+  for (const [jid, v2] of Object.entries(v2Map)) {
+    if (!v2.folder) continue;
+    if (!isValidGroupFolder(v2.folder)) {
+      logger.warn({ jid, folder: v2.folder }, 'Skipping registered group with invalid folder');
       continue;
     }
     const baseGroup: RegisteredGroup = {
-      name: row.name,
-      folder: row.folder,
-      trigger: row.trigger_pattern,
-      added_at: row.added_at,
-      containerConfig: row.container_config ? JSON.parse(row.container_config) : undefined,
-      requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
-      isMain: row.is_main === 1 ? true : undefined,
+      name: v2.name,
+      folder: v2.folder,
+      trigger: v2.trigger,
+      added_at: v2.added_at,
+      requiresTrigger: v2.requiresTrigger,
     };
-    // Collapse-on-read: isMain DMs share a canonical session per agent.
-    // See src/session-routing.ts and features/dm-session-sharing.md.
-    result[row.jid] = {
+    result[jid] = {
       ...baseGroup,
-      folder: resolveCollapsedFolderBatch({ ...baseGroup, jid: row.jid }, chatsConfig, isGroupMap),
+      folder: resolveCollapsedFolderBatch({ ...baseGroup, jid }, chatsConfig, isGroupMap),
     };
   }
   return result;
@@ -989,15 +965,8 @@ function migrateJsonState(): void {
     }
   }
 
-  // Migrate registered_groups.json
-  const groups = migrateFile('registered_groups.json') as Record<string, RegisteredGroup> | null;
-  if (groups) {
-    for (const [jid, group] of Object.entries(groups)) {
-      try {
-        setRegisteredGroup(jid, group);
-      } catch (err) {
-        logger.warn({ jid, folder: group.folder, err }, 'Skipping migrated registered group with invalid folder');
-      }
-    }
-  }
+  // registered_groups.json migration retired 2026-05-16:
+  // fork's v0→v1 JSON→SQLite migration is years past. Old users have
+  // long since passed through it. Remaining JSON files (if any) are
+  // ignored at boot.
 }

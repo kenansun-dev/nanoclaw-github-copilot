@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { setWorkspace, ensureWorkspace } from './workspace.js';
-import { loadConfig, saveConfig, readWorkspaceEnv, getEnabledPlugins } from './config-loader.js';
+import { loadConfig, saveConfig, readWorkspaceEnv, getEnabledPlugins, getDefaultAgent } from './config-loader.js';
 
 describe('config-loader', () => {
   const tmpDir = path.join(os.tmpdir(), `nanoclaw-test-cfg-${Date.now()}`);
@@ -70,7 +70,10 @@ describe('config-loader', () => {
     saveConfig(config);
 
     const saved = JSON.parse(fs.readFileSync(path.join(tmpDir, 'nanoclaw.json'), 'utf-8'));
-    expect(saved.channels.telegram.botToken).toBe('${TELEGRAM_BOT_TOKEN}');
+    // v9 dedupe: when accounts.default.botToken is set (auto-backfilled by
+    // loadConfig normalization), the legacy top-level mirror is dropped.
+    expect(saved.channels.telegram.botToken).toBeUndefined();
+    expect(saved.channels.telegram.accounts.default.botToken).toBe('${TELEGRAM_BOT_TOKEN}');
     expect(saved.channels.teams.appPassword).toBe('${MSTEAMS_APP_PASSWORD}');
   });
 
@@ -217,6 +220,92 @@ describe('channel accounts normalization', () => {
   it('bindings defaults to undefined when not configured', () => {
     const config = loadConfig();
     expect(config.bindings).toBeUndefined();
+  });
+
+  // v2 config-shape (docs/proposals/2026-05-12-config-shape-v2.md): accounts
+  // grow access-control fields (dmPolicy / allowFrom / groupPolicy /
+  // groupAllowFrom / groups). Legacy configs without them keep parsing.
+  it('preserves v2 account access-control fields on telegram accounts', () => {
+    fs.writeFileSync(
+      path.join(tmpDir2, 'nanoclaw.json'),
+      JSON.stringify({
+        channels: {
+          telegram: {
+            enabled: true,
+            accounts: {
+              personal: {
+                botToken: 'tok',
+                dmPolicy: 'pairing',
+                allowFrom: ['8731187021'],
+                groupPolicy: 'allowlist',
+                groupAllowFrom: ['8731187021'],
+                groups: {
+                  '*': { requireMention: true },
+                  '-1001crew': { requireMention: false, allowFrom: ['8731187021', '9999'] },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    const acc = config.channels.telegram.accounts?.personal as any;
+    expect(acc.dmPolicy).toBe('pairing');
+    expect(acc.allowFrom).toEqual(['8731187021']);
+    expect(acc.groupPolicy).toBe('allowlist');
+    expect(acc.groupAllowFrom).toEqual(['8731187021']);
+    expect(acc.groups['*'].requireMention).toBe(true);
+    expect(acc.groups['-1001crew'].allowFrom).toEqual(['8731187021', '9999']);
+  });
+
+  it('preserves v2 account access-control fields on teams + discord accounts', () => {
+    fs.writeFileSync(
+      path.join(tmpDir2, 'nanoclaw.json'),
+      JSON.stringify({
+        channels: {
+          teams: {
+            enabled: true,
+            accounts: {
+              default: { appId: 'a', allowFrom: ['29:abc'], dmPolicy: 'open' },
+            },
+          },
+          discord: {
+            enabled: true,
+            accounts: {
+              default: { botToken: 'dc-tok', allowFrom: ['user-1'] },
+            },
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect((config.channels.teams.accounts?.default as any).allowFrom).toEqual(['29:abc']);
+    expect((config.channels.teams.accounts?.default as any).dmPolicy).toBe('open');
+    expect((config.channels.discord.accounts?.default as any).allowFrom).toEqual(['user-1']);
+  });
+
+  it('roundtrips v2 account fields through saveConfig (no field drop)', () => {
+    const config = loadConfig();
+    config.channels.telegram = {
+      enabled: true,
+      accounts: {
+        personal: {
+          botToken: 'tok',
+          dmPolicy: 'pairing',
+          allowFrom: ['8731187021'],
+          groupPolicy: 'allowlist',
+          groups: { '-1001crew': { allowFrom: ['8731187021'] } },
+        },
+      },
+    };
+    saveConfig(config);
+    const reloaded = loadConfig();
+    const acc = reloaded.channels.telegram.accounts?.personal as any;
+    expect(acc.dmPolicy).toBe('pairing');
+    expect(acc.allowFrom).toEqual(['8731187021']);
+    expect(acc.groupPolicy).toBe('allowlist');
+    expect(acc.groups['-1001crew'].allowFrom).toEqual(['8731187021']);
   });
 });
 
@@ -527,7 +616,7 @@ describe('config-loader / chat numeric ids', () => {
     expect(() => loadConfig()).not.toThrow();
   });
 
-  it('findExtraMainChats flags multi-isMain *groups* when isGroup info is given', () => {
+  it('findExtraMainChats stub returns [] (isMain invariant retired 2026-05-16)', () => {
     fs.writeFileSync(
       path.join(tmpDir, 'nanoclaw.json'),
       JSON.stringify({
@@ -544,7 +633,7 @@ describe('config-loader / chat numeric ids', () => {
     );
     const config = loadConfig();
     const isGroupByJid = { 'tg:g1': true, 'tg:g2': true };
-    expect(findExtraMainChats(config, isGroupByJid)).toEqual(['tg:g1', 'tg:g2']);
+    expect(findExtraMainChats(config, isGroupByJid)).toEqual([]);
   });
 
   it('findExtraMainChats does NOT flag multi-isMain DMs', () => {
@@ -700,7 +789,7 @@ describe('config migration v4→v5: TUI chat consolidation', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(8);
+    expect(config.configVersion).toBe(9);
     expect(config.chats['tui:1']).toBeUndefined();
     expect(config.chats['tui:2']).toBeUndefined();
     expect(config.chats['tui:3']).toBeUndefined();
@@ -720,7 +809,7 @@ describe('config migration v4→v5: TUI chat consolidation', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(8);
+    expect(config.configVersion).toBe(9);
     expect(config.chats['tui:default']).toBeUndefined();
     expect(config.chats['tg:999']).toBeDefined();
   });
@@ -771,7 +860,7 @@ describe('config migration v5→v6: plugins block seed', () => {
   it('seeds default marketplaces and empty enabledPlugins[] when missing', () => {
     fs.writeFileSync(path.join(tmpDir, 'nanoclaw.json'), JSON.stringify({ configVersion: 5 }));
     const config = loadConfig();
-    expect(config.configVersion).toBe(8);
+    expect(config.configVersion).toBe(9);
     expect(config.plugins).toBeDefined();
     expect(config.plugins?.enabledPlugins).toEqual([]);
     expect(config.plugins?.extraKnownMarketplaces).toEqual([
@@ -800,7 +889,7 @@ describe('config migration v5→v6: plugins block seed', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(8);
+    expect(config.configVersion).toBe(9);
     // v8 renamed enabled → enabledPlugins
     expect(config.plugins?.enabledPlugins).toHaveLength(1);
     expect(config.plugins?.enabledPlugins?.[0].name).toBe('workiq');
@@ -854,7 +943,7 @@ describe('config migration v5→v6: plugins block seed', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(8);
+    expect(config.configVersion).toBe(9);
     expect(Object.keys(config.chats)).toHaveLength(0);
   });
 
@@ -874,10 +963,39 @@ describe('config migration v5→v6: plugins block seed', () => {
       }),
     );
     const config = loadConfig();
-    expect(config.configVersion).toBe(8);
+    expect(config.configVersion).toBe(9);
     expect(config.chats['tui:default']).toBeUndefined();
     expect(config.chats['telegram:12345']).toBeDefined();
     expect(config.chats['discord:67890']).toBeDefined();
+  });
+
+  it('v9 migration: drops channels.tui block and dedupes telegram botToken', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'nanoclaw.json'),
+      JSON.stringify({
+        configVersion: 8,
+        channels: {
+          telegram: {
+            enabled: true,
+            botToken: '${TELEGRAM_BOT_TOKEN}',
+            accounts: { default: { botToken: '${TELEGRAM_BOT_TOKEN}', allowFrom: ['1'] } },
+          },
+          tui: {
+            enabled: false,
+            accounts: { default: { allowFrom: ['default'] } },
+            roleBindings: { default: 'owner' },
+          },
+        },
+      }),
+    );
+    const config = loadConfig();
+    expect(config.configVersion).toBe(9);
+    // tui block fully removed
+    expect((config.channels as Record<string, unknown>).tui).toBeUndefined();
+    // top-level telegram.botToken removed (duplicate of accounts.default.botToken)
+    expect(config.channels.telegram?.botToken).toBeUndefined();
+    // accounts.default.botToken preserved
+    expect(config.channels.telegram?.accounts?.default?.botToken).toBe('${TELEGRAM_BOT_TOKEN}');
   });
 });
 
@@ -949,5 +1067,52 @@ describe('getEnabledPlugins — bare-string entry normalization (kenan repro 202
         plugins: { enabled: [{ name: 'old', source: 'a/b' }] as any },
       }),
     ).toEqual([{ name: 'old', source: 'a/b' }]);
+  });
+});
+
+describe('getDefaultAgent — list[].default resolution (TUI consistency)', () => {
+  const baseDefaults = {
+    provider: 'github-copilot',
+    model: 'claude-sonnet-4',
+    name: 'Andy',
+    triggerWord: '@Andy',
+    hasOwnNumber: false,
+    mode: 'host' as const,
+  };
+
+  it('returns agents.defaults when list is empty', () => {
+    const cfg = { agents: { defaults: baseDefaults, list: [] } } as any;
+    expect(getDefaultAgent(cfg).model).toBe('claude-sonnet-4');
+  });
+
+  it('returns list[0] merged on defaults when no entry marked default', () => {
+    const cfg = {
+      agents: {
+        defaults: baseDefaults,
+        list: [
+          { id: 'a', model: 'claude-sonnet-4.6', name: 'A' },
+          { id: 'b', model: 'gpt-5' },
+        ],
+      },
+    } as any;
+    const got = getDefaultAgent(cfg);
+    expect(got.id).toBe('a');
+    expect(got.model).toBe('claude-sonnet-4.6');
+    expect(got.triggerWord).toBe('@Andy'); // inherited from defaults
+  });
+
+  it('honors agents.list[].default=true over list[0]', () => {
+    const cfg = {
+      agents: {
+        defaults: baseDefaults,
+        list: [
+          { id: 'first', model: 'claude-sonnet-4.6', name: 'First' },
+          { id: 'starred', model: 'gpt-5', name: 'Starred', default: true },
+        ],
+      },
+    } as any;
+    const got = getDefaultAgent(cfg);
+    expect(got.id).toBe('starred');
+    expect(got.model).toBe('gpt-5');
   });
 });

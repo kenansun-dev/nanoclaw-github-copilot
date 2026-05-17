@@ -35,16 +35,12 @@ function makeDeps(overrides: Partial<V2WiringDeps> = {}): V2WiringDeps {
 
 function makeLoaders(
   opts: {
-    setAccessGate?: ReturnType<typeof vi.fn>;
     installAbortFork?: ReturnType<typeof vi.fn>;
     installRegisteredGroupsFork?: ReturnType<typeof vi.fn>;
     loadModulesBarrel?: ReturnType<typeof vi.fn>;
-    makeSenderAllowlistGate?: ReturnType<typeof vi.fn>;
     throwOn?: keyof V2WiringLoaders;
   } = {},
 ) {
-  const setAccessGate = opts.setAccessGate ?? vi.fn();
-  const makeSenderAllowlistGate = opts.makeSenderAllowlistGate ?? vi.fn(() => () => ({ allowed: true }));
   const installAbortFork = opts.installAbortFork ?? vi.fn();
   const installRegisteredGroupsFork = opts.installRegisteredGroupsFork ?? vi.fn();
   const loadModulesBarrel = opts.loadModulesBarrel ?? vi.fn(async () => ({}));
@@ -57,10 +53,6 @@ function makeLoaders(
       return fn();
     };
   const loaders: V2WiringLoaders = {
-    loadRouter: wrap('loadRouter', async () => ({ setAccessGate })),
-    loadSenderAllowlist: wrap('loadSenderAllowlist', async () => ({
-      makeSenderAllowlistGate,
-    })),
     loadAbortFork: wrap('loadAbortFork', async () => ({ installAbortFork })),
     loadRegisteredGroupsFork: wrap('loadRegisteredGroupsFork', async () => ({ installRegisteredGroupsFork })),
     loadModulesBarrel: wrap('loadModulesBarrel', loadModulesBarrel),
@@ -68,8 +60,6 @@ function makeLoaders(
   return {
     loaders,
     spies: {
-      setAccessGate,
-      makeSenderAllowlistGate,
       installAbortFork,
       installRegisteredGroupsFork,
       loadModulesBarrel,
@@ -79,52 +69,56 @@ function makeLoaders(
 }
 
 describe('installV2DispatcherHooks', () => {
-  it.each(['undefined', '0', '', 'foo'])('mode=%s → disabled, no loaders called', async (modeKey) => {
-    const mode = modeKey === 'undefined' ? undefined : modeKey;
+  // #49 step 9.5: v2 is the DEFAULT. Only '0' / 'legacy' opt out.
+  it.each(['0', 'legacy'])('mode=%s → disabled, no loaders called', async (mode) => {
     const deps = makeDeps();
     const { loaders, spies, calls } = makeLoaders();
     const out = await installV2DispatcherHooks(mode, deps, loaders);
     expect(out).toEqual({ kind: 'disabled', mode });
     expect(calls).toEqual([]);
-    expect(spies.setAccessGate).not.toHaveBeenCalled();
     expect(spies.installAbortFork).not.toHaveBeenCalled();
     expect(spies.installRegisteredGroupsFork).not.toHaveBeenCalled();
     expect(deps.logger.info).not.toHaveBeenCalled();
   });
 
-  it.each(['1', '2'] as const)('mode=%s → installed, all 3 hooks fire in documented order', async (mode) => {
+  it('default (env unset) installs v2 hooks (regression: v2-default)', async () => {
+    const deps = makeDeps();
+    const { loaders, spies, calls } = makeLoaders();
+    const out = await installV2DispatcherHooks(undefined, deps, loaders);
+    expect(out.kind).toBe('installed');
+    if (out.kind === 'installed') {
+      expect(out.mode).toBe('1');
+      expect(out.shadow).toBe(false);
+    }
+    expect(calls).toEqual(['loadAbortFork', 'loadRegisteredGroupsFork', 'loadModulesBarrel']);
+    expect(spies.installAbortFork).toHaveBeenCalledTimes(1);
+    expect(spies.installRegisteredGroupsFork).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['1', '2', '', 'foo'] as const)('mode=%s → installed (v2 default path)', async (mode) => {
     const deps = makeDeps();
     const { loaders, spies, calls } = makeLoaders();
     const out = await installV2DispatcherHooks(mode, deps, loaders);
 
+    const expectedMode = mode === '2' ? '2' : '1';
     expect(out).toEqual({
       kind: 'installed',
-      mode,
-      shadow: mode === '2',
-      gates: ['sender-allowlist'],
+      mode: expectedMode,
+      shadow: expectedMode === '2',
+      gates: ['upstream-permissions'],
       abortHandler: 'fork',
       groupResolver: 'registered-groups-extensions',
     });
 
-    // Loaders called in declared order: router → allowlist → abort →
-    // registered-groups → modules barrel last (per
-    // docs/v2-migration-inventory.md "Side-effect import order").
-    expect(calls).toEqual([
-      'loadRouter',
-      'loadSenderAllowlist',
-      'loadAbortFork',
-      'loadRegisteredGroupsFork',
-      'loadModulesBarrel',
-    ]);
+    // Loaders called in declared order: abort → registered-groups →
+    // modules barrel last (per docs/v2-migration-inventory.md
+    // "Side-effect import order"). The barrel registers the upstream
+    // permissions access gate as a side effect of import.
+    expect(calls).toEqual(['loadAbortFork', 'loadRegisteredGroupsFork', 'loadModulesBarrel']);
 
     // Each install*() called exactly once.
-    expect(spies.setAccessGate).toHaveBeenCalledTimes(1);
     expect(spies.installAbortFork).toHaveBeenCalledTimes(1);
     expect(spies.installRegisteredGroupsFork).toHaveBeenCalledTimes(1);
-
-    // setAccessGate received the gate produced by makeSenderAllowlistGate.
-    const gateArg = spies.setAccessGate.mock.calls[0][0];
-    expect(typeof gateArg).toBe('function');
 
     // installAbortFork received the deps we passed in (not a closure
     // over a stale value).
@@ -137,14 +131,14 @@ describe('installV2DispatcherHooks', () => {
     const [logMeta, logMsg] = deps.logger.info.mock.calls[0];
     expect(logMeta).toEqual(
       expect.objectContaining({
-        gates: ['sender-allowlist'],
+        gates: ['upstream-permissions'],
         abortHandler: 'fork',
         groupResolver: 'registered-groups-extensions',
-        mode,
-        shadow: mode === '2',
+        mode: expectedMode,
+        shadow: expectedMode === '2',
       }),
     );
-    expect(logMsg).toContain('NANOCLAW_V2_DISPATCHER=' + mode);
+    expect(logMsg).toContain('NANOCLAW_V2_DISPATCHER=' + (mode || 'unset'));
   });
 
   it('shadow flag is true iff mode is "2" (regression: order matters)', async () => {
@@ -178,7 +172,6 @@ describe('installV2DispatcherHooks', () => {
     });
     const out = await installV2DispatcherHooks('2', deps, loaders);
     expect(out.kind).toBe('failed');
-    expect(spies.setAccessGate).not.toHaveBeenCalled();
     expect(spies.installAbortFork).not.toHaveBeenCalled();
     expect(spies.installRegisteredGroupsFork).not.toHaveBeenCalled();
   });

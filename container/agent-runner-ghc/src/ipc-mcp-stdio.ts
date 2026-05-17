@@ -22,7 +22,9 @@ const RESPONSES_DIR = path.join(IPC_DIR, 'responses');
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
-const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+// v2-only (PR #49): NANOCLAW_IS_DEFAULT_AGENT is the sole signal.
+// Legacy NANOCLAW_IS_MAIN env was retired alongside the v1 isMain field.
+const isDefaultAgent = process.env.NANOCLAW_IS_DEFAULT_AGENT === '1';
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -171,7 +173,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     }
 
     // Non-main groups can only schedule for themselves
-    const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
+    const targetJid = isDefaultAgent && args.target_group_jid ? args.target_group_jid : chatJid;
 
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -211,7 +213,7 @@ server.tool(
 
       const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
 
-      const tasks = isMain ? allTasks : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
+      const tasks = isDefaultAgent ? allTasks : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
 
       if (tasks.length === 0) {
         return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
@@ -251,7 +253,7 @@ server.tool(
       type: 'pause_task',
       taskId: args.task_id,
       groupFolder,
-      isMain,
+      isDefaultAgent,
       timestamp: new Date().toISOString(),
     };
 
@@ -270,7 +272,7 @@ server.tool(
       type: 'resume_task',
       taskId: args.task_id,
       groupFolder,
-      isMain,
+      isDefaultAgent,
       timestamp: new Date().toISOString(),
     };
 
@@ -289,7 +291,7 @@ server.tool(
       type: 'cancel_task',
       taskId: args.task_id,
       groupFolder,
-      isMain,
+      isDefaultAgent,
       timestamp: new Date().toISOString(),
     };
 
@@ -336,7 +338,7 @@ server.tool(
       type: 'update_task',
       taskId: args.task_id,
       groupFolder,
-      isMain: String(isMain),
+      isDefaultAgent: String(isDefaultAgent),
       timestamp: new Date().toISOString(),
     };
     if (args.prompt !== undefined) data.prompt = args.prompt;
@@ -363,7 +365,7 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
   },
   async (args) => {
-    if (!isMain) {
+    if (!isDefaultAgent) {
       return {
         content: [{ type: 'text' as const, text: 'Only the main group can register new groups.' }],
         isError: true,
@@ -457,7 +459,7 @@ server.tool(
   },
   async (args) => {
     // Only main group can use control commands
-    if (!isMain) {
+    if (!isDefaultAgent) {
       return {
         content: [
           {

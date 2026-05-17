@@ -10,12 +10,30 @@ import { migration010 } from './010-engage-modes.js';
 import { migration011 } from './011-pending-sender-approvals.js';
 import { migration012 } from './012-channel-registration.js';
 import { migration013 } from './013-approval-render-metadata.js';
+import { migration014 } from './014-container-configs.js';
+import { migration015 } from './015-cli-scope.js';
+import { migration105ForkV2Schema } from './105-fork-v2-schema.js';
+import { migration106PendingPairing } from './106-pending-pairing.js';
+import { migration107AgentGroupsArchived } from './107-agent-groups-archived.js';
+import { migration108UserRolesDedup } from './108-user-roles-dedup.js';
 import { moduleApprovalsPendingApprovals } from './module-approvals-pending-approvals.js';
 import { moduleApprovalsTitleOptions } from './module-approvals-title-options.js';
+import { prepareForV2Migrations } from '../v2-boot-guard.js';
 
 export interface Migration {
   version: number;
   name: string;
+  /**
+   * If true, the runner toggles `PRAGMA foreign_keys = OFF` **before** the
+   * implicit migration transaction (and restores it after). Required for
+   * any migration that does a table rebuild on a table with FK references,
+   * because `PRAGMA foreign_keys` is silently a no-op inside a transaction
+   * (see https://www.sqlite.org/pragma.html#pragma_foreign_keys).
+   *
+   * Migration 011 documents the historical incident; migration 105 is the
+   * first to use this flag.
+   */
+  requiresForeignKeysOff?: boolean;
   up: (db: Database.Database) => void;
 }
 
@@ -31,9 +49,20 @@ const migrations: Migration[] = [
   migration011,
   migration012,
   migration013,
+  migration014,
+  migration015,
+  migration105ForkV2Schema,
+  migration106PendingPairing,
+  migration107AgentGroupsArchived,
+  migration108UserRolesDedup,
 ];
 
-export function runMigrations(db: Database.Database): void {
+export function runMigrations(db: Database.Database, dbPath: string = ''): void {
+  // Defuse legacy `sessions` table BEFORE migration 001 runs `CREATE TABLE
+  // sessions` (without IF NOT EXISTS). No-op on fresh, in-memory, or
+  // already-migrated DBs. See src/db/v2-boot-guard.ts for the full rationale.
+  prepareForV2Migrations(db, dbPath);
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_version (
       version INTEGER PRIMARY KEY,
@@ -58,16 +87,26 @@ export function runMigrations(db: Database.Database): void {
   log.info('Running migrations', { count: pending.length });
 
   for (const m of pending) {
-    db.transaction(() => {
-      m.up(db);
-      const next = (db.prepare('SELECT COALESCE(MAX(version), 0) + 1 AS v FROM schema_version').get() as { v: number })
-        .v;
-      db.prepare('INSERT INTO schema_version (version, name, applied) VALUES (?, ?, ?)').run(
-        next,
-        m.name,
-        new Date().toISOString(),
-      );
-    })();
+    // PRAGMA foreign_keys must be toggled OUTSIDE the transaction; inside
+    // it is silently ignored by SQLite. Migrations that rebuild tables
+    // holding FK references must opt in via `requiresForeignKeysOff`.
+    const fkBefore = m.requiresForeignKeysOff ? (db.pragma('foreign_keys', { simple: true }) as 0 | 1) : 0;
+    if (m.requiresForeignKeysOff && fkBefore) db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        m.up(db);
+        const next = (
+          db.prepare('SELECT COALESCE(MAX(version), 0) + 1 AS v FROM schema_version').get() as { v: number }
+        ).v;
+        db.prepare('INSERT INTO schema_version (version, name, applied) VALUES (?, ?, ?)').run(
+          next,
+          m.name,
+          new Date().toISOString(),
+        );
+      })();
+    } finally {
+      if (m.requiresForeignKeysOff && fkBefore) db.pragma('foreign_keys = ON');
+    }
     log.info('Migration applied', { name: m.name });
   }
 }
