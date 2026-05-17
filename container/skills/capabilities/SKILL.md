@@ -36,6 +36,7 @@ echo "Working dir: $(pwd)"
 ```
 
 On Windows (PowerShell), use:
+
 ```powershell
 echo "OS: Windows $([System.Environment]::OSVersion.Version)"
 echo "Shell: PowerShell $($PSVersionTable.PSVersion)"
@@ -66,6 +67,7 @@ done
 ## 3. Available tools
 
 You always have access to:
+
 - **Core**: Bash, Read, Write, Edit, Glob, Grep
 - **Web** (if GitHub MCP enabled): WebSearch, WebFetch
 - **NanoClaw MCP**: send_message, send_file, schedule_task, list_tasks, react, register_group, pdf-read_pdf
@@ -73,16 +75,23 @@ You always have access to:
 
 ## 4. Slash commands
 
-| Command | Description |
-|---------|-------------|
-| `/think [level]` | Set reasoning effort |
-| `/reasoning [on\|off]` | Show/hide thinking |
-| `/new` | Reset session |
-| `/status` | Health check |
-| `/capabilities` | This report |
-| `/tasks` | List scheduled tasks |
-| `/wiki [topic]` | Knowledge base |
-| `/help` | All commands |
+Source of truth: `src/slash-commands.ts` (`COMMANDS` array). Run `/help` in chat
+for the live auto-generated list. Current snapshot:
+
+| Command                                  | Description                            |
+| ---------------------------------------- | -------------------------------------- |
+| `/think [off\|low\|medium\|high\|xhigh]` | Set reasoning effort                   |
+| `/reasoning [on\|off\|flash]`            | Show/hide/flash thinking               |
+| `/new` (alias `/reset`)                  | Reset session                          |
+| `/status`                                | Health check, auth, models (file-only) |
+| `/capabilities`                          | This report                            |
+| `/tasks`                                 | List scheduled tasks                   |
+| `/wiki [topic]`                          | Knowledge base                         |
+| `/model [id] [--default]`                | Show/set active model                  |
+| `/models`                                | List provider model catalog            |
+| `/mcp`                                   | List configured MCP servers            |
+| `/plugin [...]`                          | Manage plugins                         |
+| `/help`                                  | All commands (auto-generated)          |
 
 ## 5. Output format
 

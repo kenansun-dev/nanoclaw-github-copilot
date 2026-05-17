@@ -101,6 +101,23 @@ describe('normalizeSlashInput', () => {
   it('returns empty for non-slash text after normalization', () => {
     expect(normalizeSlashInput('hello')).toBe('hello');
   });
+
+  // Regression: 2026-05-17 kenan. `^@\S+\s*` greedily ate the slash when
+  // the mention had no trailing space (`@bot/help` → ''). New charset-bounded
+  // pattern stops at the first non-username character.
+  it('strips leading @mention even when no space precedes the slash (no-space bug)', () => {
+    expect(normalizeSlashInput('@bot/help')).toBe('/help');
+    expect(normalizeSlashInput('@bot_user/status')).toBe('/status');
+    expect(normalizeSlashInput('@nanoclaw_bot/new')).toBe('/new');
+  });
+
+  it('strips leading @mention when separator is colon', () => {
+    expect(normalizeSlashInput('@bot:/help')).toBe(':/help');
+  });
+
+  it('handles no-space mention combined with trailing bot suffix', () => {
+    expect(normalizeSlashInput('@MyBot/help@otherbot')).toBe('/help');
+  });
 });
 
 // ─── handleSlashCommand ──────────────────────────────────────────────────────
@@ -523,11 +540,11 @@ describe('COMMANDS registry', () => {
     expect(names).toContain('models');
   });
 
-  it('includes pair-approve, pair-pending, and pair-revoke (owner pairing surface)', () => {
+  it('does NOT include pair-* (removed 2026-05-17 — owner pairing is CLI-only)', () => {
     const names = COMMANDS.map((c) => c.name);
-    expect(names).toContain('pair-approve');
-    expect(names).toContain('pair-pending');
-    expect(names).toContain('pair-revoke');
+    expect(names).not.toContain('pair-approve');
+    expect(names).not.toContain('pair-pending');
+    expect(names).not.toContain('pair-revoke');
   });
 });
 
