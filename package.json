@@ -54,7 +54,8 @@
     "node": ">=20"
   },
   "bin": {
-    "nanoclaw": "./bin/nanoclaw.js"
+    "nanoclaw": "./bin/nanoclaw.js",
+    "ncl": "./bin/ncl.js"
   },
   "repository": {
     "type": "git",
