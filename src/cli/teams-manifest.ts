@@ -10,6 +10,7 @@ import { createWriteStream } from 'fs';
 import { fileURLToPath } from 'url';
 import { deflateSync } from 'zlib';
 import { paths } from '../workspace.js';
+import { COMMANDS } from '../slash-commands.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -205,35 +206,24 @@ export async function setupManifest(appId: string, botName: string): Promise<str
         scopes: ['personal', 'team', 'groupChat'],
         supportsFiles: true,
         isNotificationOnly: false,
+        // Single source of truth (kenan 2026-05-18): derive command list
+        // from the canonical `COMMANDS` registry + the two Telegram-style
+        // utility commands (chatid/ping) that live as bot-side handlers
+        // (mirror of `registerTelegramCommands` in src/slash-commands.ts).
+        // Teams `commandList.commands[].description` max 128 chars.
         commandLists: [
           {
             scopes: ['personal'],
             commands: [
-              {
-                title: '/chatid',
-                description: 'Get this chat registration ID',
-              },
+              { title: '/chatid', description: 'Get this chat registration ID' },
               { title: '/ping', description: 'Check if bot is online' },
-              { title: '/new', description: 'Start a new conversation' },
-              { title: '/status', description: 'Show system status' },
-              {
-                title: '/think',
-                description: 'Set thinking level (low/medium/high/xhigh)',
-              },
-              {
-                title: '/reasoning',
-                description: 'Show or hide reasoning output (on/off)',
-              },
-              { title: '/tasks', description: 'List scheduled tasks' },
-              {
-                title: '/capabilities',
-                description: 'Show available tools and skills',
-              },
-              { title: '/help', description: 'Show available commands' },
-              {
-                title: '/wiki',
-                description: 'Knowledge base — ingest, query, or maintain',
-              },
+              ...COMMANDS.map((c) => {
+                const desc = c.description + (c.args ? ` (${c.args})` : '');
+                return {
+                  title: `/${c.name}`,
+                  description: desc.length > 128 ? desc.slice(0, 125) + '…' : desc,
+                };
+              }),
             ],
           },
         ],
