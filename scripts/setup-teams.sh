@@ -264,10 +264,15 @@ cat > "$MANIFEST_DIR/manifest.json" << EOFMANIFEST
         { "title": "ping", "description": "Check if bot is online" },
         { "title": "new", "description": "Start a new conversation" },
         { "title": "status", "description": "Show system status" },
-        { "title": "think", "description": "Set thinking level (low/medium/high/xhigh)" },
+        { "title": "think", "description": "Set thinking level (off/low/medium/high/xhigh)" },
+        { "title": "reasoning", "description": "Show or hide reasoning (on/off/flash)" },
         { "title": "tasks", "description": "List scheduled tasks" },
         { "title": "capabilities", "description": "Show available tools and skills" },
         { "title": "wiki", "description": "Knowledge base — ingest, query, or maintain" },
+        { "title": "model", "description": "Show or set active model" },
+        { "title": "models", "description": "List models from active provider" },
+        { "title": "plugin", "description": "Manage plugins (list/install/remove/info/marketplace/reload)" },
+        { "title": "mcp", "description": "List configured MCP servers" },
         { "title": "help", "description": "Show available commands" }
       ]
     }]
