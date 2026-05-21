@@ -136,8 +136,11 @@ async function record(name, fn) {
 
 async function case1_shortChunk(token) {
   // FINDING 1: bootstrap informative with long thinking, then send a
-  // streaming chunk whose text is SHORTER than the informative.
-  // If server rejects, phase B core mechanism is dead.
+  // streaming chunk whose text is SHORTER than the informative
+  // (and not a prefix). Then send a follow-up streaming chunk that
+  // EXTENDS the short reset to confirm the stream survives the reset
+  // and resumes normal cumulative growth. If either is rejected,
+  // phase B's commitAnswer() reset mechanism is dead.
   const longThinking = 'Thinking about your question. '.repeat(8); // ~240 chars
   const boot = await postActivity(
     token,
@@ -158,12 +161,32 @@ async function case1_shortChunk(token) {
     }),
   );
   await sleep(1100);
+  // case1b (Rpi5 nit): after reset, can we extend with a longer
+  // streaming chunk? This is what actual answer streaming would do.
+  const continuedAnswer = await postActivity(
+    token,
+    CONV_1_1,
+    mkActivity({
+      type: 'typing',
+      text: 'A long answer continues here with more tokens.',
+      streamType: 'streaming',
+      sequence: 3,
+      streamId,
+    }),
+  );
+  await sleep(1100);
   const final = await postActivity(
     token,
     CONV_1_1,
-    mkActivity({ type: 'message', text: 'A.', streamType: 'final', sequence: 3, streamId }),
+    mkActivity({
+      type: 'message',
+      text: 'A long answer continues here with more tokens.',
+      streamType: 'final',
+      sequence: 4,
+      streamId,
+    }),
   );
-  return { boot, shortAnswer, final };
+  return { boot, shortAnswer, continuedAnswer, final };
 }
 
 async function case2_dismissEmpty(token) {
@@ -231,7 +254,7 @@ async function case4_groupChannel(token) {
   console.log('\n===== SPIKE RESULTS =====');
   console.log(JSON.stringify(results, null, 2));
   console.log('\nPlease ALSO paste Teams client (Windows + Web) observations into the PR:');
-  console.log('  • case1: did the bubble briefly show "Thinking about..." and then change to "A." cleanly, or did it duplicate / leave the thinking text?');
+  console.log('  • case1: did the bubble briefly show "Thinking about..." → change to "A." → grow to "A long answer continues..." cleanly in ONE bubble, or did it duplicate / leave thinking text / split into multiple bubbles?');
   console.log('  • case2: did the "Thinking…" bubble disappear or leave a blank message?');
   console.log('  • case3: any client-side render glitches at large sizes?');
   console.log('  • case4: did anything appear in the group at all?');
