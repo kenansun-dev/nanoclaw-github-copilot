@@ -1,8 +1,35 @@
 # Teams: native streaming thinking → answer phase (proposal B)
 
-**Status**: draft, awaiting review
+**Status**: ⛔ BLOCKED ON PROTOCOL SPIKE (2026-05-21 23:12 GMT+8)
+
+> Post-push protocol research surfaced 3 MS Bot Framework streaming
+> constraints that may invalidate the core mechanism (`commitAnswer`
+> resetting `_latestText`). See "Protocol verification spike" section
+> below. No implementation work until spike (1)+(2) clear. The design
+> body below is preserved as the design candidate; any later edits
+> must keep this banner until owner clears it.
+
+**Original status**: draft, awaiting review
 **Authors**: Rpi5 Claw (proposal), VM Claw (test matrix + open Q research)
 **Discussion**: Discord #nanoclaw 2026-05-21 (Issues disabled on `kenansun-dev/nanoclaw-github-copilot`; this doc + the PR carry scope/discussion in place of a GH issue)
+
+## Protocol verification spike (REQUIRED before any implementation)
+
+VM Claw post-push doc research surfaced 3 protocol constraints that may invalidate the design below. Before any code change PR opens, a spike must verify:
+
+1. **Short-chunk acceptance**: send `informative(thinking long text)` → send `streaming(short answer text, NOT containing thinking as prefix)` and observe whether the Teams server accepts the chunk or rejects it. If rejected → `commitAnswer()` reset semantics is impossible and B is dead in its current form.
+2. **Group-channel rejection**: confirm streaming protocol returns `BadArgument: streaming api is not enabled` on a group channel even with proper `streaminfo` entities, so the dispatcher can guard with `chat_type === '1:1'` cleanly.
+3. **Informative size**: confirm 1KB / 1000-char limit on informative `text` (already strongly implied by MS doc; spike is mostly a sanity check).
+
+Spike artifact: `scripts/spike-teams-streaming.ts` (VM Claw, separate commit on this branch). Bot Framework REST direct POST, no SDK. Owner runs with real tenant + bot creds; paste raw responses to PR comment.
+
+Decision tree:
+- **Spike passes (1) AND (2)** → proceed with design below, address (3) by capping informative text
+- **Spike fails (1)** → B dead. Fallback options up to owner:
+  - B-alt-1: thinking-prefix concat (thinking + separator + answer all in `_latestText`, never resets)
+  - B-alt-2: two streamMessage sessions in series (risk: kenan-rejected "reedit-no-newmsg" territory)
+  - C revisit: Teams group channel can\'t do streaming thinking anyway by (2), so "no flash thinking on Teams" is partly forced — owner may accept C with this rationale
+
 
 ## Goal
 Teams 上 flash `thinking` 可见，零 regression（不留空 bubble、不发新消息、不多 bubble、不闪烁）。利用 Teams streaming 协议在 **同一个 streamId** 里先渲染 thinking，answer 第一 chunk 到达时 **覆盖** 为 answer。
