@@ -191,6 +191,19 @@ export class TeamsChannel implements Channel {
     certThumbprint?: string,
     certPrivateKeyPath?: string,
   ) {
+    // Fail-fast contract check: `supportsNativeThinking=true` (set above)
+    // requires the TeamsStreamingSession class to actually implement
+    // `appendThinking` and `commitAnswer`. Without this guard, a future
+    // refactor that removes either method would silently degrade flash /
+    // reasoning-on mode at runtime (dispatcher would skip the call and
+    // drop reasoning_delta with no visible error). VM nit on PR #53.
+    const proto = TeamsStreamingSession.prototype as Partial<import('./teams-streaming.js').TeamsStreamingSession>;
+    if (typeof proto.appendThinking !== 'function' || typeof proto.commitAnswer !== 'function') {
+      throw new Error(
+        'TeamsChannel: supportsNativeThinking=true but TeamsStreamingSession is missing appendThinking/commitAnswer. ' +
+          'Either implement them or set supportsNativeThinking=false.',
+      );
+    }
     this.opts = opts;
     this.port = port;
 

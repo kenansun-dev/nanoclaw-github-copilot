@@ -489,6 +489,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // bubbles AFTER the answer was already finalized (kenan TG repro
   // 2026-04-26 00:03: thinking bubble appeared post-answer).
   let turnFinalized = false;
+  // Native reasoning=on extension (PR #53 phase B commit 2): when channel
+  // supportsNativeThinking AND mode === 'on', stream the thinking text
+  // through the same streamHandle as a cumulative `<formatted-thinking>\n\n<answer>`
+  // prefix. Frozen on the first answer chunk so trailing reasoning_delta
+  // doesn't regress the bubble (case (q) from the proposal).
+  let nativeOnThinkingPrefix: string | undefined;
+  let nativeOnThinkingFrozen = false;
   // Thinking message state (separate from answer progressive message)
 
   try {
@@ -561,6 +568,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               flashThinkingDismissed = false;
               lastThinkingRendered = undefined;
               thinkingPrependedThisQuery = false;
+              nativeOnThinkingPrefix = undefined;
+              nativeOnThinkingFrozen = false;
               flashOpeningLock.reset();
               flashEditCoalescer.clear();
               if (streamHandle) {
@@ -582,7 +591,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               if (lastThinkingRendered !== tp.text) {
                 const sendOpts = tp.parseMode ? { parseMode: tp.parseMode } : undefined;
                 if (!streamHandle) {
-                  await traceSetTyping(channel, chatJid, false, 'native-thinking-open');
+                  // Don't toggle typing off here — streamMessage owns the
+                  // typing lifecycle via its informative bootstrap activity
+                  // (Nit 1 from VM review on 3cfd021). Toggling false then
+                  // having the informative chunk re-enable causes a visible
+                  // typing indicator flicker in the Teams client.
                   streamHandle = await channel.streamMessage!(chatJid, sendOpts);
                 }
                 // The appendThinking method is only present when the
@@ -594,6 +607,31 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                   lastThinkingRendered = tp.text;
                 }
               }
+            }
+            return;
+          }
+          // Native thinking path for reasoning=on (single-stream cumulative
+          // prefix `<formatted-thinking>\n\n<answer>`, no commitAnswer here).
+          // Each reasoning_delta updates `nativeOnThinkingPrefix`; the
+          // partial answer branch downstream concatenates it before the
+          // answer text. Frozen on the first answer chunk via
+          // `nativeOnThinkingFrozen` so trailing reasoning_delta after the
+          // answer starts cannot regress the bubble (case (q)).
+          if (
+            thinkingMode === 'on' &&
+            channel.supportsNativeThinking &&
+            channel.streamMessage &&
+            !nativeOnThinkingFrozen
+          ) {
+            const tp = formatThinkingForChannel(result.thinking, chatJid);
+            if (tp) {
+              nativeOnThinkingPrefix = tp.text;
+              // Live-render the thinking text in the streaming bubble.
+              if (!streamHandle) {
+                streamHandle = await channel.streamMessage(chatJid, undefined);
+              }
+              await streamHandle.chunk(tp.text);
+              lastThinkingRendered = tp.text;
             }
             return;
           }
@@ -806,12 +844,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             // that reject mid-stream. We never call sendMessage/editMessage
             // here, so updateActivity races (the partial+final duplicate
             // bug) cannot occur on this path.
-            progressiveText = text;
+            //
+            // reasoning=on extension (PR #53 commit 2): if the channel
+            // supports native thinking AND there's a live thinking prefix,
+            // freeze it (case (q): trailing reasoning_delta after first
+            // answer chunk MUST NOT regress) and prepend so the streamed
+            // bubble shows `<formatted-thinking>\n\n<answer>` cumulatively.
+            let chunkText = text;
+            if (thinkingMode === 'on' && channel.supportsNativeThinking && nativeOnThinkingPrefix) {
+              nativeOnThinkingFrozen = true;
+              chunkText = `${nativeOnThinkingPrefix}\n\n${text}`;
+            }
+            progressiveText = chunkText;
             if (!streamHandle) {
               await traceSetTyping(channel, chatJid, false, 'native-stream-open');
               streamHandle = await channel.streamMessage(chatJid, sendOpts);
             }
-            await streamHandle.chunk(text);
+            await streamHandle.chunk(chunkText);
           } else if (result.partial && channel.editMessage) {
             // Delta/partial: accumulate and edit existing message.
             progressiveText = text; // delta buffer already accumulated in agent-runner
