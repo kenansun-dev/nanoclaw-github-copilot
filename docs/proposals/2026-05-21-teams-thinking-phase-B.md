@@ -1,6 +1,21 @@
 # Teams: native streaming thinking → answer phase (proposal B)
 
-**Status**: ⛔ BLOCKED ON PROTOCOL SPIKE (2026-05-21 23:12 GMT+8)
+**Status**: 🟢 SHIP-AND-VERIFY (2026-05-22 13:50 GMT+8, owner override)
+
+> 2026-05-22 update: kenan reviewed the spike requirement and elected
+> **not to run the protocol spike**. Path forward: ship the design
+> below + the reasoning-on extension (see new section at the bottom),
+> verify hands-on in Teams. Spike script (`scripts/spike-teams-streaming.mjs`)
+> stays in tree for future regression. If hands-on verification surfaces
+> any of the three risks (short-chunk acceptance / group-channel reject /
+> informative size), we revisit. Until then this is the green light to
+> implement.
+>
+> Original phase B scope was flush-only (`reasoning=flash`); today's
+> extension brings `reasoning=on` into the same state machine — one
+> mechanism covers both modes (see "Extension: reasoning=on" section).
+
+**Prior status**: ⛔ BLOCKED ON PROTOCOL SPIKE (2026-05-21 23:12 GMT+8)
 
 > Post-push protocol research surfaced 3 MS Bot Framework streaming
 > constraints that may invalidate the core mechanism (`commitAnswer`
@@ -195,3 +210,73 @@ export interface Channel {
 - Risk: SDK trailing reasoning_delta 还是覆盖了 answer。Mitigation: `appendThinking` 在 phase!=thinking 时 drop+log.debug；testcase (l) 覆盖
 - Risk: Teams 客户端某版本不接受 `text` 在 streaming chunk 间剧烈变化。Mitigation: 实测三平台（Windows/Mac/Web）；kenan signoff before merge
 - Rollback: `supportsNativeThinking` 是 channel cap，关掉它即回到 gate 排除 Teams 的现状（零行为变化）。代码 revert 也可，因新路径全部在 `if (channel.supportsNativeThinking)` 之内
+
+---
+
+## Extension: `reasoning=on` (2026-05-22, VM Claw)
+
+### Scope
+kenan 2026-05-22 proposal 引入三态：`off` / `on` / `flash`。原 phase B 只 cover `flash`。本扩展把 `reasoning=on` 也接到 phase B 同款 `TeamsStreamingSession` 状态机上 — **一套机制 cover 两个 mode**，零新协议、零新状态、零新风险面。
+
+### Behavior contract (`reasoning=on`)
+用户体验：
+- thinking 流式渲染在气泡顶部，作为 markdown 引用块 (italic)：`> _thinking 已出部分_`
+- thinking 下方空一行，答案 stream 在下半段
+- thinking 跟答案**永久共存**（不像 flash 那样答案出现就删 thinking）
+- 整个 turn 全程**单条消息单个气泡**，原地刷新
+
+### Mechanism
+复用 phase B 的 `TeamsStreamingSession`，**不调用 `commitAnswer()`**。phase 保持在 `thinking`，但 dispatcher 用一个新的写入路径：
+
+```
+appendBoth(thinkingBuf, answerBuf) →
+  this._latestText = thinkingBuf ? `> _${thinkingBuf}_\n\n${answerBuf}` : answerBuf
+  schedule chunk
+```
+
+或者更轻一层：dispatcher 自己拼好 `cumulativeText = formatThinkingPrefix(thinking) + answer`，调现有 `streamHandle.chunk(cumulativeText)` 一次。**`appendThinking` / `commitAnswer` 在 reasoning=on 路径下根本不调** — `chunk()` 单方法就够。
+
+采纳后者，理由：
+- API surface 最小（不在 `StreamHandle` interface 加新方法）
+- dispatcher 已经持有 thinkingBuf + answerBuf 两个累积字符串，拼接 trivial
+- Rpi5 实现时只需一行 helper：`const text = thinkingBuf ? formatThinkingPrefix(thinkingBuf) + '\n\n' + answerBuf : answerBuf`
+
+### Why this isn't a protocol risk on top of phase B
+phase B 的 spike 担心的是 "chunk 文本剧烈变化（thinking 整段删掉变 answer）"。reasoning=on 路径下文本**单调追加** (thinking 段只增不删，answer 段只增不删)，跟 ② 现状 Telegram flash thinking 路径一样的 monotone-grow pattern，Teams 客户端没理由拒绝。
+
+这条路径的风险**严格弱于** phase B flush 路径 — 如果 phase B flush 能 ship，reasoning=on 必然 ship 得了。
+
+### Dispatcher gate (`src/index.ts:545`) updated
+```ts
+streamThinking = thinkingMode === 'flash' && (
+  (!!channel.editMessage && !channel.usesNativeStreaming) ||  // legacy (TG)
+  !!channel.supportsNativeThinking                            // phase B (Teams)
+);
+inlineThinking = thinkingMode === 'on' && (
+  // existing prepend path for non-streaming channels
+  ... ||
+  !!channel.supportsNativeThinking                            // new (Teams)
+);
+```
+
+`inlineThinking` + `supportsNativeThinking` 走新分支：
+- 每个 `reasoning_delta`: 累积 thinkingBuf, 调 `streamHandle.chunk(formatThinkingPrefix(thinkingBuf) + '\n\n' + answerBuf)` (answerBuf 此刻为 '')
+- 每个 `answer partial`: 累积 answerBuf, 调 `streamHandle.chunk(formatThinkingPrefix(thinkingBuf) + '\n\n' + answerBuf)`
+- `end(finalAnswer)`: 调 `streamHandle.end(formatThinkingPrefix(thinkingBuf) + '\n\n' + finalAnswer)`
+
+### Test matrix additions (extends a–m)
+
+| #   | Case                                                                                              | Expected                                                                                          |
+| --- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| n   | reasoning=on happy path: thinking → answer 全程拼接                                                | 单气泡，thinking 引用块在上+answer 在下，两段都流式增长，final 留两段                              |
+| o   | reasoning=on thinking 为空（模型没出 reasoning）                                                  | 走纯 answer 路径，不渲染空引用块                                                                  |
+| p   | reasoning=on answer 第一字到达时 thinking 还在 stream                                              | 下一个 chunk 文本 = `> _think 部分_\n\nanswer 部分`，两段在同一气泡里都继续增长                  |
+| q   | reasoning=on 收到 trailing reasoning_delta（answer 已出）                                          | thinkingBuf 继续追加, 下一个 chunk 重发 `> _更长 think_\n\nanswer`（thinking 在上半段继续长）   |
+| r   | reasoning=on cancel                                                                              | 复用 phase B cancel 路径（dispatcher dismiss 现有逻辑）                                          |
+| s   | reasoning=on + 其他 channel (TG/Discord)                                                          | 走旧 prepend 路径，行为不变                                                                       |
+
+### Implementation split (建议两 commit)
+1. **commit 1** — phase B 原 scope: `appendThinking` + `commitAnswer` API + dispatcher flush 分支
+2. **commit 2** — reasoning=on extension: dispatcher gate 加 `inlineThinking` 分支 + thinkingBuf+answerBuf 拼接 helper, 复用 `streamHandle.chunk()`
+
+Review: VM Claw 重点看 dispatcher gate (`src/index.ts:545`), Rpi5 Claw 主推 implementation。
