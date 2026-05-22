@@ -271,7 +271,7 @@ inlineThinking = thinkingMode === 'on' && (
 | n   | reasoning=on happy path: thinking → answer 全程拼接                                                | 单气泡，thinking 引用块在上+answer 在下，两段都流式增长，final 留两段                              |
 | o   | reasoning=on thinking 为空（模型没出 reasoning）                                                  | 走纯 answer 路径，不渲染空引用块                                                                  |
 | p   | reasoning=on answer 第一字到达时 thinking 还在 stream                                              | 下一个 chunk 文本 = `> _think 部分_\n\nanswer 部分`，两段在同一气泡里都继续增长                  |
-| q   | reasoning=on 收到 trailing reasoning_delta（answer 已出）                                          | thinkingBuf 继续追加, 下一个 chunk 重发 `> _更长 think_\n\nanswer`（thinking 在上半段继续长）   |
+| q   | reasoning=on 收到 trailing reasoning_delta（answer 已出）                                          | **Freeze thinkingBuf**：answer 第一字到达后 silently drop trailing reasoning_delta (log.debug)。跟 phase B flush case (l) 同款语义，避免 thinking 引用块在 answer 已渲染后跳变。Rationale: 一致性 > 完整性（Rpi5 review 2026-05-22） |
 | r   | reasoning=on cancel                                                                              | 复用 phase B cancel 路径（dispatcher dismiss 现有逻辑）                                          |
 | s   | reasoning=on + 其他 channel (TG/Discord)                                                          | 走旧 prepend 路径，行为不变                                                                       |
 
