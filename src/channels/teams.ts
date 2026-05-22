@@ -53,6 +53,13 @@ export class TeamsChannel implements Channel {
   // whose `updateActivity` racing produced visible duplicate replies.
   // See src/channels/teams-streaming.ts for the wire-protocol notes.
   usesNativeStreaming = true;
+  // Teams renders thinking → answer natively inside a single live
+  // stream: TeamsStreamingSession.appendThinking() / commitAnswer()
+  // implement the phase machine (see proposal
+  // docs/proposals/2026-05-21-teams-thinking-phase-B.md). Dispatcher
+  // narrows on this flag to route `flash` mode reasoning_delta through
+  // the native path instead of the legacy editMessage(thinkingMsgId).
+  supportsNativeThinking = true;
 
   private adapter: BotFrameworkAdapter;
   private adapterSettings: Record<string, any> = {};

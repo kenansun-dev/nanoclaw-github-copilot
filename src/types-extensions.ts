@@ -145,6 +145,27 @@ export interface StreamHandle {
   cancel(): Promise<void>;
 }
 
+/**
+ * Cap-narrowed extension of `StreamHandle` exposed by channels that set
+ * `Channel.supportsNativeThinking=true`. Not added to `StreamHandle`
+ * itself to keep the base interface minimal (per 2026-05-22 PR #53
+ * design review). Dispatcher narrows via `channel.supportsNativeThinking`
+ * before invoking either method.
+ */
+export interface NativeThinkingStreamHandle extends StreamHandle {
+  /**
+   * Latest cumulative thinking-text snapshot. Implementations must drop
+   * the call once the session has transitioned to answer phase (after
+   * `commitAnswer()`) or ended.
+   */
+  appendThinking(cumulativeText: string): Promise<void>;
+  /**
+   * Flip the session from thinking-phase to answer-phase. Must be
+   * idempotent: calling outside the thinking phase is a no-op.
+   */
+  commitAnswer(): void;
+}
+
 export interface Channel {
   name: string;
   connect(): Promise<void>;
@@ -202,6 +223,20 @@ export interface Channel {
    * Native streaming sidesteps `updateActivity` entirely.
    */
   usesNativeStreaming?: boolean;
+  /**
+   * When true, the channel can render thinking → answer natively inside
+   * a single live stream (e.g. Teams Bot Framework streaming activities
+   * using `commitAnswer()` to reset `_latestText`). Dispatcher routes
+   * `reasoning_delta` in `flash` mode through `StreamHandle.appendThinking`
+   * and calls `StreamHandle.commitAnswer()` once before the first answer
+   * chunk, instead of the legacy editMessage(thinkingMsgId) path.
+   *
+   * Channels that set this MUST implement `streamMessage()` returning a
+   * `StreamHandle` with `appendThinking` and `commitAnswer` populated.
+   *
+   * Proposal: docs/proposals/2026-05-21-teams-thinking-phase-B.md
+   */
+  supportsNativeThinking?: boolean;
   /**
    * Open a native streaming session for `jid`. Required when
    * `usesNativeStreaming` is true; ignored otherwise.

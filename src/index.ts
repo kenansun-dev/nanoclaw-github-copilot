@@ -543,6 +543,60 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             getEffectiveShowThinking(chatJid) ?? getConfig().agents?.defaults?.showThinking,
           );
           const streamThinking = thinkingMode === 'flash' && !!channel.editMessage && !channel.usesNativeStreaming;
+          // Native thinking path (Teams via TeamsStreamingSession): flash
+          // mode streams reasoning_delta through the native StreamHandle
+          // using the appendThinking/commitAnswer phase machine, instead
+          // of the legacy sendMessage(thinkingMsgId) + editMessage path.
+          // Gated by the channel cap so non-Teams channels are unaffected.
+          // See proposal docs/proposals/2026-05-21-teams-thinking-phase-B.md
+          const nativeThinking =
+            thinkingMode === 'flash' && !!channel.supportsNativeThinking && !!channel.streamMessage;
+          if (nativeThinking && !flashThinkingDismissed) {
+            // Boundary handling parallels the legacy flash branch: a new
+            // turn must clear thinkingMsgId/lastThinkingRendered AND
+            // cancel any leftover streamHandle so a fresh stream opens.
+            if (queryBoundaryPendingThinking) {
+              queryBoundaryPendingThinking = false;
+              thinkingMsgId = undefined;
+              flashThinkingDismissed = false;
+              lastThinkingRendered = undefined;
+              thinkingPrependedThisQuery = false;
+              flashOpeningLock.reset();
+              flashEditCoalescer.clear();
+              if (streamHandle) {
+                try {
+                  await streamHandle.cancel();
+                } catch (err) {
+                  logger.warn(
+                    { chatJid, err: (err as Error).message },
+                    'native-thinking: streamHandle.cancel during turn boundary failed (non-fatal)',
+                  );
+                }
+                streamHandle = undefined;
+              }
+            }
+            const tp = formatThinkingForFlash(result.thinking, chatJid);
+            if (tp) {
+              // Avoid no-op repeats: TeamsStreamingSession dedupes via
+              // _lastSent, but skipping early saves a sender allocation.
+              if (lastThinkingRendered !== tp.text) {
+                const sendOpts = tp.parseMode ? { parseMode: tp.parseMode } : undefined;
+                if (!streamHandle) {
+                  await traceSetTyping(channel, chatJid, false, 'native-thinking-open');
+                  streamHandle = await channel.streamMessage!(chatJid, sendOpts);
+                }
+                // The appendThinking method is only present when the
+                // channel sets supportsNativeThinking; gate confirmed
+                // above so the cast is safe.
+                const handle = streamHandle as import('./types-extensions.js').NativeThinkingStreamHandle;
+                if (handle.appendThinking) {
+                  await handle.appendThinking(tp.text);
+                  lastThinkingRendered = tp.text;
+                }
+              }
+            }
+            return;
+          }
           // In flash mode, once we've dismissed the thinking preview on the
           // first answer chunk, ignore trailing reasoning_delta events for
           // the rest of the turn (don't re-open it).
@@ -683,6 +737,27 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               result.result = merged.resultText;
               thinkingPrependedThisQuery = true;
             }
+          }
+          // Native thinking dismiss (Teams flash): the active streamHandle
+          // is in `thinking` phase from earlier reasoning_delta events. Flip
+          // it to `answer` phase via commitAnswer() so the next chunk()
+          // (right below in the result.partial branch) overwrites the
+          // thinking text in the same client-side bubble. Idempotent on
+          // repeat calls, so we don't gate on flashThinkingDismissed here —
+          // commitAnswer() itself no-ops once already flipped.
+          if (!flashThinkingDismissed && thinkingMode === 'flash' && channel.supportsNativeThinking && streamHandle) {
+            const handle = streamHandle as import('./types-extensions.js').NativeThinkingStreamHandle;
+            if (handle.commitAnswer) {
+              try {
+                handle.commitAnswer();
+              } catch (err) {
+                logger.warn(
+                  { chatJid, err: (err as Error).message },
+                  'native-thinking: commitAnswer failed (non-fatal)',
+                );
+              }
+            }
+            flashThinkingDismissed = true;
           }
           if (thinkingMsgId && thinkingMode === 'flash' && !flashThinkingDismissed) {
             // Drain coalescer first: a pending edit on this msgId would
