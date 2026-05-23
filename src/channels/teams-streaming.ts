@@ -64,7 +64,7 @@
 
 import type { TurnContext, ConversationReference } from 'botbuilder';
 import { logger } from '../log-extensions.js';
-import type { StreamHandle } from '../types-extensions.js';
+import type { NativeThinkingStreamHandle } from '../types-extensions.js';
 
 // --- Types: minimal, deliberately narrow to ease unit testing ----------
 
@@ -109,7 +109,7 @@ export interface TeamsStreamingOpts {
  * Lifecycle: open → chunk(text) × N → end(text) | cancel().
  * `end` and `cancel` are idempotent.
  */
-export class TeamsStreamingSession implements StreamHandle {
+export class TeamsStreamingSession implements NativeThinkingStreamHandle {
   private _streamId: string | undefined;
   /**
    * True once the bootstrap (`streamType: 'informative'`) activity has
@@ -120,6 +120,30 @@ export class TeamsStreamingSession implements StreamHandle {
    * ("You can set only one informative message").
    */
   private _bootstrapSent = false;
+  /**
+   * Phase machine for native thinking support (PR #53 phase B).
+   *
+   *   thinking  -- appendThinking() updates _latestText; chunk() also allowed
+   *     |          (dispatcher may call chunk() with the cumulative thinking
+   *     |           snapshot in `reasoning=on` mode; we don't distinguish).
+   *     | commitAnswer()   sync flip; resets _latestText/_lastSent so the
+   *     v                  next outbound `streaming` chunk overwrites the
+   *   answer    -- chunk() updates _latestText; appendThinking() is dropped
+   *     |          (case `l` in the proposal: trailing reasoning_delta after
+   *     |           the first answer chunk must NOT regress the bubble).
+   *     | end() | cancel()
+   *     v
+   *   ended     -- everything is a no-op.
+   *
+   * The phase machine is irreversible. `commitAnswer()` from `answer` /
+   * `ended` is a no-op; `appendThinking()` from `answer` / `ended` drops
+   * the call with a debug log.
+   *
+   * Channels that don't set `Channel.supportsNativeThinking` simply never
+   * call appendThinking/commitAnswer, so the phase stays `thinking` for
+   * the whole session and behavior is identical to pre-PR #53.
+   */
+  private _phase: 'thinking' | 'answer' | 'ended' = 'thinking';
   private _nextSequence = 1;
   private _ended = false;
   private _cancelled = false;
@@ -186,9 +210,60 @@ export class TeamsStreamingSession implements StreamHandle {
     return;
   }
 
+  // --- Native thinking phase API (PR #53 phase B) ---------------------
+
+  /**
+   * Update the in-flight thinking-text snapshot. Behaves like `chunk()`
+   * during the `thinking` phase; drops the call (with a debug log) once
+   * the dispatcher has committed to the answer phase. This is the
+   * critical guard for case (l) in the proposal: SDK trailing
+   * `reasoning_delta` events after the first answer chunk must NOT
+   * regress the streaming bubble back to thinking text.
+   */
+  async appendThinking(cumulativeText: string): Promise<void> {
+    if (this._phase !== 'thinking') {
+      this.log.debug(
+        { phase: this._phase, len: cumulativeText.length },
+        'Teams streaming: appendThinking dropped (phase != thinking)',
+      );
+      return;
+    }
+    return this.chunk(cumulativeText);
+  }
+
+  /**
+   * Flip the session from thinking-phase to answer-phase. Resets
+   * `_latestText` / `_lastSent` so the next outbound `streaming` chunk
+   * truly overwrites the previously streamed thinking text in the same
+   * client-side bubble (the `commitAnswer reset _latestText` mechanism
+   * documented in the proposal).
+   *
+   * Idempotent — calling outside the thinking phase is a no-op, so the
+   * dispatcher can safely call it on every answer partial without
+   * worrying about double-flips.
+   *
+   * NOTE: deliberately does NOT enqueue a chunk on its own. The very
+   * next `chunk(answerText)` from the dispatcher is what actually
+   * reaches the wire (with empty `_lastSent` it bypasses the no-op
+   * skip in `_drainLoop`). If the dispatcher wanted to publish a tiny
+   * "resetting\u2026" placeholder it could, but we leave that policy to
+   * the caller.
+   */
+  commitAnswer(): void {
+    if (this._phase !== 'thinking') return;
+    this._phase = 'answer';
+    this._latestText = '';
+    this._lastSent = '';
+    // We intentionally keep `_bootstrapSent` true: the informative frame
+    // already went out, and Teams accepts only ONE informative per stream.
+    // Subsequent answer chunks must continue as `streaming` activities
+    // under the same streamId.
+  }
+
   async end(finalText: string): Promise<string | void> {
     if (this._ended) return;
     this._ended = true;
+    this._phase = 'ended';
     this._latestText = finalText;
     // Explicit dispatcher-driven cancel: nothing to publish.
     if (this._explicitCancel) return;
@@ -282,6 +357,7 @@ export class TeamsStreamingSession implements StreamHandle {
     this._explicitCancel = true;
     this._cancelled = true;
     this._ended = true;
+    this._phase = 'ended';
     // Drop any queued work; let in-flight drain finish on its own.
     this._pendingChunk = false;
     // Best-effort: don't await drain on cancel — the dispatcher uses

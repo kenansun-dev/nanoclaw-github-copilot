@@ -53,6 +53,13 @@ export class TeamsChannel implements Channel {
   // whose `updateActivity` racing produced visible duplicate replies.
   // See src/channels/teams-streaming.ts for the wire-protocol notes.
   usesNativeStreaming = true;
+  // Teams renders thinking → answer natively inside a single live
+  // stream: TeamsStreamingSession.appendThinking() / commitAnswer()
+  // implement the phase machine (see proposal
+  // docs/proposals/2026-05-21-teams-thinking-phase-B.md). Dispatcher
+  // narrows on this flag to route `flash` mode reasoning_delta through
+  // the native path instead of the legacy editMessage(thinkingMsgId).
+  supportsNativeThinking = true;
 
   private adapter: BotFrameworkAdapter;
   private adapterSettings: Record<string, any> = {};
@@ -184,6 +191,19 @@ export class TeamsChannel implements Channel {
     certThumbprint?: string,
     certPrivateKeyPath?: string,
   ) {
+    // Fail-fast contract check: `supportsNativeThinking=true` (set above)
+    // requires the TeamsStreamingSession class to actually implement
+    // `appendThinking` and `commitAnswer`. Without this guard, a future
+    // refactor that removes either method would silently degrade flash /
+    // reasoning-on mode at runtime (dispatcher would skip the call and
+    // drop reasoning_delta with no visible error). VM nit on PR #53.
+    const proto = TeamsStreamingSession.prototype as Partial<import('./teams-streaming.js').TeamsStreamingSession>;
+    if (typeof proto.appendThinking !== 'function' || typeof proto.commitAnswer !== 'function') {
+      throw new Error(
+        'TeamsChannel: supportsNativeThinking=true but TeamsStreamingSession is missing appendThinking/commitAnswer. ' +
+          'Either implement them or set supportsNativeThinking=false.',
+      );
+    }
     this.opts = opts;
     this.port = port;
 

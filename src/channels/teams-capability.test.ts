@@ -434,7 +434,7 @@ describe('native streaming dispatcher source contract', () => {
     );
     expect(src).toMatch(/channel\.usesNativeStreaming\s*&&\s*channel\.streamMessage/);
     expect(src).toMatch(/streamHandle\s*=\s*await\s+channel\.streamMessage/);
-    expect(src).toMatch(/streamHandle\.chunk\(text\)/);
+    expect(src).toMatch(/streamHandle\.chunk\(chunkText\)/);
     expect(src).toMatch(/streamHandle\.end\(text\)/);
   });
 
@@ -447,5 +447,47 @@ describe('native streaming dispatcher source contract', () => {
     expect(cancelMatches.length).toBeGreaterThanOrEqual(2);
     expect(src).toMatch(/IPC turn boundary/);
     expect(src).toMatch(/finally-guard/);
+  });
+
+  // PR #53 commit 2: reasoning=on native concat + Nit 1 (no typing toggle)
+  // + Nit 2 (boot-time assertion).
+  it('Teams declares supportsNativeThinking=true (PR #53 phase B)', async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.promises.readFile(new URL('./teams.ts', import.meta.url), 'utf-8'),
+    );
+    expect(src).toMatch(/supportsNativeThinking\s*=\s*true/);
+  });
+
+  it('dispatcher routes reasoning=on through streamHandle.chunk with thinking prefix', async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.promises.readFile(new URL('../index.ts', import.meta.url), 'utf-8'),
+    );
+    // nativeOnThinkingPrefix captures the formatted thinking text and the
+    // partial answer branch prepends it (frozen on first answer chunk).
+    expect(src).toMatch(/nativeOnThinkingPrefix/);
+    expect(src).toMatch(/nativeOnThinkingFrozen/);
+    expect(src).toMatch(/\$\{nativeOnThinkingPrefix\}/);
+  });
+
+  it('dispatcher does NOT toggle typing off before native-thinking streamMessage open (Nit 1)', async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.promises.readFile(new URL('../index.ts', import.meta.url), 'utf-8'),
+    );
+    // The 'native-thinking-open' typing trace was removed in commit 2 so
+    // streamMessage owns the typing lifecycle. The native-stream-open
+    // trace for the result.partial branch is still expected (separate
+    // code path).
+    expect(src).not.toMatch(/'native-thinking-open'/);
+    expect(src).toMatch(/'native-stream-open'/);
+  });
+
+  it('TeamsChannel boot-time assertion guards supportsNativeThinking contract (Nit 2)', async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.promises.readFile(new URL('./teams.ts', import.meta.url), 'utf-8'),
+    );
+    expect(src).toMatch(/TeamsStreamingSession\.prototype/);
+    expect(src).toMatch(/appendThinking/);
+    expect(src).toMatch(/commitAnswer/);
+    expect(src).toMatch(/supportsNativeThinking=true but TeamsStreamingSession is missing/);
   });
 });

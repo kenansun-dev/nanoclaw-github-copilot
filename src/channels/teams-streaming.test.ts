@@ -505,3 +505,131 @@ describe('Teams streaming wire-protocol regression (2026-04-22)', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------
+// Phase machine tests (PR #53 phase B: appendThinking + commitAnswer).
+// Proposal: docs/proposals/2026-05-21-teams-thinking-phase-B.md
+// ---------------------------------------------------------------------
+
+describe('TeamsStreamingSession native thinking phase', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('appendThinking publishes via the same chunk path during thinking phase', async () => {
+    const { calls, sender } = makeSender();
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+
+    await s.appendThinking('think a');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.appendThinking('think ab');
+    await new Promise((r) => setTimeout(r, 5));
+
+    const typings = calls.filter((c) => c.type === 'typing');
+    expect(typings.length).toBeGreaterThanOrEqual(1);
+    // First activity is the informative bootstrap with thinking text.
+    expect(typings[0].entities?.[0].streamType).toBe('informative');
+    expect(typings[0].text).toContain('think');
+    await s.end('done');
+  });
+
+  it('commitAnswer flips phase and lets the next chunk overwrite thinking text', async () => {
+    const { calls, sender } = makeSender();
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+
+    await s.appendThinking('thinking step 1');
+    await new Promise((r) => setTimeout(r, 5));
+    // First answer chunk: dispatcher calls commitAnswer() then chunk().
+    s.commitAnswer();
+    await s.chunk('answer a');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.chunk('answer abc');
+    await new Promise((r) => setTimeout(r, 5));
+
+    const typings = calls.filter((c) => c.type === 'typing');
+    // Bootstrap had thinking text; later streaming activities have answer.
+    const thinkingActivities = typings.filter((c) => typeof c.text === 'string' && c.text.includes('thinking'));
+    const answerActivities = typings.filter((c) => typeof c.text === 'string' && c.text.startsWith('answer'));
+    expect(thinkingActivities.length).toBeGreaterThanOrEqual(1);
+    expect(answerActivities.length).toBeGreaterThanOrEqual(1);
+    // No answer activity may include the thinking prefix — commitAnswer
+    // reset _latestText so chunk('answer a') sent 'answer a', not
+    // 'thinking step 1 answer a'.
+    for (const a of answerActivities) {
+      expect(a.text).not.toContain('thinking');
+    }
+    // Only one informative across the whole stream.
+    const informatives = typings.filter((c) => c.entities?.[0].streamType === 'informative');
+    expect(informatives.length).toBe(1);
+    await s.end('answer final');
+  });
+
+  it('appendThinking after commitAnswer is dropped (case l: trailing reasoning_delta)', async () => {
+    const { calls, sender } = makeSender();
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+
+    await s.appendThinking('think 1');
+    await new Promise((r) => setTimeout(r, 5));
+    s.commitAnswer();
+    await s.chunk('answer 1');
+    await new Promise((r) => setTimeout(r, 5));
+    // Trailing reasoning_delta: must NOT regress the bubble.
+    await s.appendThinking('think 2 — should be dropped');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.chunk('answer 12');
+    await new Promise((r) => setTimeout(r, 5));
+
+    const typings = calls.filter((c) => c.type === 'typing');
+    // No activity may carry the trailing thinking text.
+    for (const a of typings) {
+      expect(a.text).not.toContain('should be dropped');
+    }
+    await s.end('answer 12 final');
+  });
+
+  it('commitAnswer is idempotent (no-op when phase != thinking)', async () => {
+    const { sender } = makeSender();
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+    s.commitAnswer();
+    s.commitAnswer();
+    await s.chunk('answer');
+    await new Promise((r) => setTimeout(r, 5));
+    // Calling commitAnswer twice should not throw or corrupt state.
+    s.commitAnswer();
+    await s.end('answer final');
+  });
+
+  it('commitAnswer before any thinking is harmless (empty-thinking case)', async () => {
+    const { calls, sender } = makeSender();
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+    s.commitAnswer();
+    await s.chunk('answer only');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.end('answer only final');
+    const typings = calls.filter((c) => c.type === 'typing');
+    expect(typings[0].entities?.[0].streamType).toBe('informative');
+    expect(typings[0].text).toBe('answer only');
+  });
+
+  it('end() flips phase to ended; subsequent appendThinking is dropped', async () => {
+    const { calls, sender } = makeSender();
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+    await s.appendThinking('think');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.end('final');
+    await s.appendThinking('after-end');
+    const messages = calls.filter((c) => c.type === 'message');
+    expect(messages.length).toBe(1);
+    expect(messages[0].text).toBe('final');
+  });
+
+  it('cancel() flips phase to ended; subsequent appendThinking is dropped', async () => {
+    const { sender } = makeSender();
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+    await s.appendThinking('think');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.cancel();
+    await s.appendThinking('after-cancel');
+    // Cancel + drop should not throw.
+  });
+});
