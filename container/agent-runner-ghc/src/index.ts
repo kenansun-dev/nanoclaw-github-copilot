@@ -35,13 +35,26 @@ interface ContainerInput {
   agentId?: string;
 }
 
+/**
+ * Tool-call lifecycle event surfaced to the host dispatcher. The shape
+ * + mapping logic live in `./progress-envelope.ts` so unit tests can
+ * import them without booting the runner (index.ts calls `main()` at
+ * import time). Mirrors src/container-runner.ts `ContainerProgressEnvelope`
+ * byte-for-byte.
+ */
+import {
+  toProgressEnvelope,
+  type ContainerProgressEnvelope,
+} from './progress-envelope.js';
+
 interface ContainerOutput {
-  status: 'success' | 'error' | 'thinking';
+  status: 'success' | 'error' | 'thinking' | 'progress';
   result: string | null;
   newSessionId?: string;
   error?: string;
   partial?: boolean;
   thinking?: string;
+  progress?: ContainerProgressEnvelope;
 }
 
 const IPC_INPUT_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc/input';
@@ -66,6 +79,24 @@ const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 function writeOutput(output: ContainerOutput): void {
   const text = `${OUTPUT_START_MARKER}\n${JSON.stringify(output)}\n${OUTPUT_END_MARKER}\n`;
   process.stdout.write(text);
+}
+
+/**
+ * Emit a single ContainerProgressEnvelope as a status='progress' output
+ * marker. The host dispatcher's progress lane consumes these without
+ * touching the answer/thinking lanes. Best-effort: any serialization
+ * failure is logged and swallowed.
+ */
+function writeProgressEnvelope(progress: ContainerProgressEnvelope): void {
+  try {
+    writeOutput({
+      status: 'progress',
+      result: null,
+      progress,
+    });
+  } catch (err) {
+    log(`writeProgressEnvelope failed (non-fatal): ${(err as Error).message}`);
+  }
 }
 
 function log(message: string): void {
@@ -412,6 +443,13 @@ async function main(): Promise<void> {
             log(`[Session Error] ${event.data?.errorType}: ${event.data?.message}`);
           } else if (event.type === 'session.info' && event.data?.infoType === 'mcp') {
             log(`[MCP Info] ${event.data?.message}`);
+          } else {
+            // Tool-call lifecycle — forward as progress envelopes for the
+            // host dispatcher's progress-draft lane. Failures here are
+            // best-effort (writeOutput logs on its own); never let a bad
+            // event payload abort the turn.
+            const env = toProgressEnvelope(event);
+            if (env) writeProgressEnvelope(env);
           }
         },
         // NanoClaw MCP server for IPC (send_message, schedule_task, etc.)
