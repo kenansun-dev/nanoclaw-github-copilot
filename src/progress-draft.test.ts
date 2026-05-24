@@ -139,19 +139,15 @@ describe('renderProgressLine', () => {
   });
 
   test('progress message wins over arg detail in raw mode', () => {
-    expect(
-      renderProgressLine(
-        { ...baseLine, detail: 'npm test', progressMessage: 'fetched 12/40' },
-        'raw',
-        120,
-      ),
-    ).toBe('🛠️ Bash: fetched 12/40');
+    expect(renderProgressLine({ ...baseLine, detail: 'npm test', progressMessage: 'fetched 12/40' }, 'raw', 120)).toBe(
+      '🛠️ Bash: fetched 12/40',
+    );
   });
 
   test('progress message shows even in explain mode', () => {
-    expect(
-      renderProgressLine({ ...baseLine, progressMessage: 'fetched 12/40' }, 'explain', 120),
-    ).toBe('🛠️ Bash: fetched 12/40');
+    expect(renderProgressLine({ ...baseLine, progressMessage: 'fetched 12/40' }, 'explain', 120)).toBe(
+      '🛠️ Bash: fetched 12/40',
+    );
   });
 
   test('success ✓ suffix on done', () => {
@@ -159,9 +155,9 @@ describe('renderProgressLine', () => {
   });
 
   test('failure ✗ + error summary', () => {
-    expect(
-      renderProgressLine({ ...baseLine, success: false, errorSummary: 'exit 1' }, 'explain', 120),
-    ).toBe('🛠️ Bash ✗ exit 1');
+    expect(renderProgressLine({ ...baseLine, success: false, errorSummary: 'exit 1' }, 'explain', 120)).toBe(
+      '🛠️ Bash ✗ exit 1',
+    );
   });
 
   test('truncates to maxLineChars with ellipsis', () => {

@@ -75,9 +75,7 @@ function pickProgressOptions(raw: unknown): ProgressDraftOptions {
  * will silently use release. The intent is preserved in the config shape so
  * later phases don't need a migration.
  */
-export function resolveProgressStreamingForChannel(
-  channelName: string,
-): ResolvedProgressStreaming {
+export function resolveProgressStreamingForChannel(channelName: string): ResolvedProgressStreaming {
   const channels = (getConfig().channels as unknown as Record<string, unknown>) ?? {};
   const ch = channels[channelName];
   if (!isPlainObject(ch)) return { mode: 'off', options: {} };

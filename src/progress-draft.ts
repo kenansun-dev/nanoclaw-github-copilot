@@ -119,14 +119,7 @@ export interface ProgressDraftOptions {
 
 const DEFAULT_OPTIONS: Required<ProgressDraftOptions> = {
   label: 'auto',
-  labels: [
-    'Working…',
-    'On it…',
-    'One moment…',
-    'Cooking…',
-    'Shelling…',
-    'Looking…',
-  ],
+  labels: ['Working…', 'On it…', 'One moment…', 'Cooking…', 'Shelling…', 'Looking…'],
   initialDelayMs: 5000,
   maxLines: 4,
   maxLineChars: 120,
@@ -163,16 +156,7 @@ interface ToolDisplaySpec {
 const FALLBACK_SPEC: ToolDisplaySpec = {
   emoji: '🧩',
   title: 'Tool',
-  detailKeys: [
-    'command',
-    'path',
-    'url',
-    'query',
-    'pattern',
-    'message',
-    'name',
-    'id',
-  ],
+  detailKeys: ['command', 'path', 'url', 'query', 'pattern', 'message', 'name', 'id'],
 };
 
 const TOOL_DISPLAY: Record<string, ToolDisplaySpec> = {
@@ -248,10 +232,7 @@ export function resolveProgressToolSpec(toolName: string | undefined): {
   return { emoji: FALLBACK_SPEC.emoji, title: titled, detailKeys: FALLBACK_SPEC.detailKeys ?? [] };
 }
 
-function pickDetail(
-  args: Record<string, unknown> | undefined,
-  detailKeys: readonly string[],
-): string | undefined {
+function pickDetail(args: Record<string, unknown> | undefined, detailKeys: readonly string[]): string | undefined {
   if (!args) return undefined;
   for (const key of detailKeys) {
     const raw = args[key];
@@ -269,11 +250,7 @@ function truncate(s: string, max: number): string {
 /**
  * Pure-function renderer for a single tool line. Exported for tests.
  */
-export function renderProgressLine(
-  line: ToolLine,
-  detail: ProgressDetailMode,
-  maxLineChars: number,
-): string {
+export function renderProgressLine(line: ToolLine, detail: ProgressDetailMode, maxLineChars: number): string {
   // Status prefix: in-flight gets the tool emoji; done gets ✓ / ✗ stacked
   // to the right so the eye lands on the tool name not the verdict.
   const statusSuffix =
@@ -566,12 +543,7 @@ export function createProgressDraftSession(args: CreateArgs): ProgressDraftSessi
     const all = Array.from(lines.values());
     const done = all.filter((l) => l.success === true).length;
     const fail = all.filter((l) => l.success === false).length;
-    const summary =
-      fail > 0
-        ? `✅ ${done} done, ❌ ${fail} failed`
-        : done > 0
-          ? `✅ ${done} done`
-          : '✅ done';
+    const summary = fail > 0 ? `✅ ${done} done, ❌ ${fail} failed` : done > 0 ? `✅ ${done} done` : '✅ done';
     parts.push(summary);
     return parts.join('\n');
   }

@@ -488,10 +488,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     try {
       await progressDraft.finalize(finalText);
     } catch (err) {
-      logger.warn(
-        { chatJid, err: (err as Error).message },
-        'progress-draft: finalize threw (non-fatal)',
-      );
+      logger.warn({ chatJid, err: (err as Error).message }, 'progress-draft: finalize threw (non-fatal)');
     }
     progressDraft = undefined;
   }
@@ -500,10 +497,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     try {
       progressDraft.abandon();
     } catch (err) {
-      logger.warn(
-        { chatJid, err: (err as Error).message },
-        'progress-draft: abandon threw (non-fatal)',
-      );
+      logger.warn({ chatJid, err: (err as Error).message }, 'progress-draft: abandon threw (non-fatal)');
     }
     progressDraft = undefined;
   }
@@ -578,10 +572,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             try {
               draft.apply(result.progress);
             } catch (err) {
-              logger.warn(
-                { chatJid, err: (err as Error).message },
-                'progress-draft: apply threw (non-fatal)',
-              );
+              logger.warn({ chatJid, err: (err as Error).message }, 'progress-draft: apply threw (non-fatal)');
             }
           }
           return;
