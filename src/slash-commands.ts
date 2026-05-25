@@ -633,16 +633,9 @@ async function handleStreaming(
         const card = ctx.chatJid.startsWith('teams:')
           ? buildTeamsAdaptiveCard(cmd, effective)
           : { command: 'streaming', choices: cmd.choices };
-        await ctx.channel.sendCard(
-          ctx.chatJid,
-          card,
-          `📡 Streaming: **${effective}** ${scopeLabel}${usage}`,
-        );
+        await ctx.channel.sendCard(ctx.chatJid, card, `📡 Streaming: **${effective}** ${scopeLabel}${usage}`);
       } else {
-        await ctx.channel.sendMessage(
-          ctx.chatJid,
-          `📡 Streaming: **${effective}** ${scopeLabel}${usage}`,
-        );
+        await ctx.channel.sendMessage(ctx.chatJid, `📡 Streaming: **${effective}** ${scopeLabel}${usage}`);
       }
     }
     void provider; // silence unused; reserved for future per-provider scoping

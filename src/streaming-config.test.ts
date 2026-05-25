@@ -17,10 +17,7 @@ vi.mock('./session-overrides.js', () => ({
   getEffectiveStreamingOverride: (jid: string) => getEffectiveStreamingOverrideMock(jid),
 }));
 
-import {
-  resolveProgressStreamingForChannel,
-  resolveProgressStreamingForChat,
-} from './streaming-config.js';
+import { resolveProgressStreamingForChannel, resolveProgressStreamingForChat } from './streaming-config.js';
 
 function withChannels(channels: Record<string, unknown>): void {
   getConfigMock.mockReturnValue({ channels });

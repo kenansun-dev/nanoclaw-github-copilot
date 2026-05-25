@@ -103,10 +103,7 @@ export function resolveProgressStreamingForChannel(channelName: string): Resolve
  * The `options` block is always read from channel config — per-chat tuning
  * of label/maxLines/etc. is out of scope for v1; the slash only flips mode.
  */
-export function resolveProgressStreamingForChat(
-  channelName: string,
-  chatJid: string,
-): ResolvedProgressStreaming {
+export function resolveProgressStreamingForChat(channelName: string, chatJid: string): ResolvedProgressStreaming {
   const base = resolveProgressStreamingForChannel(channelName);
   const override = getEffectiveStreamingOverride(chatJid);
   if (!override) return base;
