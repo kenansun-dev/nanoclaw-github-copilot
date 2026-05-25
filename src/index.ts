@@ -26,7 +26,7 @@ import { getChannelFactory, getRegisteredChannelNames } from './channels/registr
 import { ContainerOutput, writeGroupsSnapshot, writeTasksSnapshot } from './container-runner.js';
 import { createProgressDraftSession, type ProgressDraftSession } from './progress-draft.js';
 import { createProgressTransport } from './progress-draft-transport.js';
-import { resolveProgressStreamingForChannel } from './streaming-config.js';
+import { resolveProgressStreamingForChat } from './streaming-config.js';
 import { cleanupOrphans, ensureContainerRuntimeRunning } from './container-runtime.js';
 import {
   getAllChats,
@@ -466,7 +466,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // thinking + answer lanes. Reset on every turn boundary along with them.
   let progressDraft: ProgressDraftSession | undefined;
   const channelForProgress: import('./types-extensions.js').Channel = channel;
-  const progressStreamingCfg = resolveProgressStreamingForChannel(channelForProgress.name);
+  const progressStreamingCfg = resolveProgressStreamingForChat(channelForProgress.name, chatJid);
   function ensureProgressDraft(): ProgressDraftSession | undefined {
     if (progressStreamingCfg.mode !== 'progress') return undefined;
     if (!channelForProgress.editMessage) return undefined; // transport requires edit

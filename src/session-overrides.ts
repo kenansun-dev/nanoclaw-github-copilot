@@ -25,6 +25,7 @@ import { resolveAgentForChat, getAgentModelName, isAgentGHC } from './config-ext
 
 export type ThinkLevel = 'off' | 'low' | 'medium' | 'high' | 'xhigh';
 export type ShowThinking = 'on' | 'off' | 'flash';
+export type StreamingMode = 'off' | 'partial' | 'progress';
 
 export function providerForChat(chatJid: string): 'github-copilot' | 'anthropic' {
   const agent = resolveAgentForChat(chatJid);
@@ -75,5 +76,24 @@ export function getEffectiveShowThinking(chatJid: string): ShowThinking | undefi
   if (raw === true) return 'on';
   if (raw === 'flash') return 'flash';
   if (raw === 'on' || raw === 'off') return raw;
+  return undefined;
+}
+
+/**
+ * Resolve the per-chat streaming mode override (from sessions table).
+ * Returns undefined when no session-scoped override is set; callers fall
+ * back to channel-level config (`channels.<X>.streaming.mode`).
+ *
+ * Mirrors getEffectiveShowThinking: per-chat overrides win over channel
+ * config, channel config wins over the implicit 'off' default. We do NOT
+ * read channel config here because the call site
+ * (resolveProgressStreamingForChat) already does that as the fallback layer.
+ */
+export function getEffectiveStreamingOverride(chatJid: string): StreamingMode | undefined {
+  const scope = resolveSessionScope(chatJid);
+  if (!scope) return undefined;
+  const ov = getSessionOverrides(scope.groupFolder, scope.provider);
+  const raw = ov.streaming;
+  if (raw === 'off' || raw === 'partial' || raw === 'progress') return raw;
   return undefined;
 }

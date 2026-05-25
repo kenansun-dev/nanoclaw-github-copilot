@@ -11,9 +11,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const getConfigMock = vi.fn();
+const getEffectiveStreamingOverrideMock = vi.fn();
 vi.mock('./config.js', () => ({ getConfig: () => getConfigMock() }));
+vi.mock('./session-overrides.js', () => ({
+  getEffectiveStreamingOverride: (jid: string) => getEffectiveStreamingOverrideMock(jid),
+}));
 
-import { resolveProgressStreamingForChannel } from './streaming-config.js';
+import {
+  resolveProgressStreamingForChannel,
+  resolveProgressStreamingForChat,
+} from './streaming-config.js';
 
 function withChannels(channels: Record<string, unknown>): void {
   getConfigMock.mockReturnValue({ channels });
@@ -125,5 +132,50 @@ describe('resolveProgressStreamingForChannel', () => {
   it('returns mode=off for unknown channel names', () => {
     withChannels({ telegram: { enabled: true, streaming: { mode: 'progress' } } });
     expect(resolveProgressStreamingForChannel('discord').mode).toBe('off');
+  });
+});
+
+describe('resolveProgressStreamingForChat', () => {
+  beforeEach(() => {
+    getConfigMock.mockReset();
+    getEffectiveStreamingOverrideMock.mockReset();
+    getEffectiveStreamingOverrideMock.mockReturnValue(undefined);
+  });
+
+  it('falls through to channel config when no per-chat override', () => {
+    withChannels({ telegram: { enabled: true, streaming: { mode: 'progress' } } });
+    expect(resolveProgressStreamingForChat('telegram', 'group:abc').mode).toBe('progress');
+  });
+
+  it('per-chat override beats channel config', () => {
+    withChannels({ telegram: { enabled: true, streaming: { mode: 'progress' } } });
+    getEffectiveStreamingOverrideMock.mockReturnValue('off');
+    expect(resolveProgressStreamingForChat('telegram', 'group:abc').mode).toBe('off');
+  });
+
+  it('per-chat override enables progress even when channel config is off', () => {
+    withChannels({ telegram: { enabled: true, streaming: { mode: 'off' } } });
+    getEffectiveStreamingOverrideMock.mockReturnValue('progress');
+    const res = resolveProgressStreamingForChat('telegram', 'group:abc');
+    expect(res.mode).toBe('progress');
+    // options block still comes from channel config (slash only flips mode).
+    expect(res.options.finalizePolicy).toBe('release');
+  });
+
+  it('preserves channel options when override flips mode', () => {
+    withChannels({
+      telegram: {
+        enabled: true,
+        streaming: {
+          mode: 'off',
+          progress: { label: 'Working…', maxLines: 8 },
+        },
+      },
+    });
+    getEffectiveStreamingOverrideMock.mockReturnValue('progress');
+    const res = resolveProgressStreamingForChat('telegram', 'group:abc');
+    expect(res.mode).toBe('progress');
+    expect(res.options.label).toBe('Working…');
+    expect(res.options.maxLines).toBe(8);
   });
 });
