@@ -215,12 +215,7 @@ describe('handleSlashCommand', () => {
     (db.setSessionOverride as any).mockClear();
     const result = await handleSlashCommand('/streaming progress', makeCtx());
     expect(result.handled).toBe(true);
-    expect(db.setSessionOverride).toHaveBeenCalledWith(
-      'test-group',
-      'streaming',
-      'progress',
-      expect.any(String),
-    );
+    expect(db.setSessionOverride).toHaveBeenCalledWith('test-group', 'streaming', 'progress', expect.any(String));
   });
 
   it('/streaming off --default writes channels.<chan>.streaming.mode in nanoclaw.json', async () => {
