@@ -28,25 +28,25 @@ describe('resolveProgressStreamingForChannel', () => {
     getConfigMock.mockReset();
   });
 
-  it('returns mode=off when channels block is missing', () => {
+  it('returns mode=progress when channels block is missing (kenan 2026-05-26 default)', () => {
     getConfigMock.mockReturnValue({});
     expect(resolveProgressStreamingForChannel('telegram')).toEqual({
-      mode: 'off',
-      options: {},
+      mode: 'progress',
+      options: { finalizePolicy: 'release' },
     });
   });
 
-  it('returns mode=off when channel has no streaming block', () => {
+  it('returns mode=progress when channel has no streaming block', () => {
     withChannels({ telegram: { enabled: true } });
     expect(resolveProgressStreamingForChannel('telegram')).toEqual({
-      mode: 'off',
-      options: {},
+      mode: 'progress',
+      options: { finalizePolicy: 'release' },
     });
   });
 
-  it('returns mode=off + empty options when streaming.mode is unknown', () => {
+  it('returns mode=progress when streaming.mode is unknown (default fallback)', () => {
     withChannels({ telegram: { enabled: true, streaming: { mode: 'bogus' } } });
-    expect(resolveProgressStreamingForChannel('telegram').mode).toBe('off');
+    expect(resolveProgressStreamingForChannel('telegram').mode).toBe('progress');
   });
 
   it('reads mode=progress and forces finalizePolicy=release in v1', () => {
@@ -126,9 +126,9 @@ describe('resolveProgressStreamingForChannel', () => {
     expect(resolveProgressStreamingForChannel('telegram').mode).toBe('off');
   });
 
-  it('returns mode=off for unknown channel names', () => {
+  it('returns mode=progress for unknown channel names (default fallback)', () => {
     withChannels({ telegram: { enabled: true, streaming: { mode: 'progress' } } });
-    expect(resolveProgressStreamingForChannel('discord').mode).toBe('off');
+    expect(resolveProgressStreamingForChannel('discord').mode).toBe('progress');
   });
 });
 

@@ -72,7 +72,7 @@ export const COMMANDS: SlashCommand[] = [
     choices: [
       { title: 'Off — no progress updates', value: 'off' },
       { title: 'Partial — stream the final answer as it generates', value: 'partial' },
-      { title: 'Progress — live scrolling "working on..." bubble (tool calls)', value: 'progress' },
+      { title: 'Progress (default) — live scrolling "working on..." bubble (tool calls)', value: 'progress' },
     ],
   },
   {
@@ -620,7 +620,7 @@ async function handleStreaming(
       const cfg = (getConfig().channels as unknown as Record<string, any>) ?? {};
       const raw = cfg?.[chanName]?.streaming?.mode;
       if (raw === 'off' || raw === 'partial' || raw === 'progress') return raw as StreamingMode;
-      return 'off' as StreamingMode;
+      return 'progress' as StreamingMode;
     })();
     const effective: StreamingMode = sessionOverride ?? channelDefault;
     const scopeLabel = sessionOverride ? '(chat override)' : '(channel default)';

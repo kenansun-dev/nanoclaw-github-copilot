@@ -4,7 +4,9 @@
 
 A *progress draft* is a single chat message nanoclaw edits while a turn runs,
 showing the tools the agent is using right now — separate from the answer and
-the `<think>` bubble. By default it is **off**; turn it on per-channel.
+the `<think>` bubble. By default it is **progress** on channels that support
+editing (e.g. Telegram). Set `channels.<name>.streaming.mode = "off"` to
+opt out, or use `/streaming off` per chat.
 
 Example bubble while a tool-heavy turn runs:
 
@@ -55,7 +57,7 @@ suite and grep for X"*). One bubble should appear and update while it works.
 
 | Field | Default | Meaning |
 |---|---|---|
-| `mode` | `"off"` | `"off"` (no draft), `"partial"` (legacy answer streaming, unchanged), `"progress"` (this feature) |
+| `mode` | `"progress"` | `"off"` (no draft), `"partial"` (legacy answer streaming, unchanged), `"progress"` (this feature, the new default) |
 | `progress.label` | `"auto"` | Top line. `"auto"` rotates from a small pool (`Working…`, `On it…`, `Cooking…`, …). `false` hides it. Any string is taken literally. |
 | `progress.labels` | (built-in pool) | Pool used when `label === "auto"`. |
 | `progress.maxLines` | `4` | Max tool lines visible. Older done lines drop off first; in-flight lines never drop. |

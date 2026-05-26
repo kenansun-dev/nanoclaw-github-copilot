@@ -6,7 +6,7 @@
  * Shape (under `channels.<channel>.streaming`):
  *
  *   {
- *     "mode": "off" | "partial" | "progress",   // default "off"
+ *     "mode": "off" | "partial" | "progress",   // default "progress"
  *     "progress": {
  *        "label": "auto" | false | string,
  *        "labels": string[],
@@ -41,7 +41,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 
 function normalizeMode(v: unknown): StreamingMode {
   if (v === 'progress' || v === 'partial' || v === 'off') return v;
-  return 'off';
+  return 'progress';
 }
 
 function pickProgressOptions(raw: unknown): ProgressDraftOptions {
@@ -67,7 +67,9 @@ function pickProgressOptions(raw: unknown): ProgressDraftOptions {
 
 /**
  * Read `channels.<channelName>.streaming` from current config and produce
- * a normalized resolution. Unknown channels / missing block → mode 'off'.
+ * a normalized resolution. Unknown channels / missing block → mode 'progress'
+ * (kenan 2026-05-26: progress is the better default UX; users can opt out
+ * with `/streaming off` or set `channels.<name>.streaming.mode = "off"`).
  *
  * V1 force: finalizePolicy = 'release' regardless of config, because the
  * dispatcher does not yet implement the edit-in-place handoff (would need
@@ -79,9 +81,9 @@ function pickProgressOptions(raw: unknown): ProgressDraftOptions {
 export function resolveProgressStreamingForChannel(channelName: string): ResolvedProgressStreaming {
   const channels = (getConfig().channels as unknown as Record<string, unknown>) ?? {};
   const ch = channels[channelName];
-  if (!isPlainObject(ch)) return { mode: 'off', options: {} };
+  if (!isPlainObject(ch)) return { mode: 'progress', options: { finalizePolicy: 'release' } };
   const streaming = ch.streaming;
-  if (!isPlainObject(streaming)) return { mode: 'off', options: {} };
+  if (!isPlainObject(streaming)) return { mode: 'progress', options: { finalizePolicy: 'release' } };
   const mode = normalizeMode(streaming.mode);
   const options = pickProgressOptions(streaming.progress);
   // V1: force release; see fn docstring.
@@ -98,7 +100,7 @@ export function resolveProgressStreamingForChannel(channelName: string): Resolve
  * Resolution order (first match wins for `mode`):
  *   1. session override (sessions.streaming column, written by /streaming)
  *   2. channel-level config (channels.<channelName>.streaming.mode)
- *   3. implicit 'off'
+ *   3. implicit 'progress' (kenan 2026-05-26: progress is the new default)
  *
  * The `options` block is always read from channel config — per-chat tuning
  * of label/maxLines/etc. is out of scope for v1; the slash only flips mode.
