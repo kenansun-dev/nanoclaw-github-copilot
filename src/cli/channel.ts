@@ -226,15 +226,64 @@ async function channelAdd(name: string | undefined, args: string[]): Promise<voi
     return;
   }
 
+  // Resolve a per-account botName. For accountId='default' we keep the
+  // historical `nanoclaw-<agentName>` shape (so existing deploys keep their
+  // Azure resource names). For non-default accounts we suffix the accountId
+  // so two accounts that resolve to the same agent name still get distinct
+  // Azure AD app + Bot resources (e.g. `nanoclaw-andy-bot-b`).
+  const resolveBotName = (cfg = config): string => {
+    const agent = resolveAgent(cfg, agentId);
+    const agentName = agent.name || agentId || 'default';
+    const base = `nanoclaw-${agentName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
+    if (accountId === 'default') return base;
+    const safeAccount = accountId.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    return `${base}-${safeAccount}`;
+  };
+
+  // Allocate a webhook port for this account. Reuses an existing
+  // accounts[accountId].webhookPort when set, otherwise picks the
+  // first-free port starting from 3978 so a second account doesn't
+  // collide with the first bot's HTTP server. First-free (not max+1)
+  // means deleting a middle account refills its gap on next setup.
+  const allocatePort = (cfg = config): number => {
+    const teams = cfg.channels?.teams as any;
+    const accounts: Record<string, any> = teams?.accounts || {};
+    if (accounts[accountId]?.webhookPort) return accounts[accountId].webhookPort;
+    if (flags.webhookPort) return flags.webhookPort;
+    const used = new Set<number>();
+    if (typeof teams?.webhookPort === 'number') used.add(teams.webhookPort);
+    for (const acct of Object.values(accounts)) {
+      const p = (acct as any)?.webhookPort;
+      if (typeof p === 'number') used.add(p);
+    }
+    let port = 3978;
+    while (used.has(port)) port += 1;
+    return port;
+  };
+
+  // Persist the allocated webhook port back to accounts[accountId] so the
+  // next `nanoclaw restart` knows which port this bot's HTTP server listens
+  // on. Idempotent — re-running --setup with the same accountId reuses it.
+  const persistWebhookPort = (port: number): void => {
+    const cfg = loadConfig();
+    cfg.channels = cfg.channels || ({} as any);
+    const teams: any = (cfg.channels as any).teams || {};
+    teams.enabled = true;
+    teams.accounts = teams.accounts || {};
+    teams.accounts[accountId] = { ...(teams.accounts[accountId] || {}), webhookPort: port };
+    (cfg.channels as any).teams = teams;
+    saveConfig(cfg);
+  };
+
   // Teams with --setup: run all steps in order (tunnel → app → bot → manifest)
   if (channelName === 'teams' && flags.setup) {
-    const agent = resolveAgent(config, agentId);
-    const agentName = agent.name || agentId || 'default';
-    const botName = `nanoclaw-${agentName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
-    await channelSetupTunnel();
-    const appResult = await setupApp(botName);
+    const botName = resolveBotName();
+    const port = allocatePort();
+    await channelSetupTunnel(port);
+    persistWebhookPort(port);
+    const appResult = await setupApp(botName, accountId);
     if (!appResult) return;
-    const tunnelUrl = await getTunnelUrlForSetup();
+    const tunnelUrl = await getTunnelUrlForSetup(port);
     if (tunnelUrl) {
       await setupBot(botName, appResult.appId, appResult.appPassword, tunnelUrl);
     }
@@ -244,31 +293,33 @@ async function channelAdd(name: string | undefined, args: string[]): Promise<voi
 
   // Teams with --setup-tunnel: only set up devtunnel
   if (channelName === 'teams' && flags.setupTunnel) {
-    return channelSetupTunnel();
+    const port = allocatePort();
+    persistWebhookPort(port);
+    return channelSetupTunnel(port);
   }
 
   // Teams with --setup-app: only create Azure AD App Registration
   if (channelName === 'teams' && flags.setupApp) {
-    const agent = resolveAgent(config, agentId);
-    const agentName = agent.name || agentId || 'default';
-    const botName = `nanoclaw-${agentName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
-    await setupApp(botName);
+    const botName = resolveBotName();
+    await setupApp(botName, accountId);
     return;
   }
 
   // Teams with --setup-bot: only create Azure Bot
   if (channelName === 'teams' && flags.setupBot) {
-    const agent = resolveAgent(config, agentId);
-    const agentName = agent.name || agentId || 'default';
-    const botName = `nanoclaw-${agentName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
+    const botName = resolveBotName();
     const cfg = loadConfig();
-    const appId = cfg.channels.teams.accounts?.default?.appId || cfg.channels.teams.appId;
-    const appPassword = cfg.channels.teams.accounts?.default?.appPassword || cfg.channels.teams.appPassword;
+    const acct = cfg.channels.teams.accounts?.[accountId];
+    const appId = acct?.appId || (accountId === 'default' ? cfg.channels.teams.appId : undefined);
+    const appPassword = acct?.appPassword || (accountId === 'default' ? cfg.channels.teams.appPassword : undefined);
     if (!appId || !appPassword) {
-      console.error('Error: appId and appPassword required. Run --setup-app first or set them in config.');
+      console.error(
+        `Error: appId and appPassword required for account '${accountId}'. Run --setup-app --account ${accountId} first or set them in config.`,
+      );
       return;
     }
-    const tunnelUrl = await getTunnelUrlForSetup();
+    const port = allocatePort(cfg);
+    const tunnelUrl = await getTunnelUrlForSetup(port);
     if (!tunnelUrl) {
       console.error('Error: Could not determine tunnel URL. Run --setup-tunnel first.');
       return;
@@ -288,9 +339,8 @@ async function channelAdd(name: string | undefined, args: string[]): Promise<voi
       console.error('Error: appId required. Run --setup-app first or set it in config.');
       return;
     }
-    // Name priority: account.name → agent.name → agents.defaults.name → 'Nanoclaw'
-    const agent = resolveAgent(cfg, agentId);
-    const botName = (account as any)?.name || agent.name || cfg.agents?.defaults?.name || 'Nanoclaw';
+    // Name priority: account.name → resolveBotName() (agent + account suffix)
+    const botName = (account as any)?.name || resolveBotName(cfg);
     await setupManifest(appId, botName);
     return;
   }
@@ -399,7 +449,10 @@ function runCmd(cmd: string, opts?: { silent?: boolean }): { ok: boolean; output
  * --setup-app: Create Azure AD App Registration (appId + appPassword).
  * Reuses existing app if found by display name.
  */
-async function setupApp(botName: string): Promise<{ appId: string; appPassword: string } | null> {
+async function setupApp(
+  botName: string,
+  accountId: string = 'default',
+): Promise<{ appId: string; appPassword: string } | null> {
   console.log(`\n🔑 Setting up Azure AD App Registration '${botName}'...`);
 
   // Check Azure CLI
@@ -445,33 +498,43 @@ async function setupApp(botName: string): Promise<{ appId: string; appPassword: 
     console.log('  ✅ App + secret created.');
   }
 
-  // Write credentials to config
+  // Write credentials to config under accounts[accountId] (preserves any
+  // existing webhookPort / tenantId / etc on that account).
   const config = loadConfig();
   if (!config.channels.teams.accounts) config.channels.teams.accounts = {};
-  const acct = config.channels.teams.accounts.default || ({} as any);
+  const acct = (config.channels.teams.accounts as any)[accountId] || ({} as any);
   acct.appId = appId;
   acct.appPassword = appPassword;
-  config.channels.teams.accounts.default = acct;
+  (config.channels.teams.accounts as any)[accountId] = acct;
   config.channels.teams.enabled = true;
   saveConfig(config);
 
-  // Also write to .env
-  const { paths: wsPaths } = await import('../workspace.js');
-  const envPath = wsPaths.env;
-  let envContent = '';
-  try {
-    envContent = fs.readFileSync(envPath, 'utf-8');
-  } catch {}
-  const envLines = envContent.split('\n');
-  const setEnv = (key: string, value: string) => {
-    const idx = envLines.findIndex((l) => l.startsWith(`${key}=`));
-    if (idx >= 0) envLines[idx] = `${key}=${value}`;
-    else envLines.push(`${key}=${value}`);
-  };
-  setEnv('MSTEAMS_APP_ID', appId);
-  setEnv('MSTEAMS_APP_PASSWORD', appPassword);
-  fs.writeFileSync(envPath, envLines.join('\n'));
-  console.log(`  ✅ Credentials saved to .env and nanoclaw.json`);
+  // Only the 'default' account writes the flat MSTEAMS_* env vars — those
+  // are the single-account fallback path in `registerChannel('teams', ...)`
+  // and overwriting them from a non-default account would silently kick the
+  // first bot off its credentials.
+  if (accountId === 'default') {
+    const { paths: wsPaths } = await import('../workspace.js');
+    const envPath = wsPaths.env;
+    let envContent = '';
+    try {
+      envContent = fs.readFileSync(envPath, 'utf-8');
+    } catch {}
+    const envLines = envContent.split('\n');
+    const setEnv = (key: string, value: string) => {
+      const idx = envLines.findIndex((l) => l.startsWith(`${key}=`));
+      if (idx >= 0) envLines[idx] = `${key}=${value}`;
+      else envLines.push(`${key}=${value}`);
+    };
+    setEnv('MSTEAMS_APP_ID', appId);
+    setEnv('MSTEAMS_APP_PASSWORD', appPassword);
+    fs.writeFileSync(envPath, envLines.join('\n'));
+    console.log(`  ✅ Credentials saved to .env and nanoclaw.json (account: ${accountId})`);
+  } else {
+    console.log(
+      `  ✅ Credentials saved to nanoclaw.json under accounts.${accountId} (skipped .env to avoid clobbering 'default' bot)`,
+    );
+  }
 
   return { appId, appPassword };
 }
@@ -530,9 +593,11 @@ async function setupBot(botName: string, appId: string, appPassword: string, tun
 }
 
 /**
- * Helper to get tunnel URL for --setup-bot.
+ * Helper to get tunnel URL for --setup-bot. When a port is supplied we use
+ * `devtunnel port show <id> -p <port>` to surface that port's URL (multi-bot
+ * tunnels register one port per Azure Bot).
  */
-async function getTunnelUrlForSetup(): Promise<string | null> {
+async function getTunnelUrlForSetup(port?: number): Promise<string | null> {
   // Try devtunnel show for nanoclaw tunnel
   const listResult = runCmd('devtunnel list');
   if (!listResult.ok) return null;
@@ -548,6 +613,16 @@ async function getTunnelUrlForSetup(): Promise<string | null> {
     }
   }
   if (!tunnelId) return null;
+
+  // Prefer per-port URL when a port is supplied so the second bot doesn't
+  // pick up the first bot's port-3978 endpoint.
+  if (port) {
+    const portShow = runCmd(`devtunnel port show ${tunnelId} -p ${port}`, { silent: true });
+    if (portShow.ok) {
+      const portUrl = portShow.output.match(/https?:\/\/[a-zA-Z0-9._-]+\.devtunnels\.ms[^\s]*/);
+      if (portUrl) return portUrl[0].replace(/\/+$/, '');
+    }
+  }
 
   const showResult = runCmd(`devtunnel show ${tunnelId}`);
   if (!showResult.ok) return null;
@@ -581,7 +656,7 @@ function channelRemove(name?: string): void {
 // Teams: devtunnel setup (--setup-tunnel)
 // ---------------------------------------------------------------------------
 
-async function channelSetupTunnel(): Promise<void> {
+async function channelSetupTunnel(port?: number): Promise<void> {
   const { setupTeamsTunnel } = await import('./tunnel.js');
-  return setupTeamsTunnel();
+  return setupTeamsTunnel(port);
 }
