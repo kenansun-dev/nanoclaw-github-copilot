@@ -17,7 +17,10 @@ import { join } from 'path';
 import { homedir, platform } from 'os';
 
 const TUNNEL_DESCRIPTION = 'nanoclaw';
-const TUNNEL_PORT = 3978;
+const DEFAULT_TUNNEL_PORT = 3978;
+// Kept for back-compat with anything that imports the constant; prefer
+// passing an explicit port to setupTeamsTunnel(port) for multi-bot setups.
+const TUNNEL_PORT = DEFAULT_TUNNEL_PORT;
 
 function run(cmd: string, opts?: { silent?: boolean }): { ok: boolean; output: string } {
   try {
@@ -39,24 +42,34 @@ function run(cmd: string, opts?: { silent?: boolean }): { ok: boolean; output: s
 export async function runTunnel(args: string[]): Promise<void> {
   const sub = args[0] || 'setup';
 
+  // Parse `-p <port>` / `--port <port>` flag (multi-bot tunnels add several
+  // ports to the same nanoclaw tunnel; default is 3978 for back-compat).
+  let port: number | undefined;
+  for (let i = 1; i < args.length; i++) {
+    if ((args[i] === '-p' || args[i] === '--port') && args[i + 1]) {
+      const parsed = parseInt(args[++i], 10);
+      if (Number.isFinite(parsed)) port = parsed;
+    }
+  }
+
   if (sub === 'setup') {
-    await setupTeamsTunnel();
+    await setupTeamsTunnel(port);
   } else if (sub === 'status') {
     await tunnelStatus();
   } else if (sub === 'url') {
-    await tunnelUrl();
+    await tunnelUrl(port);
   } else {
-    console.log(`Usage: nanoclaw tunnel <setup|status|url>`);
+    console.log(`Usage: nanoclaw tunnel <setup|status|url> [-p <port>]`);
     console.log('');
     console.log('Commands:');
-    console.log('  setup     Set up a dev tunnel for Teams webhook (port 3978)');
-    console.log('  status    Show tunnel status');
-    console.log('  url       Print the tunnel URL for Azure Bot endpoint config');
+    console.log('  setup [-p <port>]   Set up a dev tunnel for Teams webhook (default port 3978)');
+    console.log('  status              Show tunnel status');
+    console.log('  url [-p <port>]     Print the tunnel URL for Azure Bot endpoint config');
   }
 }
 
-export async function setupTeamsTunnel(): Promise<void> {
-  console.log('🔧 NanoClaw DevTunnel Setup\n');
+export async function setupTeamsTunnel(port: number = DEFAULT_TUNNEL_PORT): Promise<void> {
+  console.log(`🔧 NanoClaw DevTunnel Setup (port ${port})\n`);
 
   // 1. Check devtunnel CLI
   console.log('1. Checking devtunnel CLI...');
@@ -100,20 +113,20 @@ export async function setupTeamsTunnel(): Promise<void> {
     console.log(`   ✅ Created tunnel: ${tunnelId}`);
   }
 
-  // 4. Add port 3978
-  console.log(`\n4. Adding port ${TUNNEL_PORT}...`);
-  const portResult = run(`devtunnel port create ${tunnelId} -p ${TUNNEL_PORT} --protocol http`);
+  // 4. Add port (default 3978; multi-bot setups pass per-bot ports)
+  console.log(`\n4. Adding port ${port}...`);
+  const portResult = run(`devtunnel port create ${tunnelId} -p ${port} --protocol http`);
   if (portResult.ok) {
-    console.log(`   ✅ Port ${TUNNEL_PORT} added (protocol: http)`);
+    console.log(`   ✅ Port ${port} added (protocol: http)`);
   } else if (portResult.output.includes('already exists')) {
-    console.log(`   ✅ Port ${TUNNEL_PORT} already configured`);
+    console.log(`   ✅ Port ${port} already configured`);
   } else {
     console.error(`   ⚠️  Port setup issue (may already exist): ${portResult.output}`);
   }
 
-  // 5. Add anonymous access
+  // 5. Add anonymous access for this port
   console.log('\n5. Setting anonymous access...');
-  const accessResult = run(`devtunnel access create ${tunnelId} -p ${TUNNEL_PORT} --anonymous`);
+  const accessResult = run(`devtunnel access create ${tunnelId} -p ${port} --anonymous`);
   if (accessResult.ok) {
     console.log('   ✅ Anonymous access enabled');
   } else if (accessResult.output.includes('already exists')) {
@@ -126,23 +139,26 @@ export async function setupTeamsTunnel(): Promise<void> {
   console.log('\n6. Tunnel ready. Start manually:');
   console.log(`   devtunnel host ${tunnelId} --allow-anonymous`);
 
-  // 7. Register addon
+  // 7. Register addon (one entry per port — keep the legacy 'teams-tunnel'
+  // name for the default port, suffix the addon id for other ports so a
+  // second bot's tunnel addon doesn't overwrite the first).
   console.log('\n7. Registering addon...');
-  const url = getTunnelUrl(tunnelId);
+  const url = getTunnelUrl(tunnelId, port);
+  const addonId = port === DEFAULT_TUNNEL_PORT ? 'teams-tunnel' : `teams-tunnel-${port}`;
   try {
     const { registerAddon } = await import('./addon.js');
-    registerAddon('teams-tunnel', {
+    registerAddon(addonId, {
       type: 'devtunnel',
       channel: 'teams',
       enabled: true,
       config: {
         tunnelId,
-        port: TUNNEL_PORT,
+        port,
         url: url ? `${url}/api/messages` : undefined,
         taskName: 'NanoClaw-DevTunnel',
       },
     });
-    console.log('   ✅ Addon registered');
+    console.log(`   ✅ Addon registered (${addonId})`);
   } catch {
     /* best effort */
   }
@@ -172,13 +188,13 @@ async function tunnelStatus(): Promise<void> {
   }
 }
 
-async function tunnelUrl(): Promise<void> {
+async function tunnelUrl(port: number = DEFAULT_TUNNEL_PORT): Promise<void> {
   const tunnelId = findNanoclawTunnel();
   if (!tunnelId) {
     console.log('No nanoclaw tunnel found. Run: nanoclaw tunnel setup');
     return;
   }
-  const url = getTunnelUrl(tunnelId);
+  const url = getTunnelUrl(tunnelId, port);
   if (url) {
     console.log(`${url}/api/messages`);
   } else {
@@ -212,20 +228,21 @@ function parseTunnelId(output: string): string | null {
   return idMatch ? idMatch[1] : null;
 }
 
-function getTunnelUrl(tunnelId: string): string | null {
+function getTunnelUrl(tunnelId: string, port: number = DEFAULT_TUNNEL_PORT): string | null {
+  // Prefer per-port URL when available (multi-bot tunnels register one URL
+  // per port; `devtunnel show` only returns the first/default).
+  const portResult = run(`devtunnel port show ${tunnelId} -p ${port}`);
+  if (portResult.ok) {
+    const portUrl = portResult.output.match(/https?:\/\/[a-zA-Z0-9._-]+\.devtunnels\.ms[^\s]*/);
+    if (portUrl) return portUrl[0].replace(/\/+$/, '');
+  }
+
   const showResult = run(`devtunnel show ${tunnelId}`);
   if (!showResult.ok) return null;
 
   // Look for URL in output
   const urlMatch = showResult.output.match(/https?:\/\/[a-zA-Z0-9._-]+\.devtunnels\.ms[^\s]*/);
   if (urlMatch) return urlMatch[0].replace(/\/+$/, '');
-
-  // Try port show
-  const portResult = run(`devtunnel port show ${tunnelId} -p ${TUNNEL_PORT}`);
-  if (portResult.ok) {
-    const portUrl = portResult.output.match(/https?:\/\/[a-zA-Z0-9._-]+\.devtunnels\.ms[^\s]*/);
-    if (portUrl) return portUrl[0].replace(/\/+$/, '');
-  }
 
   return null;
 }
