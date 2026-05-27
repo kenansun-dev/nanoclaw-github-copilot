@@ -67,8 +67,62 @@ export interface ContainerInput {
   agentId?: string;
 }
 
+/**
+ * Tool-call lifecycle event surfaced from the container runner to the host
+ * dispatcher. Three kinds map cleanly onto the GHC SDK's five tool events
+ * (start, partial_result, progress, complete, user_requested):
+ *
+ *   tool_start    ← SDK `tool.execution_start` and `tool.user_requested`
+ *                   (user-initiated calls set `userInitiated: true`)
+ *   tool_progress ← SDK `tool.execution_progress` (MCP-emitted status)
+ *                   and `tool.execution_partial_result` (partial stdout;
+ *                   runner trims to a short preview before forwarding)
+ *   tool_done     ← SDK `tool.execution_complete` (carries success +
+ *                   error.message when success=false)
+ *
+ * The host's ProgressDraftSession (src/progress-draft.ts) consumes these
+ * verbatim — keep field names in sync with `ProgressEvent` over there.
+ * The shape is mirrored in container/agent-runner-ghc/src/index.ts; both
+ * copies MUST stay byte-equivalent (the runner ships its own bundled
+ * copy because the container image only sees its src directory).
+ */
+export type ContainerProgressEnvelope =
+  | {
+      kind: 'tool_start';
+      toolCallId: string;
+      toolName: string;
+      /** Set when the tool is an MCP tool (`mcpServerName.toolName`). */
+      mcpServerName?: string;
+      /** Original tool name on the MCP server, when applicable. */
+      mcpToolName?: string;
+      /** Tool input arguments, when surfaced by the SDK. */
+      arguments?: Record<string, unknown>;
+      /** True when the SDK delivered this via `tool.user_requested`. */
+      userInitiated?: boolean;
+    }
+  | {
+      kind: 'tool_progress';
+      toolCallId: string;
+      /** Human-readable status; either MCP `progressMessage` or a runner
+       * preview of `partialOutput`. */
+      message: string;
+    }
+  | {
+      kind: 'tool_done';
+      toolCallId: string;
+      success: boolean;
+      /** Short error string when success=false (from SDK `error.message`). */
+      error?: string;
+    };
+
 export interface ContainerOutput {
-  status: 'success' | 'error' | 'thinking';
+  /**
+   * `'progress'` carries a single tool-call lifecycle event with no
+   * `result` payload — routed to the in-chat progress draft lane,
+   * independent of `thinking` (which still owns the reasoning bubble)
+   * and `success`/`partial` (which own the answer text lane).
+   */
+  status: 'success' | 'error' | 'thinking' | 'progress';
   result: string | null;
   newSessionId?: string;
   error?: string;
@@ -76,6 +130,8 @@ export interface ContainerOutput {
   partial?: boolean;
   /** Extended thinking / reasoning content (displayed separately from result) */
   thinking?: string;
+  /** Set when status='progress'; one tool-call lifecycle event. */
+  progress?: ContainerProgressEnvelope;
 }
 
 interface VolumeMount {

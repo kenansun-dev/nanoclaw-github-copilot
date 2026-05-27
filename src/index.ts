@@ -24,6 +24,9 @@ import { runAgentForChat, IS_GHC_PROVIDER, resolveAgentForChat, getAgentProvider
 import './channels/index.js';
 import { getChannelFactory, getRegisteredChannelNames } from './channels/registry.js';
 import { ContainerOutput, writeGroupsSnapshot, writeTasksSnapshot } from './container-runner.js';
+import { createProgressDraftSession, type ProgressDraftSession } from './progress-draft.js';
+import { createProgressTransport } from './progress-draft-transport.js';
+import { resolveProgressStreamingForChat } from './streaming-config.js';
 import { cleanupOrphans, ensureContainerRuntimeRunning } from './container-runtime.js';
 import {
   getAllChats,
@@ -457,6 +460,47 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // src/types.ts:Channel.usesNativeStreaming docstring for why this is
   // a separate code path from editMessage-based partial accumulation.
   let streamHandle: import('./types-extensions.js').StreamHandle | undefined;
+  // Progress-draft lane (proposal docs/proposals/2026-05-23-progress-drafts.md).
+  // Lazily created on the first `status==='progress'` event when the channel
+  // is configured `streaming.mode === 'progress'`. Independent of the
+  // thinking + answer lanes. Reset on every turn boundary along with them.
+  let progressDraft: ProgressDraftSession | undefined;
+  const channelForProgress: import('./types-extensions.js').Channel = channel;
+  const progressStreamingCfg = resolveProgressStreamingForChat(channelForProgress.name, chatJid);
+  function ensureProgressDraft(): ProgressDraftSession | undefined {
+    if (progressStreamingCfg.mode !== 'progress') return undefined;
+    if (!channelForProgress.editMessage) return undefined; // transport requires edit
+    if (!progressDraft) {
+      progressDraft = createProgressDraftSession({
+        transport: createProgressTransport({ channel: channelForProgress, chatJid }),
+        options: progressStreamingCfg.options,
+        onError: (err, ctx) =>
+          logger.warn(
+            { chatJid, channel: channelForProgress.name, stage: ctx.stage, err: err.message },
+            'progress-draft: stage error (non-fatal)',
+          ),
+      });
+    }
+    return progressDraft;
+  }
+  async function finalizeProgressDraft(finalText: string): Promise<void> {
+    if (!progressDraft) return;
+    try {
+      await progressDraft.finalize(finalText);
+    } catch (err) {
+      logger.warn({ chatJid, err: (err as Error).message }, 'progress-draft: finalize threw (non-fatal)');
+    }
+    progressDraft = undefined;
+  }
+  function abandonProgressDraft(): void {
+    if (!progressDraft) return;
+    try {
+      progressDraft.abandon();
+    } catch (err) {
+      logger.warn({ chatJid, err: (err as Error).message }, 'progress-draft: abandon threw (non-fatal)');
+    }
+    progressDraft = undefined;
+  }
   // IPC mode: the runAgent() promise resolves on the first query-complete
   // signal, but the spawned agent process keeps living and the stdout
   // listener (with this onOutput closure) keeps firing for follow-up
@@ -516,6 +560,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           queryBoundaryPendingResult = true;
           // Don't return — let the rest of the handler run for thinking/status
           // bookkeeping, then exit naturally on the !result.result guard above.
+        }
+
+        // Progress-draft lane: tool-call lifecycle from the runner. Routed
+        // here independent of thinking/answer. Gated by per-channel
+        // `streaming.mode === 'progress'`. See proposal
+        // docs/proposals/2026-05-23-progress-drafts.md.
+        if (result.status === 'progress' && result.progress) {
+          const draft = ensureProgressDraft();
+          if (draft) {
+            try {
+              draft.apply(result.progress);
+            } catch (err) {
+              logger.warn({ chatJid, err: (err as Error).message }, 'progress-draft: apply threw (non-fatal)');
+            }
+          }
+          return;
         }
 
         // Thinking-only deltas (no result yet). Modes:
@@ -722,6 +782,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             progressiveText = '';
             lastFinalMsgId = undefined;
             outputSentToUser = false;
+            // Progress-draft lane: a leftover open draft from the previous
+            // turn is no longer relevant. Abandon (no wire traffic) so the
+            // next turn opens a fresh draft when its first tool event fires.
+            abandonProgressDraft();
             // NOTE: thinking-side state (thinkingMsgId, flashThinkingDismissed,
             // lastThinkingRendered, flashOpeningLock, flashEditCoalescer,
             // thinkingPrependedThisQuery) is intentionally NOT reset here.
@@ -919,6 +983,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             progressiveMsgId = undefined;
             progressiveText = '';
             outputSentToUser = true;
+            // Progress draft (proposal docs/proposals/2026-05-23-progress-drafts.md):
+            // turn produced a real final answer. Finalize the draft so the
+            // bubble flips to its summary (✅ N done / ❌ M failed). V1
+            // forces finalizePolicy='release' in streaming-config, so we
+            // pass the answer text only for future edit-in-place phases.
+            void finalizeProgressDraft(text);
             // Mark this turn finalized; any further reasoning_delta events
             // arriving before a new userTurnSeq are SDK trailing artifacts
             // and must be ignored to avoid orphan thinking bubbles.
@@ -987,6 +1057,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         );
       }
     }
+    // Progress draft: any draft still open at finally-guard time means the
+    // turn ended without a normal final-output path (error, cancel, etc).
+    // Abandon without wire traffic; caller's error path owns any user-visible
+    // cleanup.
+    abandonProgressDraft();
     await traceSetTyping(channel, chatJid, false, 'finally-guard');
   }
 }

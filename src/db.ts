@@ -158,6 +158,7 @@ function createSchema(database: Database.Database): void {
       think_level TEXT,
       model TEXT,
       show_thinking TEXT,
+      streaming TEXT,
       PRIMARY KEY (group_folder, provider)
     );
     CREATE TABLE IF NOT EXISTS registered_groups (
@@ -219,11 +220,12 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
-  // Add session-level slash overrides (think_level, model, show_thinking).
-  // Adopts OpenClaw's per-session-override + global-default model: slash
-  // commands write here by default; --default flag writes global config.
-  // See PR #26 (2026-04-24).
-  for (const col of ['think_level', 'model', 'show_thinking']) {
+  // Add session-level slash overrides (think_level, model, show_thinking,
+  // streaming). Adopts OpenClaw's per-session-override + global-default
+  // model: slash commands write here by default; --default flag writes
+  // global config. See PR #26 (2026-04-24); `streaming` added 2026-05-25
+  // for `/streaming` slash (progress-draft lane mode toggle).
+  for (const col of ['think_level', 'model', 'show_thinking', 'streaming']) {
     try {
       database.exec(`ALTER TABLE sessions ADD COLUMN ${col} TEXT`);
     } catch {
@@ -776,16 +778,20 @@ export interface SessionOverrides {
   thinkLevel?: string;
   model?: string;
   showThinking?: string;
+  streaming?: string;
 }
 
 export function getSessionOverrides(groupFolder: string, provider: string = 'anthropic'): SessionOverrides {
   const row = db
-    .prepare('SELECT think_level, model, show_thinking FROM sessions WHERE group_folder = ? AND provider = ?')
+    .prepare(
+      'SELECT think_level, model, show_thinking, streaming FROM sessions WHERE group_folder = ? AND provider = ?',
+    )
     .get(groupFolder, provider) as
     | {
         think_level: string | null;
         model: string | null;
         show_thinking: string | null;
+        streaming: string | null;
       }
     | undefined;
   if (!row) return {};
@@ -793,6 +799,7 @@ export function getSessionOverrides(groupFolder: string, provider: string = 'ant
     thinkLevel: row.think_level ?? undefined,
     model: row.model ?? undefined,
     showThinking: row.show_thinking ?? undefined,
+    streaming: row.streaming ?? undefined,
   };
 }
 
@@ -803,7 +810,7 @@ export function getSessionOverrides(groupFolder: string, provider: string = 'ant
  */
 export function setSessionOverride(
   groupFolder: string,
-  field: 'think_level' | 'model' | 'show_thinking',
+  field: 'think_level' | 'model' | 'show_thinking' | 'streaming',
   value: string | null,
   provider: string = 'anthropic',
 ): void {

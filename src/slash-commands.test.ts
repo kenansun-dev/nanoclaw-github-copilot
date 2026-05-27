@@ -57,6 +57,7 @@ function makeCtx(overrides: Partial<SlashCommandContext> = {}): SlashCommandCont
     chatJid: 'tg:123',
     groupFolder: 'test-group',
     channel: {
+      name: 'telegram',
       sendMessage: vi.fn().mockResolvedValue(undefined),
       sendCard: vi.fn().mockResolvedValue(undefined),
     } as any,
@@ -206,6 +207,45 @@ describe('handleSlashCommand', () => {
     expect(result.handled).toBe(false);
     const { loadConfig } = await import('./config-loader.js');
     expect(loadConfig().agents?.defaults?.showThinking).toBe('flash');
+  });
+
+  // ─── /streaming tests ────────────────────────────────────────────────
+  it('/streaming progress (no --default) writes session override only', async () => {
+    const db = await import('./db.js');
+    (db.setSessionOverride as any).mockClear();
+    const result = await handleSlashCommand('/streaming progress', makeCtx());
+    expect(result.handled).toBe(true);
+    expect(db.setSessionOverride).toHaveBeenCalledWith('test-group', 'streaming', 'progress', expect.any(String));
+  });
+
+  it('/streaming off --default writes channels.<chan>.streaming.mode in nanoclaw.json', async () => {
+    const result = await handleSlashCommand('/streaming off --default', makeCtx());
+    expect(result.handled).toBe(true);
+    const { loadConfig } = await import('./config-loader.js');
+    const cfg: any = loadConfig();
+    expect(cfg.channels?.telegram?.streaming?.mode).toBe('off');
+  });
+
+  it('/streaming partial --default writes "partial" for the channel', async () => {
+    await handleSlashCommand('/streaming partial --default', makeCtx());
+    const { loadConfig } = await import('./config-loader.js');
+    const cfg: any = loadConfig();
+    expect(cfg.channels?.telegram?.streaming?.mode).toBe('partial');
+  });
+
+  it('/streaming without args returns handled and shows status', async () => {
+    const ctx = makeCtx();
+    const result = await handleSlashCommand('/streaming', ctx);
+    expect(result.handled).toBe(true);
+    // Either sendCard or sendMessage was called (Teams vs other).
+    const sentCard = (ctx.channel!.sendCard as any).mock.calls.length;
+    const sentMsg = (ctx.channel!.sendMessage as any).mock.calls.length;
+    expect(sentCard + sentMsg).toBeGreaterThan(0);
+  });
+
+  it('/streaming rejects bogus values (returns not handled)', async () => {
+    const result = await handleSlashCommand('/streaming bogus', makeCtx());
+    expect(result.handled).toBe(false);
   });
 
   // Bumped timeout to 30s: collectStatus() does ~10 dynamic imports

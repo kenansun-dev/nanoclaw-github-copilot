@@ -31,7 +31,11 @@ interface ContainerInput {
 }
 
 interface ContainerOutput {
-  status: 'success' | 'error' | 'thinking';
+  // Must stay assignable from src/container-runner.ts ContainerOutput
+  // (which added 'progress' for the in-chat tool-status lane). TUI
+  // direct mode never emits or renders progress, so we accept it in
+  // the union but treat it as a no-op below.
+  status: 'success' | 'error' | 'thinking' | 'progress';
   result: string | null;
   newSessionId?: string;
   error?: string;

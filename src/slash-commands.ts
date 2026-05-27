@@ -18,9 +18,11 @@ import {
   getEffectiveThinkLevel,
   getEffectiveModel,
   getEffectiveShowThinking,
+  getEffectiveStreamingOverride,
   providerForChat,
   type ThinkLevel,
   type ShowThinking,
+  type StreamingMode,
 } from './session-overrides.js';
 import { Channel } from './types-extensions.js';
 import { logger as log } from './log-extensions.js';
@@ -61,6 +63,16 @@ export const COMMANDS: SlashCommand[] = [
       { title: 'On — show reasoning (kept after final)', value: 'on' },
       { title: 'Flash — stream then replace with final', value: 'flash' },
       { title: 'Off — hide reasoning (default)', value: 'off' },
+    ],
+  },
+  {
+    name: 'streaming',
+    description: 'Show or hide live tool-call progress while the agent works',
+    args: 'off|partial|progress',
+    choices: [
+      { title: 'Off — no progress updates', value: 'off' },
+      { title: 'Partial — stream the final answer as it generates', value: 'partial' },
+      { title: 'Progress (default) — live scrolling "working on..." bubble (tool calls)', value: 'progress' },
     ],
   },
   {
@@ -222,6 +234,18 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
     const mode = reasoningMatch[1] as 'on' | 'off' | 'flash' | undefined;
     const isDefault = !!reasoningMatch[2];
     await handleReasoning(mode, ctx, { isDefault });
+    return { handled: true };
+  }
+
+  // /streaming [off|partial|progress] [--default] — toggle live tool-call
+  // progress display (progress-draft lane). Per-chat by default; --default
+  // writes channels.<channel>.streaming.mode. See proposal
+  // docs/proposals/2026-05-23-progress-drafts.md.
+  const streamingMatch = input.match(/^\/streaming(?:\s+(off|partial|progress))?(\s+--default)?$/);
+  if (streamingMatch) {
+    const mode = streamingMatch[1] as StreamingMode | undefined;
+    const isDefault = !!streamingMatch[2];
+    await handleStreaming(mode, ctx, { isDefault });
     return { handled: true };
   }
 
@@ -570,6 +594,93 @@ async function handleReasoning(
           ? '🧠 Reasoning set to **flash** for this chat — streamed live, replaced by final answer.'
           : '🧠 Reasoning is now **hidden** for this chat.';
     await ctx.channel.sendMessage(ctx.chatJid, `${blurb} Use \`/reasoning ${mode} --default\` to apply globally.`);
+  }
+}
+
+// ─── /streaming implementation ──────────────────────────────────────────────
+
+function channelNameForChat(ctx: SlashCommandContext): string {
+  // Channel is provided per-call by the dispatcher; fall back to a sane
+  // default if the slash arrived without a channel (test paths, etc).
+  return ctx.channel?.name ?? 'unknown';
+}
+
+async function handleStreaming(
+  mode: StreamingMode | undefined,
+  ctx: SlashCommandContext,
+  opts: { isDefault: boolean } = { isDefault: false },
+): Promise<void> {
+  const provider = providerForChat(ctx.chatJid);
+  const chanName = channelNameForChat(ctx);
+
+  if (!mode) {
+    // Status display: show effective + scope.
+    const sessionOverride = getEffectiveStreamingOverride(ctx.chatJid);
+    const channelDefault = (() => {
+      const cfg = (getConfig().channels as unknown as Record<string, any>) ?? {};
+      const raw = cfg?.[chanName]?.streaming?.mode;
+      if (raw === 'off' || raw === 'partial' || raw === 'progress') return raw as StreamingMode;
+      return 'progress' as StreamingMode;
+    })();
+    const effective: StreamingMode = sessionOverride ?? channelDefault;
+    const scopeLabel = sessionOverride ? '(chat override)' : '(channel default)';
+    const usage =
+      '\nUsage: /streaming off|partial|progress [--default]\n' +
+      '`--default` writes nanoclaw.json (all chats on this channel); omit it to set just this chat.';
+    if (ctx.channel) {
+      if (ctx.channel.sendCard) {
+        const cmd = COMMANDS.find((c) => c.name === 'streaming')!;
+        const card = ctx.chatJid.startsWith('teams:')
+          ? buildTeamsAdaptiveCard(cmd, effective)
+          : { command: 'streaming', choices: cmd.choices };
+        await ctx.channel.sendCard(ctx.chatJid, card, `📡 Streaming: **${effective}** ${scopeLabel}${usage}`);
+      } else {
+        await ctx.channel.sendMessage(ctx.chatJid, `📡 Streaming: **${effective}** ${scopeLabel}${usage}`);
+      }
+    }
+    void provider; // silence unused; reserved for future per-provider scoping
+    return;
+  }
+
+  if (opts.isDefault) {
+    // Write channels.<channel>.streaming.mode in nanoclaw.json.
+    const { loadConfig, saveConfig } = await import('./config-loader.js');
+    const config: any = loadConfig();
+    if (!config.channels) config.channels = {};
+    if (!config.channels[chanName]) config.channels[chanName] = { enabled: true };
+    if (!config.channels[chanName].streaming) config.channels[chanName].streaming = {};
+    config.channels[chanName].streaming.mode = mode;
+    saveConfig(config, 'slash-command', {
+      command: '/streaming --default',
+      mode,
+      chatJid: ctx.chatJid,
+      channel: chanName,
+    });
+    reloadConfig();
+    if (ctx.channel) {
+      await ctx.channel.sendMessage(
+        ctx.chatJid,
+        `📡 **Channel default** streaming set to **${mode}** for \`${chanName}\`. Affects all chats on this channel.`,
+      );
+    }
+    return;
+  }
+
+  // Per-chat override: write to sessions table. Resolved by
+  // resolveProgressStreamingForChat on each turn — takes effect on the
+  // NEXT message (no runner respawn needed).
+  setSessionOverride(ctx.groupFolder, 'streaming', mode, provider);
+  if (ctx.channel) {
+    const blurb =
+      mode === 'progress'
+        ? '📡 Streaming set to **progress** — you\'ll see a live "working on..." bubble with tool calls.'
+        : mode === 'partial'
+          ? '📡 Streaming set to **partial** — final answer streams in as it generates.'
+          : '📡 Streaming **off** for this chat — replies arrive in one go when done.';
+    await ctx.channel.sendMessage(
+      ctx.chatJid,
+      `${blurb} Use \`/streaming ${mode} --default\` to apply to all chats on this channel.`,
+    );
   }
 }
 
