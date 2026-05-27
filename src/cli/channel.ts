@@ -241,9 +241,10 @@ async function channelAdd(name: string | undefined, args: string[]): Promise<voi
   };
 
   // Allocate a webhook port for this account. Reuses an existing
-  // accounts[accountId].webhookPort when set, otherwise picks `max(in-use)+1`
-  // starting from 3978 so a second account doesn't collide with the first
-  // bot's HTTP server.
+  // accounts[accountId].webhookPort when set, otherwise picks the
+  // first-free port starting from 3978 so a second account doesn't
+  // collide with the first bot's HTTP server. First-free (not max+1)
+  // means deleting a middle account refills its gap on next setup.
   const allocatePort = (cfg = config): number => {
     const teams = cfg.channels?.teams as any;
     const accounts: Record<string, any> = teams?.accounts || {};
