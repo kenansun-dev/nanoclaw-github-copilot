@@ -310,8 +310,7 @@ async function channelAdd(name: string | undefined, args: string[]): Promise<voi
     const cfg = loadConfig();
     const acct = cfg.channels.teams.accounts?.[accountId];
     const appId = acct?.appId || (accountId === 'default' ? cfg.channels.teams.appId : undefined);
-    const appPassword =
-      acct?.appPassword || (accountId === 'default' ? cfg.channels.teams.appPassword : undefined);
+    const appPassword = acct?.appPassword || (accountId === 'default' ? cfg.channels.teams.appPassword : undefined);
     if (!appId || !appPassword) {
       console.error(
         `Error: appId and appPassword required for account '${accountId}'. Run --setup-app --account ${accountId} first or set them in config.`,

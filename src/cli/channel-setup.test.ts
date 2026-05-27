@@ -114,7 +114,10 @@ beforeEach(() => {
   memoryConfig.channels = {};
   memoryConfig.agents = {
     defaults: { name: 'Andy' },
-    list: [{ id: 'main', name: 'Andy' }, { id: 'coder', name: 'Coder' }],
+    list: [
+      { id: 'main', name: 'Andy' },
+      { id: 'coder', name: 'Coder' },
+    ],
   };
   exec.mockReset();
   setupExecStubs();
