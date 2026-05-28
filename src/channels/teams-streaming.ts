@@ -364,6 +364,19 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     // cancel for fast turn-boundary cleanup.
   }
 
+  /**
+   * Whether the wire transport has given up (wire reject, generic
+   * send failure). Distinct from explicit dispatcher `cancel()`:
+   * an explicit cancel means "do not publish anything" while a wire
+   * cancel means "stop streaming but `end()` will still publish a
+   * plain final message". Dispatcher reads this to switch the
+   * remaining turn to coalesced-final mode (bug 2 fallback). See
+   * `docs/proposals/2026-05-29-teams-streaming-multi-final-fix.md`.
+   */
+  isCancelled(): boolean {
+    return this._cancelled && !this._explicitCancel;
+  }
+
   // --- Internals ------------------------------------------------------
 
   /**
