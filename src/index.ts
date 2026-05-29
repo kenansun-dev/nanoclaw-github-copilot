@@ -472,6 +472,24 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // is healthy (`isCancelled()` never trips mid-turn) this code path is
   // never entered and behaviour is unchanged.
   let streamDiedCoalesced: string[] | undefined;
+  // Bug 2 helper: probe whether the native streaming wire died and arm the
+  // coalesce buffer if so. Called after every operation that funnels into
+  // the wire (`chunk`, `appendThinking`) — wire-cancel can flip mid-drain
+  // regardless of which entry point we used. Idempotent (gated on
+  // `streamDiedCoalesced === undefined`). Returns true if it tripped this
+  // call so the caller can null out its handle reference.
+  const probeWireDeath = (where: string): boolean => {
+    if (!streamHandle) return false;
+    if (streamHandle.isCancelled?.() !== true) return false;
+    if (streamDiedCoalesced !== undefined) return false;
+    logger.warn(
+      { chatJid, group: group.name, where },
+      'native streaming wire cancelled mid-turn; switching to coalesced-final fallback',
+    );
+    streamDiedCoalesced = [];
+    streamHandle = undefined;
+    return true;
+  };
   // Progress-draft lane (proposal docs/proposals/2026-05-23-progress-drafts.md).
   // Lazily created on the first `status==='progress'` event when the channel
   // is configured `streaming.mode === 'progress'`. Independent of the
@@ -677,6 +695,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 if (handle.appendThinking) {
                   await handle.appendThinking(tp.text);
                   lastThinkingRendered = tp.text;
+                  // Bug 2 probe: wire can die during the thinking phase
+                  // before any text `chunk()` lands. Without this probe
+                  // the coalesce buffer would never arm and a subsequent
+                  // multi-final turn would still fan out.
+                  probeWireDeath('appendThinking');
                 }
               }
             }
@@ -704,6 +727,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               }
               await streamHandle.chunk(tp.text);
               lastThinkingRendered = tp.text;
+              // Bug 2 probe: same reason as the appendThinking site above
+              // (reasoning=on path streams thinking-prefix through chunk()
+              // before any answer chunks arrive).
+              probeWireDeath('native-on-thinking-chunk');
             }
             return;
           }
@@ -937,21 +964,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               streamHandle = await channel.streamMessage(chatJid, sendOpts);
             }
             await streamHandle.chunk(chunkText);
-            // Bug 2 detect: chunk() noops silently once the wire is cancelled
-            // (see StreamHandle contract). Probe `isCancelled()` and arm the
-            // coalesce buffer so subsequent finals don't fan out into
-            // separate `channel.sendMessage` calls.
-            if (streamHandle.isCancelled?.() === true && streamDiedCoalesced === undefined) {
-              logger.warn(
-                { chatJid, group: group.name },
-                'native streaming wire cancelled mid-turn; switching to coalesced-final fallback',
-              );
-              streamDiedCoalesced = [];
-              // Drop the handle so the final branch can't try `end()` and
-              // emit yet another (degraded plain) message. The flush at
-              // turn-end is the single visible output.
-              streamHandle = undefined;
-            }
+            // Bug 2 probe: chunk() noops silently once the wire is cancelled
+            // (see StreamHandle contract). Arming the coalesce buffer here
+            // ensures subsequent finals don't fan out into separate
+            // `channel.sendMessage` calls. Same helper covers the two
+            // thinking-phase entry points above.
+            probeWireDeath('answer-chunk');
           } else if (result.partial && channel.editMessage) {
             // Delta/partial: accumulate and edit existing message.
             progressiveText = text; // delta buffer already accumulated in agent-runner
