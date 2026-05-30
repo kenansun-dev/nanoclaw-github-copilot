@@ -1093,10 +1093,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           'Coalesced multi-final flushed (streaming wire died mid-turn)',
         );
       } catch (err) {
-        logger.error(
-          { group: group.name, err: (err as Error).message },
-          'Coalesced multi-final flush failed',
-        );
+        logger.error({ group: group.name, err: (err as Error).message }, 'Coalesced multi-final flush failed');
       }
       streamDiedCoalesced = undefined;
     }
