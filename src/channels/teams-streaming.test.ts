@@ -99,13 +99,15 @@ describe('TeamsStreamingSession', () => {
     const second = calls.find((c, i) => i > 0 && c.type === 'typing') as Partial<TeamsActivity>;
     const final = calls[calls.length - 1];
 
-    // First activity has no id field set (it'll learn it from the response).
-    expect(first.id).toBeUndefined();
-    // Subsequent activities carry the streamId from the first response.
-    expect(second?.id).toBe('msg-1');
-    expect(second?.entities?.[0].streamId).toBe('msg-1');
-    expect(final.id).toBe('msg-1');
-    expect(final.entities?.[0].streamId).toBe('msg-1');
+    // Bug 1 fix (2026-05-29): streamId is minted locally at construction
+    // (not learned from server response). It is the same UUID on every
+    // activity in the session. `id` on the activity itself is unrelated —
+    // the dispatcher does not learn it from anywhere.
+    const mintedId = first.entities?.[0].streamId;
+    expect(typeof mintedId).toBe('string');
+    expect(mintedId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second?.entities?.[0].streamId).toBe(mintedId);
+    expect(final.entities?.[0].streamId).toBe(mintedId);
   });
 
   it('uses monotonically increasing streamSequence numbers', async () => {
@@ -282,6 +284,45 @@ describe('TeamsStreamingSession', () => {
     expect(typeof id).toBe('string');
   });
 
+  it('isCancelled() flips true after wire reject but stays false after explicit cancel (bug 2 dispatcher contract)', async () => {
+    // The dispatcher distinguishes the two cases to decide whether to
+    // arm the coalesced-final fallback (bug 2). Wire reject (e.g.
+    // `ContentStreamNotAllowed`, `streaming api is not enabled`)
+    // → `isCancelled() === true` and subsequent finals must be
+    // buffered + flushed as one bubble. Explicit dispatcher cancel
+    // → `isCancelled() === false` (it's a normal turn boundary, not
+    // a failure we need to compensate for).
+    let chunkCalled = 0;
+    const sender: ActivitySender = async (activity) => {
+      if (activity.type === 'typing') {
+        chunkCalled++;
+        if (chunkCalled === 1) {
+          throw new Error('ContentStreamNotAllowed: user paused at client');
+        }
+      }
+      return `msg-${chunkCalled}`;
+    };
+    const sWire = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+    expect(sWire.isCancelled()).toBe(false);
+    await sWire.chunk('a');
+    await new Promise((r) => setTimeout(r, 10));
+    expect(sWire.isCancelled()).toBe(true);
+    // Further chunk() calls must be noops (idempotent + safe for the
+    // dispatcher to keep calling while it routes finals to the buffer).
+    await sWire.chunk('ab');
+    await sWire.chunk('abc');
+    expect(sWire.isCancelled()).toBe(true);
+
+    const { sender: cleanSender } = makeSender();
+    const sExplicit = new TeamsStreamingSession(cleanSender, { delayInMs: 0, log: silentLog });
+    await sExplicit.chunk('hi');
+    await new Promise((r) => setTimeout(r, 5));
+    await sExplicit.cancel();
+    // Explicit cancel → isCancelled() stays false so dispatcher does
+    // NOT trigger bug 2 fallback on a normal turn boundary.
+    expect(sExplicit.isCancelled()).toBe(false);
+  });
+
   it('explicit cancel() suppresses end()’s final send (dispatcher turn boundary)', async () => {
     // The dispatcher calls cancel() on IPC turn boundaries and in the
     // finally-guard. In those cases the stream is intentionally dead
@@ -379,10 +420,10 @@ describe('Teams streaming wire-protocol regression (2026-04-22)', () => {
     expect(calls.length).toBeGreaterThanOrEqual(1);
     expect(calls[0].type).toBe('typing');
     expect(calls[0].entities?.[0].streamType).toBe('informative');
-    // No streamId on the first activity — it gets learned from the
-    // server's response.
-    expect(calls[0].entities?.[0].streamId).toBeUndefined();
-    expect(calls[0].id).toBeUndefined();
+    // Bug 1 fix (2026-05-29): streamId is minted locally at construction
+    // so the first activity DOES carry it (previously the test asserted
+    // undefined because the impl waited for the server to assign one).
+    expect(calls[0].entities?.[0].streamId).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it('subsequent chunks switch to `streaming` once streamId is bound', async () => {
@@ -402,11 +443,13 @@ describe('Teams streaming wire-protocol regression (2026-04-22)', () => {
     const typings = calls.filter((c) => c.type === 'typing');
     expect(typings.length).toBeGreaterThanOrEqual(2);
     expect(typings[0].entities?.[0].streamType).toBe('informative');
-    // All later typing activities are `streaming` and carry the streamId.
+    const mintedId = typings[0].entities?.[0].streamId;
+    expect(typeof mintedId).toBe('string');
+    // All later typing activities are `streaming` and carry the same
+    // locally-minted streamId.
     for (let i = 1; i < typings.length; i++) {
       expect(typings[i].entities?.[0].streamType).toBe('streaming');
-      expect(typings[i].entities?.[0].streamId).toBe('msg-1');
-      expect(typings[i].id).toBe('msg-1');
+      expect(typings[i].entities?.[0].streamId).toBe(mintedId);
     }
   });
 
@@ -462,9 +505,9 @@ describe('Teams streaming wire-protocol regression (2026-04-22)', () => {
     const final = calls[calls.length - 1];
     expect(final.type).toBe('message');
     expect(final.entities?.[0].streamType).toBe('final');
-    // CRITICAL: Teams server rejects final without streamId.
-    expect(final.entities?.[0].streamId).toBe('msg-1');
-    expect(final.id).toBe('msg-1');
+    // CRITICAL: Teams server rejects final without streamId. Bug 1 fix
+    // (2026-05-29) mints it locally so the final always has one.
+    expect(final.entities?.[0].streamId).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it('only ONE informative activity even if server returns no id (no infinite informative loop)', async () => {

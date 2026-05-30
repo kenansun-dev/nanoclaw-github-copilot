@@ -460,6 +460,36 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // src/types.ts:Channel.usesNativeStreaming docstring for why this is
   // a separate code path from editMessage-based partial accumulation.
   let streamHandle: import('./types-extensions.js').StreamHandle | undefined;
+  // Bug 2 fallback (proposal docs/proposals/2026-05-29-teams-streaming-multi-final-fix.md).
+  // When the native streaming wire dies mid-turn (server rejects an
+  // activity → `_cancelled` flips inside the channel session) subsequent
+  // `result.partial=false` outputs from a multi-step agent turn would
+  // otherwise each hit `channel.sendMessage()` and produce one DM bubble
+  // per output (kenan Teams repro 2026-05-28: 13–34 bubbles per turn).
+  // When this flag transitions to an array we route every remaining final
+  // text from the turn into the buffer and flush a single concatenated
+  // `channel.sendMessage()` at turn-end / in the finally-guard. If Bug 1
+  // is healthy (`isCancelled()` never trips mid-turn) this code path is
+  // never entered and behaviour is unchanged.
+  let streamDiedCoalesced: string[] | undefined;
+  // Bug 2 helper: probe whether the native streaming wire died and arm the
+  // coalesce buffer if so. Called after every operation that funnels into
+  // the wire (`chunk`, `appendThinking`) — wire-cancel can flip mid-drain
+  // regardless of which entry point we used. Idempotent (gated on
+  // `streamDiedCoalesced === undefined`). Returns true if it tripped this
+  // call so the caller can null out its handle reference.
+  const probeWireDeath = (where: string): boolean => {
+    if (!streamHandle) return false;
+    if (streamHandle.isCancelled?.() !== true) return false;
+    if (streamDiedCoalesced !== undefined) return false;
+    logger.warn(
+      { chatJid, group: group.name, where },
+      'native streaming wire cancelled mid-turn; switching to coalesced-final fallback',
+    );
+    streamDiedCoalesced = [];
+    streamHandle = undefined;
+    return true;
+  };
   // Progress-draft lane (proposal docs/proposals/2026-05-23-progress-drafts.md).
   // Lazily created on the first `status==='progress'` event when the channel
   // is configured `streaming.mode === 'progress'`. Independent of the
@@ -665,6 +695,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 if (handle.appendThinking) {
                   await handle.appendThinking(tp.text);
                   lastThinkingRendered = tp.text;
+                  // Bug 2 probe: wire can die during the thinking phase
+                  // before any text `chunk()` lands. Without this probe
+                  // the coalesce buffer would never arm and a subsequent
+                  // multi-final turn would still fan out.
+                  probeWireDeath('appendThinking');
                 }
               }
             }
@@ -692,6 +727,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               }
               await streamHandle.chunk(tp.text);
               lastThinkingRendered = tp.text;
+              // Bug 2 probe: same reason as the appendThinking site above
+              // (reasoning=on path streams thinking-prefix through chunk()
+              // before any answer chunks arrive).
+              probeWireDeath('native-on-thinking-chunk');
             }
             return;
           }
@@ -925,6 +964,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               streamHandle = await channel.streamMessage(chatJid, sendOpts);
             }
             await streamHandle.chunk(chunkText);
+            // Bug 2 probe: chunk() noops silently once the wire is cancelled
+            // (see StreamHandle contract). Arming the coalesce buffer here
+            // ensures subsequent finals don't fan out into separate
+            // `channel.sendMessage` calls. Same helper covers the two
+            // thinking-phase entry points above.
+            probeWireDeath('answer-chunk');
           } else if (result.partial && channel.editMessage) {
             // Delta/partial: accumulate and edit existing message.
             progressiveText = text; // delta buffer already accumulated in agent-runner
@@ -946,6 +991,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           } else {
             // Final message (or channel doesn't support edit)
             await traceSetTyping(channel, chatJid, false, 'final-output');
+            if (streamDiedCoalesced !== undefined) {
+              // Bug 2 fallback: streaming wire died earlier this turn.
+              // Buffer this final and let the flush at turn-end publish
+              // a single concatenated message instead of N bubbles.
+              streamDiedCoalesced.push(text);
+              outputSentToUser = true;
+              turnFinalized = true;
+              progressiveMsgId = undefined;
+              progressiveText = '';
+              void finalizeProgressDraft(text);
+              await armTypingBounded(channel, chatJid, 'after-coalesced-final', INTERIM_TYPING_TTL_MS);
+              logger.info(
+                { group: group.name, buffered: streamDiedCoalesced.length },
+                `Agent output (coalesced): ${raw.length} chars`,
+              );
+              return;
+            }
             if (streamHandle) {
               // Native streaming path: close the stream with the final text.
               // The handle owns whether this becomes a new message or replaces
@@ -1018,6 +1080,24 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       triggeringUserId,
     );
 
+    // Bug 2 flush: if the streaming wire died mid-turn, publish all the
+    // buffered finals as a single concatenated `channel.sendMessage`.
+    // Worst-case: 1 long DM instead of 34 short ones.
+    if (streamDiedCoalesced && streamDiedCoalesced.length > 0) {
+      const combined = streamDiedCoalesced.join('\n\n');
+      try {
+        const msgId = await channel.sendMessage(chatJid, combined);
+        if (typeof msgId === 'string') lastFinalMsgId = msgId;
+        logger.info(
+          { group: group.name, parts: streamDiedCoalesced.length, length: combined.length },
+          'Coalesced multi-final flushed (streaming wire died mid-turn)',
+        );
+      } catch (err) {
+        logger.error({ group: group.name, err: (err as Error).message }, 'Coalesced multi-final flush failed');
+      }
+      streamDiedCoalesced = undefined;
+    }
+
     await traceSetTyping(channel, chatJid, false, 'turn-end');
 
     if (output === 'error' || hadError) {
@@ -1056,6 +1136,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           'streamHandle.cancel in finally-guard failed (non-fatal)',
         );
       }
+    }
+    // Bug 2 finally-flush: if the turn threw before reaching the happy-path
+    // flush above and there is buffered coalesced text, try once more so the
+    // user still gets the agent's reply (in one bubble) instead of nothing.
+    if (streamDiedCoalesced && streamDiedCoalesced.length > 0) {
+      const combined = streamDiedCoalesced.join('\n\n');
+      try {
+        await channel.sendMessage(chatJid, combined);
+      } catch (err) {
+        logger.warn(
+          { chatJid, err: (err as Error).message },
+          'Coalesced multi-final flush in finally-guard failed (non-fatal)',
+        );
+      }
+      streamDiedCoalesced = undefined;
     }
     // Progress draft: any draft still open at finally-guard time means the
     // turn ended without a normal final-output path (error, cancel, etc).

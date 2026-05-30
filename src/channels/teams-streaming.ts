@@ -62,6 +62,7 @@
  *   - Pacing: per-chunk delay matches Teams' enforced rate limit.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { TurnContext, ConversationReference } from 'botbuilder';
 import { logger } from '../log-extensions.js';
 import type { NativeThinkingStreamHandle } from '../types-extensions.js';
@@ -110,7 +111,15 @@ export interface TeamsStreamingOpts {
  * `end` and `cancel` are idempotent.
  */
 export class TeamsStreamingSession implements NativeThinkingStreamHandle {
-  private _streamId: string | undefined;
+  // Bug 1 fix (2026-05-29): mint streamId locally at session construction
+  // instead of waiting for the server's sendActivity response. Bot
+  // Connector treats typing activities as fire-and-forget and frequently
+  // returns no id, leaving `_streamId` undefined; `_stampStreamId` then
+  // early-returns, continuation chunks ship without a streamId entity,
+  // and the server rejects them ("Only start streaming and continue
+  // streaming types are allowed as a typing activity"). MS reference
+  // implementations mint client-side for the same reason.
+  private _streamId: string = randomUUID();
   /**
    * True once the bootstrap (`streamType: 'informative'`) activity has
    * been sent. Tracked separately from `_streamId` because the server
@@ -364,6 +373,19 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     // cancel for fast turn-boundary cleanup.
   }
 
+  /**
+   * Whether the wire transport has given up (wire reject, generic
+   * send failure). Distinct from explicit dispatcher `cancel()`:
+   * an explicit cancel means "do not publish anything" while a wire
+   * cancel means "stop streaming but `end()` will still publish a
+   * plain final message". Dispatcher reads this to switch the
+   * remaining turn to coalesced-final mode (bug 2 fallback). See
+   * `docs/proposals/2026-05-29-teams-streaming-multi-final-fix.md`.
+   */
+  isCancelled(): boolean {
+    return this._cancelled && !this._explicitCancel;
+  }
+
   // --- Internals ------------------------------------------------------
 
   /**
@@ -426,7 +448,10 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
       this._stampStreamId(activity);
       try {
         const id = await this.send(activity);
-        if (!this._streamId && id) this._streamId = id;
+        // We no longer need to backfill `_streamId` from the response —
+        // it was minted at construction. The response id is ignored on
+        // purpose so subsequent chunks always stamp the same value.
+        void id;
         this._bootstrapSent = true;
         this._lastSent = textToSend;
       } catch (err: any) {
@@ -472,7 +497,8 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
    * carry it.
    */
   private _stampStreamId(activity: Partial<TeamsActivity>): void {
-    if (!this._streamId) return;
+    // `_streamId` is always set (locally minted at construction); no
+    // guard required. Kept method for the entity-shape contract.
     activity.id = this._streamId;
     if (!activity.entities) activity.entities = [];
     if (!activity.entities[0]) activity.entities[0] = { type: 'streaminfo' };

@@ -143,6 +143,18 @@ export interface StreamHandle {
   chunk(cumulativeText: string): Promise<void>;
   end(finalText: string): Promise<string | void>;
   cancel(): Promise<void>;
+  /**
+   * True if the wire transport (e.g. Teams streaming) gave up mid-turn
+   * after a non-recoverable reject (`ContentStreamNotAllowed`, wire
+   * protocol error). Distinct from explicit dispatcher-driven `cancel()`
+   * and from `_ended`. When true, subsequent `chunk()` calls are noops
+   * and the dispatcher should switch to a coalesced single-`end()`
+   * fallback for the rest of the turn (see
+   * `docs/proposals/2026-05-29-teams-streaming-multi-final-fix.md`
+   * Bug 2). Channels without this concept (Telegram editMessage-based,
+   * Slack) may always return false.
+   */
+  isCancelled?(): boolean;
 }
 
 /**
