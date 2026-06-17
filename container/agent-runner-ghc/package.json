@@ -9,8 +9,8 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@github/copilot": "^1.0.54",
-    "@github/copilot-sdk": "^0.3.0",
+    "@github/copilot": "^1.0.63",
+    "@github/copilot-sdk": "^1.0.1",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "cron-parser": "^5.0.0",
     "pdf-parse": "^2.4.5",

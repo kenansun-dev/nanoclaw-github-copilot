@@ -19,11 +19,12 @@ const runners = [
 
 // Required nested SDK version. If postinstall fails to install runner deps
 // AND the nested copy is missing/older, the runner will fall back to the
-// top-level @github/copilot-sdk via npm hoist; that fallback MUST also be
-// 0.3.x or the CLI will throw `unexpected user permission response` at
-// runtime. We bumped top-level dep to ^0.3.0 in package.json as belt; this
-// check is suspenders.
-const REQUIRED_SDK_MAJOR_MINOR = '0.3';
+// top-level @github/copilot-sdk via npm hoist; that fallback MUST match the
+// CLI's major.minor or the CLI throws `unexpected user permission response`
+// at runtime. SDK 1.0.x pairs with @github/copilot ^1.0.61 (CLI 1.0.63 here).
+// We bumped top-level + both runner deps to ^1.0.1 in package.json as belt;
+// this check is suspenders.
+const REQUIRED_SDK_MAJOR_MINOR = '1.0';
 
 function sdkVersion(runnerDir) {
   const p = join(runnerDir, 'node_modules', '@github', 'copilot-sdk', 'package.json');
