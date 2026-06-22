@@ -156,8 +156,22 @@ constraint, not a caveat.
 - If we later want network isolation, options: App Service **access
   restrictions** allowing only Bot Connector service tag, or Private Endpoint +
   a public ingress shim. Not needed for v1.
-- Single path `/api/messages/<name>` per bot (or one endpoint + appId routing) —
-  design note: prefer **per-bot path** so logs/correlation are clean.
+- **Multi-bot routing — RESOLVED (rpi5 line-review 2026-06-22).** The current
+  adapter is **one listener, one fixed `/api/messages`, one appId per process**
+  (`teams.ts:280`, `:98`). Today's multi-bot story is **N `TeamsChannel`
+  instances each on its own `webhookPort`** (`:1207`) — an N-ports model that
+  **does not map onto App Service**, which hands the process a single `PORT`.
+  So the v1 decision is **(a) one App Service per bot**: existing per-account
+  env runs **literally unchanged** (one bot, one port, one appId). No per-bot
+  path, no surgery.
+  - When bot count makes N plans expensive, migrate to **(b) one App Service,
+    N bots**: demux on **`activity.recipient.id`** (the addressed bot's
+    `28:<appId>`), which the listener already `JSON.parse`s at `:289` *before*
+    the adapter — so the right credential set is picked pre-auth on a single
+    `/api/messages` path. **Do NOT** route by per-bot URL path or by parsing
+    the unvalidated JWT `aud`. `recipient.id` is already the dispatch key used
+    at `:467/:487`.
+  - This **dissolves the old §4 "per-bot path" question entirely** — closed.
 
 ## 5. Isolation boundary (explicit risk)
 
@@ -216,7 +230,10 @@ incumbent, that seam is pure downside.)
 - [x] ~~MI-as-FIC: is the IMDS token directly a valid `client_assertion`?~~ →
       **RESOLVED** (GA'd, sound; §3).
 - [x] ~~Bicep vs Terraform~~ → **Terraform** (greenfield, no incumbent IaC; §7).
-- [ ] Per-bot path vs single endpoint + appId routing (§4).
+- [x] ~~Per-bot path vs single endpoint + appId routing~~ → **v1 = one App
+      Service per bot** (existing per-account env, zero code change). Future
+      multi-bot-single-App-Service demuxes on `activity.recipient.id`, not
+      path/JWT (§4, rpi5 review).
 - [ ] Same-tenant only (cross-tenant fallback lives in the identity note).
 - [ ] B1 vs P1v3 starting tier; Always On confirmed.
 - [x] ~~Relay folding~~ → **No separate relay exists.** rpi5 source check:
