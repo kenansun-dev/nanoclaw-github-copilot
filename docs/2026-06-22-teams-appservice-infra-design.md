@@ -114,8 +114,16 @@ az bot msteams create -g <rg> -n ncl-bot-<name>
 Runtime (in App Service code), per outbound reply for bot `<name>`:
 1. IMDS → MSI token, `resource=api://AzureADTokenExchange`, `client_id=$MSI_CID`.
 2. POST that JWT as `client_assertion` to
-   `/{TENANT}/oauth2/v2.0/token` with `client_id=<that bot's appId>`,
-   `scope=https://api.botframework.com/.default`.
+   `https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/token` with the
+   **full confidential-client federated set** (rpi5 review: the two grant
+   params are required, not implied):
+   - `grant_type=client_credentials`
+   - `client_id=<that bot's appId>`
+   - `scope=https://api.botframework.com/.default`
+   - `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer`
+   - `client_assertion=<the MSI IMDS token from step 1>`
+   Omitting `grant_type` or `client_assertion_type` → `invalid_request` /
+   `unsupported_grant_type`.
 3. Use returned token as bearer to Bot Connector.
 
 **RESOLVED (rpi5 review 2026-06-22):** "Managed identity as a federated
@@ -198,13 +206,15 @@ incumbent, that seam is pure downside.)
 
 ## 8. Provisioning runbook (end state)
 
-1. `az deployment group create` core.bicep → App Service + MSI live.
+1. `terraform apply -target=module.core` → App Service plan + web app + MSI
+   live (§7 decided Terraform, not Bicep).
 2. Deploy NCL code to App Service (zip deploy / GH Actions).
 3. Per bot: run the §3 per-bot script (app create → FIC → bot create → teams).
 4. Smoke: send a Teams message, confirm reply (validates IMDS→FIC→Connector).
 
 ## 9. Open items for rpi5 review
-- [ ] MI-as-FIC: is the IMDS token directly a valid `client_assertion`? (§3)
+- [x] ~~MI-as-FIC: is the IMDS token directly a valid `client_assertion`?~~ →
+      **RESOLVED** (GA'd, sound; §3).
 - [x] ~~Bicep vs Terraform~~ → **Terraform** (greenfield, no incumbent IaC; §7).
 - [ ] Per-bot path vs single endpoint + appId routing (§4).
 - [ ] Same-tenant only (cross-tenant fallback lives in the identity note).
