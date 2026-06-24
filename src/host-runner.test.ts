@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 vi.mock('./log-extensions.js', () => ({
   logger: {
@@ -9,10 +12,12 @@ vi.mock('./log-extensions.js', () => ({
   },
 }));
 
-import { treeKillAgent } from './host-runner.js';
+import { treeKillAgent, reapDeadAgentPids } from './host-runner.js';
+import { setWorkspace } from './workspace.js';
+
+const origPlatform = process.platform;
 
 describe('treeKillAgent (POSIX process-group reap)', () => {
-  const origPlatform = process.platform;
   let killSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
@@ -54,5 +59,54 @@ describe('treeKillAgent (POSIX process-group reap)', () => {
     });
     // Must not reject — best-effort + idempotent.
     await expect(treeKillAgent(44208, 'unit')).resolves.toBeUndefined();
+  });
+});
+
+describe('reapDeadAgentPids (liveness-checked record pruning)', () => {
+  let tmpWs: string;
+
+  beforeEach(() => {
+    // POSIX liveness path uses process.kill(pid, 0); force that branch.
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    tmpWs = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-pids-'));
+    setWorkspace(tmpWs);
+    fs.mkdirSync(path.join(tmpWs, 'state'), { recursive: true });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: origPlatform, configurable: true });
+    try {
+      fs.rmSync(tmpWs, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  const pidsFile = () => path.join(tmpWs, 'state', 'agent-pids.json');
+
+  it('prunes records whose process is gone, keeps the live one', async () => {
+    // process.pid is definitely alive; a huge pid is definitely dead.
+    const deadPid = 2_000_000_000;
+    fs.writeFileSync(pidsFile(), JSON.stringify([process.pid, deadPid]));
+    const pruned = await reapDeadAgentPids();
+    expect(pruned).toBe(1);
+    const remaining = JSON.parse(fs.readFileSync(pidsFile(), 'utf-8'));
+    expect(remaining).toEqual([process.pid]);
+  });
+
+  it('is a no-op when the file is missing', async () => {
+    expect(fs.existsSync(pidsFile())).toBe(false);
+    await expect(reapDeadAgentPids()).resolves.toBe(0);
+  });
+
+  it('never kills a live process (pruning is record-only)', async () => {
+    const killSpy = vi.spyOn(process, 'kill');
+    fs.writeFileSync(pidsFile(), JSON.stringify([process.pid]));
+    await reapDeadAgentPids();
+    // Only signal 0 (liveness probe) is allowed; never a real kill signal.
+    for (const call of killSpy.mock.calls) {
+      expect(call[1]).toBe(0);
+    }
+    killSpy.mockRestore();
   });
 });

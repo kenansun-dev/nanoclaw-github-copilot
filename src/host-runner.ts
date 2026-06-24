@@ -218,6 +218,64 @@ export async function killAllAgentPids(): Promise<void> {
 }
 
 /**
+ * Prune agent-pids.json records whose process is already gone.
+ *
+ * Backstop for the host-mode leak (2026-06-24): the per-turn reaper
+ * (`treeKillAgent` on close) is the primary fix, but if a host-agent died
+ * without its close handler running cleanly (hard crash, OOM, missed kill),
+ * its pid lingers in the bookkeeping file. This is a SAFE, liveness-checked
+ * sweep: it only drops records for pids that are NOT running (POSIX
+ * `kill(pid, 0)` ESRCH / Windows tasklist miss). It never kills a live
+ * process — long-lived host agents in IPC mode must keep running. Returns the
+ * count pruned. Best-effort; errors are swallowed.
+ */
+export async function reapDeadAgentPids(): Promise<number> {
+  try {
+    const file = agentPidsFile();
+    if (!fs.existsSync(file)) return 0;
+    const pids: number[] = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    if (pids.length === 0) return 0;
+
+    const alive: number[] = [];
+    for (const pid of pids) {
+      if (!pid || pid <= 0) continue;
+      if (await isPidAlive(pid)) alive.push(pid);
+    }
+    const pruned = pids.length - alive.length;
+    if (pruned > 0) {
+      fs.writeFileSync(file, JSON.stringify(alive));
+      logger.info({ pruned, remaining: alive.length }, 'reapDeadAgentPids: pruned dead agent pid record(s)');
+    }
+    return pruned;
+  } catch (err: any) {
+    logger.debug({ err: err?.message ?? String(err) }, 'reapDeadAgentPids: skipped');
+    return 0;
+  }
+}
+
+/** Liveness probe for a single pid. POSIX: `kill(pid, 0)`. Windows: tasklist. */
+async function isPidAlive(pid: number): Promise<boolean> {
+  if (process.platform === 'win32') {
+    try {
+      const { stdout } = await execAsync(`tasklist /FI "PID eq ${pid}" /NH /FO CSV`);
+      // tasklist prints an INFO line (no matching task) when the pid is gone;
+      // a real row is a CSV record beginning with a quoted image name.
+      return /^\s*"/.test(stdout);
+    } catch {
+      // tasklist failed — be conservative and assume alive (don't prune).
+      return true;
+    }
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: any) {
+    // ESRCH = no such process → dead. EPERM = exists but not ours → alive.
+    return err?.code === 'EPERM';
+  }
+}
+
+/**
  * Resolve the path to the agent-runner entry point.
  */
 function resolveAgentRunnerPath(agent: AgentConfig): string {

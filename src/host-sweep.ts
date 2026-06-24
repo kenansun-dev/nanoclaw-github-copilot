@@ -30,6 +30,7 @@ import type Database from 'better-sqlite3';
 import fs from 'fs';
 
 import { getActiveSessions } from './db/sessions.js';
+import { isDbInitialized } from './db/connection.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import {
   countDueMessages,
@@ -43,6 +44,7 @@ import {
   type ContainerState,
 } from './db/session-db.js';
 import { log } from './log.js';
+import { reapDeadAgentPids } from './host-runner.js';
 import { openInboundDb, openOutboundDb, openOutboundDbRw, inboundDbPath, heartbeatPath } from './session-manager.js';
 import { isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
 import { loadConfig } from './config-loader.js';
@@ -165,12 +167,32 @@ async function sweep(): Promise<void> {
   if (!running) return;
 
   try {
-    const sessions = getActiveSessions();
-    for (const session of sessions) {
-      await sweepSession(session);
+    // Defensive: if the central DB handle isn't initialized in THIS module
+    // instance, skip the DB scan instead of throwing once per tick. With the
+    // globalThis-pinned handle (db/connection.ts) this should never be false
+    // in a healthy process, but a duplicate module instance (Windows
+    // drive-letter casing / dynamic-import resolution drift) would otherwise
+    // spam 'Database not initialized' every 60s, which is exactly the bug
+    // this guard backstops (2026-06-24).
+    if (isDbInitialized()) {
+      const sessions = getActiveSessions();
+      for (const session of sessions) {
+        await sweepSession(session);
+      }
     }
   } catch (err) {
     log.error('Host sweep error', { err });
+  }
+
+  // Host-mode backstop (runs every tick regardless of DB state / runtime):
+  // prune agent-pids.json records whose process already died. Safe —
+  // liveness-checked, never kills a live agent. Complements the per-turn
+  // close-time reaper (treeKillAgent) for the hard-crash path where the
+  // close handler never ran. Container mode also benefits (stale records).
+  try {
+    await reapDeadAgentPids();
+  } catch (err) {
+    log.error('Host sweep reap error', { err });
   }
 
   setTimeout(sweep, sweepTunables().sweepIntervalMs);
