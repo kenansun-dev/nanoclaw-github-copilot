@@ -68,6 +68,61 @@ export function unregisterAgentPid(pid: number): void {
   }
 }
 
+/**
+ * Force-kill a single host-agent process **and its whole subtree** (the GHC
+ * copilot CLI + every stdio MCP server it spawned).
+ *
+ * Why this exists (root cause of kenan's Windows "running but silent, needs
+ * restart" + 400+ leaked node procs over 4 days, 2026-06-24):
+ * host mode is IPC long-lived, so one host-agent node process is reused across
+ * many turns and only dies on per-query timeout / crash / `stop`. When it dies,
+ * the `child.on('close')` path historically only called `unregisterAgentPid()`
+ * — it dropped the bookkeeping record but never reaped the OS subtree. On
+ * Windows there is no process-group SIGKILL cascade, so the copilot CLI and its
+ * MCP grandchildren were orphaned and lived on. Every respawn stacked more.
+ * host-sweep (the intended reaper) is container-only AND was wedged on a null
+ * v2 DB handle, so nothing collected them until a manual restart.
+ *
+ * This reaper is the per-agent-death backstop: Windows uses parallel
+ * `taskkill /F /T` (walks the tree); POSIX kills the detached process group
+ * (negative pid) with a single-pid fallback. Best-effort + idempotent — a
+ * process that already exited is a no-op, not an error.
+ */
+export async function treeKillAgent(pid: number, reason: string): Promise<void> {
+  if (!pid || pid <= 0) return;
+  try {
+    if (process.platform === 'win32') {
+      try {
+        await execAsync(`taskkill /F /T /PID ${pid}`);
+        logger.info({ pid, reason }, 'treeKillAgent: taskkill /F /T succeeded (subtree reaped)');
+      } catch (err: any) {
+        const msg = err?.stderr?.toString?.() ?? String(err);
+        if (/not found|不存在|找不到/i.test(msg)) {
+          logger.debug({ pid, reason }, 'treeKillAgent: process already gone');
+        } else {
+          logger.warn({ pid, reason, err: msg }, 'treeKillAgent: taskkill /F /T failed');
+        }
+      }
+    } else {
+      // POSIX: kill the detached process group (spawn uses detached:true), so
+      // grandchildren spawned by the CLI go too. Fall back to single-pid.
+      try {
+        process.kill(-pid, 'SIGKILL');
+        logger.info({ pid, reason }, 'treeKillAgent: SIGKILL sent to process group (subtree reaped)');
+      } catch {
+        try {
+          process.kill(pid, 'SIGKILL');
+          logger.debug({ pid, reason }, 'treeKillAgent: SIGKILL sent to pid (no pgroup)');
+        } catch {
+          logger.debug({ pid, reason }, 'treeKillAgent: process already gone');
+        }
+      }
+    }
+  } catch (err: any) {
+    logger.warn({ pid, reason, err: err?.message ?? String(err) }, 'treeKillAgent: unexpected error');
+  }
+}
+
 export async function killAllAgentPids(): Promise<void> {
   try {
     const file = agentPidsFile();
@@ -756,7 +811,18 @@ export async function runHostAgent(
           /* ignore */
         }
       }
-      if (child.pid) unregisterAgentPid(child.pid);
+      // Reap the whole subtree (copilot CLI + MCP grandchildren), not just the
+      // node process whose stdio closed. On Windows the parent exiting does NOT
+      // cascade to children, so without this they orphan and pile up across
+      // respawns (root cause of the 400+ leaked procs / silent-host bug,
+      // 2026-06-24). Fire-and-forget: the close handler is sync, and the reap
+      // is best-effort + idempotent. Runs BEFORE unregister so a crash in the
+      // kill path still leaves the pid recorded for `killAllAgentPids()` / sweep.
+      if (child.pid) {
+        const deadPid = child.pid;
+        void treeKillAgent(deadPid, `host-agent-close(code=${code})`);
+        unregisterAgentPid(deadPid);
+      }
       const duration = Date.now() - startTime;
 
       if (resolved) {
