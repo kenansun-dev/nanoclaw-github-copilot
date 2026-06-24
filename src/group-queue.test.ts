@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
-import { GroupQueue } from './group-queue.js';
+import { GroupQueue, taskSlotKey } from './group-queue.js';
 
 // Mock config to control concurrency limit
 vi.mock('./config.js', () => ({
@@ -491,6 +491,69 @@ describe('GroupQueue', () => {
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
+  });
+
+  // --- closeTaskStdin live-tree reap (Windows orphan leak fix, 2026-06-25) ---
+
+  it('closeTaskStdin force-reaps the LIVE task agent subtree (POSIX process-group kill)', async () => {
+    // The actual leak fix: on graceful `_close` the SDK ends only its session;
+    // detached GHC CLI + MCP grandchildren orphan. We must kill the live tree
+    // while the parent is still alive (killing after exit walks a dead tree).
+    const origPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as never);
+    try {
+      const q = new GroupQueue();
+      q.setProcessMessagesFn(async () => true);
+      let release: () => void;
+      const taskFn = vi.fn(
+        () =>
+          new Promise<void>((r) => {
+            release = r;
+          }),
+      );
+      q.enqueueTask('group1@g.us', 'task-1', taskFn);
+      await vi.advanceTimersByTimeAsync(10);
+      // Register a LIVE process on the per-task slot.
+      q.registerProcess(taskSlotKey('group1@g.us', 'task-1'), { on: () => {}, exitCode: null, killed: false, pid: 44208 } as any, 'c-task', 'task-folder');
+
+      q.closeTaskStdin('group1@g.us', 'task-1');
+
+      // POSIX path: SIGKILL the negative pid (the whole detached process group).
+      expect(killSpy).toHaveBeenCalledWith(-44208, 'SIGKILL');
+      release!();
+      await vi.advanceTimersByTimeAsync(10);
+    } finally {
+      killSpy.mockRestore();
+      Object.defineProperty(process, 'platform', { value: origPlatform, configurable: true });
+    }
+  });
+
+  it('closeTaskStdin does NOT kill when the task process already exited (no dead-tree taskkill)', async () => {
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as never);
+    try {
+      const q = new GroupQueue();
+      q.setProcessMessagesFn(async () => true);
+      let release: () => void;
+      const taskFn = vi.fn(
+        () =>
+          new Promise<void>((r) => {
+            release = r;
+          }),
+      );
+      q.enqueueTask('group1@g.us', 'task-2', taskFn);
+      await vi.advanceTimersByTimeAsync(10);
+      // Dead process (exitCode set) — reap must be skipped.
+      q.registerProcess(taskSlotKey('group1@g.us', 'task-2'), { on: () => {}, exitCode: 0, killed: false, pid: 44209 } as any, 'c-task', 'task-folder');
+
+      q.closeTaskStdin('group1@g.us', 'task-2');
+
+      expect(killSpy).not.toHaveBeenCalled();
+      release!();
+      await vi.advanceTimersByTimeAsync(10);
+    } finally {
+      killSpy.mockRestore();
+    }
   });
 
   // --- Tests for #188/#189 process liveness + IPC queue ---
