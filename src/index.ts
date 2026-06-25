@@ -1857,21 +1857,22 @@ async function main(): Promise<void> {
 
   // v2 host-sweep: heartbeat-based zombie detection (claim-stuck 60s default)
   // + optional absolute-ceiling throttle (default disabled per owner directive
-  // 2026-05-10). Container mode only — host mode (sandbox.runtime is not
-  // 'docker'/'apple-container') has no per-session container, no claim/ack
-  // table writes, and no heartbeat writer; the sweep would be a no-op there.
-  // Skipping startup keeps the timer + DB scan off the host-mode hot path.
+  // 2026-05-10). The DB-scan half (container claim/ack/heartbeat) is
+  // container-only — host mode has no per-session container, no claim/ack
+  // table writes, and no heartbeat writer, so that half is a no-op there.
+  // BUT the sweep loop also runs the agent-pid reaper (reapDeadAgentPids),
+  // which IS needed in host mode — that's the backstop for the Windows
+  // orphaned-process leak (2026-06-24). So we start the sweep in BOTH modes;
+  // the DB scan self-skips in host mode (isDbInitialized guard + container
+  // checks), and the reaper runs every tick regardless.
   try {
     const { loadConfig: lcSweep } = await import('./config-loader.js');
     const { startHostSweep } = await import('./host-sweep.js');
     const cfgSweep = lcSweep();
     const runtime = cfgSweep.sandbox?.runtime;
-    if (runtime === 'docker' || runtime === 'apple-container') {
-      startHostSweep();
-      logger.info('Host sweep started (container mode)');
-    } else {
-      logger.debug('Host sweep skipped (host mode)');
-    }
+    const containerMode = runtime === 'docker' || runtime === 'apple-container';
+    startHostSweep();
+    logger.info({ mode: containerMode ? 'container' : 'host' }, 'Host sweep started');
   } catch (err) {
     logger.warn({ err }, 'Failed to start host sweep');
   }

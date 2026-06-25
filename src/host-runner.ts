@@ -68,6 +68,61 @@ export function unregisterAgentPid(pid: number): void {
   }
 }
 
+/**
+ * Force-kill a single host-agent process **and its whole subtree** (the GHC
+ * copilot CLI + every stdio MCP server it spawned).
+ *
+ * Why this exists (root cause of kenan's Windows "running but silent, needs
+ * restart" + 400+ leaked node procs over 4 days, 2026-06-24):
+ * host mode is IPC long-lived, so one host-agent node process is reused across
+ * many turns and only dies on per-query timeout / crash / `stop`. When it dies,
+ * the `child.on('close')` path historically only called `unregisterAgentPid()`
+ * — it dropped the bookkeeping record but never reaped the OS subtree. On
+ * Windows there is no process-group SIGKILL cascade, so the copilot CLI and its
+ * MCP grandchildren were orphaned and lived on. Every respawn stacked more.
+ * host-sweep (the intended reaper) is container-only AND was wedged on a null
+ * v2 DB handle, so nothing collected them until a manual restart.
+ *
+ * This reaper is the per-agent-death backstop: Windows uses parallel
+ * `taskkill /F /T` (walks the tree); POSIX kills the detached process group
+ * (negative pid) with a single-pid fallback. Best-effort + idempotent — a
+ * process that already exited is a no-op, not an error.
+ */
+export async function treeKillAgent(pid: number, reason: string): Promise<void> {
+  if (!pid || pid <= 0) return;
+  try {
+    if (process.platform === 'win32') {
+      try {
+        await execAsync(`taskkill /F /T /PID ${pid}`);
+        logger.info({ pid, reason }, 'treeKillAgent: taskkill /F /T succeeded (subtree reaped)');
+      } catch (err: any) {
+        const msg = err?.stderr?.toString?.() ?? String(err);
+        if (/not found|不存在|找不到/i.test(msg)) {
+          logger.debug({ pid, reason }, 'treeKillAgent: process already gone');
+        } else {
+          logger.warn({ pid, reason, err: msg }, 'treeKillAgent: taskkill /F /T failed');
+        }
+      }
+    } else {
+      // POSIX: kill the detached process group (spawn uses detached:true), so
+      // grandchildren spawned by the CLI go too. Fall back to single-pid.
+      try {
+        process.kill(-pid, 'SIGKILL');
+        logger.info({ pid, reason }, 'treeKillAgent: SIGKILL sent to process group (subtree reaped)');
+      } catch {
+        try {
+          process.kill(pid, 'SIGKILL');
+          logger.debug({ pid, reason }, 'treeKillAgent: SIGKILL sent to pid (no pgroup)');
+        } catch {
+          logger.debug({ pid, reason }, 'treeKillAgent: process already gone');
+        }
+      }
+    }
+  } catch (err: any) {
+    logger.warn({ pid, reason, err: err?.message ?? String(err) }, 'treeKillAgent: unexpected error');
+  }
+}
+
 export async function killAllAgentPids(): Promise<void> {
   try {
     const file = agentPidsFile();
@@ -159,6 +214,64 @@ export async function killAllAgentPids(): Promise<void> {
     fs.unlinkSync(file);
   } catch (err: any) {
     logger.warn({ err: err?.message ?? String(err) }, 'killAllAgentPids: unexpected error');
+  }
+}
+
+/**
+ * Prune agent-pids.json records whose process is already gone.
+ *
+ * Backstop for the host-mode leak (2026-06-24): the per-turn reaper
+ * (`treeKillAgent` on close) is the primary fix, but if a host-agent died
+ * without its close handler running cleanly (hard crash, OOM, missed kill),
+ * its pid lingers in the bookkeeping file. This is a SAFE, liveness-checked
+ * sweep: it only drops records for pids that are NOT running (POSIX
+ * `kill(pid, 0)` ESRCH / Windows tasklist miss). It never kills a live
+ * process — long-lived host agents in IPC mode must keep running. Returns the
+ * count pruned. Best-effort; errors are swallowed.
+ */
+export async function reapDeadAgentPids(): Promise<number> {
+  try {
+    const file = agentPidsFile();
+    if (!fs.existsSync(file)) return 0;
+    const pids: number[] = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    if (pids.length === 0) return 0;
+
+    const alive: number[] = [];
+    for (const pid of pids) {
+      if (!pid || pid <= 0) continue;
+      if (await isPidAlive(pid)) alive.push(pid);
+    }
+    const pruned = pids.length - alive.length;
+    if (pruned > 0) {
+      fs.writeFileSync(file, JSON.stringify(alive));
+      logger.info({ pruned, remaining: alive.length }, 'reapDeadAgentPids: pruned dead agent pid record(s)');
+    }
+    return pruned;
+  } catch (err: any) {
+    logger.debug({ err: err?.message ?? String(err) }, 'reapDeadAgentPids: skipped');
+    return 0;
+  }
+}
+
+/** Liveness probe for a single pid. POSIX: `kill(pid, 0)`. Windows: tasklist. */
+async function isPidAlive(pid: number): Promise<boolean> {
+  if (process.platform === 'win32') {
+    try {
+      const { stdout } = await execAsync(`tasklist /FI "PID eq ${pid}" /NH /FO CSV`);
+      // tasklist prints an INFO line (no matching task) when the pid is gone;
+      // a real row is a CSV record beginning with a quoted image name.
+      return /^\s*"/.test(stdout);
+    } catch {
+      // tasklist failed — be conservative and assume alive (don't prune).
+      return true;
+    }
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: any) {
+    // ESRCH = no such process → dead. EPERM = exists but not ours → alive.
+    return err?.code === 'EPERM';
   }
 }
 
@@ -756,7 +869,18 @@ export async function runHostAgent(
           /* ignore */
         }
       }
-      if (child.pid) unregisterAgentPid(child.pid);
+      // Reap the whole subtree (copilot CLI + MCP grandchildren), not just the
+      // node process whose stdio closed. On Windows the parent exiting does NOT
+      // cascade to children, so without this they orphan and pile up across
+      // respawns (root cause of the 400+ leaked procs / silent-host bug,
+      // 2026-06-24). Fire-and-forget: the close handler is sync, and the reap
+      // is best-effort + idempotent. Runs BEFORE unregister so a crash in the
+      // kill path still leaves the pid recorded for `killAllAgentPids()` / sweep.
+      if (child.pid) {
+        const deadPid = child.pid;
+        void treeKillAgent(deadPid, `host-agent-close(code=${code})`);
+        unregisterAgentPid(deadPid);
+      }
       const duration = Date.now() - startTime;
 
       if (resolved) {

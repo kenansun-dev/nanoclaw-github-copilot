@@ -596,6 +596,29 @@ export class GroupQueue {
     } catch {
       // ignore
     }
+    // Force-reap the LIVE process tree (parent agent + detached GHC CLI + stdio
+    // MCP grandchildren) instead of relying on the `_close` graceful wind-down.
+    //
+    // Root cause of kenan's Windows leak (400+ node procs / 4 days, 2026-06-25):
+    // on graceful exit the agent's `client.stop()` ends only the SDK session;
+    // the detached CLI/MCP grandchildren it spawned are NOT cascaded on Windows
+    // (no process-group semantics). They orphan, one tree per scheduled task.
+    // Killing AFTER the parent exits is useless — `taskkill /T <dead_pid>` walks
+    // the *live* tree, and the root is already gone. So we must reap while the
+    // parent is still alive: `killProcess` does a live `taskkill /F /T` (Windows)
+    // / process-group SIGKILL (POSIX), atomically taking the whole subtree.
+    //
+    // Safe to hard-kill here: the 10s `TASK_CLOSE_DELAY_MS` grace already elapsed
+    // upstream (output long delivered + any final MCP calls done), and scheduled
+    // tasks run in a fresh, non-resumable session (`sessionId=undefined`), so the
+    // SDK's graceful disconnect buys nothing. No state to flush.
+    if (slot.process && slot.process.exitCode === null && !slot.process.killed) {
+      logger.info(
+        { chatJid, taskId, pid: slot.process.pid, platform: process.platform },
+        'closeTaskStdin: force-reaping live task agent subtree (orphan prevention)',
+      );
+      this.killProcess(slot.process, 'SIGKILL');
+    }
   }
 
   /**
