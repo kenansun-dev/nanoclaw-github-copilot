@@ -105,10 +105,28 @@ export async function getAzureToken(serverName: string, authConfig: McpAzureAuth
   }
 
   // 3. Try az account get-access-token (already logged in)
-  const azToken = tryAzGetToken(resource);
-  if (azToken) {
+  const azResult = tryAzGetToken(resource);
+  if (azResult) {
+    // Cache the az-cli token so subsequent tasks reuse it instead of spawning
+    // `az account get-access-token` on every MCP call. On Windows `az` is a
+    // `.cmd` wrapper that flashes a console window + adds ~8s latency per call,
+    // so an uncached az path made every scheduled task re-pay that cost (root
+    // cause of kenan's "terminal flashes + slow replies", 2026-06-25). az
+    // tokens carry no refresh_token, so on expiry we simply re-run az (which is
+    // cheap when az session is still valid) — the empty refresh_token means the
+    // refresh branch above is skipped and we fall straight through to here.
+    cache[serverName] = {
+      access_token: azResult.token,
+      // Use az's real expiresOn when parseable; otherwise fall back to a
+      // conservative 50 min (az access tokens are typically 60–90 min, so a
+      // shorter TTL just means we re-acquire a bit early — never serve stale).
+      expires_at: azResult.expiresAt ?? Math.floor(Date.now() / 1000) + 50 * 60,
+      resource,
+      tenant_id: tenantId,
+    };
+    saveTokenCache(cache);
     logger.info({ serverName }, 'Got MCP token from az cli');
-    return { token: azToken, method: 'az-cli' };
+    return { token: azResult.token, method: 'az-cli' };
   }
 
   // 4. Try az login --use-device-code (az installed but not logged in)
@@ -206,19 +224,45 @@ function isAzInstalled(): boolean {
   }
 }
 
-function tryAzGetToken(resource: string): string | null {
+function tryAzGetToken(resource: string): { token: string; expiresAt: number | null } | null {
   try {
-    const result = execSync(`az account get-access-token --resource ${resource} --query accessToken -o tsv`, {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 10000,
-      windowsHide: true,
-    }).trim();
-    if (result && result.length > 10) return result;
-    return null;
+    // Fetch accessToken + expiresOn together so we can cache with the real TTL.
+    const raw = execSync(
+      `az account get-access-token --resource ${resource} --query "{token:accessToken,expiresOn:expiresOn}" -o json`,
+      {
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 10000,
+        windowsHide: true,
+      },
+    ).trim();
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { token?: string; expiresOn?: string };
+    const token = parsed.token?.trim();
+    if (!token || token.length <= 10) return null;
+    return { token, expiresAt: parseAzExpiresOn(parsed.expiresOn) };
   } catch {
     return null;
   }
+}
+
+/**
+ * Parse az CLI's `expiresOn` into a Unix epoch (seconds), or null if unusable.
+ *
+ * az emits expiresOn as a LOCAL-time string without timezone, e.g.
+ * "2026-06-25 23:59:00.000000" (classic az) or an ISO-8601 with offset on
+ * newer Azure CLI. `Date.parse` reads the no-offset form as machine-local
+ * time, which matches az's intent, so we let it. We subtract a 60s safety
+ * skew and reject anything in the past / unparseable so a bad value never
+ * yields a stale-but-"valid" cache entry (caller falls back to a fixed TTL).
+ */
+function parseAzExpiresOn(expiresOn: string | undefined): number | null {
+  if (!expiresOn) return null;
+  const ms = Date.parse(expiresOn);
+  if (Number.isNaN(ms)) return null;
+  const epoch = Math.floor(ms / 1000) - 60;
+  if (epoch <= Math.floor(Date.now() / 1000)) return null;
+  return epoch;
 }
 
 /**
@@ -256,8 +300,8 @@ async function tryAzLogin(
 
       if (code === 0) {
         // Login succeeded — get the token
-        const token = tryAzGetToken(resource);
-        resolve({ token, loginPrompt: output.trim() || undefined });
+        const azResult = tryAzGetToken(resource);
+        resolve({ token: azResult?.token ?? null, loginPrompt: output.trim() || undefined });
       } else {
         // Login failed or user didn't complete — return prompt for LLM
         resolve({
