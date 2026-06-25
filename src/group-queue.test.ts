@@ -515,7 +515,12 @@ describe('GroupQueue', () => {
       q.enqueueTask('group1@g.us', 'task-1', taskFn);
       await vi.advanceTimersByTimeAsync(10);
       // Register a LIVE process on the per-task slot.
-      q.registerProcess(taskSlotKey('group1@g.us', 'task-1'), { on: () => {}, exitCode: null, killed: false, pid: 44208 } as any, 'c-task', 'task-folder');
+      q.registerProcess(
+        taskSlotKey('group1@g.us', 'task-1'),
+        { on: () => {}, exitCode: null, killed: false, pid: 44208 } as any,
+        'c-task',
+        'task-folder',
+      );
 
       q.closeTaskStdin('group1@g.us', 'task-1');
 
@@ -544,7 +549,12 @@ describe('GroupQueue', () => {
       q.enqueueTask('group1@g.us', 'task-2', taskFn);
       await vi.advanceTimersByTimeAsync(10);
       // Dead process (exitCode set) — reap must be skipped.
-      q.registerProcess(taskSlotKey('group1@g.us', 'task-2'), { on: () => {}, exitCode: 0, killed: false, pid: 44209 } as any, 'c-task', 'task-folder');
+      q.registerProcess(
+        taskSlotKey('group1@g.us', 'task-2'),
+        { on: () => {}, exitCode: 0, killed: false, pid: 44209 } as any,
+        'c-task',
+        'task-folder',
+      );
 
       q.closeTaskStdin('group1@g.us', 'task-2');
 
