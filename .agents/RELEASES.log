@@ -1,0 +1,18 @@
+# Release log. One line per packed-and-handed-off tarball, newest at bottom.
+# Format: <ISO-date>  v<version>  main=<short-sha>  sha256=<tgz-sha256>  by=<agent>
+# Tarball filename convention (see RELEASE.md §3): nanoclaw-<track>-<YYYYMMDD>-<main-sha8>.tgz
+#
+# Build identity = main short-sha + content manifest (`tar -tzf` file list + sizes).
+# The tgz sha256 below is a TRANSFER-INTEGRITY checksum only: npm pack bakes mtimes
+# into the gzip, so the SAME main commit packed twice gives a different tgz sha256
+# with identical contents. A differing tgz sha for the same main is NOT "dirty tree".
+2026-06-25  v0.0.2  main=084778c3  sha256=3e1d6c62452edf4c0a603a61f39e7bf99f838a26b1cd84e88bf4a24fca3d12fb  by=vm-claw
+# NOTE 2026-06-25: PR #61 (the leak fix) was packed several ways before/while this
+# convention landed, all SAME CONTENT, different tgz sha256 (proving non-reproducibility):
+#   - vm   7fcaccee… (1.1M) packed from branch HEAD fb2cb979  <- WRONG: pre-merge branch sha
+#   - rpi5 95658ee5… (988K) packed from merged main 084778c3  <- right source, but see size note
+#   - vm   3e1d6c62… / 19c8670f… both packed from merged main 084778c3 seconds apart
+# Lesson 1: pack from merged main (§2), so the sha8 in the filename is the shipped commit.
+# Lesson 2: the tgz sha256 is integrity-only, not a canonical fingerprint (§4).
+# The 988K vs 1.1M size gap was inner node_modules hand-stuffed before packing on one box;
+# with a clean `files[]`-only pack from main the artifact is ~1.1M (postinstall pulls deps).
