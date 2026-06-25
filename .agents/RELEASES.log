@@ -16,3 +16,4 @@
 # Lesson 2: the tgz sha256 is integrity-only, not a canonical fingerprint (§4).
 # The 988K vs 1.1M size gap was inner node_modules hand-stuffed before packing on one box;
 # with a clean `files[]`-only pack from main the artifact is ~1.1M (postinstall pulls deps).
+2026-06-25  v0.0.2  main=d7f256b5  sha256=b8541a6037cfd66b6f1a9e5fde7644a91995ed06d4177f1cdc7609472396eb3b  by=rpi5-claw
