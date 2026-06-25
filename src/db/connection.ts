@@ -8,7 +8,9 @@ import { log } from '../log.js';
 // than a plain module-level `let`. Reason (root cause of kenan's Windows
 // 'Host sweep error: Database not initialized' spam every 60s, 2026-06-24):
 // ESM module identity is keyed by the resolved module URL. On Windows the
-// same file reached via a different drive-letter casing (`c:\` vs `C:\`) or\n// via a dynamic `await import()` whose specifier resolves differently than\n// the static import chain is loaded as a SEPARATE module instance, each with
+// same file reached via a different drive-letter casing (`c:\` vs `C:\`) or
+// via a dynamic `await import()` whose specifier resolves differently than
+// the static import chain is loaded as a SEPARATE module instance, each with
 // its own module-scoped `_db`. `initDb()` ran in the static-graph instance
 // (via index.ts boot) and set its `_db`, but host-sweep is pulled in through
 // `await import('./host-sweep.js')` and got a second instance whose `_db`
