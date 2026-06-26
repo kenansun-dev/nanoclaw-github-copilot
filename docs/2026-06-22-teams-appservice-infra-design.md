@@ -1,3 +1,12 @@
+> ⚠️ **SUPERSEDED 2026-06-26 by `2026-06-26-teams-appservice-relay-design.md`.**
+> This doc converged on the WRONG topology — it places NCL *inside* App Service.
+> The owner-confirmed design is the opposite: **App Service is a thin RELAY**;
+> **NCL runs on the owner's local machine and dials out** (gRPC). The original
+> intent was in `teams-bot-identity-federation.md` ("NCL + Relay, NCL is the
+> *outside-Azure* case"); the §9 "no separate relay exists" conclusion below is
+> the specific error. Kept for history. **Do not implement from this file.**
+> The MSI + per-bot federation parts (§2/§3/§6) remain correct and carry over.
+
 # NCL Teams — App Service Service & Infra Design
 
 > Status: design proposal for review (VM author, 2026-06-22). Builds on
