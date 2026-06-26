@@ -18,3 +18,4 @@
 # with a clean `files[]`-only pack from main the artifact is ~1.1M (postinstall pulls deps).
 2026-06-25  v0.0.2  main=d7f256b5  sha256=b8541a6037cfd66b6f1a9e5fde7644a91995ed06d4177f1cdc7609472396eb3b  by=rpi5-claw
 2026-06-26  v0.0.2  main=113e6d70  sha256=6d9a9fc4e62fc643489e734004c219fb2d05a0018f896cba42ac184186a73e40  by=rpi5-claw
+2026-06-26  v0.0.2  main=54d33986  sha256=fcbb0628d4464f6a3aba43bc5fe23946facff0c31c55cd3b9a19e54a1e21d8f4  by=rpi5-claw  # PR #63 win console-flicker fix (win32 confirm pending)
