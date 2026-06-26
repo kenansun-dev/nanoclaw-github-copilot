@@ -232,6 +232,7 @@ async function runService(action: string) {
   const os = await import('os');
   const fs = await import('fs');
   const { execSync, spawn } = await import('child_process');
+  const { winExecSync } = await import('./win-process.js');
 
   // B.5 + 2026-05-09 followup: file logging is daily-rotated
   // (`nanoclaw-YYYY-MM-DD.log`), driven by the in-process sink in
@@ -252,9 +253,7 @@ async function runService(action: string) {
   const hasSchedTask = (() => {
     if (process.platform !== 'win32') return false;
     try {
-      execSync(`schtasks /Query /TN "${SERVICE_NAME}" /FO CSV /NH`, {
-        stdio: 'pipe',
-      });
+      winExecSync('schtasks', ['/Query', '/TN', SERVICE_NAME, '/FO', 'CSV', '/NH']);
       return true;
     } catch {
       return false;
@@ -264,7 +263,12 @@ async function runService(action: string) {
   const hasWindowsAutoStart = (() => {
     if (process.platform !== 'win32') return false;
     try {
-      execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "nanoclaw"', { stdio: 'pipe' });
+      winExecSync('reg', [
+        'query',
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+        '/v',
+        'nanoclaw',
+      ]);
       return true;
     } catch {
       const startupDir = join(
@@ -288,7 +292,9 @@ async function runService(action: string) {
     if (process.platform === 'win32') {
       try {
         // /T kills the process tree (including child agent-runner processes)
-        execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'pipe' });
+        // execFile (no cmd.exe wrapper) + windowsHide so the kill doesn't flash
+        // a console window. See src/win-process.ts.
+        winExecSync('taskkill', ['/F', '/T', '/PID', String(pid)]);
       } catch {
         /* */
       }
@@ -327,7 +333,7 @@ async function runService(action: string) {
       }
       if (hasSchedTask) {
         try {
-          execSync(`schtasks /Run /TN "${SERVICE_NAME}"`, { stdio: 'pipe' });
+          winExecSync('schtasks', ['/Run', '/TN', SERVICE_NAME]);
           console.log('Started via Scheduled Task');
           return;
         } catch {

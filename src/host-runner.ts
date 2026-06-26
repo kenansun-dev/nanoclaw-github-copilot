@@ -6,10 +6,9 @@
  *
  * Used when agents.defaults.mode === 'host'.
  */
-import { ChildProcess, spawn, execSync, exec } from 'child_process';
-import { promisify } from 'util';
+import { ChildProcess, spawn } from 'child_process';
+import { winExecSync, winExecAsync, isProcessAlreadyGone } from './win-process.js';
 
-const execAsync = promisify(exec);
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -93,13 +92,13 @@ export async function treeKillAgent(pid: number, reason: string): Promise<void> 
   try {
     if (process.platform === 'win32') {
       try {
-        await execAsync(`taskkill /F /T /PID ${pid}`);
+        await winExecAsync('taskkill', ['/F', '/T', '/PID', String(pid)]);
         logger.info({ pid, reason }, 'treeKillAgent: taskkill /F /T succeeded (subtree reaped)');
       } catch (err: any) {
-        const msg = err?.stderr?.toString?.() ?? String(err);
-        if (/not found|不存在|找不到/i.test(msg)) {
+        if (isProcessAlreadyGone(err)) {
           logger.debug({ pid, reason }, 'treeKillAgent: process already gone');
         } else {
+          const msg = err?.stderr?.toString?.() ?? String(err);
           logger.warn({ pid, reason, err: msg }, 'treeKillAgent: taskkill /F /T failed');
         }
       }
@@ -149,13 +148,13 @@ export async function killAllAgentPids(): Promise<void> {
       await Promise.all(
         pids.map(async (pid) => {
           try {
-            await execAsync(`taskkill /F /T /PID ${pid}`);
+            await winExecAsync('taskkill', ['/F', '/T', '/PID', String(pid)]);
             logger.info({ pid }, 'taskkill /F /T succeeded (tree killed)');
           } catch (err: any) {
-            const msg = err?.stderr?.toString?.() ?? String(err);
-            if (/not found|不存在|找不到/i.test(msg)) {
+            if (isProcessAlreadyGone(err)) {
               logger.debug({ pid }, 'taskkill: process already gone');
             } else {
+              const msg = err?.stderr?.toString?.() ?? String(err);
               logger.warn({ pid, err: msg }, 'taskkill /F /T failed');
             }
           }
@@ -257,7 +256,7 @@ export async function reapDeadAgentPids(): Promise<number> {
 async function isPidAlive(pid: number): Promise<boolean> {
   if (process.platform === 'win32') {
     try {
-      const { stdout } = await execAsync(`tasklist /FI "PID eq ${pid}" /NH /FO CSV`);
+      const stdout = await winExecAsync('tasklist', ['/FI', `PID eq ${pid}`, '/NH', '/FO', 'CSV']);
       // tasklist prints an INFO line (no matching task) when the pid is gone;
       // a real row is a CSV record beginning with a quoted image name.
       return /^\s*"/.test(stdout);
@@ -643,7 +642,7 @@ export async function runHostAgent(
       // Windows too.
       if (process.platform === 'win32') {
         try {
-          execSync(`taskkill /F /T /PID ${child.pid}`, { stdio: 'pipe' });
+          winExecSync('taskkill', ['/F', '/T', '/PID', String(child.pid)]);
           logger.warn({ pid: child.pid, group: group.name }, 'Host agent timeout: taskkill /F /T sent (tree kill)');
         } catch (err: any) {
           const msg = err?.stderr?.toString?.() ?? String(err);

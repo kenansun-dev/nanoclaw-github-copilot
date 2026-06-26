@@ -8,6 +8,7 @@
  *   nanoclaw update                    — auto: try npm first, fall back to GitHub
  */
 import { execSync } from 'child_process';
+import { winExecSync } from '../win-process.js';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -35,7 +36,9 @@ async function waitForProcessExit(pid: number, timeoutMs = 10000): Promise<void>
   // Timeout: force kill
   try {
     if (process.platform === 'win32') {
-      execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe' });
+      // execFile (no cmd.exe wrapper) + windowsHide so the kill doesn't flash
+      // a console window during `ncl stop`/`update`. See src/win-process.ts.
+      winExecSync('taskkill', ['/F', '/PID', String(pid)]);
     } else {
       process.kill(pid, 'SIGKILL');
     }
