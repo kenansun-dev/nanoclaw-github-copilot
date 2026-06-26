@@ -1,4 +1,5 @@
 import { ChildProcess, execSync } from 'child_process';
+import { winExecSync } from './win-process.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -862,10 +863,12 @@ export class GroupQueue {
       return;
     }
     if (process.platform === 'win32') {
-      // Windows: taskkill /T kills the process tree (equivalent to -pid on Unix)
-      const flag = signal === 'SIGKILL' ? '/F' : '';
+      // Windows: taskkill /T kills the process tree (equivalent to -pid on Unix).
+      // execFile (no cmd.exe wrapper) + windowsHide so this kill doesn't flash a
+      // console window from the daemon. See src/win-process.ts.
+      const args = signal === 'SIGKILL' ? ['/F', '/T', '/PID', String(proc.pid)] : ['/T', '/PID', String(proc.pid)];
       try {
-        execSync(`taskkill ${flag} /T /PID ${proc.pid}`, { stdio: 'pipe' });
+        winExecSync('taskkill', args);
       } catch {
         proc.kill(signal);
       }
