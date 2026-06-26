@@ -10,14 +10,20 @@
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "gen": "buf generate",
+    "prebuild": "npm run gen",
+    "pretest": "npm run gen",
+    "pretypecheck": "npm run gen"
   },
   "engines": {
     "node": ">=22"
   },
-  "dependencies": {},
   "devDependencies": {
+    "@bufbuild/buf": "^1.71.0",
+    "@grpc/grpc-js": "^1.14.4",
     "@types/node": "^22.0.0",
+    "ts-proto": "^2.11.8",
     "typescript": "^5.6.0",
     "vitest": "^4.0.0"
   }
