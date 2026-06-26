@@ -55,19 +55,26 @@ resource "azurerm_linux_web_app" "this" {
   }
 
   site_config {
-    # Always On: keep the instance warm so Bot Connector's first POST doesn't
-    # hit a cold/sleeping worker and time out the first Teams message (§6).
-    # Not supported on Free/Shared tiers; guarded by var validation.
+    # Always On: keep the RELAY warm so Bot Connector's first POST doesn't hit a
+    # cold/sleeping worker and time out the first Teams message (§6). Not
+    # supported on Free/Shared tiers; guarded by var validation.
     always_on = var.always_on
+
+    # gRPC south edge needs HTTP/2. App Service serves h2 to the port named by
+    # HTTP20_ONLY_PORT (app_settings below) while the normal HTTPS port keeps
+    # serving HTTP/1.1 for the /api/messages webhook — both coexist in one Node
+    # process (design §3/§8).
+    http2_enabled = true
 
     application_stack {
       node_version = "22-lts"
     }
 
-    # Inbound is authenticated per-request by the BotFramework JWT (adapter
-    # validates issuer = Bot Connector, audience = bot appId). "Public" here
-    # means reachable, not open (design §4). Network access-restrictions can be
-    # layered later via var.bot_connector_service_tag_only.
+    # The relay's inbound /api/messages POSTs come from the Bot Connector
+    # (Microsoft cloud), so the endpoint must be publicly reachable HTTPS. The
+    # relay TERMINATES inbound auth (validates the BotFramework JWT per request),
+    # so "public" means reachable, not open (design §4). Optionally hard-limit
+    # ingress to the AzureBotService service tag.
     dynamic "ip_restriction" {
       for_each = var.restrict_to_bot_connector ? [1] : []
       content {
@@ -81,14 +88,18 @@ resource "azurerm_linux_web_app" "this" {
 
   app_settings = merge(
     {
-      # The in-proc NCL listener must bind process.env.PORT on App Service
-      # (single injected port). Verified against src/channels/teams.ts listen
-      # path by the runtime-adaptation work.
-      WEBSITES_PORT = tostring(var.listen_port)
-      # Expose the shared MSI client id to the runtime so IMDS token requests
-      # can target it explicitly (client_id=$MSI_CID, design §3 step 1).
+      # HTTP/1.1 port the relay binds for the inbound /api/messages webhook.
+      WEBSITES_PORT = tostring(var.webhook_port)
+      # Port the relay serves gRPC (HTTP/2) on for the NCL south edge. App
+      # Service routes h2 traffic here; see http2_enabled above (design §3).
+      HTTP20_ONLY_PORT = tostring(var.grpc_port)
+      # Shared MSI client id — the relay uses it for the outbound IMDS token
+      # pull before the per-bot federation exchange (design §6 step 1).
       NCL_BOT_MSI_CLIENT_ID = azurerm_user_assigned_identity.bot.client_id
       AZURE_TENANT_ID       = var.tenant_id
+      # Allowlist of AAD object ids / appIds permitted on the NCL south edge
+      # (the gRPC interceptor checks the owner's token against this, design §5).
+      NCL_RELAY_ALLOWLIST = join(",", var.south_edge_allowlist)
     },
     var.extra_app_settings,
   )

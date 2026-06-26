@@ -48,10 +48,22 @@ variable "always_on" {
   default     = true
 }
 
-variable "listen_port" {
-  description = "Port the in-proc NCL listener binds."
+variable "webhook_port" {
+  description = "HTTP/1.1 port the relay binds for the inbound /api/messages webhook."
   type        = number
   default     = 3978
+}
+
+variable "grpc_port" {
+  description = "HTTP/2 port the relay serves gRPC on for the NCL south edge."
+  type        = number
+  default     = 8585
+}
+
+variable "south_edge_allowlist" {
+  description = "AAD object ids / appIds allowed on the NCL gRPC south edge (design §5)."
+  type        = list(string)
+  default     = []
 }
 
 variable "restrict_to_bot_connector" {

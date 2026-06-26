@@ -53,7 +53,9 @@ module "core" {
   app_service_name          = var.app_service_name
   app_service_sku           = var.app_service_sku
   always_on                 = var.always_on
-  listen_port               = var.listen_port
+  webhook_port              = var.webhook_port
+  grpc_port                 = var.grpc_port
+  south_edge_allowlist      = var.south_edge_allowlist
   restrict_to_bot_connector = var.restrict_to_bot_connector
   extra_app_settings        = var.extra_app_settings
   tags                      = var.tags

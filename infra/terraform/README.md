@@ -1,19 +1,23 @@
-# NCL Teams — App Service Infra (Terraform)
+# NCL Teams — App Service **Relay** Infra (Terraform)
 
-Greenfield IaC for the Teams App Service hosting topology. Implements the
-design in [`docs/2026-06-22-teams-appservice-infra-design.md`](../../docs/2026-06-22-teams-appservice-infra-design.md).
+Greenfield IaC for the Teams **relay** hosting topology. Implements the design
+in [`docs/2026-06-26-teams-appservice-relay-design.md`](../../docs/2026-06-26-teams-appservice-relay-design.md).
+The App Service runs a **thin relay** (inbound Teams JWT termination + per-bot
+inbound buffer + gRPC south-edge server + outbound MSI federation); **NCL runs
+on the owner's local machine and dials in over gRPC** — it is NOT hosted here.
 
 ## What it provisions
 
 - **`modules/core`** (one-time, shared): App Service plan + Linux Web App
-  (Node 22, Always On), a **shared user-assigned MSI** (the single trust
-  anchor), and Log Analytics.
+  (Node 22, Always On, **HTTP/2 for gRPC**) hosting the relay, a **shared
+  user-assigned MSI** (the single outbound trust anchor), and Log Analytics.
 - **`modules/bot`** (per-bot, `for_each`): per-bot App Registration + **one
   federated identity credential** (subject = the shared MSI), Azure Bot
   resource, and the Teams channel. Adding a bot = one entry in `var.bots`.
 
-No long-lived bot secrets: each bot's token is minted at runtime by the MSI
-presenting its IMDS token and exchanging it via the per-bot FIC (design §3).
+No long-lived bot secrets: each bot's outbound token is minted at runtime by
+the relay's MSI presenting its IMDS token and exchanging it via the per-bot FIC
+(design §6).
 
 ## One-time setup (owner)
 
@@ -38,11 +42,15 @@ config can run from automation with `./deploy.sh -auto`.
 
 ## After `apply`
 
-1. Deploy NCL code to the App Service (`app_service_name` output) via zip /
-   GH Actions — owned by the runtime-adaptation work.
-2. Each bot's `app_id` + `messaging_endpoint` are in `terraform output bots`.
-3. Smoke: send a Teams message, confirm a reply (validates IMDS → FIC →
-   Bot Connector).
+1. Deploy the **relay service** code to the App Service (`app_service_name`
+   output) via zip / GH Actions — the relay terminates inbound Teams JWT, holds
+   the per-bot inbound buffer, runs the gRPC south-edge server, and does the
+   outbound MSI→federation exchange. NCL itself runs on the owner's machine and
+   dials in (design `2026-06-26-teams-appservice-relay-design.md`).
+2. Each bot's `app_id` + `messaging_endpoint` are in `terraform output bots`
+   (the endpoint points at the relay, not NCL).
+3. Smoke: send a Teams message, confirm a reply (validates inbound JWT → relay
+   buffer/forward → NCL over gRPC → outbound IMDS→FIC→Bot Connector).
 
 ## Notes
 
