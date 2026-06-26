@@ -16,7 +16,10 @@
 import { loadConfig } from './config.js';
 import { logger } from './logger.js';
 import { startNorthEdge, type InboundAuthResult } from './north-edge.js';
-import type { InboundSink, InboundActivityInput, OutboundSender } from './contract.js';
+import type { OutboundSender } from './contract.js';
+import { makeBroker } from './broker.js';
+import { startGrpcServer, type SouthCaller } from './grpc-server.js';
+import type { Metadata } from '@grpc/grpc-js';
 import type { IncomingMessage } from 'node:http';
 
 // ─── Placeholder seams (replaced by the owning subsystems) ───────────────────
@@ -33,18 +36,9 @@ const rejectAllJwt = async (
 ): Promise<InboundAuthResult | null> => null;
 
 /**
- * #4 (Rpi5): real broker (route → attached stream or buffer+TTL+drop+audit).
- * Bootstrap default logs and no-ops so the process boots before the broker
- * lands. It does NOT throw on "no NCL" — matches the contract.
+ * #4 (Rpi5): broker is now wired (route → attached stream or buffer+TTL+drop+
+ * audit). The bootstrap no-op sink is retired.
  */
-const noopSink: InboundSink = {
-  async enqueueInbound(activity: InboundActivityInput): Promise<void> {
-    logger.warn('broker not wired — inbound dropped (bootstrap no-op sink)', {
-      botId: activity.botId,
-      bytes: activity.activityJson.byteLength,
-    });
-  },
-};
 
 /**
  * #5 (VM): real outbound sender (MSI IMDS token + Bot Connector POST; per-bot
@@ -65,13 +59,12 @@ const notImplementedSender: OutboundSender = {
 };
 
 /**
- * #3 (Rpi5): real gRPC server starts the Attach bidi stream + AAD metadata
- * interceptor + allowlist. Bootstrap default just logs that it's not wired so
- * the process still boots with only the north edge live.
+ * #3 (Rpi5): gRPC server is wired below via startGrpcServer. The south-edge AAD
+ * token VALIDATION is injected (validateSouthToken); the bootstrap default is
+ * fail-closed until real JWKS wiring lands. Token ACQUISITION on the NCL side is
+ * the next task.
  */
-async function startGrpcServerStub(port: number, _sender: OutboundSender): Promise<void> {
-  logger.warn('gRPC server not wired — south edge inactive (bootstrap stub)', { port });
-}
+const rejectAllSouthToken = async (_md: Metadata): Promise<SouthCaller | null> => null;
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
@@ -85,17 +78,33 @@ async function main(): Promise<void> {
     tenantId: config.tenantId ? 'set' : 'unset',
   });
 
+  // Broker core — routes inbound to the attached NCL stream or buffers (TTL).
+  const broker = makeBroker();
+
   // North edge — inbound Teams webhook. JWT validator is fail-closed until #2.
   const north = startNorthEdge(config.webhookPort, {
-    sink: noopSink,
+    sink: broker,
     validateInboundJwt: rejectAllJwt,
   });
 
-  // South edge — gRPC server (Rpi5 #3) holding the NCL stream. Stubbed until wired.
-  await startGrpcServerStub(config.grpcPort, notImplementedSender);
+  // South edge — gRPC server (Rpi5 #3) holding the NCL stream. AAD validation is
+  // fail-closed until real JWKS wiring; the owner allowlist (config
+  // NCL_RELAY_ALLOWLIST) is the CALLER gate, enforced inside validateSouthToken
+  // once wired. Per-bot ACL is a next-task concern (bot onboarding), so v1
+  // authorizeBots passes the requested bots through unchanged once the caller is
+  // already authenticated+allowlisted. The outbound sender (VM #5) is injected;
+  // its federation exchange is stubbed until the onboarding task.
+  const grpc = await startGrpcServer(config.grpcPort, {
+    broker,
+    sender: notImplementedSender,
+    validateSouthToken: rejectAllSouthToken,
+    authorizeBots: (_caller, requestedBotIds) => requestedBotIds,
+  });
 
   const shutdown = (signal: string): void => {
     logger.info('relay shutting down', { signal });
+    broker.stop();
+    grpc.tryShutdown(() => logger.info('gRPC server closed'));
     north.close(() => {
       logger.info('north edge closed');
       process.exit(0);
