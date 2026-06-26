@@ -1,0 +1,26 @@
+# Copy to terraform.tfvars and fill in. Owner supplies subscription/tenant.
+# Run: terraform init && terraform plan   (apply only after plan review)
+
+subscription_id  = "00000000-0000-0000-0000-000000000000"
+tenant_id        = "00000000-0000-0000-0000-000000000000"
+location         = "eastus"
+
+# Resource group (create_resource_group=false to reuse an existing one)
+create_resource_group = true
+resource_group_name   = "ncl-teams-rg"
+
+# App Service — name must be globally unique across *.azurewebsites.net
+app_service_name = "ncl-teams-CHANGEME"
+app_service_sku  = "B1"     # B1 to start; P1v3 for scale-out (design §6)
+always_on        = true
+
+# First bot(s). Key becomes the resource-name suffix (ncl-bot-<key>).
+bots = {
+  prod = {}
+}
+
+tags = {
+  project = "ncl-teams"
+  managed = "terraform"
+  env     = "prod"
+}
