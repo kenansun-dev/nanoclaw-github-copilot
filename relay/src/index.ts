@@ -16,10 +16,10 @@
 import { loadConfig } from './config.js';
 import { logger } from './logger.js';
 import { startNorthEdge } from './north-edge.js';
-import type { OutboundSender } from './contract.js';
 import { makeBroker } from './broker.js';
 import { startGrpcServer, type SouthCaller } from './grpc-server.js';
 import { makeJwtValidator } from './inbound-jwt.js';
+import { makeOutboundSender } from './outbound-sender.js';
 import type { Metadata } from '@grpc/grpc-js';
 
 // ─── Placeholder seams (replaced by the owning subsystems) ───────────────────
@@ -36,22 +36,11 @@ import type { Metadata } from '@grpc/grpc-js';
  */
 
 /**
- * #5 (VM): real outbound sender (MSI IMDS token + Bot Connector POST; per-bot
- * federation exchange stubbed until the onboarding task). Held here so the
- * broker/gRPC layer can be handed an OutboundSender once wired.
+ * #5 (VM): outbound sender is wired below via makeOutboundSender. It does the
+ * MSI IMDS token pull (works today) but the per-bot federation EXCHANGE is
+ * stubbed (throws NOT_IMPLEMENTED) until bot onboarding supplies appIds — so
+ * outbound does not reach Teams e2e yet, by design (kenan scope 2026-06-26).
  */
-const notImplementedSender: OutboundSender = {
-  async deliverOutbound(reply) {
-    logger.warn('outbound sender not wired (bootstrap stub)', { botId: reply.botId });
-    return {
-      clientMsgId: reply.clientMsgId,
-      ok: false,
-      connectorStatus: 0,
-      error: 'outbound sender not implemented (bootstrap stub)',
-      retryable: false,
-    };
-  },
-};
 
 /**
  * #3 (Rpi5): gRPC server is wired below via startGrpcServer. The south-edge AAD
@@ -88,16 +77,18 @@ async function main(): Promise<void> {
     validateInboundJwt,
   });
 
-  // South edge — gRPC server (Rpi5 #3) holding the NCL stream. AAD validation is
-  // fail-closed until real JWKS wiring; the owner allowlist (config
-  // NCL_RELAY_ALLOWLIST) is the CALLER gate, enforced inside validateSouthToken
-  // once wired. Per-bot ACL is a next-task concern (bot onboarding), so v1
-  // authorizeBots passes the requested bots through unchanged once the caller is
-  // already authenticated+allowlisted. The outbound sender (VM #5) is injected;
-  // its federation exchange is stubbed until the onboarding task.
+  // South edge outbound sender (VM #5): MSI IMDS token (works today) → per-bot
+  // federation exchange (STUBBED, throws until onboarding) → Connector POST.
+  const sender = makeOutboundSender({ msiClientId: config.msiClientId });
+
+  // gRPC server (Rpi5 #3) holding the NCL stream. AAD validation is fail-closed
+  // until real JWKS wiring; the owner allowlist (config NCL_RELAY_ALLOWLIST) is
+  // the CALLER gate, enforced inside validateSouthToken once wired. Per-bot ACL
+  // is a next-task concern (bot onboarding), so v1 authorizeBots passes the
+  // requested bots through unchanged once the caller is authenticated.
   const grpc = await startGrpcServer(config.grpcPort, {
     broker,
-    sender: notImplementedSender,
+    sender,
     validateSouthToken: rejectAllSouthToken,
     authorizeBots: (_caller, requestedBotIds) => requestedBotIds,
   });
