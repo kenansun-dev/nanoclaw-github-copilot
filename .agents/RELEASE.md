@@ -122,9 +122,23 @@ not the tgz sha256 — those differ on every pack and that's normal.
 
 ## 5. Deliver + deploy
 
-- **Discord handoff:** copy the tgz into `~/.openclaw/workspace/tmp/` (the
-  `MEDIA:` path validator rejects bare `/tmp/`). Post the `MEDIA:` line + the
-  sha256 + the install command.
+- **Discord handoff — DO NOT send a bare `.tgz` via `MEDIA:`.** OpenClaw's
+  outbound media layer sniffs gzip content and rewrites the extension by MIME
+  (`mime-n-*.js` maps `gzip` -> `.gz`), so an attached `.tgz` arrives as
+  `...---<UUID>.gz`. `npm install -g <file>.gz` then fails with
+  `ENOENT ...\.gz\package.json` because npm only treats `.tgz`/`.tar.gz` as
+  tarballs (root cause of the 2026-06-26 repeated-failure incident; the
+  packaging was always correct — the delivery channel mangled the name).
+  **Deliver one of these instead:**
+  - **Preferred: ship an uncompressed `.tar`.** MIME `application/x-tar` is not
+    rewritten, so the name survives. `npm install -g <file>.tar` works
+    (verified). Build it from the packed tgz: `tar -xzf <pkg>.tgz && tar -cf
+    <pkg>.tar package`.
+  - If you must send the `.tgz`, tell the receiver the file will arrive as
+    `.gz` and they must `Rename-Item <file>.gz <file>.tgz` before installing.
+  - Copy the artifact into `~/.openclaw/workspace/tmp/` (the `MEDIA:` path
+    validator rejects bare `/tmp/`). Post the `MEDIA:` line + the sha256 + the
+    install command.
 - **Deploy:** `nanoclaw update --package <tgz>` (or `npm install -g <tgz>`).
 - **Then verify, don't assume:** one spawn-and-respond test, not just
   `nanoclaw --version`. On Windows specifically, after a few cron/heartbeat
@@ -151,4 +165,4 @@ not the tgz sha256 — those differ on every pack and that's normal.
 3. Clean **merged `main`** (not a feature branch): `npm ci`, build, tsc, test — all green, tree clean.
 4. `npm pack`, then rename → `nanoclaw-<track>-<YYYYMMDD>-<main-sha8>.tgz`. Don't hand-add inner `node_modules`.
 5. `tar -tzf` check `package/` prefix; `sha256sum`; append one line to `.agents/RELEASES.log`.
-6. Copy to `~/.openclaw/workspace/tmp/`, post `MEDIA:` + sha256 + install cmd. Deploy, then spawn-verify.
+6. Deliver via **uncompressed `.tar`** (not `.tgz` — OpenClaw outbound rewrites gzip files to `.gz` and breaks install): `tar -xzf <pkg>.tgz && tar -cf <pkg>.tar package`, copy to `~/.openclaw/workspace/tmp/`, post `MEDIA:` + sha256 + install cmd. Deploy, then spawn-verify.
