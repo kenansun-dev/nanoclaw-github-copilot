@@ -45,7 +45,7 @@ message FromNcl {
     Hello hello = 1;            // MUST be the first frame on the stream.
     OutboundReply reply = 2;    // an NCL-produced reply to deliver to Teams.
     InboundAck ack = 3;         // ack that an inbound activity was received.
-    Heartbeat heartbeat = 4;    // client liveness ping.
+    Heartbeat heartbeat = 4;    // client liveness ping (shared Heartbeat type).
   }
 }
 
@@ -76,8 +76,9 @@ message OutboundReply {
   // Which bot this reply is from (must be one of Hello.bot_ids).
   string bot_id = 1;
 
-  // Correlates to the InboundActivity.activity_id this replies to, when the
-  // reply is a direct response. Empty for proactive sends.
+  // The InboundActivity.activity_id this replies to, when the reply is a direct
+  // response (value is exactly the relay-assigned InboundActivity.activity_id,
+  // NOT the Bot Framework activity id). Empty for proactive sends.
   string in_reply_to = 2;
 
   // Bot Framework conversation reference / activity JSON (opaque to the relay
@@ -98,6 +99,9 @@ message InboundAck {
   string bot_id = 2;
 }
 
+// Shared liveness ping, used in both directions (FromNcl.heartbeat and
+// ToNcl.heartbeat). The wrapping oneof already encodes the direction, so one
+// type suffices.
 message Heartbeat {
   uint64 sent_unix_ms = 1;
 }
@@ -111,7 +115,7 @@ message ToNcl {
     AttachAck attach_ack = 1;        // server's response to Hello.
     InboundActivity inbound = 2;     // a JWT-validated Teams activity to handle.
     OutboundAck outbound_ack = 3;    // ack/result of an OutboundReply.
-    ServerHeartbeat heartbeat = 4;   // server liveness ping.
+    Heartbeat heartbeat = 4;         // server liveness ping (shared Heartbeat type).
     BufferOverflow overflow = 5;     // a bot's inbound buffer dropped item(s).
     Drain drain = 6;                 // server is draining (shutdown/redeploy).
   }
@@ -126,6 +130,10 @@ message AttachAck {
   uint32 server_protocol_version = 3;
   // Heartbeat interval the server expects from the client (ms). 0 = no expectation.
   uint32 heartbeat_interval_ms = 4;
+  // Relay-assigned id for THIS attach/stream. Appears in relay audit/logs so a
+  // specific stream can be correlated across reconnects (debugging multiple
+  // NCL instances / flapping connections).
+  string session_id = 5;
 }
 
 message RejectedBot {
@@ -164,10 +172,10 @@ message OutboundAck {
   // Connector HTTP status when ok=false (e.g. 401/429/5xx), 0 if not applicable.
   uint32 connector_status = 3;
   string error = 4;           // human-readable failure detail when ok=false.
-}
-
-message ServerHeartbeat {
-  uint64 sent_unix_ms = 1;
+  // Whether NCL should retry this reply. The relay maps connector semantics so
+  // NCL does not re-derive HTTP meaning: 429/5xx/transient -> true,
+  // 401/4xx/permanent -> false. Only meaningful when ok=false.
+  bool retryable = 5;
 }
 
 // Notifies NCL that the relay dropped one or more buffered inbound activities
@@ -184,4 +192,9 @@ message BufferOverflow {
 message Drain {
   uint64 drain_deadline_unix_ms = 1;
   string reason = 2;
+  // Inbound activities still buffered (not yet flushed to any NCL) at drain
+  // time. The in-memory buffer is LOST on redeploy/scale-in unless backed by
+  // durable storage (see design §8 buffer-durability open item); this count is
+  // surfaced so NCL/audit can record the loss. 0 = nothing was buffered.
+  uint32 buffered_count = 3;
 }
