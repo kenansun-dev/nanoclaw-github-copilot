@@ -31,6 +31,33 @@ const ENV_KEYS = [
   'MSTEAMS_CERT_PRIVATE_KEY_PATH',
 ] as const;
 
+/**
+ * Resolve the port the Teams in-proc webhook listener binds.
+ *
+ * Precedence (first defined wins):
+ *  1. `configPort` — explicit `webhookPort` from nanoclaw.json (per-account or
+ *     channel-level). Honored first so existing deployments are unchanged.
+ *  2. `process.env.PORT` — platform-injected port. Azure App Service (and most
+ *     PaaS) inject `PORT` and require the process to listen on it; the in-proc
+ *     listener must bind that, not a hard-coded 3978.
+ *  3. `process.env.MSTEAMS_WEBHOOK_PORT` — legacy explicit override.
+ *  4. `3978` — default.
+ *
+ * Non-numeric / non-positive env values are ignored (fall through to default).
+ */
+export function resolveTeamsPort(
+  configPort: number | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  if (configPort) return configPort;
+  for (const raw of [env.PORT, env.MSTEAMS_WEBHOOK_PORT]) {
+    if (!raw) continue;
+    const parsed = parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 3978;
+}
+
 export interface TeamsChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
@@ -1218,7 +1245,10 @@ registerChannel('teams', (opts: ChannelOpts) => {
   if (!tenantId) tenantId = process.env.MSTEAMS_TENANT_ID;
   if (!certThumbprint) certThumbprint = process.env.MSTEAMS_CERT_THUMBPRINT || '';
   if (!certPrivateKeyPath) certPrivateKeyPath = process.env.MSTEAMS_CERT_PRIVATE_KEY_PATH || '';
-  if (!port) port = process.env.MSTEAMS_WEBHOOK_PORT ? parseInt(process.env.MSTEAMS_WEBHOOK_PORT, 10) : 3978;
+  // Port precedence handled by resolveTeamsPort: explicit config wins, then the
+  // platform-injected PORT (App Service), then legacy MSTEAMS_WEBHOOK_PORT, then
+  // 3978. See resolveTeamsPort for rationale.
+  port = resolveTeamsPort(port);
 
   const hasCert = !!(certThumbprint && certPrivateKeyPath);
 
