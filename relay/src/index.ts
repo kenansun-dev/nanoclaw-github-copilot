@@ -15,25 +15,20 @@
 
 import { loadConfig } from './config.js';
 import { logger } from './logger.js';
-import { startNorthEdge, type InboundAuthResult } from './north-edge.js';
+import { startNorthEdge } from './north-edge.js';
 import type { OutboundSender } from './contract.js';
 import { makeBroker } from './broker.js';
 import { startGrpcServer, type SouthCaller } from './grpc-server.js';
+import { makeJwtValidator } from './inbound-jwt.js';
 import type { Metadata } from '@grpc/grpc-js';
-import type { IncomingMessage } from 'node:http';
 
 // ─── Placeholder seams (replaced by the owning subsystems) ───────────────────
 
 /**
- * #2 (VM): real BotFramework JWT validation lands here. The bootstrap default
- * REJECTS everything (fail-closed) so an unconfigured relay never forwards
- * unauthenticated traffic. Replaced before north edge is considered done.
+ * #2 (VM): real BotFramework JWT validation is wired below via makeJwtValidator
+ * (per-bot appId from config.botAppIds). The validator is fail-closed: an
+ * unknown bot or invalid token → reject → 401.
  */
-const rejectAllJwt = async (
-  _req: IncomingMessage,
-  _botId: string,
-  _body: Buffer,
-): Promise<InboundAuthResult | null> => null;
 
 /**
  * #4 (Rpi5): broker is now wired (route → attached stream or buffer+TTL+drop+
@@ -81,10 +76,16 @@ async function main(): Promise<void> {
   // Broker core — routes inbound to the attached NCL stream or buffers (TTL).
   const broker = makeBroker();
 
-  // North edge — inbound Teams webhook. JWT validator is fail-closed until #2.
+  // North edge — inbound Teams webhook. Validates the BotFramework JWT per bot
+  // (audience = that bot's appId from config.botAppIds); unknown bot or invalid
+  // token → 401 (fail-closed).
+  const validateInboundJwt = makeJwtValidator({
+    resolveAppId: (botId) => config.botAppIds.get(botId),
+    channelService: config.channelService,
+  });
   const north = startNorthEdge(config.webhookPort, {
     sink: broker,
-    validateInboundJwt: rejectAllJwt,
+    validateInboundJwt,
   });
 
   // South edge — gRPC server (Rpi5 #3) holding the NCL stream. AAD validation is

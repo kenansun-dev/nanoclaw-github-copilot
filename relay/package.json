@@ -26,5 +26,8 @@
     "ts-proto": "^2.11.8",
     "typescript": "^5.6.0",
     "vitest": "^4.0.0"
+  },
+  "dependencies": {
+    "botframework-connector": "^4.23.3"
   }
 }

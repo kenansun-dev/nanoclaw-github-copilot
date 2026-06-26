@@ -22,6 +22,18 @@ export interface RelayConfig {
   msiClientId: string | undefined;
   /** Entra tenant id. */
   tenantId: string | undefined;
+  /**
+   * Map of bot-id -> appId for inbound JWT audience validation. In v1 sourced
+   * from NCL_RELAY_BOT_APPIDS ("prod=appid1,staging=appid2"); bot onboarding
+   * owns the real registry next task. Empty map = no bot known (all inbound
+   * rejected, fail-closed).
+   */
+  botAppIds: Map<string, string>;
+  /**
+   * Channel service for BotFramework JWT validation. Empty = public Azure Bot
+   * Service; set for government cloud.
+   */
+  channelService: string;
 }
 
 function parsePort(raw: string | undefined, fallback: number, name: string): number {
@@ -41,6 +53,19 @@ function parseList(raw: string | undefined): string[] {
     .filter((s) => s.length > 0);
 }
 
+function parseBotAppIds(raw: string | undefined): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!raw) return map;
+  for (const pair of raw.split(',')) {
+    const eq = pair.indexOf('=');
+    if (eq <= 0) continue;
+    const botId = pair.slice(0, eq).trim();
+    const appId = pair.slice(eq + 1).trim();
+    if (botId && appId) map.set(botId, appId);
+  }
+  return map;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
   return {
     // App Service injects WEBSITES_PORT as the port the platform routes HTTP/1.1
@@ -50,5 +75,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
     southEdgeAllowlist: parseList(env.NCL_RELAY_ALLOWLIST),
     msiClientId: env.NCL_BOT_MSI_CLIENT_ID,
     tenantId: env.AZURE_TENANT_ID,
+    botAppIds: parseBotAppIds(env.NCL_RELAY_BOT_APPIDS),
+    channelService: env.NCL_RELAY_CHANNEL_SERVICE ?? '',
   };
 }
