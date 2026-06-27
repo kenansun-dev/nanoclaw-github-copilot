@@ -7,13 +7,11 @@
  * client assertion (FIC). This replaces the NOT_IMPLEMENTED stub in
  * outbound-sender.
  *
- * The bot's appId is resolved from the SAME config map the inbound JWT validator
- * already uses (`botAppIds`, env NCL_RELAY_BOT_APPIDS). So inbound audience and
- * outbound federation share one source of truth — onboarding can later replace
- * the map source without touching this file. Per kenan (2026-06-27): don't
- * design the write path yet; read the appId from here, and if it's absent treat
- * it as "app not found" (a non-retryable failure — retrying won't conjure a
- * registration).
+ * appId is NOT configured: per the appId-as-routing-key design
+ * (docs/2026-06-27-relay-appid-routing-key.md), the relay's bot id IS the appId.
+ * OutboundReply.bot_id (= the appId, one of the stream's Hello.bot_ids) flows
+ * straight into the exchange — no map lookup, no NCL_RELAY_BOT_APPIDS. The only
+ * config this still needs is the tenant id (for the token endpoint).
  */
 
 import { logger } from './logger.js';
@@ -42,8 +40,6 @@ export class FederationConfigError extends Error {
 }
 
 export interface FederationExchangeDeps {
-  /** bot-id -> appId, shared with inbound JWT validation (config.botAppIds). */
-  botAppIds: Map<string, string>;
   /** Entra tenant id (config.tenantId). */
   tenantId: string | undefined;
   /**
@@ -69,22 +65,20 @@ async function realPostForm(url: string, form: URLSearchParams): Promise<{ statu
 }
 
 /**
- * Build the `exchangeForBotToken(botId, imdsAssertion)` the outbound sender
- * injects. Resolves the bot's appId from config; on success returns the Bot
- * Connector access_token. Throws FederationConfigError (non-retryable) for a
+ * Build the `exchangeForBotToken(appId, imdsAssertion)` the outbound sender
+ * injects. The incoming id IS the appId (routing key). On success returns the
+ * Bot Connector access_token. Throws FederationConfigError (non-retryable) for a
  * missing appId/tenant, and a plain Error (retryable) for a transient token
  * endpoint failure.
  */
 export function makeFederationExchange(
   deps: FederationExchangeDeps,
-): (botId: string, imdsAssertion: string) => Promise<string> {
+): (appId: string, imdsAssertion: string) => Promise<string> {
   const postForm = deps.postForm ?? realPostForm;
 
-  return async function exchangeForBotToken(botId: string, imdsAssertion: string): Promise<string> {
-    const appId = deps.botAppIds.get(botId);
+  return async function exchangeForBotToken(appId: string, imdsAssertion: string): Promise<string> {
     if (!appId) {
-      // "read it from here, and if absent treat as app-not-found" (kenan 6-27).
-      throw new FederationConfigError(`app not found for bot "${botId}" (no appId in NCL_RELAY_BOT_APPIDS)`);
+      throw new FederationConfigError('outbound reply missing bot id (appId) — cannot exchange federation token');
     }
     if (!deps.tenantId) {
       throw new FederationConfigError('relay misconfigured: AZURE_TENANT_ID unset (cannot exchange federation token)');
@@ -109,7 +103,7 @@ export function makeFederationExchange(
     // 4xx from Entra (bad assertion/registration) is generally not fixed by a
     // blind retry, but we keep token-endpoint failures retryable EXCEPT the
     // structural config errors above — NCL can retry once onboarding/FIC is set.
-    logger.warn('federation token exchange failed', { botId, appId, status, detail });
-    throw new Error(`federation exchange failed for bot "${botId}": ${detail}`);
+    logger.warn('federation token exchange failed', { appId, status, detail });
+    throw new Error(`federation exchange failed for appId "${appId}": ${detail}`);
   };
 }

@@ -26,9 +26,10 @@ import { makeSouthTokenValidator, makeAadTokenVerifier } from './south-auth.js';
 // ─── Placeholder seams (replaced by the owning subsystems) ───────────────────
 
 /**
- * #2 (VM): real BotFramework JWT validation is wired below via makeJwtValidator
- * (per-bot appId from config.botAppIds). The validator is fail-closed: an
- * unknown bot or invalid token → reject → 401.
+ * #2 (VM): real BotFramework JWT validation is wired below via makeJwtValidator.
+ * The <bot> path segment IS the appId (appId-as-routing-key), so resolveAppId is
+ * the identity function — the JWT audience must equal the path segment. No
+ * configured map. Fail-closed: empty/unknown id or invalid token → 401.
  */
 
 /**
@@ -38,10 +39,9 @@ import { makeSouthTokenValidator, makeAadTokenVerifier } from './south-auth.js';
 
 /**
  * #5 (VM): outbound sender is wired below via makeOutboundSender. The per-bot
- * federation EXCHANGE is now real (makeFederationExchange): it reads the bot's
- * appId from config.botAppIds (same map as inbound) and exchanges the MSI IMDS
- * assertion for that appId's Connector token. Unknown bot → app-not-found
- * (non-retryable). e2e still needs the appIds populated + FIC configured.
+ * federation EXCHANGE is real (makeFederationExchange): OutboundReply.bot_id IS
+ * the appId, fed straight into the MSI-IMDS-assertion → Connector-token
+ * exchange. No configured map. e2e still needs FIC configured per bot.
  */
 
 /**
@@ -67,11 +67,11 @@ async function main(): Promise<void> {
   // Broker core — routes inbound to the attached NCL stream or buffers (TTL).
   const broker = makeBroker();
 
-  // North edge — inbound Teams webhook. Validates the BotFramework JWT per bot
-  // (audience = that bot's appId from config.botAppIds); unknown bot or invalid
-  // token → 401 (fail-closed).
+  // North edge — inbound Teams webhook. Validates the BotFramework JWT per bot;
+  // the <bot> path segment IS the appId, so the JWT audience must equal it
+  // (resolveAppId = identity). Empty/unknown id or invalid token → 401.
   const validateInboundJwt = makeJwtValidator({
-    resolveAppId: (botId) => config.botAppIds.get(botId),
+    resolveAppId: (botId) => botId || undefined,
     channelService: config.channelService,
   });
   const north = startNorthEdge(config.webhookPort, {
@@ -80,12 +80,10 @@ async function main(): Promise<void> {
   });
 
   // South edge outbound sender (VM #5): MSI IMDS token → per-bot federation
-  // exchange (reads appId from config.botAppIds; app-not-found if absent) →
-  // Connector POST.
+  // exchange (OutboundReply.bot_id IS the appId) → Connector POST.
   const sender = makeOutboundSender({
     msiClientId: config.msiClientId,
     exchangeForBotToken: makeFederationExchange({
-      botAppIds: config.botAppIds,
       tenantId: config.tenantId,
     }),
   });

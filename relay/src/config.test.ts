@@ -36,17 +36,12 @@ describe('relay config', () => {
     expect(() => loadConfig({ WEBSITES_PORT: '70000' })).toThrow(/WEBSITES_PORT/);
   });
 
-  it('parses the bot->appId map and defaults channelService empty', () => {
-    const c = loadConfig({ NCL_RELAY_BOT_APPIDS: 'prod=app1, staging = app2 ,bad,=x,y=' });
-    expect(c.botAppIds.get('prod')).toBe('app1');
-    expect(c.botAppIds.get('staging')).toBe('app2');
-    expect(c.botAppIds.has('bad')).toBe(false);
-    expect(c.botAppIds.has('y')).toBe(false);
-    expect(c.botAppIds.size).toBe(2);
+  it('defaults channelService empty', () => {
+    const c = loadConfig({});
     expect(c.channelService).toBe('');
   });
 
-  it('empty bot->appId map when env unset (fail-closed: no bot known)', () => {
-    expect(loadConfig({}).botAppIds.size).toBe(0);
+  it('reads channelService from env when set', () => {
+    expect(loadConfig({ NCL_RELAY_CHANNEL_SERVICE: 'gov' }).channelService).toBe('gov');
   });
 });

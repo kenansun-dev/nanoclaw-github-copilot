@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  *   - GET /healthz            → liveness (App Service Always On / probes).
- *   - POST /api/messages/<bot> → the Teams Bot Service messaging endpoint.
+ *   - POST /api/messages/<appId> → the Teams Bot Service messaging endpoint.
  *       1. validate the BotFramework JWT (auth termination) — see jwt.ts.
  *       2. parse the activity, extract serviceUrl.
  *       3. hand to broker via InboundSink.enqueueInbound(...).
@@ -30,7 +30,7 @@ export interface NorthEdgeDeps {
 }
 
 export interface InboundAuthResult {
-  /** appId the JWT audience resolved to (cross-check vs <bot> path). */
+  /** appId the JWT audience resolved to (= the <appId> path segment). */
   appId: string;
 }
 
@@ -142,7 +142,7 @@ function router(deps: NorthEdgeDeps) {
 export function startNorthEdge(port: number, deps: NorthEdgeDeps): Server {
   const server = createServer(router(deps));
   server.listen(port, '0.0.0.0', () => {
-    logger.info('north edge listening', { port, path: '/api/messages/<bot>' });
+    logger.info('north edge listening', { port, path: '/api/messages/<appId>' });
   });
   return server;
 }

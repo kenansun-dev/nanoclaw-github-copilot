@@ -38,7 +38,7 @@ export interface OutboundSenderDeps {
   /**
    * Exchange the MSI IMDS assertion for a given bot appId's Bot Connector token
    * (design §6 federation). Default throws NOT_IMPLEMENTED; production injects
-   * makeFederationExchange (reads appId from config.botAppIds). A thrown error
+   * makeFederationExchange (OutboundReply.bot_id IS the appId). A thrown error
    * carrying `retryable===false` (FederationConfigError) is surfaced as a
    * non-retryable ack.
    */

@@ -8,9 +8,13 @@
  * logic).
  *
  * Per-bot: the relay hosts N bots, each with its own appId. The <bot> path
- * segment selects which appId the inbound JWT must be audienced for. appIds are
- * supplied by a resolver (bot-id -> appId) so the source (env now, bot
- * onboarding later) stays out of this file.
+ * segment IS the appId (appId-as-routing-key design,
+ * docs/2026-06-27-relay-appid-routing-key.md). The inbound JWT must be
+ * audienced for that appId. A resolver (bot-id -> appId) keeps the mapping
+ * injectable, but the production wiring is the IDENTITY function: the path
+ * segment is the appId, self-describing, no configured map. Security is
+ * unchanged — only the bot's own Azure registration can mint a Microsoft-signed
+ * token with aud=<that appId>, so a forged path segment fails validation.
  *
  * The JWT carries no client secret — channel-token validation is signature +
  * issuer + audience against the Bot Connector's published JWKS. So we use a
@@ -25,9 +29,10 @@ import { logger } from './logger.js';
 
 export interface JwtValidatorDeps {
   /**
-   * Resolve the appId a given bot-id's inbound JWT must be audienced for.
-   * Returns undefined for an unknown bot (→ reject). Sourced from config/env in
-   * v1; bot onboarding owns the real registry next task.
+   * Resolve the appId a given bot-id's inbound JWT must be audienced for. In the
+   * appId-as-routing-key model this is the IDENTITY function (the bot-id IS the
+   * appId). Returns undefined to reject an empty/unknown id. Kept injectable so
+   * a future multi-owner entitlement check can wrap it.
    */
   resolveAppId: (botId: string) => string | undefined;
   /**

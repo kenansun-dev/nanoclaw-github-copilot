@@ -9,8 +9,8 @@ syntax = "proto3";
 //   - NCL runs LOCALLY and dials OUT to the relay (one long-lived stream).
 //   - Teams Bot Service POSTs inbound activities to the relay's per-bot HTTPS
 //     endpoint (north edge), independent of whether an NCL stream is attached.
-//   - Relay terminates inbound BotFramework JWT auth, then routes by bot id to
-//     the attached NCL stream. No stream attached -> buffer with TTL, drop on
+//   - Relay terminates inbound BotFramework JWT auth, then routes by bot id
+//     (= the bot's appId; see Hello.bot_ids) to the attached NCL stream. No stream attached -> buffer with TTL, drop on
 //     expiry, write audit. NCL attached but Teams broken -> harmless, just no
 //     e2e.
 //   - South edge (this stream) is authed by the OWNER's AAD token in call
@@ -54,8 +54,11 @@ message FromNcl {
 // unknown/unauthorized bot id is the server's call (it cross-checks the
 // allowlist + which bots exist on the relay).
 message Hello {
-  // Bot ids this NCL serves (relay's per-bot routing keys; the <bot> segment
-  // in /api/messages/<bot>). Empty = serve nothing (rejected).
+  // Bot ids this NCL serves = the bots' appIds, which are the relay's per-bot
+  // routing keys: the <appId> segment in /api/messages/<appId> (appId-as-
+  // routing-key, docs/2026-06-27-relay-appid-routing-key.md). The inbound JWT's
+  // aud must equal this id, so it is self-describing — no configured map. Empty
+  // = serve nothing (rejected).
   repeated string bot_ids = 1;
 
   // Free-form NCL instance label for audit/observability (host name etc.).
