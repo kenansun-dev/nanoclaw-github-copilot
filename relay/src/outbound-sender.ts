@@ -37,9 +37,10 @@ export interface OutboundSenderDeps {
   fetchImdsToken?: (resource: string, clientId: string) => Promise<string>;
   /**
    * Exchange the MSI IMDS assertion for a given bot appId's Bot Connector token
-   * (design §6 federation). STUBBED until bot onboarding supplies appIds — the
-   * default throws NOT_IMPLEMENTED. Injectable so the onboarding task wires the
-   * real exchange without touching this file's POST logic.
+   * (design §6 federation). Default throws NOT_IMPLEMENTED; production injects
+   * makeFederationExchange (reads appId from config.botAppIds). A thrown error
+   * carrying `retryable===false` (FederationConfigError) is surfaced as a
+   * non-retryable ack.
    */
   exchangeForBotToken?: (botId: string, imdsAssertion: string) => Promise<string>;
   /** HTTP POST to the Connector; injectable for tests. */
@@ -114,22 +115,25 @@ export function makeOutboundSender(deps: OutboundSenderDeps): OutboundSender {
         };
       }
 
-      // 1. MSI IMDS assertion (works today) → per-bot Connector token (stub).
+      // 1. MSI IMDS assertion (works today) → per-bot Connector token.
       let botToken: string;
       try {
         const imdsAssertion = await fetchImdsToken(TOKEN_EXCHANGE_RESOURCE, deps.msiClientId);
         botToken = await exchangeForBotToken(reply.botId, imdsAssertion);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        // Token acquisition failure (incl. the onboarding-pending stub). Encode,
-        // don't throw — retryable since re-auth may succeed once wired.
-        logger.warn('outbound token acquisition failed', { botId: reply.botId, err: msg });
+        // A FederationConfigError (missing appId/tenant) is non-retryable —
+        // retrying won't conjure a registration. Other token failures are
+        // transient (re-auth may succeed). Read the flag without importing the
+        // class so the sender stays decoupled from the exchange impl.
+        const retryable = (err as { retryable?: boolean })?.retryable !== false;
+        logger.warn('outbound token acquisition failed', { botId: reply.botId, err: msg, retryable });
         return {
           clientMsgId: reply.clientMsgId,
           ok: false,
           connectorStatus: 0,
           error: msg,
-          retryable: true,
+          retryable,
         };
       }
 

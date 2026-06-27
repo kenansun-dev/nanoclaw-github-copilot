@@ -17,10 +17,11 @@ import { loadConfig } from './config.js';
 import { logger } from './logger.js';
 import { startNorthEdge } from './north-edge.js';
 import { makeBroker } from './broker.js';
-import { startGrpcServer, type SouthCaller } from './grpc-server.js';
+import { startGrpcServer } from './grpc-server.js';
 import { makeJwtValidator } from './inbound-jwt.js';
 import { makeOutboundSender } from './outbound-sender.js';
-import type { Metadata } from '@grpc/grpc-js';
+import { makeFederationExchange } from './federation.js';
+import { makeSouthTokenValidator, makeAadTokenVerifier } from './south-auth.js';
 
 // ─── Placeholder seams (replaced by the owning subsystems) ───────────────────
 
@@ -36,19 +37,20 @@ import type { Metadata } from '@grpc/grpc-js';
  */
 
 /**
- * #5 (VM): outbound sender is wired below via makeOutboundSender. It does the
- * MSI IMDS token pull (works today) but the per-bot federation EXCHANGE is
- * stubbed (throws NOT_IMPLEMENTED) until bot onboarding supplies appIds — so
- * outbound does not reach Teams e2e yet, by design (kenan scope 2026-06-26).
+ * #5 (VM): outbound sender is wired below via makeOutboundSender. The per-bot
+ * federation EXCHANGE is now real (makeFederationExchange): it reads the bot's
+ * appId from config.botAppIds (same map as inbound) and exchanges the MSI IMDS
+ * assertion for that appId's Connector token. Unknown bot → app-not-found
+ * (non-retryable). e2e still needs the appIds populated + FIC configured.
  */
 
 /**
  * #3 (Rpi5): gRPC server is wired below via startGrpcServer. The south-edge AAD
- * token VALIDATION is injected (validateSouthToken); the bootstrap default is
- * fail-closed until real JWKS wiring lands. Token ACQUISITION on the NCL side is
- * the next task.
+ * token validation is now CONFIG-DRIVEN (makeSouthTokenValidator + Entra JWKS
+ * verifier): verify the caller's AAD token, then gate it against
+ * config.southEdgeAllowlist. Empty allowlist = deny-all (fail-closed). No code
+ * edit needed to authorize a caller — it's all config now.
  */
-const rejectAllSouthToken = async (_md: Metadata): Promise<SouthCaller | null> => null;
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
@@ -77,19 +79,30 @@ async function main(): Promise<void> {
     validateInboundJwt,
   });
 
-  // South edge outbound sender (VM #5): MSI IMDS token (works today) → per-bot
-  // federation exchange (STUBBED, throws until onboarding) → Connector POST.
-  const sender = makeOutboundSender({ msiClientId: config.msiClientId });
+  // South edge outbound sender (VM #5): MSI IMDS token → per-bot federation
+  // exchange (reads appId from config.botAppIds; app-not-found if absent) →
+  // Connector POST.
+  const sender = makeOutboundSender({
+    msiClientId: config.msiClientId,
+    exchangeForBotToken: makeFederationExchange({
+      botAppIds: config.botAppIds,
+      tenantId: config.tenantId,
+    }),
+  });
 
   // gRPC server (Rpi5 #3) holding the NCL stream. AAD validation is fail-closed
   // until real JWKS wiring; the owner allowlist (config NCL_RELAY_ALLOWLIST) is
   // the CALLER gate, enforced inside validateSouthToken once wired. Per-bot ACL
   // is a next-task concern (bot onboarding), so v1 authorizeBots passes the
   // requested bots through unchanged once the caller is authenticated.
+  const validateSouthToken = makeSouthTokenValidator({
+    allowlist: config.southEdgeAllowlist,
+    verifyToken: makeAadTokenVerifier({ tenantId: config.tenantId }),
+  });
   const grpc = await startGrpcServer(config.grpcPort, {
     broker,
     sender,
-    validateSouthToken: rejectAllSouthToken,
+    validateSouthToken,
     authorizeBots: (_caller, requestedBotIds) => requestedBotIds,
   });
 
