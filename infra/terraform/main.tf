@@ -56,7 +56,6 @@ module "core" {
   webhook_port              = var.webhook_port
   grpc_port                 = var.grpc_port
   south_edge_allowlist      = var.south_edge_allowlist
-  bot_app_ids               = var.bot_app_ids
   restrict_to_bot_connector = var.restrict_to_bot_connector
   extra_app_settings        = var.extra_app_settings
   tags                      = var.tags

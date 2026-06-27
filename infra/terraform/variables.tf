@@ -66,12 +66,6 @@ variable "south_edge_allowlist" {
   default     = []
 }
 
-variable "bot_app_ids" {
-  description = "Map of bot name -> Azure AD app (client) id. Feeds NCL_RELAY_BOT_APPIDS (inbound JWT audience + outbound federation). Add a bot = one entry. appId is a non-secret public client id."
-  type        = map(string)
-  default     = {}
-}
-
 variable "restrict_to_bot_connector" {
   description = "Allow only AzureBotService service tag inbound."
   type        = bool

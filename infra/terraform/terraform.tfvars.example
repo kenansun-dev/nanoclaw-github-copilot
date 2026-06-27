@@ -15,16 +15,12 @@ app_service_sku  = "B1"     # B1 to start; P1v3 for scale-out (design §6)
 always_on        = true
 
 # First bot(s). Key becomes the resource-name suffix (ncl-bot-<key>).
+# appId is NOT configured here — each bot's App Registration is created by the
+# bot module and its appId flows inline as the routing key (the bot's messaging
+# endpoint is /api/messages/<appId>). See
+# docs/2026-06-27-relay-appid-routing-key.md.
 bots = {
   prod = {}
-}
-
-# Per-bot Azure AD app (client) id. Key must match a `bots` key above. This is
-# the single source the relay uses for inbound JWT audience validation AND
-# outbound federation token exchange (env NCL_RELAY_BOT_APPIDS). appId is a
-# non-secret public client id. Fill in after the bot's App Registration exists.
-bot_app_ids = {
-  # prod = "00000000-0000-0000-0000-000000000000"
 }
 
 # AAD object ids / appIds allowed to attach on the NCL gRPC south edge.

@@ -41,8 +41,10 @@ resource "azuread_application_federated_identity_credential" "msi" {
 }
 
 # Azure Bot resource — MultiTenant, msaAppId = this bot's appId. Messaging
-# endpoint points at the shared App Service's in-proc listener. v1 = one App
-# Service per bot, so the path is the default /api/messages (design §4).
+# endpoint points at the shared App Service's relay listener. The path segment
+# IS the bot's appId: the relay routes inbound /api/messages/<appId> by that
+# segment and pins the JWT audience to it (self-describing, no configured map).
+# See docs/2026-06-27-relay-appid-routing-key.md.
 resource "azurerm_bot_service_azure_bot" "this" {
   name                = "ncl-bot-${var.bot_name}"
   resource_group_name = var.resource_group_name
@@ -51,7 +53,7 @@ resource "azurerm_bot_service_azure_bot" "this" {
   microsoft_app_id    = azuread_application.bot.client_id
   microsoft_app_type  = "MultiTenant"
 
-  endpoint = "https://${var.app_service_hostname}/api/messages${var.messaging_path_suffix}"
+  endpoint = "https://${var.app_service_hostname}/api/messages/${azuread_application.bot.client_id}"
 
   tags = var.tags
 }

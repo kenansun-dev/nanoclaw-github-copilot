@@ -100,12 +100,10 @@ resource "azurerm_linux_web_app" "this" {
       # Allowlist of AAD object ids / appIds permitted on the NCL south edge
       # (the gRPC interceptor checks the owner's token against this, design §5).
       NCL_RELAY_ALLOWLIST = join(",", var.south_edge_allowlist)
-      # Per-bot appId map (name=appId,...). Single source for inbound JWT
-      # audience validation AND outbound federation exchange. appId is a
-      # non-secret public client id, so app_settings is the right home; adding a
-      # bot = one entry in var.bot_app_ids. Onboarding is admin/declarative for
-      # now (no south-edge self-registration yet).
-      NCL_RELAY_BOT_APPIDS = join(",", [for name, app_id in var.bot_app_ids : "${name}=${app_id}"])
+      # No NCL_RELAY_BOT_APPIDS: appId is never configured. It is intrinsic to
+      # inbound (the BotFramework JWT `aud` == the bot's appId == the
+      # /api/messages/<appId> path segment) and carried as the routing key into
+      # outbound federation. See docs/2026-06-27-relay-appid-routing-key.md.
     },
     var.extra_app_settings,
   )
