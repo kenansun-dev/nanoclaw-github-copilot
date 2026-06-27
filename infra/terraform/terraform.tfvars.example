@@ -19,6 +19,17 @@ bots = {
   prod = {}
 }
 
+# Per-bot Azure AD app (client) id. Key must match a `bots` key above. This is
+# the single source the relay uses for inbound JWT audience validation AND
+# outbound federation token exchange (env NCL_RELAY_BOT_APPIDS). appId is a
+# non-secret public client id. Fill in after the bot's App Registration exists.
+bot_app_ids = {
+  # prod = "00000000-0000-0000-0000-000000000000"
+}
+
+# AAD object ids / appIds allowed to attach on the NCL gRPC south edge.
+# south_edge_allowlist = ["<owner-oid>"]
+
 tags = {
   project = "ncl-teams"
   managed = "terraform"
