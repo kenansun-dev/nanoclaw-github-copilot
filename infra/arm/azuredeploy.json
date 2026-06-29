@@ -1,0 +1,215 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": "hand-written: core-only NCL Teams relay buildout",
+    "description": "App Service relay + shared user-assigned MSI + Log Analytics + diagnostic setting. Bot identity (App Registration / Bot Service / FIC) is onboarded by NCL CLI, not here. Mirrors infra/terraform modules/core (design 2026-06-26-teams-appservice-relay-design.md)."
+  },
+  "parameters": {
+    "namePrefix": {
+      "type": "string",
+      "defaultValue": "ncl-teams",
+      "metadata": { "description": "Prefix for derived resource names (plan, logs, MSI, diag)." }
+    },
+    "appServiceName": {
+      "type": "string",
+      "metadata": { "description": "Globally-unique App Service (web app) name." }
+    },
+    "tenantId": {
+      "type": "string",
+      "defaultValue": "[subscription().tenantId]",
+      "metadata": { "description": "Entra tenant id (runtime token exchange)." }
+    },
+    "appServiceSku": {
+      "type": "string",
+      "defaultValue": "B1",
+      "allowedValues": ["B1", "B2", "B3", "P0v3", "P1v3", "P2v3", "P3v3"],
+      "metadata": { "description": "App Service plan SKU. B1 to start; P1v3 for scale-out. Free/Shared rejected (Always On needs Basic+)." }
+    },
+    "alwaysOn": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": { "description": "Keep the relay warm (avoids cold-start timeout on first Teams POST). Requires Basic+." }
+    },
+    "webhookPort": {
+      "type": "int",
+      "defaultValue": 3978,
+      "metadata": { "description": "HTTP/1.1 port the relay binds for inbound /api/messages (WEBSITES_PORT)." }
+    },
+    "grpcPort": {
+      "type": "int",
+      "defaultValue": 8585,
+      "metadata": { "description": "HTTP/2 port the relay serves gRPC on for the NCL south edge (HTTP20_ONLY_PORT)." }
+    },
+    "southEdgeAllowlist": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": { "description": "AAD object ids / appIds allowed on the gRPC south edge; joined into NCL_RELAY_ALLOWLIST." }
+    },
+    "restrictToBotConnector": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": { "description": "If true, restrict inbound to the AzureBotService service tag." }
+    },
+    "logRetentionDays": {
+      "type": "int",
+      "defaultValue": 30,
+      "metadata": { "description": "Log Analytics + http log retention in days." }
+    },
+    "extraAppSettings": {
+      "type": "object",
+      "defaultValue": {},
+      "metadata": { "description": "Additional app settings merged into the web app (per-account MSTEAMS_* env, etc.)." }
+    },
+    "msiName": {
+      "type": "string",
+      "defaultValue": "ncl-bot-msi",
+      "metadata": { "description": "Name of the shared user-assigned managed identity." }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": { "project": "ncl-teams", "managed": "arm" },
+      "metadata": { "description": "Resource tags applied to all resources." }
+    }
+  },
+  "variables": {
+    "location": "[resourceGroup().location]",
+    "planName": "[concat(parameters('namePrefix'), '-plan')]",
+    "logName": "[concat(parameters('namePrefix'), '-logs')]",
+    "diagName": "[concat(parameters('namePrefix'), '-diag')]",
+    "msiId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('msiName'))]",
+    "baseAppSettings": {
+      "WEBSITES_PORT": "[string(parameters('webhookPort'))]",
+      "HTTP20_ONLY_PORT": "[string(parameters('grpcPort'))]",
+      "NCL_BOT_MSI_CLIENT_ID": "[reference(variables('msiId'), '2023-01-31').clientId]",
+      "AZURE_TENANT_ID": "[parameters('tenantId')]",
+      "NCL_RELAY_ALLOWLIST": "[join(parameters('southEdgeAllowlist'), ',')]"
+    },
+    "ipRestrictions": [
+      {
+        "ipAddress": "AzureBotService",
+        "tag": "ServiceTag",
+        "action": "Allow",
+        "priority": 100,
+        "name": "allow-bot-connector"
+      }
+    ]
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[parameters('msiName')]",
+      "location": "[variables('location')]",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('logName')]",
+      "location": "[variables('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "sku": { "name": "PerGB2018" },
+        "retentionInDays": "[parameters('logRetentionDays')]"
+      }
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2023-12-01",
+      "name": "[variables('planName')]",
+      "location": "[variables('location')]",
+      "tags": "[parameters('tags')]",
+      "sku": { "name": "[parameters('appServiceSku')]" },
+      "kind": "linux",
+      "properties": { "reserved": true }
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2023-12-01",
+      "name": "[parameters('appServiceName')]",
+      "location": "[variables('location')]",
+      "tags": "[parameters('tags')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
+        "[variables('msiId')]"
+      ],
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": { "[variables('msiId')]": {} }
+      },
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
+        "httpsOnly": true,
+        "siteConfig": {
+          "linuxFxVersion": "NODE|22-lts",
+          "alwaysOn": "[parameters('alwaysOn')]",
+          "http20Enabled": true,
+          "ipSecurityRestrictions": "[if(parameters('restrictToBotConnector'), variables('ipRestrictions'), json('null'))]",
+          "appSettings": "[map(items(union(variables('baseAppSettings'), parameters('extraAppSettings'))), lambda('kv', createObject('name', lambdaVariables('kv').key, 'value', lambdaVariables('kv').value)))]"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites/config",
+      "apiVersion": "2023-12-01",
+      "name": "[concat(parameters('appServiceName'), '/logs')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', parameters('appServiceName'))]"
+      ],
+      "properties": {
+        "applicationLogs": { "fileSystem": { "level": "Information" } },
+        "httpLogs": {
+          "fileSystem": {
+            "retentionInDays": "[parameters('logRetentionDays')]",
+            "retentionInMb": 35,
+            "enabled": true
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Insights/diagnosticSettings",
+      "apiVersion": "2021-05-01-preview",
+      "scope": "[concat('Microsoft.Web/sites/', parameters('appServiceName'))]",
+      "name": "[variables('diagName')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', parameters('appServiceName'))]",
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logName'))]"
+      ],
+      "properties": {
+        "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logName'))]",
+        "logs": [
+          { "category": "AppServiceConsoleLogs", "enabled": true },
+          { "category": "AppServiceHTTPLogs", "enabled": true },
+          { "category": "AppServiceAppLogs", "enabled": true }
+        ],
+        "metrics": [
+          { "category": "AllMetrics", "enabled": true }
+        ]
+      }
+    }
+  ],
+  "outputs": {
+    "appServiceHostname": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Web/sites', parameters('appServiceName')), '2023-12-01').defaultHostName]"
+    },
+    "appServiceName": {
+      "type": "string",
+      "value": "[parameters('appServiceName')]"
+    },
+    "msiPrincipalId": {
+      "type": "string",
+      "value": "[reference(variables('msiId'), '2023-01-31').principalId]"
+    },
+    "msiClientId": {
+      "type": "string",
+      "value": "[reference(variables('msiId'), '2023-01-31').clientId]"
+    },
+    "logAnalyticsWorkspaceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logName'))]"
+    }
+  }
+}
