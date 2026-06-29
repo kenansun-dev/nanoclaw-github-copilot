@@ -78,25 +78,6 @@ variable "extra_app_settings" {
   default     = {}
 }
 
-# Map of bots. Key = short bot name (becomes resource suffix). Value can carry
-# optional per-bot overrides. v1 default layout is one App Service per bot, so
-# messaging_path_suffix stays "" — set it only in the future single-App-Service
-# N-bots layout (design §4).
-#
-# Example:
-#   bots = {
-#     prod = {}
-#     staging = { bot_sku = "F0" }
-#   }
-variable "bots" {
-  description = "Per-bot configuration map (key = bot name)."
-  type = map(object({
-    bot_sku               = optional(string, "F0")
-    messaging_path_suffix = optional(string, "")
-  }))
-  default = {}
-}
-
 variable "tags" {
   description = "Resource tags applied to all resources."
   type        = map(string)

@@ -120,3 +120,28 @@ resource "azurerm_linux_web_app" "this" {
     }
   }
 }
+
+# Wire App Service logs into the Log Analytics workspace. Without this the
+# workspace is an orphan resource (created, billed, but receiving nothing) and
+# the relay's structured `relay_audit` JSON only reaches the file_system log.
+# This makes the broker comment's "single JSON line -> Log Analytics" real and
+# enables KQL queries over relay traffic.
+resource "azurerm_monitor_diagnostic_setting" "app" {
+  name                       = "${var.name_prefix}-diag"
+  target_resource_id         = azurerm_linux_web_app.this.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.this.id
+
+  enabled_log {
+    category = "AppServiceConsoleLogs"
+  }
+  enabled_log {
+    category = "AppServiceHTTPLogs"
+  }
+  enabled_log {
+    category = "AppServiceAppLogs"
+  }
+
+  metric {
+    category = "AllMetrics"
+  }
+}

@@ -18,13 +18,7 @@ output "msi_client_id" {
   value       = module.core.msi_client_id
 }
 
-output "bots" {
-  description = "Per-bot appId + messaging endpoint map."
-  value = {
-    for k, m in module.bot : k => {
-      app_id             = m.app_id
-      bot_name           = m.bot_name
-      messaging_endpoint = m.messaging_endpoint
-    }
-  }
+output "log_analytics_workspace_id" {
+  description = "Log Analytics workspace id (App Service diagnostics target)."
+  value       = module.core.log_analytics_workspace_id
 }
