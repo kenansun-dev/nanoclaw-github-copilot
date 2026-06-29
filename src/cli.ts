@@ -263,12 +263,7 @@ async function runService(action: string) {
   const hasWindowsAutoStart = (() => {
     if (process.platform !== 'win32') return false;
     try {
-      winExecSync('reg', [
-        'query',
-        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
-        '/v',
-        'nanoclaw',
-      ]);
+      winExecSync('reg', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', '/v', 'nanoclaw']);
       return true;
     } catch {
       const startupDir = join(
