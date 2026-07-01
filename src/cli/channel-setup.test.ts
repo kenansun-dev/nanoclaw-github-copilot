@@ -99,6 +99,9 @@ function setupExecStubs(): void {
     if (c.includes('az bot create')) return '';
     if (c.includes('az bot msteams create')) return '';
     if (c.includes('az bot update')) return '';
+    if (c.includes('az ad app federated-credential list')) return '';
+    if (c.includes('az ad app federated-credential create')) return '';
+    if (c.includes('az ad app federated-credential update')) return '';
     return '';
   });
 }
@@ -263,3 +266,122 @@ describe('nanoclaw channel add teams --setup multi-account', () => {
     expect(envWrites.length).toBe(0);
   });
 });
+
+describe('nanoclaw channel add teams --transport proxy (relay)', () => {
+  it('--transport proxy (no setup verb) persists mode + endpoint + credEnv', async () => {
+    memoryConfig.channels.teams = {
+      enabled: true,
+      accounts: { default: { appId: 'app-x', appPassword: 'y', webhookPort: 3978 } },
+    };
+
+    await runChannelCommand([
+      'add',
+      'teams',
+      '--transport',
+      'proxy',
+      '--relay-endpoint',
+      'relay-host:443',
+      '--relay-cred-env',
+      'NCL_RELAY_CRED',
+    ]);
+
+    const acct = memoryConfig.channels.teams.accounts.default;
+    expect(acct.transport).toBe('proxy');
+    expect(acct.proxy.southEndpoint).toBe('relay-host:443');
+    expect(acct.proxy.auth.credentialEnv).toBe('NCL_RELAY_CRED');
+    // appPassword left intact (federation not run in this path)
+    expect(acct.appPassword).toBe('y');
+  });
+
+  it('credentialEnv defaults to NCL_RELAY_CRED when --relay-cred-env omitted', async () => {
+    memoryConfig.channels.teams = { enabled: true, accounts: { default: { appId: 'app-x' } } };
+    await runChannelCommand(['add', 'teams', '--transport', 'proxy', '--relay-endpoint', 'r:443']);
+    expect(memoryConfig.channels.teams.accounts.default.proxy.auth.credentialEnv).toBe('NCL_RELAY_CRED');
+  });
+
+  it('`relay` is accepted as an alias for proxy', async () => {
+    memoryConfig.channels.teams = { enabled: true, accounts: { default: { appId: 'app-x' } } };
+    await runChannelCommand(['add', 'teams', '--transport', 'relay', '--relay-endpoint', 'r:443']);
+    expect(memoryConfig.channels.teams.accounts.default.transport).toBe('proxy');
+  });
+
+  it('--transport tunnel persists tunnel mode without touching proxy', async () => {
+    memoryConfig.channels.teams = { enabled: true, accounts: { default: { appId: 'app-x' } } };
+    await runChannelCommand(['add', 'teams', '--transport', 'tunnel']);
+    expect(memoryConfig.channels.teams.accounts.default.transport).toBe('tunnel');
+    expect(memoryConfig.channels.teams.accounts.default.proxy).toBeUndefined();
+  });
+
+  it('--setup --transport proxy populates schema and skips devtunnel', async () => {
+    exec.mockClear();
+    setupExecStubs();
+    await runChannelCommand([
+      'add',
+      'teams',
+      '--setup',
+      '--transport',
+      'proxy',
+      '--agent',
+      'main',
+      '--relay-endpoint',
+      'relay-host:443',
+      '--relay-cred-env',
+      'NCL_RELAY_CRED',
+      '--relay-issuer',
+      'https://issuer.example/oidc',
+    ]);
+
+    const acct = memoryConfig.channels.teams.accounts.default;
+    expect(acct.transport).toBe('proxy');
+    expect(acct.proxy.southEndpoint).toBe('relay-host:443');
+    expect(acct.appId).toMatch(/^app-id-nanoclaw-andy$/);
+
+    // No devtunnel calls on the proxy path.
+    const dtCalls = exec.mock.calls.map((c: any[]) => String(c[0])).filter((c: string) => c.startsWith('devtunnel'));
+    expect(dtCalls.length).toBe(0);
+  });
+
+  it('--setup-federation without issuer does NOT create a credential', async () => {
+    exec.mockClear();
+    setupExecStubs();
+    memoryConfig.channels.teams = { enabled: true, accounts: { default: { appId: 'app-x' } } };
+
+    await runChannelCommand(['add', 'teams', '--setup-federation']);
+
+    const fedCreate = exec.mock.calls
+      .map((c: any[]) => String(c[0]))
+      .filter((c: string) => c.includes('az ad app federated-credential create'));
+    expect(fedCreate.length).toBe(0);
+  });
+
+  it('--setup-federation with issuer + subject creates the credential', async () => {
+    exec.mockClear();
+    setupExecStubs();
+    memoryConfig.channels.teams = { enabled: true, accounts: { default: { appId: 'app-x' } } };
+    // Provide subject via ARM output file read.
+    readFileSyncSpy.mockImplementation((p: any) => {
+      if (String(p).includes('arm') || String(p).includes('outputs')) {
+        return JSON.stringify({ msiPrincipalId: { value: 'msi-principal-123' } });
+      }
+      if (String(p).endsWith('.env')) return '';
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    });
+
+    await runChannelCommand([
+      'add',
+      'teams',
+      '--setup-federation',
+      '--relay-issuer',
+      'https://issuer.example/oidc',
+    ]);
+
+    const fedCreate = exec.mock.calls
+      .map((c: any[]) => String(c[0]))
+      .filter((c: string) => c.includes('az ad app federated-credential create'));
+    expect(fedCreate.length).toBe(1);
+    expect(fedCreate[0]).toContain('msi-principal-123');
+    expect(fedCreate[0]).toContain('https://issuer.example/oidc');
+    expect(fedCreate[0]).toContain('api://AzureADTokenExchange');
+  });
+});
+

@@ -96,6 +96,11 @@ function parseFlags(args: string[]): {
   tenantId?: string;
   botToken?: string;
   webhookPort?: number;
+  transport?: 'tunnel' | 'proxy';
+  setupFederation: boolean;
+  relayEndpoint?: string;
+  relayCredEnv?: string;
+  relayIssuer?: string;
 } {
   let agent: string | undefined;
   let account: string | undefined;
@@ -110,6 +115,11 @@ function parseFlags(args: string[]): {
   let tenantId: string | undefined;
   let botToken: string | undefined;
   let webhookPort: number | undefined;
+  let transport: 'tunnel' | 'proxy' | undefined;
+  let setupFederation = false;
+  let relayEndpoint: string | undefined;
+  let relayCredEnv: string | undefined;
+  let relayIssuer: string | undefined;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--agent' && args[i + 1]) {
       agent = args[++i];
@@ -137,6 +147,23 @@ function parseFlags(args: string[]): {
       botToken = args[++i];
     } else if (args[i] === '--webhookPort' && args[i + 1]) {
       webhookPort = parseInt(args[++i], 10);
+    } else if (args[i] === '--transport' && args[i + 1]) {
+      const v = args[++i];
+      if (v === 'tunnel' || v === 'proxy' || v === 'relay') {
+        // `relay` is accepted as an alias for `proxy` (docs/infra call it relay).
+        transport = v === 'relay' ? 'proxy' : v;
+      } else {
+        console.error(`Invalid --transport '${v}'. Use 'tunnel' or 'proxy'.`);
+        process.exitCode = 1;
+      }
+    } else if (args[i] === '--setup-federation') {
+      setupFederation = true;
+    } else if (args[i] === '--relay-endpoint' && args[i + 1]) {
+      relayEndpoint = args[++i];
+    } else if (args[i] === '--relay-cred-env' && args[i + 1]) {
+      relayCredEnv = args[++i];
+    } else if (args[i] === '--relay-issuer' && args[i + 1]) {
+      relayIssuer = args[++i];
     }
   }
   return {
@@ -153,6 +180,11 @@ function parseFlags(args: string[]): {
     tenantId,
     botToken,
     webhookPort,
+    transport,
+    setupFederation,
+    relayEndpoint,
+    relayCredEnv,
+    relayIssuer,
   };
 }
 
@@ -192,6 +224,10 @@ async function channelAdd(name: string | undefined, args: string[]): Promise<voi
       'Usage: nanoclaw channel add <name> [--account <id>] [--setup] [--setup-tunnel] [--agent <id>] [--force]',
     );
     console.log('       nanoclaw channel add teams --appId xxx --appPassword yyy [--account bot-b]');
+    console.log('       nanoclaw channel add teams --setup --transport proxy \\');
+    console.log('           --relay-endpoint relay-host:443 --relay-cred-env NCL_RELAY_CRED \\');
+    console.log('           --relay-issuer <msi-oidc-issuer-url>   # relay/proxy transport');
+    console.log('       nanoclaw channel add teams --transport tunnel|proxy   # set transport only');
     console.log('       nanoclaw channel add telegram --botToken xxx [--account daily]');
     console.log('Available: ' + SUPPORTED_CHANNELS.join(', '));
     return;
@@ -274,6 +310,92 @@ async function channelAdd(name: string | undefined, args: string[]): Promise<voi
     (cfg.channels as any).teams = teams;
     saveConfig(cfg);
   };
+
+  // Persist relay/proxy transport settings back to accounts[accountId]. Writes
+  // `transport: 'proxy'`, `proxy.southEndpoint`, and `proxy.auth.credentialEnv`
+  // (an env-var NAME, never the secret). Idempotent.
+  const persistProxyConfig = (opts: { southEndpoint?: string; credEnv?: string }): void => {
+    const cfg = loadConfig();
+    cfg.channels = cfg.channels || ({} as any);
+    const teams: any = (cfg.channels as any).teams || {};
+    teams.enabled = true;
+    teams.accounts = teams.accounts || {};
+    const acct: any = { ...(teams.accounts[accountId] || {}) };
+    acct.transport = 'proxy';
+    const prevProxy = acct.proxy || {};
+    acct.proxy = {
+      southEndpoint: opts.southEndpoint ?? prevProxy.southEndpoint ?? '',
+      auth: {
+        credentialEnv: opts.credEnv ?? prevProxy.auth?.credentialEnv ?? 'NCL_RELAY_CRED',
+      },
+    };
+    teams.accounts[accountId] = acct;
+    (cfg.channels as any).teams = teams;
+    saveConfig(cfg);
+  };
+
+  // Teams with --setup + --transport proxy: relay path. No devtunnel, no public
+  // webhook. Order: app → federation (replaces secret) → bot (endpoint = relay
+  // /api/messages/<appId>) → manifest → persist proxy schema → reminder.
+  if (channelName === 'teams' && flags.setup && flags.transport === 'proxy') {
+    const botName = resolveBotName();
+    // Seed the teams channel block so setupApp() can write accounts (the tunnel
+    // path seeds this via persistWebhookPort; the proxy path has no port step).
+    persistProxyConfig({ southEndpoint: flags.relayEndpoint, credEnv: flags.relayCredEnv });
+    const appResult = await setupApp(botName, accountId);
+    if (!appResult) return;
+    const fedOk = await setupFederation(appResult.appId, {
+      issuer: flags.relayIssuer,
+      subject: undefined, // resolved from ARM output msiPrincipalId inside setupFederation
+    });
+    const relayEndpoint = flags.relayEndpoint || (loadConfig().channels.teams.accounts?.[accountId] as any)?.proxy?.southEndpoint;
+    const messagingBase = relayMessagingEndpoint(relayEndpoint);
+    if (messagingBase) {
+      // Bot messaging endpoint = relay north edge for this appId.
+      await setupBotEndpoint(botName, appResult.appId, `${messagingBase}/api/messages/${appResult.appId}`);
+    }
+    await setupManifest(appResult.appId, botName);
+    persistProxyConfig({ southEndpoint: flags.relayEndpoint, credEnv: flags.relayCredEnv });
+    printProxyEnableReminder(appResult.appId, accountId, fedOk);
+    return;
+  }
+
+  // Teams with --setup-federation: only add the federated identity credential.
+  if (channelName === 'teams' && flags.setupFederation) {
+    const cfg = loadConfig();
+    const acct = cfg.channels.teams.accounts?.[accountId];
+    const appId = acct?.appId || (accountId === 'default' ? cfg.channels.teams.appId : undefined);
+    if (!appId) {
+      console.error(
+        `Error: appId required for account '${accountId}'. Run --setup-app --account ${accountId} first.`,
+      );
+      return;
+    }
+    await setupFederation(appId, { issuer: flags.relayIssuer });
+    return;
+  }
+
+  // `--transport` without a setup verb: just persist the transport choice.
+  if (channelName === 'teams' && flags.transport && !flags.setup && !flags.setupApp && !flags.setupBot && !flags.setupTunnel && !flags.setupManifest) {
+    if (flags.transport === 'proxy') {
+      persistProxyConfig({ southEndpoint: flags.relayEndpoint, credEnv: flags.relayCredEnv });
+      console.log(`\n\u2705 teams account '${accountId}' transport set to proxy (relay).`);
+      printProxyEnableReminder(
+        (loadConfig().channels.teams.accounts?.[accountId] as any)?.appId || '<appId>',
+        accountId,
+        false,
+      );
+    } else {
+      const cfg = loadConfig();
+      const teams: any = (cfg.channels as any).teams || {};
+      teams.accounts = teams.accounts || {};
+      teams.accounts[accountId] = { ...(teams.accounts[accountId] || {}), transport: 'tunnel' };
+      (cfg.channels as any).teams = teams;
+      saveConfig(cfg);
+      console.log(`\n\u2705 teams account '${accountId}' transport set to tunnel.`);
+    }
+    return;
+  }
 
   // Teams with --setup: run all steps in order (tunnel → app → bot → manifest)
   if (channelName === 'teams' && flags.setup) {
@@ -537,6 +659,188 @@ async function setupApp(
   }
 
   return { appId, appPassword };
+}
+
+/**
+ * --setup-federation: add a federated identity credential (workload identity
+ * federation) to the bot's App Registration, replacing the client secret with
+ * trust of the relay's managed identity. See docs/teams-bot-identity-federation.md.
+ *
+ * The FIC has four fields:
+ *   - issuer:   the relay MSI's OIDC issuer URL (UNVERIFIED format — must be
+ *               passed explicitly via --relay-issuer; we do NOT hardcode/guess).
+ *   - subject:  the relay MSI principalId (ARM output `msiPrincipalId`).
+ *   - audience: api://AzureADTokenExchange (fixed).
+ *   - name:     a label.
+ *
+ * Returns true only if the credential was actually created/confirmed.
+ */
+async function setupFederation(
+  appId: string,
+  opts: { issuer?: string; subject?: string },
+): Promise<boolean> {
+  const AUDIENCE = 'api://AzureADTokenExchange';
+  const credName = 'ncl-relay-msi';
+  console.log(`\n🔗 Setting up federated identity credential on app ${appId}...`);
+
+  const azCheck = runCmd('az account show --query name -o tsv');
+  if (!azCheck.ok) {
+    console.error('  ❌ Not logged in to Azure CLI. Run: az login');
+    return false;
+  }
+
+  // subject = relay MSI principalId. Prefer explicit; else read ARM output.
+  let subject = opts.subject;
+  if (!subject) {
+    subject = readMsiPrincipalIdFromArmOutput() || undefined;
+  }
+  const issuer = opts.issuer;
+
+  if (!issuer || !subject) {
+    console.error('  ⚠️  Cannot create federated credential yet — missing:');
+    if (!issuer)
+      console.error(
+        '     • issuer (relay MSI OIDC issuer URL). Pass --relay-issuer <url>.\n' +
+          '       NOTE: user-assigned MI issuer format is UNVERIFIED (see\n' +
+          '       docs/teams-bot-identity-federation.md open items). Get the real\n' +
+          '       value from infra before this will work.',
+      );
+    if (!subject)
+      console.error(
+        '     • subject (relay MSI principalId). Pass it via ARM output\n' +
+          '       `msiPrincipalId`, or set it in infra outputs.',
+      );
+    console.error('  Skipping federation; bot still has its client secret as fallback.');
+    return false;
+  }
+
+  // Idempotent: check for an existing credential by name.
+  const existing = runCmd(
+    `az ad app federated-credential list --id "${appId}" --query "[?name=='${credName}'].name" -o tsv`,
+    { silent: true },
+  );
+  const params = JSON.stringify({
+    name: credName,
+    issuer,
+    subject,
+    audiences: [AUDIENCE],
+    description: 'NanoClaw Teams relay MSI token exchange',
+  });
+  if (existing.ok && existing.output.includes(credName)) {
+    console.log('  Found existing federated credential; updating...');
+    const upd = runCmd(
+      `az ad app federated-credential update --id "${appId}" --federated-credential-id "${credName}" --parameters '${params}'`,
+    );
+    if (!upd.ok) {
+      console.error(`  ❌ Failed to update federated credential: ${upd.output}`);
+      return false;
+    }
+  } else {
+    const create = runCmd(`az ad app federated-credential create --id "${appId}" --parameters '${params}'`);
+    if (!create.ok) {
+      console.error(`  ❌ Failed to create federated credential: ${create.output}`);
+      return false;
+    }
+  }
+  console.log('  ✅ Federated credential configured (issuer + subject + audience).');
+  return true;
+}
+
+/**
+ * Best-effort read of the relay MSI principalId from a local ARM deployment
+ * output file, if present. Returns null when unavailable (caller then requires
+ * an explicit value). Non-fatal.
+ */
+function readMsiPrincipalIdFromArmOutput(): string | null {
+  const candidates = [
+    path.join(process.cwd(), 'infra', 'arm', 'outputs.json'),
+    path.join(process.cwd(), 'relay', 'arm-outputs.json'),
+  ];
+  for (const p of candidates) {
+    try {
+      const raw = fs.readFileSync(p, 'utf-8');
+      const json = JSON.parse(raw);
+      const val =
+        json?.properties?.outputs?.msiPrincipalId?.value ??
+        json?.msiPrincipalId?.value ??
+        json?.msiPrincipalId;
+      if (typeof val === 'string' && val) return val;
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
+}
+
+/**
+ * Derive the relay's public HTTPS base from a south gRPC endpoint. The south
+ * endpoint is `host:port` (gRPC); the north (Bot messaging) edge is the same
+ * host over HTTPS. Best-effort — returns null when the host can't be derived,
+ * in which case the caller skips the endpoint update (user sets it manually).
+ */
+function relayMessagingEndpoint(southEndpoint?: string): string | null {
+  if (!southEndpoint) return null;
+  const host = southEndpoint.replace(/^https?:\/\//, '').split(':')[0]?.replace(/\/+$/, '');
+  if (!host) return null;
+  return `https://${host}`;
+}
+
+/**
+ * Update only an existing Azure Bot's messaging endpoint (no create). Used by
+ * the proxy path to point the bot at the relay's `/api/messages/<appId>`.
+ */
+async function setupBotEndpoint(botName: string, appId: string, messagingEndpoint: string): Promise<void> {
+  const resourceGroup = 'nanoclaw-rg';
+  console.log(`\n🤖 Pointing Azure Bot '${botName}' at relay endpoint...`);
+  const existingBot = runCmd(
+    `az bot show --name "${botName}" --resource-group "${resourceGroup}" --query "name" -o tsv`,
+    { silent: true },
+  );
+  if (existingBot.ok && existingBot.output) {
+    runCmd(
+      `az bot update --name "${botName}" --resource-group "${resourceGroup}" --endpoint "${messagingEndpoint}" --output none`,
+    );
+    console.log(`  ✅ Bot endpoint → ${messagingEndpoint}`);
+  } else {
+    console.log('  Creating bot (single-tenant, no password — federation)...');
+    const create = runCmd(
+      `az bot create --name "${botName}" --resource-group "${resourceGroup}" --app-type SingleTenant --appid "${appId}" --endpoint "${messagingEndpoint}" --sku F0 --output none`,
+    );
+    if (!create.ok) {
+      console.error(`  ⚠️  Bot create may have failed: ${create.output}`);
+    } else {
+      console.log(`  ✅ Bot created with endpoint ${messagingEndpoint}`);
+    }
+    runCmd(`az bot msteams create --name "${botName}" --resource-group "${resourceGroup}" --output none`);
+  }
+}
+
+/**
+ * Post-setup reminder for the proxy path: the relay owner must enable this
+ * user + app on the relay before e2e works. Wording mirrors what the south
+ * edge actually enforces (relay/src/south-auth.ts): NCL_RELAY_ALLOWLIST
+ * (oid/upn) + the bot's federated-credential trust of the relay MSI.
+ */
+function printProxyEnableReminder(appId: string, accountId: string, fedOk: boolean): void {
+  console.log('\n' + '─'.repeat(64));
+  console.log('📣 ACTION REQUIRED — reach out to the relay (proxy) owner:');
+  console.log('');
+  console.log('  1. Enable USER: add your Azure AD identity (oid or upn) to the');
+  console.log('     relay allowlist `NCL_RELAY_ALLOWLIST` (App Service app setting).');
+  console.log('     Without this, the south-edge Attach is rejected (401).');
+  console.log('');
+  console.log(`  2. Enable APP: confirm the relay managed identity is trusted by`);
+  console.log(`     this bot's federated credential (appId ${appId}).`);
+  if (!fedOk) {
+    console.log('     ⚠️  Federation was NOT completed above (missing issuer/subject).');
+    console.log('         Re-run: nanoclaw channel add teams --account ' + accountId);
+    console.log('         --setup-federation --relay-issuer <url> once infra gives you');
+    console.log('         the real MSI issuer URL.');
+  }
+  console.log('');
+  console.log('  Until the owner enables both, inbound Teams messages will reach');
+  console.log('  the relay but replies cannot flow back through the south edge.');
+  console.log('─'.repeat(64) + '\n');
 }
 
 /**
