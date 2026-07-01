@@ -51,11 +51,29 @@ if [ -z "$ZIP" ]; then
 fi
 
 echo "==> deploying $ZIP to App Service '$APP' (rg '$RG')"
+# OneDeploy (--type zip) runs its own "wait for site to start" tracker whose
+# warmup ping can time out (non-zero exit) even when the app is actually
+# serving. Don't trust that exit code; disable the flaky gate and health-probe
+# /healthz ourselves as the real success signal.
 az webapp deploy \
   --resource-group "$RG" \
   --name "$APP" \
   --src-path "$ZIP" \
-  --type zip
+  --type zip \
+  --track-status false || echo "WARN: az webapp deploy returned non-zero (OneDeploy warmup timer); verifying via /healthz"
+
+echo "==> waiting for https://$APP.azurewebsites.net/healthz to return 200"
+healthy=0
+for i in $(seq 1 60); do
+  code="$(curl -s -m 10 -o /dev/null -w '%{http_code}' "https://$APP.azurewebsites.net/healthz" || true)"
+  if [ "$code" = "200" ]; then healthy=1; echo "   healthy after $((i*10))s"; break; fi
+  sleep 10
+done
+if [ "$healthy" != "1" ]; then
+  echo "ERROR: site did not become healthy within 600s. Pull docker log:" >&2
+  echo "  https://$APP.scm.azurewebsites.net/api/logs/docker" >&2
+  exit 1
+fi
 
 echo "==> done. Verify:"
 echo "    az webapp log tail -g $RG -n $APP"

@@ -55,15 +55,17 @@ if [ "$MODE" = "destroy" ]; then
   exit 0
 fi
 
-# Ensure RG exists (idempotent).
-az group create -n "$RG" -l "$LOCATION" -o none
+# Ensure RG exists WITHOUT re-issuing create on an existing one: an
+# unconditional `az group create` is treated as a create/update and can trip
+# subscription policy (e.g. required Owner tag) even when the RG already
+# exists. Only create when missing.
+if [ "$(az group exists -n "$RG")" = "true" ]; then
+  echo "== resource group $RG exists, reusing (skip create) =="
+else
+  az group create -n "$RG" -l "$LOCATION" -o none
+fi
 
-echo "== validate =="
-az deployment group validate \
-  -g "$RG" --template-file "$TEMPLATE" --parameters @"$PARAMS" -o none
-echo "  ok"
-
-echo "== what-if =="
+echo "== what-if (also server-side validates; surfaces real policy/template errors) =="
 az deployment group what-if \
   -g "$RG" --template-file "$TEMPLATE" --parameters @"$PARAMS"
 

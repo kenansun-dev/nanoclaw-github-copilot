@@ -81,7 +81,6 @@
     "baseAppSettings": {
       "WEBSITES_PORT": "[string(parameters('webhookPort'))]",
       "HTTP20_ONLY_PORT": "[string(parameters('grpcPort'))]",
-      "NCL_BOT_MSI_CLIENT_ID": "[reference(variables('msiId'), '2023-01-31').clientId]",
       "AZURE_TENANT_ID": "[parameters('tenantId')]",
       "NCL_RELAY_ALLOWLIST": "[join(parameters('southEdgeAllowlist'), ',')]"
     },
@@ -146,7 +145,7 @@
           "alwaysOn": "[parameters('alwaysOn')]",
           "http20Enabled": true,
           "ipSecurityRestrictions": "[if(parameters('restrictToBotConnector'), variables('ipRestrictions'), json('null'))]",
-          "appSettings": "[map(items(union(variables('baseAppSettings'), parameters('extraAppSettings'))), lambda('kv', createObject('name', lambdaVariables('kv').key, 'value', lambdaVariables('kv').value)))]"
+          "appSettings": "[concat(map(items(union(variables('baseAppSettings'), parameters('extraAppSettings'))), lambda('kv', createObject('name', lambdaVariables('kv').key, 'value', lambdaVariables('kv').value))), createArray(createObject('name', 'NCL_BOT_MSI_CLIENT_ID', 'value', reference(variables('msiId'), '2023-01-31').clientId)))]"
         }
       }
     },
