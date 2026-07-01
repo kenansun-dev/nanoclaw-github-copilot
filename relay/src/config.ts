@@ -48,9 +48,11 @@ function parseList(raw: string | undefined): string[] {
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
   return {
-    // App Service injects WEBSITES_PORT as the port the platform routes HTTP/1.1
-    // to; default 3978 matches the Terraform default.
-    webhookPort: parsePort(env.WEBSITES_PORT, 3978, 'WEBSITES_PORT'),
+    // App Service Linux built-in (blessed) Node images inject PORT and probe
+    // THAT port; WEBSITES_PORT is only honored for custom containers. Prefer
+    // PORT so the platform startup probe finds the north edge; fall back to
+    // WEBSITES_PORT (custom-container / IaC) then the Terraform default 3978.
+    webhookPort: parsePort(env.PORT ?? env.WEBSITES_PORT, 3978, env.PORT ? 'PORT' : 'WEBSITES_PORT'),
     grpcPort: parsePort(env.HTTP20_ONLY_PORT, 8585, 'HTTP20_ONLY_PORT'),
     southEdgeAllowlist: parseList(env.NCL_RELAY_ALLOWLIST),
     msiClientId: env.NCL_BOT_MSI_CLIENT_ID,
