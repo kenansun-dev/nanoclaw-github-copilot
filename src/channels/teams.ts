@@ -3,13 +3,15 @@ import http from 'http';
 import { BotFrameworkAdapter, TurnContext, Activity, ConversationReference } from 'botbuilder';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
-import { loadConfig } from '../config-loader.js';
+import { loadConfig, type TeamsTransport } from '../config-loader.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../log-extensions.js';
 import { sendWithRetry } from './send-with-retry.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import { Channel, OnChatMetadata, OnInboundMessage, RegisteredGroup, StreamHandle } from '../types-extensions.js';
-import { TeamsStreamingSession, makeAdapterSender } from './teams-streaming.js';
+import { TeamsStreamingSession, makeAdapterSender, type ActivitySender } from './teams-streaming.js';
+import { makeRelaySender } from './teams-outbound-sender.js';
+import { TeamsRelayClient, type RelayInbound } from './teams-relay-client.js';
 import { expandHtmlLinks } from './teams-html.js';
 
 // ---------------------------------------------------------------------------
@@ -35,6 +37,22 @@ export interface TeamsChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  /**
+   * Outbound/inbound transport. 'tunnel' (default) = direct Bot Framework
+   * adapter over a local webhook. 'proxy' = dial OUT to an Azure relay south
+   * edge over gRPC; no public webhook is bound. The relay is a pure opaque
+   * transport (Teams-message-agnostic) — all Teams protocol semantics stay
+   * above the sender seam. See teams-outbound-sender.ts for the layering.
+   */
+  transport?: TeamsTransport;
+  /** Relay dial settings; required/read only when transport === 'proxy'. */
+  proxy?: {
+    southEndpoint: string;
+    /** Resolved personal AAD credential (env value, never persisted here). */
+    credential: string;
+    /** Use an insecure gRPC channel (dev/local only). */
+    insecure?: boolean;
+  };
 }
 
 export class TeamsChannel implements Channel {
@@ -66,6 +84,16 @@ export class TeamsChannel implements Channel {
   private server: http.Server | null = null;
   private opts: TeamsChannelOpts;
   private port: number;
+
+  // Transport selection (kenan 2026-07-03: layered design; relay is a pure
+  // opaque transport). 'tunnel' = local webhook + direct BFA. 'proxy' = dial
+  // out to the relay south edge; no webhook bound. Outbound activities are
+  // routed to the matching sender in `outboundSenderFor()`.
+  private transport: TeamsTransport;
+  private relayClient: TeamsRelayClient | null = null;
+  // Per-jid relay routing metadata captured from inbound activities so proxy
+  // replies can address the right bot + connector serviceUrl.
+  private relayRouting = new Map<string, { botId: string; serviceUrl: string; inReplyTo?: string }>();
 
   // Store conversation references for proactive messaging
   private conversationRefs = new Map<string, Partial<ConversationReference>>();
@@ -206,6 +234,7 @@ export class TeamsChannel implements Channel {
     }
     this.opts = opts;
     this.port = port;
+    this.transport = opts.transport ?? 'tunnel';
 
     // Support two auth modes: client secret OR certificate (or both)
     const adapterSettings: Record<string, any> = { appId };
@@ -267,6 +296,13 @@ export class TeamsChannel implements Channel {
   }
 
   async connect(): Promise<void> {
+    // Proxy transport: do NOT bind a public webhook. Instead dial OUT to the
+    // relay south edge over gRPC and route inbound activities through the
+    // same handleIncomingRaw path. The relay is a pure opaque transport; all
+    // Teams protocol semantics stay in this channel + teams-streaming.ts.
+    if (this.transport === 'proxy') {
+      return this.connectProxy();
+    }
     return new Promise<void>((resolve, reject) => {
       this.server = http.createServer(async (req, res) => {
         // Health check endpoint
@@ -400,6 +436,56 @@ export class TeamsChannel implements Channel {
   }
 
   /**
+   * Proxy transport connect: dial the relay south edge and route inbound
+   * activities through the same raw handler. No webhook is bound. The relay
+   * forwards opaque Teams activity JSON in both directions.
+   */
+  private async connectProxy(): Promise<void> {
+    const proxy = this.opts.proxy;
+    if (!proxy?.southEndpoint || !proxy.credential) {
+      throw new Error(
+        'Teams proxy transport selected but proxy.southEndpoint / credential missing (check config + credentialEnv env var)',
+      );
+    }
+    const botId = this.adapterSettings.appId as string;
+    this.relayClient = new TeamsRelayClient({
+      southEndpoint: proxy.southEndpoint,
+      botIds: [botId],
+      credential: proxy.credential,
+      nclInstance: `teams-${botId.substring(0, 8)}`,
+      insecure: proxy.insecure,
+      onInbound: (inbound: RelayInbound) => this.handleRelayInbound(inbound),
+    });
+    this.relayClient.start();
+    logger.info(
+      { southEndpoint: proxy.southEndpoint, botId: botId.substring(0, 8) + '...' },
+      'Teams proxy: relay south client started (no webhook bound)',
+    );
+  }
+
+  /**
+   * Route a relay-delivered inbound activity through the raw handler. The
+   * relay-assigned delivery id is threaded onto the activity so proxy replies
+   * can set `inReplyTo` correctly. Errors are swallowed after logging so one
+   * bad activity never tears down the stream (the client already acked it).
+   */
+  private async handleRelayInbound(inbound: RelayInbound): Promise<void> {
+    try {
+      const activity = inbound.activity ?? {};
+      // Ensure serviceUrl is present for reply addressing (relay echoes it).
+      if (!activity.serviceUrl && inbound.serviceUrl) activity.serviceUrl = inbound.serviceUrl;
+      // Stash the relay delivery id for outbound inReplyTo capture.
+      (activity as any).__relayActivityId = inbound.activityId;
+      await this.handleIncomingRaw(activity, {});
+    } catch (err: any) {
+      logger.error(
+        { err: err?.message ?? String(err), botId: inbound.botId },
+        'Teams proxy: handleRelayInbound failed',
+      );
+    }
+  }
+
+  /**
    * Handle incoming activity without adapter auth (dev/cross-tenant fallback).
    * WARNING: This bypasses JWT validation. Use only during development.
    */
@@ -468,6 +554,17 @@ export class TeamsChannel implements Channel {
       user: activity.from,
     };
     this.conversationRefs.set(chatJid, ref as any);
+
+    // Proxy transport: capture the routing metadata needed to address relay
+    // replies (which bot appId + connector serviceUrl + the inbound id we
+    // answer). Populated from the raw activity; used by outboundSenderFor().
+    if (this.transport === 'proxy') {
+      this.relayRouting.set(chatJid, {
+        botId: activity.recipient?.id || '',
+        serviceUrl: activity.serviceUrl || '',
+        inReplyTo: (activity as any).__relayActivityId || '',
+      });
+    }
 
     let content = expandHtmlLinks(activity.text);
     // Teams sends HTML when textFormat is 'xml' — pass through as-is for
@@ -882,6 +979,37 @@ export class TeamsChannel implements Channel {
       return;
     }
 
+    // Proxy transport: route the final message through the relay sender (L2
+    // seam). The activity JSON is opaque to the relay; chunking large text
+    // into multiple message activities is preserved.
+    if (this.transport === 'proxy' && this.relayClient && this.relayRouting.has(jid)) {
+      const sender = this.outboundSenderFor(jid, ref as ConversationReference);
+      const MAX_LENGTH = 25000;
+      let lastId: string | undefined;
+      try {
+        const chunks =
+          text.length <= MAX_LENGTH
+            ? [text]
+            : Array.from({ length: Math.ceil(text.length / MAX_LENGTH) }, (_, i) =>
+                text.slice(i * MAX_LENGTH, (i + 1) * MAX_LENGTH),
+              );
+        for (const chunk of chunks) {
+          lastId = await sendWithRetry(() => sender({ type: 'message', text: chunk }), {
+            opName: 'teams.send.proxy',
+            jid,
+          });
+        }
+        logger.info({ jid, length: text.length, transport: 'proxy' }, 'Teams message sent');
+        return lastId;
+      } catch (err: any) {
+        logger.error(
+          { jid, err: err?.message ?? String(err) },
+          'Teams proxy sendMessage failed after retries',
+        );
+        return;
+      }
+    }
+
     let lastActivityId: string | undefined;
     const sendOnce = () =>
       this.adapter.continueConversation(ref as ConversationReference, async (context: TurnContext) => {
@@ -999,6 +1127,39 @@ export class TeamsChannel implements Channel {
    * `message` activity if Teams reports the channel doesn't
    * support streaming for this conversation.
    */
+  /**
+   * Select the L2 outbound sender for `jid` based on the configured
+   * transport. This is the single seam where transport is chosen; every
+   * outbound activity (streaming frames + non-streaming finals) flows through
+   * the returned `ActivitySender`, keeping the Teams protocol code (L3)
+   * transport-blind.
+   *
+   *   tunnel → direct Bot Framework adapter.continueConversation
+   *   proxy  → relay client sendReply (opaque activity_json over gRPC)
+   *
+   * Falls back to the adapter sender if proxy is selected but the relay is
+   * not attached or the jid has no captured routing metadata yet, so a
+   * misconfiguration degrades to "try direct" rather than silently dropping.
+   */
+  private outboundSenderFor(jid: string, ref: ConversationReference): ActivitySender {
+    if (this.transport === 'proxy' && this.relayClient) {
+      const routing = this.relayRouting.get(jid);
+      if (routing) {
+        return makeRelaySender({
+          client: this.relayClient,
+          botId: routing.botId,
+          serviceUrl: routing.serviceUrl,
+          inReplyTo: routing.inReplyTo,
+        });
+      }
+      logger.warn(
+        { jid },
+        'Teams proxy: no relay routing metadata for jid; falling back to adapter sender',
+      );
+    }
+    return makeAdapterSender({ adapter: this.adapter as any, ref });
+  }
+
   async streamMessage(jid: string): Promise<StreamHandle> {
     const ref = this.conversationRefs.get(jid);
     if (!ref) {
@@ -1013,10 +1174,7 @@ export class TeamsChannel implements Channel {
         cancel: async () => {},
       };
     }
-    const sender = makeAdapterSender({
-      adapter: this.adapter as any,
-      ref: ref as ConversationReference,
-    });
+    const sender = this.outboundSenderFor(jid, ref as ConversationReference);
     // Track that this jid is now in stream-mode so the bare-typing
     // keepalive suppresses itself; clear on end/cancel so subsequent
     // non-streaming turns get keepalives back.
@@ -1137,6 +1295,11 @@ export class TeamsChannel implements Channel {
   }
 
   async disconnect(): Promise<void> {
+    if (this.relayClient) {
+      this.relayClient.stop();
+      this.relayClient = null;
+      logger.info('Teams proxy: relay south client stopped');
+    }
     if (this.server) {
       await new Promise<void>((resolve) => this.server!.close(() => resolve()));
       this.server = null;
@@ -1196,6 +1359,9 @@ registerChannel('teams', (opts: ChannelOpts) => {
   let certPrivateKeyPath = '';
   let tenantId = teams.tenantId;
   let port = teams.webhookPort;
+  // Transport: per-account overrides channel default; default 'tunnel'.
+  let transport: TeamsTransport = teams.transport ?? 'tunnel';
+  let proxyCfg = teams.proxy;
 
   if (opts.accountId && teams.accounts?.[opts.accountId]) {
     const acct = teams.accounts[opts.accountId];
@@ -1205,6 +1371,8 @@ registerChannel('teams', (opts: ChannelOpts) => {
     certPrivateKeyPath = acct.certPrivateKeyPath || '';
     if (acct.tenantId) tenantId = acct.tenantId;
     if (acct.webhookPort) port = acct.webhookPort;
+    if (acct.transport) transport = acct.transport;
+    if (acct.proxy) proxyCfg = acct.proxy;
   } else {
     appId = teams.appId || '';
     appPassword = teams.appPassword || '';
@@ -1222,7 +1390,30 @@ registerChannel('teams', (opts: ChannelOpts) => {
 
   const hasCert = !!(certThumbprint && certPrivateKeyPath);
 
-  if (!appId || (!appPassword && !hasCert)) {
+  // Resolve proxy transport dependencies. In proxy mode the relay performs
+  // the Connector auth (MSI→per-bot federation), so NCL needs only the appId
+  // (to declare bot_ids) + the personal AAD credential for the south-edge
+  // handshake. The credential is resolved from the env var NAME in config
+  // (never a plaintext secret in nanoclaw.json).
+  let resolvedProxy: TeamsChannelOpts['proxy'];
+  if (transport === 'proxy') {
+    const credentialEnv = proxyCfg?.auth?.credentialEnv || 'NCL_RELAY_CRED';
+    const credential = process.env[credentialEnv] || '';
+    const southEndpoint = proxyCfg?.southEndpoint || process.env.NCL_RELAY_SOUTH_ENDPOINT || '';
+    if (!appId || !southEndpoint || !credential) {
+      logger.warn(
+        { channel: 'teams', hasAppId: !!appId, hasEndpoint: !!southEndpoint, credentialEnv, hasCredential: !!credential },
+        'Teams proxy transport selected but appId / southEndpoint / credential missing — skipping. ' +
+          'Check nanoclaw.json proxy.* and the credentialEnv env var.',
+      );
+      return null;
+    }
+    resolvedProxy = {
+      southEndpoint,
+      credential,
+      insecure: process.env.NCL_RELAY_INSECURE === 'true',
+    };
+  } else if (!appId || (!appPassword && !hasCert)) {
     logger.warn(
       { channel: 'teams' },
       'Channel installed but credentials missing — skipping. Check nanoclaw.json or .env.',
@@ -1238,6 +1429,7 @@ registerChannel('teams', (opts: ChannelOpts) => {
       tenantId: tenantId || 'common',
       port,
       authMode,
+      transport,
     },
     'Teams channel initializing',
   );
@@ -1247,7 +1439,7 @@ registerChannel('teams', (opts: ChannelOpts) => {
     appPassword || undefined,
     tenantId,
     port,
-    opts,
+    { ...opts, transport, proxy: resolvedProxy } as TeamsChannelOpts,
     hasCert ? certThumbprint : undefined,
     hasCert ? certPrivateKeyPath : undefined,
   );
