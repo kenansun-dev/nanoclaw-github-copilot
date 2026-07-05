@@ -367,13 +367,7 @@ describe('nanoclaw channel add teams --transport proxy (relay)', () => {
       throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
     });
 
-    await runChannelCommand([
-      'add',
-      'teams',
-      '--setup-federation',
-      '--relay-issuer',
-      'https://issuer.example/oidc',
-    ]);
+    await runChannelCommand(['add', 'teams', '--setup-federation', '--relay-issuer', 'https://issuer.example/oidc']);
 
     const fedCreate = exec.mock.calls
       .map((c: any[]) => String(c[0]))
@@ -384,4 +378,3 @@ describe('nanoclaw channel add teams --transport proxy (relay)', () => {
     expect(fedCreate[0]).toContain('api://AzureADTokenExchange');
   });
 });
-

@@ -1002,10 +1002,7 @@ export class TeamsChannel implements Channel {
         logger.info({ jid, length: text.length, transport: 'proxy' }, 'Teams message sent');
         return lastId;
       } catch (err: any) {
-        logger.error(
-          { jid, err: err?.message ?? String(err) },
-          'Teams proxy sendMessage failed after retries',
-        );
+        logger.error({ jid, err: err?.message ?? String(err) }, 'Teams proxy sendMessage failed after retries');
         return;
       }
     }
@@ -1152,10 +1149,7 @@ export class TeamsChannel implements Channel {
           inReplyTo: routing.inReplyTo,
         });
       }
-      logger.warn(
-        { jid },
-        'Teams proxy: no relay routing metadata for jid; falling back to adapter sender',
-      );
+      logger.warn({ jid }, 'Teams proxy: no relay routing metadata for jid; falling back to adapter sender');
     }
     return makeAdapterSender({ adapter: this.adapter as any, ref });
   }
@@ -1402,7 +1396,13 @@ registerChannel('teams', (opts: ChannelOpts) => {
     const southEndpoint = proxyCfg?.southEndpoint || process.env.NCL_RELAY_SOUTH_ENDPOINT || '';
     if (!appId || !southEndpoint || !credential) {
       logger.warn(
-        { channel: 'teams', hasAppId: !!appId, hasEndpoint: !!southEndpoint, credentialEnv, hasCredential: !!credential },
+        {
+          channel: 'teams',
+          hasAppId: !!appId,
+          hasEndpoint: !!southEndpoint,
+          credentialEnv,
+          hasCredential: !!credential,
+        },
         'Teams proxy transport selected but appId / southEndpoint / credential missing — skipping. ' +
           'Check nanoclaw.json proxy.* and the credentialEnv env var.',
       );

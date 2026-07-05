@@ -100,15 +100,24 @@ describe('makeRelaySender — transport-agnostic L2 seam', () => {
     const sender = makeRelaySender({ client, botId: 'b', serviceUrl: 'u', inReplyTo: 'in-1' });
 
     // Same activity shapes the L3 streaming session emits; sender must not care.
-    await sender({ type: 'typing', id: 'sid', entities: [{ type: 'streaminfo', streamId: 'sid', streamType: 'informative' }] } as any);
-    await sender({ type: 'typing', id: 'sid', entities: [{ type: 'streaminfo', streamId: 'sid', streamType: 'streaming' }] } as any);
-    await sender({ type: 'message', text: 'done', id: 'sid', entities: [{ type: 'streaminfo', streamId: 'sid', streamType: 'final' }] } as any);
+    await sender({
+      type: 'typing',
+      id: 'sid',
+      entities: [{ type: 'streaminfo', streamId: 'sid', streamType: 'informative' }],
+    } as any);
+    await sender({
+      type: 'typing',
+      id: 'sid',
+      entities: [{ type: 'streaminfo', streamId: 'sid', streamType: 'streaming' }],
+    } as any);
+    await sender({
+      type: 'message',
+      text: 'done',
+      id: 'sid',
+      entities: [{ type: 'streaminfo', streamId: 'sid', streamType: 'final' }],
+    } as any);
 
-    expect(sent.map((s) => (s.activity as any).entities[0].streamType)).toEqual([
-      'informative',
-      'streaming',
-      'final',
-    ]);
+    expect(sent.map((s) => (s.activity as any).entities[0].streamType)).toEqual(['informative', 'streaming', 'final']);
     // All three carry the same locally-minted streamId, untouched by L2.
     expect(new Set(sent.map((s) => (s.activity as any).id))).toEqual(new Set(['sid']));
     // Distinct idempotency keys per frame.

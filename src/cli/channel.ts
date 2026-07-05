@@ -348,7 +348,8 @@ async function channelAdd(name: string | undefined, args: string[]): Promise<voi
       issuer: flags.relayIssuer,
       subject: undefined, // resolved from ARM output msiPrincipalId inside setupFederation
     });
-    const relayEndpoint = flags.relayEndpoint || (loadConfig().channels.teams.accounts?.[accountId] as any)?.proxy?.southEndpoint;
+    const relayEndpoint =
+      flags.relayEndpoint || (loadConfig().channels.teams.accounts?.[accountId] as any)?.proxy?.southEndpoint;
     const messagingBase = relayMessagingEndpoint(relayEndpoint);
     if (messagingBase) {
       // Bot messaging endpoint = relay north edge for this appId.
@@ -366,9 +367,7 @@ async function channelAdd(name: string | undefined, args: string[]): Promise<voi
     const acct = cfg.channels.teams.accounts?.[accountId];
     const appId = acct?.appId || (accountId === 'default' ? cfg.channels.teams.appId : undefined);
     if (!appId) {
-      console.error(
-        `Error: appId required for account '${accountId}'. Run --setup-app --account ${accountId} first.`,
-      );
+      console.error(`Error: appId required for account '${accountId}'. Run --setup-app --account ${accountId} first.`);
       return;
     }
     await setupFederation(appId, { issuer: flags.relayIssuer });
@@ -376,7 +375,15 @@ async function channelAdd(name: string | undefined, args: string[]): Promise<voi
   }
 
   // `--transport` without a setup verb: just persist the transport choice.
-  if (channelName === 'teams' && flags.transport && !flags.setup && !flags.setupApp && !flags.setupBot && !flags.setupTunnel && !flags.setupManifest) {
+  if (
+    channelName === 'teams' &&
+    flags.transport &&
+    !flags.setup &&
+    !flags.setupApp &&
+    !flags.setupBot &&
+    !flags.setupTunnel &&
+    !flags.setupManifest
+  ) {
     if (flags.transport === 'proxy') {
       persistProxyConfig({ southEndpoint: flags.relayEndpoint, credEnv: flags.relayCredEnv });
       console.log(`\n\u2705 teams account '${accountId}' transport set to proxy (relay).`);
@@ -675,10 +682,7 @@ async function setupApp(
  *
  * Returns true only if the credential was actually created/confirmed.
  */
-async function setupFederation(
-  appId: string,
-  opts: { issuer?: string; subject?: string },
-): Promise<boolean> {
+async function setupFederation(appId: string, opts: { issuer?: string; subject?: string }): Promise<boolean> {
   const AUDIENCE = 'api://AzureADTokenExchange';
   const credName = 'ncl-relay-msi';
   console.log(`\n🔗 Setting up federated identity credential on app ${appId}...`);
@@ -761,9 +765,7 @@ function readMsiPrincipalIdFromArmOutput(): string | null {
       const raw = fs.readFileSync(p, 'utf-8');
       const json = JSON.parse(raw);
       const val =
-        json?.properties?.outputs?.msiPrincipalId?.value ??
-        json?.msiPrincipalId?.value ??
-        json?.msiPrincipalId;
+        json?.properties?.outputs?.msiPrincipalId?.value ?? json?.msiPrincipalId?.value ?? json?.msiPrincipalId;
       if (typeof val === 'string' && val) return val;
     } catch {
       // try next candidate
@@ -780,7 +782,10 @@ function readMsiPrincipalIdFromArmOutput(): string | null {
  */
 function relayMessagingEndpoint(southEndpoint?: string): string | null {
   if (!southEndpoint) return null;
-  const host = southEndpoint.replace(/^https?:\/\//, '').split(':')[0]?.replace(/\/+$/, '');
+  const host = southEndpoint
+    .replace(/^https?:\/\//, '')
+    .split(':')[0]
+    ?.replace(/\/+$/, '');
   if (!host) return null;
   return `https://${host}`;
 }
