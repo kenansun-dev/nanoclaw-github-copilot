@@ -207,19 +207,9 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
   const sessionId: string | undefined = undefined;
 
   // After the task produces a result, close the container promptly.
-  // Tasks are single-turn — no need to wait for host-sweep's claim-stuck
-  // tolerance to elapse. A short delay handles any final MCP calls.
-  const TASK_CLOSE_DELAY_MS = 10000;
-  let closeTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const scheduleClose = () => {
-    if (closeTimer) return; // already scheduled
-    closeTimer = setTimeout(() => {
-      logger.debug({ taskId: task.id }, 'Closing task container after result');
-      // Detached task lives on its own slot (§4.1.A) — close that, not chat.
-      deps.queue.closeTaskStdin(task.chat_jid, task.id);
-    }, TASK_CLOSE_DELAY_MS);
-  };
+  // Tasks are single-turn. The detached task slot is force-reaped
+  // unconditionally in the tail block below (every exit path), so no
+  // deferred-close timer is needed here.
 
   try {
     const agent = taskAgent;
@@ -264,7 +254,6 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
             } else {
               await deps.sendMessage(task.chat_jid, text);
             }
-            scheduleClose();
           }
         }
         if (streamedOutput.status === 'success') {
@@ -272,15 +261,12 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
           // deprecated (PR #46): all tasks are isolated, slot routing
           // unchanged.
           deps.queue.notifyTaskIdle(task.chat_jid, task.id);
-          scheduleClose();
         }
         if (streamedOutput.status === 'error') {
           error = streamedOutput.error || 'Unknown error';
         }
       },
     );
-
-    if (closeTimer) clearTimeout(closeTimer);
 
     if (output.status === 'error') {
       error = output.error || 'Unknown error';
@@ -291,9 +277,38 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
 
     logger.info({ taskId: task.id, durationMs: Date.now() - startTime }, 'Task completed');
   } catch (err) {
-    if (closeTimer) clearTimeout(closeTimer);
     error = err instanceof Error ? err.message : String(err);
     logger.error({ taskId: task.id, error }, 'Task failed');
+  }
+
+  // Guaranteed subtree reap — the single, always-runs teardown for the
+  // detached task slot, on EVERY exit path (success, error, empty result,
+  // exception).
+  //
+  // Root cause of kenan's recurring Windows leak (187 orphaned node procs /
+  // 7 days, 2026-07-03): the only working reaper is closeTaskStdin →
+  // killProcess /F /T, which walks the *live* subtree (agent-runner-ghc +
+  // copilot CLI + stdio MCP grandchildren) while the parent is still alive.
+  // It was reachable only via a deferred scheduleClose() on the success path
+  // — and even there the `clearTimeout` after the await usually cancelled the
+  // delayed close before it fired. A scheduled task that errors (the digest
+  // task exited code=1 every run), returns an empty result, or throws never
+  // reaped its slot, so one full tree leaked per run in neverTimeout host
+  // mode. The daemon on-close treeKillAgent can't help: it taskkills the
+  // already-exited root pid, which no longer walks to the reparented
+  // grandchildren (#61 note).
+  //
+  // closeTaskStdin is idempotent (guards on `exitCode === null && !killed`),
+  // so a slot that already exited is a harmless no-op. Reap now — tasks are
+  // single-turn and runAgentForChat only returns after query-complete (agent
+  // idle, final MCP calls done), so there is nothing left to flush.
+  try {
+    deps.queue.closeTaskStdin(task.chat_jid, task.id);
+  } catch (reapErr) {
+    logger.warn(
+      { taskId: task.id, err: reapErr instanceof Error ? reapErr.message : String(reapErr) },
+      'Failed to reap detached task slot',
+    );
   }
 
   const durationMs = Date.now() - startTime;
