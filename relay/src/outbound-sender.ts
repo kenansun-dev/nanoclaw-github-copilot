@@ -7,12 +7,13 @@
  *   1. Acquire a bearer token for the bot.
  *        - The App Service carries a shared user-assigned MSI. We pull an IMDS
  *          token for `resource=api://AzureADTokenExchange` (the federation
- *          assertion audience). This part needs no per-bot data and works today.
- *        - The PER-BOT FEDERATION EXCHANGE (IMDS assertion → that bot's
- *          appId token, design §6) requires the bot's appId, which comes from
- *          BOT ONBOARDING — the NEXT task. So exchangeForBotToken is a STUB that
- *          throws NOT_IMPLEMENTED here; #5 deliberately does not reach e2e to
- *          Teams yet, and does not do onboarding's job.
+ *          assertion audience).
+ *        - The PER-BOT FEDERATION EXCHANGE (IMDS assertion → that bot's appId
+ *          token, design §6) is REAL: production injects makeFederationExchange
+ *          (federation.ts), where OutboundReply.bot_id IS the appId
+ *          (appId-as-routing-key). The `notImplementedExchange` default below is
+ *          only the fail-safe when no exchange is injected (unit/e2e fixtures
+ *          exercise it deliberately); the bootstrap always injects the real one.
  *   2. POST the activity to the Connector serviceUrl with that bearer.
  *
  * Connector failures are encoded in OutboundResult (with a retryable hint), not
@@ -37,10 +38,11 @@ export interface OutboundSenderDeps {
   fetchImdsToken?: (resource: string, clientId: string) => Promise<string>;
   /**
    * Exchange the MSI IMDS assertion for a given bot appId's Bot Connector token
-   * (design §6 federation). Default throws NOT_IMPLEMENTED; production injects
-   * makeFederationExchange (OutboundReply.bot_id IS the appId). A thrown error
-   * carrying `retryable===false` (FederationConfigError) is surfaced as a
-   * non-retryable ack.
+   * (design §6 federation). Production injects makeFederationExchange
+   * (OutboundReply.bot_id IS the appId). The default below only throws when
+   * nothing is injected (fail-safe / test fixtures). A thrown error carrying
+   * `retryable===false` (FederationConfigError) is surfaced as a non-retryable
+   * ack.
    */
   exchangeForBotToken?: (botId: string, imdsAssertion: string) => Promise<string>;
   /** HTTP POST to the Connector; injectable for tests. */
@@ -77,7 +79,9 @@ async function realHttpPost(url: string, token: string, bodyJson: Uint8Array): P
 }
 
 const notImplementedExchange = async (botId: string): Promise<string> => {
-  throw new Error(`NOT_IMPLEMENTED: per-bot federation token exchange for "${botId}" lands with bot onboarding (next task)`);
+  throw new Error(
+    `NOT_IMPLEMENTED: no federation exchange injected for "${botId}" (bootstrap injects the real makeFederationExchange)`,
+  );
 };
 
 export function makeOutboundSender(deps: OutboundSenderDeps): OutboundSender {

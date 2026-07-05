@@ -11,8 +11,8 @@
  *       activities down; receives OutboundReply up; hands replies to
  *       OutboundSender.deliverOutbound(...).
  *   South edge (outbound, VM #5): implements OutboundSender. MSI IMDS token +
- *       Bot Connector POST. The per-bot federation exchange is stubbed until the
- *       next task (bot onboarding) — see exchangeForBotToken note in §6/doc.
+ *       per-bot federation exchange (federation.ts) + Bot Connector POST. The
+ *       exchange is real; per-bot FIC registration is provisioned by onboarding.
  *
  * Types here are hand-mirrored from proto/teams_relay.proto so the seam is
  * stable before ts-proto codegen lands; once codegen is wired (Rpi5 #6) the

@@ -1,8 +1,7 @@
 # NCL Teams — App Service **Relay** Infra (ARM + az CLI)
 
-Core-only buildout as an ARM template, deployed with `az deployment group create`.
-Same 7-resource topology as the Terraform version (kept for reference under
-`../terraform`) — no Terraform install needed. Implements the design in
+Core-only buildout as an ARM template, deployed with `az deployment group create`
+— no Terraform install needed. Implements the design in
 [`docs/2026-06-26-teams-appservice-relay-design.md`](../../docs/2026-06-26-teams-appservice-relay-design.md).
 
 ## What it provisions (core-only)

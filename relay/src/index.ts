@@ -5,12 +5,9 @@
  *   - gRPC server (HTTP/2, HTTP20_ONLY_PORT): the NCL south-edge Attach stream.
  *
  * Both coexist in one process (App Service gives one h2 port + the normal HTTPS
- * port). This file owns startup/shutdown wiring only; the broker core (Rpi5 #4)
- * and gRPC server (Rpi5 #3) plug in via startGrpcServer, and the outbound
- * sender (VM #5) is injected into the broker.
- *
- * Until those land, a no-op broker + stub gRPC starter keep the process
- * bootable so the north edge and config are independently runnable/testable.
+ * port). This file owns startup/shutdown wiring only; the broker core, gRPC
+ * server, JWT validator, outbound sender, federation exchange, and south-edge
+ * AAD validator are all wired below with their real implementations.
  */
 
 import { loadConfig } from './config.js';
@@ -22,35 +19,6 @@ import { makeJwtValidator } from './inbound-jwt.js';
 import { makeOutboundSender } from './outbound-sender.js';
 import { makeFederationExchange } from './federation.js';
 import { makeSouthTokenValidator, makeAadTokenVerifier } from './south-auth.js';
-
-// ─── Placeholder seams (replaced by the owning subsystems) ───────────────────
-
-/**
- * #2 (VM): real BotFramework JWT validation is wired below via makeJwtValidator.
- * The <bot> path segment IS the appId (appId-as-routing-key), so resolveAppId is
- * the identity function — the JWT audience must equal the path segment. No
- * configured map. Fail-closed: empty/unknown id or invalid token → 401.
- */
-
-/**
- * #4 (Rpi5): broker is now wired (route → attached stream or buffer+TTL+drop+
- * audit). The bootstrap no-op sink is retired.
- */
-
-/**
- * #5 (VM): outbound sender is wired below via makeOutboundSender. The per-bot
- * federation EXCHANGE is real (makeFederationExchange): OutboundReply.bot_id IS
- * the appId, fed straight into the MSI-IMDS-assertion → Connector-token
- * exchange. No configured map. e2e still needs FIC configured per bot.
- */
-
-/**
- * #3 (Rpi5): gRPC server is wired below via startGrpcServer. The south-edge AAD
- * token validation is now CONFIG-DRIVEN (makeSouthTokenValidator + Entra JWKS
- * verifier): verify the caller's AAD token, then gate it against
- * config.southEdgeAllowlist. Empty allowlist = deny-all (fail-closed). No code
- * edit needed to authorize a caller — it's all config now.
- */
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
@@ -88,9 +56,9 @@ async function main(): Promise<void> {
     }),
   });
 
-  // gRPC server (Rpi5 #3) holding the NCL stream. AAD validation is fail-closed
-  // until real JWKS wiring; the owner allowlist (config NCL_RELAY_ALLOWLIST) is
-  // the CALLER gate, enforced inside validateSouthToken once wired. Per-bot ACL
+  // gRPC server holding the NCL stream. AAD validation verifies the caller's
+  // Entra token (JWKS) then gates it against the owner allowlist (config
+  // NCL_RELAY_ALLOWLIST); empty allowlist = deny-all (fail-closed). Per-bot ACL
   // is a next-task concern (bot onboarding), so v1 authorizeBots passes the
   // requested bots through unchanged once the caller is authenticated.
   const validateSouthToken = makeSouthTokenValidator({

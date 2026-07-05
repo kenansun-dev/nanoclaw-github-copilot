@@ -54,8 +54,9 @@ describe('makeOutboundSender (#5)', () => {
     expect(r.error).toMatch(/serviceUrl/);
   });
 
-  it('encodes the federation stub as a retryable failure (not a throw)', async () => {
-    // Default exchangeForBotToken throws NOT_IMPLEMENTED; IMDS is stubbed ok.
+  it('encodes the missing-exchange fail-safe as a retryable failure (not a throw)', async () => {
+    // No exchangeForBotToken injected → fail-safe default throws NOT_IMPLEMENTED;
+    // IMDS is stubbed ok. (Production always injects the real makeFederationExchange.)
     const s = makeOutboundSender({
       msiClientId: 'msi-1',
       fetchImdsToken: async () => 'imds-assertion',
@@ -63,7 +64,7 @@ describe('makeOutboundSender (#5)', () => {
     const r = await s.deliverOutbound(reply());
     expect(r.ok).toBe(false);
     expect(r.retryable).toBe(true);
-    expect(r.error).toMatch(/NOT_IMPLEMENTED.*onboarding/);
+    expect(r.error).toMatch(/NOT_IMPLEMENTED/);
   });
 
   it('POSTs to the Connector and reports ok on 2xx', async () => {
