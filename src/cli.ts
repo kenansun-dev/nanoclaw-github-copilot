@@ -309,6 +309,16 @@ async function runService(action: string) {
 
   switch (action) {
     case 'start': {
+      // Ensure the devtunnel is hosting on the non-systemd start paths (Windows
+      // scheduled task + direct PID). Previously this logic was inlined AFTER
+      // the schtask early-return, so `nanoclaw start` via scheduled task and
+      // `nanoclaw update` (which shells to `nanoclaw start`) skipped it.
+      // systemd is excluded because it manages its own nanoclaw-devtunnel unit.
+      // Idempotent + fail-soft — see cli/tunnel-lifecycle.ts.
+      if (!useSystemd) {
+        const { ensureTunnelHosting } = await import('./cli/tunnel-lifecycle.js');
+        await ensureTunnelHosting(ws);
+      }
       if (useSystemd) {
         try {
           execSync(`systemctl --user start ${SERVICE_NAME}`, { stdio: 'pipe' });
@@ -335,59 +345,8 @@ async function runService(action: string) {
           /* fall through to direct */
         }
       }
-      // Start devtunnel if Teams is enabled and a nanoclaw tunnel exists
-      try {
-        const { loadConfig: loadCfg } = await import('./config-loader.js');
-        const cfg = loadCfg();
-        if (cfg.channels?.teams?.enabled) {
-          const { execSync: ex, spawn: sp } = await import('child_process');
-          try {
-            // Find nanoclaw tunnel
-            const listOut = ex('devtunnel list', {
-              encoding: 'utf-8',
-              stdio: ['pipe', 'pipe', 'pipe'],
-              timeout: 10000,
-            });
-            const tunnelLine = listOut.split('\n').find((l: string) => l.toLowerCase().includes('nanoclaw'));
-            if (tunnelLine) {
-              const idMatch = tunnelLine.match(/([a-zA-Z0-9._-]+)/);
-              if (idMatch) {
-                const tid = idMatch[1];
-                // Check if tunnel is already hosting
-                const showOut = ex(`devtunnel show ${tid}`, {
-                  encoding: 'utf-8',
-                  stdio: ['pipe', 'pipe', 'pipe'],
-                  timeout: 10000,
-                });
-                const hosting = showOut.includes('Host connections');
-                const hostCount = showOut.match(/Host connections\s*:\s*(\d+)/);
-                if (!hostCount || hostCount[1] === '0') {
-                  console.log(`Starting devtunnel: ${tid}...`);
-                  const dtProc = sp('devtunnel', ['host', tid, '--allow-anonymous'], {
-                    detached: true,
-                    stdio: 'ignore',
-                  });
-                  dtProc.unref();
-                  // Save PID so nanoclaw stop can kill it
-                  try {
-                    const dtPidFile = join(ws, 'devtunnel.pid');
-                    fs.writeFileSync(dtPidFile, String(dtProc.pid));
-                  } catch {
-                    /* */
-                  }
-                  console.log(`DevTunnel started (pid: ${dtProc.pid})`);
-                } else {
-                  console.log(`DevTunnel already hosting: ${tid}`);
-                }
-              }
-            }
-          } catch {
-            // devtunnel not installed or not logged in — skip silently
-          }
-        }
-      } catch {
-        /* config not available */
-      }
+      // (devtunnel hosting is ensured above, before any early-return, so it
+      // applies to the schtask/systemd paths too.)
       await startDirect();
       break;
     }
@@ -421,20 +380,10 @@ async function runService(action: string) {
           console.log(`[stop] killAllAgentPids failed: ${err?.message ?? err}`);
         }
         // Also try to kill devtunnel if we started it
-        try {
-          const dtPidFile = join(ws, 'devtunnel.pid');
-          if (existsSync(dtPidFile)) {
-            const dtPid = parseInt(fs.readFileSync(dtPidFile, 'utf-8').trim());
-            try {
-              killProcess(dtPid);
-              console.log(`[stop] cleaned up orphaned devtunnel (pid: ${dtPid})`);
-            } catch {
-              /* already dead */
-            }
-            fs.unlinkSync(dtPidFile);
-          }
-        } catch {
-          /* */
+        {
+          const { stopTrackedTunnel } = await import('./cli/tunnel-lifecycle.js');
+          const dtPid = stopTrackedTunnel(ws, killProcess);
+          if (dtPid !== null) console.log(`[stop] cleaned up orphaned devtunnel (pid: ${dtPid})`);
         }
         console.log('Not running (attempted cleanup of any tracked child pids)');
         return;
@@ -473,20 +422,10 @@ async function runService(action: string) {
       }
       console.log(`Stopped (pid: ${pid})`);
       // Also stop devtunnel if we started it
-      try {
-        const dtPidFile = join(ws, 'devtunnel.pid');
-        if (existsSync(dtPidFile)) {
-          const dtPid = parseInt(fs.readFileSync(dtPidFile, 'utf-8').trim());
-          try {
-            killProcess(dtPid);
-            console.log(`Stopped devtunnel (pid: ${dtPid})`);
-          } catch {
-            /* already dead */
-          }
-          fs.unlinkSync(dtPidFile);
-        }
-      } catch {
-        /* */
+      {
+        const { stopTrackedTunnel } = await import('./cli/tunnel-lifecycle.js');
+        const dtPid = stopTrackedTunnel(ws, killProcess);
+        if (dtPid !== null) console.log(`Stopped devtunnel (pid: ${dtPid})`);
       }
       break;
     }
