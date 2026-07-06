@@ -9,6 +9,16 @@ import {
   startSchedulerLoop,
 } from './task-scheduler.js';
 
+// Mock the agent runtime so scheduled-task runs are driven deterministically
+// without spawning a real host agent. `runAgentForChat` is what actually
+// launches the detached slot in prod; here we control its streamed output +
+// final result to exercise the success vs error/empty reap paths.
+const mockRunAgentForChat = vi.fn();
+vi.mock('./config-extensions.js', () => ({
+  runAgentForChat: (...args: unknown[]) => mockRunAgentForChat(...args),
+  resolveAgentForChat: () => ({ name: 'test-agent', kind: 'github-copilot' }),
+}));
+
 describe('task scheduler', () => {
   beforeEach(() => {
     _initTestDatabase();
@@ -270,5 +280,106 @@ describe('task scheduler', () => {
     // test focused on the (more important) miss-then-recover counter
     // contract.
     groupAvailable = true;
+  });
+
+  describe('detached task slot reap (Windows orphan prevention, 2026-07-03)', () => {
+    const REAP_GROUP = 'reap-test-group';
+    const REAP_JID = 'reap@g.us';
+
+    const registeredGroups = (): Record<string, RegisteredGroup> => ({
+      [REAP_JID]: {
+        name: 'reap-test',
+        jid: REAP_JID,
+        folder: REAP_GROUP,
+        isMain: false,
+      } as any,
+    });
+
+    const makeDueTask = (id: string) => {
+      createTask({
+        id,
+        group_folder: REAP_GROUP,
+        chat_jid: REAP_JID,
+        prompt: 'digest',
+        schedule_type: 'interval',
+        schedule_value: '3600000',
+        context_mode: 'isolated',
+        next_run: new Date(Date.now() - 60_000).toISOString(),
+        status: 'active',
+        created_at: '2026-07-03T00:00:00.000Z',
+      });
+    };
+
+    const runOnce = async (closeTaskStdin: ReturnType<typeof vi.fn>) => {
+      const enqueueTask = vi.fn((_g: string, _t: string, fn: () => Promise<void>) => {
+        void fn();
+      });
+      startSchedulerLoop({
+        registeredGroups,
+        getSessions: () => ({}),
+        queue: { enqueueTask, closeTaskStdin, notifyTaskIdle: vi.fn() } as any,
+        onProcess: () => {},
+        sendMessage: async () => 'msg-1',
+        editMessage: async () => {},
+      } as any);
+      // Let the scheduler tick + the awaited runTask body settle. The reap
+      // is unconditional at the tail of runTask (no delay dependency).
+      await vi.advanceTimersByTimeAsync(50);
+      await vi.runOnlyPendingTimersAsync();
+    };
+
+    it('reaps the slot when a scheduled task errors (the code=1 leak path)', async () => {
+      makeDueTask('task-reap-error');
+      // Agent run finishes with an error status + no result: the exact
+      // shape that leaked 187 procs (digest task exiting code=1 every run).
+      mockRunAgentForChat.mockImplementation(async (_jid, _g, _opts, _onProc, onOutput) => {
+        await onOutput({ status: 'error', error: 'code=1', result: null, partial: false });
+        return { status: 'error', error: 'code=1', result: null } as any;
+      });
+
+      const closeTaskStdin = vi.fn();
+      await runOnce(closeTaskStdin);
+
+      // Before the fix this was never called on the error path -> orphan.
+      expect(closeTaskStdin).toHaveBeenCalledWith(REAP_JID, 'task-reap-error');
+    });
+
+    it('reaps the slot when a task returns an empty result', async () => {
+      makeDueTask('task-reap-empty');
+      mockRunAgentForChat.mockImplementation(async (_jid, _g, _opts, _onProc, onOutput) => {
+        await onOutput({ status: 'success', result: '  ', partial: false });
+        return { status: 'success', result: '  ' } as any;
+      });
+
+      const closeTaskStdin = vi.fn();
+      await runOnce(closeTaskStdin);
+
+      expect(closeTaskStdin).toHaveBeenCalledWith(REAP_JID, 'task-reap-empty');
+    });
+
+    it('reaps the slot on the success path', async () => {
+      makeDueTask('task-reap-success');
+      mockRunAgentForChat.mockImplementation(async (_jid, _g, _opts, _onProc, onOutput) => {
+        await onOutput({ status: 'success', result: 'done', partial: false });
+        return { status: 'success', result: 'done' } as any;
+      });
+
+      const closeTaskStdin = vi.fn();
+      await runOnce(closeTaskStdin);
+
+      expect(closeTaskStdin).toHaveBeenCalledWith(REAP_JID, 'task-reap-success');
+    });
+
+    it('reaps the slot when the agent run throws', async () => {
+      makeDueTask('task-reap-throw');
+      mockRunAgentForChat.mockImplementation(async () => {
+        throw new Error('spawn EPIPE');
+      });
+
+      const closeTaskStdin = vi.fn();
+      await runOnce(closeTaskStdin);
+
+      expect(closeTaskStdin).toHaveBeenCalledWith(REAP_JID, 'task-reap-throw');
+    });
   });
 });
