@@ -105,6 +105,70 @@ describe('migrateChatsToV2 — config side', () => {
     expect(role.agent_group_id).toBeNull();
   });
 
+  // ── Teams owner-id resolution (regression: 2026-07-06) ──────────────────
+  // Teams DM jid is `teams:<conversation.id>` (opaque), NOT the user's
+  // aadObjectId. The old code seeded roleBindings[<conversation.id>]='owner',
+  // which never matches the runtime senderId `teams:<aadObjectId>` → isOwner()
+  // always false → owner-scoped /tasks broke. Fix: recover the real sender
+  // (aadObjectId) from legacy messages for that chat_jid.
+  describe('Teams owner-id resolution', () => {
+    function seedTeamsDm(legacyDb: Database.Database, jid: string, aadObjectId: string): void {
+      legacyDb.exec(`CREATE TABLE IF NOT EXISTS messages (
+        id TEXT, chat_jid TEXT, sender TEXT, sender_name TEXT, content TEXT,
+        timestamp TEXT, is_from_me INTEGER, PRIMARY KEY (id, chat_jid))`);
+      legacyDb
+        .prepare(`INSERT INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me) VALUES (?,?,?,?,?,?,?)`)
+        .run('m1', jid, aadObjectId, 'Kenan Sun', 'hi', '2026-07-01T00:00:00Z', 0);
+    }
+
+    it('resolves owner from the real aadObjectId, NOT the conversation id', () => {
+      const db = open();
+      const legacyDb = new Database(':memory:');
+      const convJid = 'teams:a:1Rw3-CONV-OPAQUE-ID';
+      const aad = 'c2a345b0-c026-4d63-9b88-91000536f4f0';
+      seedTeamsDm(legacyDb, convJid, aad);
+      const cfg = makeConfig({ chats: { [convJid]: { name: 'Owner Teams DM', isMain: true } } });
+
+      const summary = migrateChatsToV2(cfg, db, { skipSaveConfig: true, skipSnapshot: true, legacyDb });
+
+      // Owner bootstrapped with the REAL user id, not the conversation id.
+      expect(summary.ownersBootstrapped).toEqual([`teams:${aad}`]);
+      const rb = (cfg.channels.teams as unknown as { roleBindings?: Record<string, string> }).roleBindings;
+      expect(rb).toEqual({ [aad]: 'owner' });
+      // The conversation id must NOT appear as an owner binding.
+      expect(rb!['a:1Rw3-CONV-OPAQUE-ID']).toBeUndefined();
+      const role = db.prepare(`SELECT role FROM user_roles WHERE user_id = ?`).get(`teams:${aad}`) as { role: string };
+      expect(role.role).toBe('owner');
+      // No role seeded under the conversation id.
+      expect(db.prepare(`SELECT COUNT(*) AS c FROM user_roles WHERE user_id LIKE '%1Rw3%'`).get()).toEqual({ c: 0 });
+    });
+
+    it('skips owner bootstrap when no sender is recoverable (no false conversation-id owner)', () => {
+      const db = open();
+      const legacyDb = new Database(':memory:'); // no messages table
+      const convJid = 'teams:a:1Rw3-NO-MESSAGES';
+      const cfg = makeConfig({ chats: { [convJid]: { name: 'Teams DM', isMain: true } } });
+
+      const summary = migrateChatsToV2(cfg, db, { skipSaveConfig: true, skipSnapshot: true, legacyDb });
+
+      // No owner seeded (better than seeding a bogus conversation-id owner).
+      expect(summary.ownersBootstrapped).toEqual([]);
+      expect(db.prepare(`SELECT COUNT(*) AS c FROM user_roles`).get()).toEqual({ c: 0 });
+      const rb = (cfg.channels.teams as unknown as { roleBindings?: Record<string, string> }).roleBindings;
+      expect(rb?.['a:1Rw3-NO-MESSAGES']).toBeUndefined();
+    });
+
+    it('non-Teams DM still uses the jid rawId as owner id (unchanged behavior)', () => {
+      const db = open();
+      // No legacyDb needed — discord jid rawId IS the user id.
+      const cfg = makeConfig({ chats: { 'discord:5551212': { name: 'Owner DC', isMain: true } } });
+      const summary = migrateChatsToV2(cfg, db, { skipSaveConfig: true, skipSnapshot: true });
+      expect(summary.ownersBootstrapped).toEqual(['discord:5551212']);
+      const rb = (cfg.channels.discord as unknown as { roleBindings?: Record<string, string> }).roleBindings;
+      expect(rb).toEqual({ '5551212': 'owner' });
+    });
+  });
+
   it('DM without isMain → allowFrom only, no owner role inserted', () => {
     const db = open();
     const cfg = makeConfig({
