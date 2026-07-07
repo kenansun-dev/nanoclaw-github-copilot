@@ -117,7 +117,9 @@ describe('migrateChatsToV2 — config side', () => {
         id TEXT, chat_jid TEXT, sender TEXT, sender_name TEXT, content TEXT,
         timestamp TEXT, is_from_me INTEGER, PRIMARY KEY (id, chat_jid))`);
       legacyDb
-        .prepare(`INSERT INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me) VALUES (?,?,?,?,?,?,?)`)
+        .prepare(
+          `INSERT INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me) VALUES (?,?,?,?,?,?,?)`,
+        )
         .run('m1', jid, aadObjectId, 'Kenan Sun', 'hi', '2026-07-01T00:00:00Z', 0);
     }
 
