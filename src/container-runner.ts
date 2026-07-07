@@ -821,14 +821,23 @@ export function writeTasksSnapshot(
     last_result?: string | null;
     context_mode?: string | null;
     consecutive_group_missing?: number | null;
+    kind?: string | null;
   }>,
 ): void {
   // Write filtered tasks to the group's IPC directory
   const groupIpcDir = resolveGroupIpcPath(groupFolder);
   fs.mkdirSync(groupIpcDir, { recursive: true });
 
+  // Internal system tasks (e.g. memory daily-summary) are never surfaced
+  // to the container's `list_tasks` view. This is display-only: the
+  // scheduler runs system tasks straight from the DB via getDueTasks(),
+  // not from this snapshot, so hiding them here does not affect
+  // execution. Keeps the "invisible system task" contract consistent
+  // across `/tasks`, `nanoclaw task list`, and the agent's list_tasks.
+  const userTasks = tasks.filter((t) => t.kind !== 'system');
+
   // Main sees all tasks, others only see their own
-  const filteredTasks = isDefaultAgent ? tasks : tasks.filter((t) => t.groupFolder === groupFolder);
+  const filteredTasks = isDefaultAgent ? userTasks : userTasks.filter((t) => t.groupFolder === groupFolder);
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
   fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));

@@ -327,7 +327,8 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
   // (slash-commands.ts:214) and `/models`/`/mcp`. The agent path remains
   // available via natural-language requests like "show my tasks".
   // (kenan request 2026-05-12, PR #48.)
-  if (input === '/tasks') {
+  if (input === '/tasks' || input === '/tasks all') {
+    const showAll = input === '/tasks all';
     if (ctx.channel) {
       try {
         const [{ getAllTasks }, { formatTasksText }, { isOwner: v2IsOwner }, { folderIsDefaultAgent }] =
@@ -356,12 +357,18 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
           return folderIsDefaultAgent(ctx.groupFolder) === true;
         })();
         const all = getAllTasks();
-        const rows = (isOperator ? all : all.filter((t) => t.group_folder === ctx.groupFolder)).slice().sort((a, b) => {
-          if (a.status !== b.status) return a.status < b.status ? -1 : 1;
-          const an = a.next_run ? new Date(a.next_run).getTime() : Infinity;
-          const bn = b.next_run ? new Date(b.next_run).getTime() : Infinity;
-          return an - bn;
-        });
+        // Hide internal system tasks (e.g. memory daily-summary) from the
+        // user-facing list unless `/tasks all` was requested. System
+        // tasks still run — this is display-only. See ScheduledTask.kind.
+        const visible = showAll ? all : all.filter((t) => t.kind !== 'system');
+        const rows = (isOperator ? visible : visible.filter((t) => t.group_folder === ctx.groupFolder))
+          .slice()
+          .sort((a, b) => {
+            if (a.status !== b.status) return a.status < b.status ? -1 : 1;
+            const an = a.next_run ? new Date(a.next_run).getTime() : Infinity;
+            const bn = b.next_run ? new Date(b.next_run).getTime() : Infinity;
+            return an - bn;
+          });
         const text = formatTasksText(rows, {
           // Compact for non-operator (chat-scoped); verbose for operator (multi-group view).
           compact: !isOperator,
