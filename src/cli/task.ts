@@ -89,8 +89,11 @@ function previewPrompt(s: string, max = 60): string {
   return oneLine.slice(0, max - 1) + '…';
 }
 
-async function listTasks(opts: { chat?: string; status?: string; json?: boolean }): Promise<void> {
+async function listTasks(opts: { chat?: string; status?: string; json?: boolean; all?: boolean }): Promise<void> {
   let rows = getAllTasks();
+  // Hide internal system tasks (e.g. memory daily-summary) by default;
+  // `--all` reveals them. System tasks still run — this is display-only.
+  if (!opts.all) rows = rows.filter((t) => t.kind !== 'system');
   if (opts.chat) rows = rows.filter((t) => t.chat_jid === opts.chat);
   if (opts.status) rows = rows.filter((t) => t.status === opts.status);
   // Re-sort: status, then next_run ascending (nulls last)
@@ -109,6 +112,7 @@ async function listTasks(opts: { chat?: string; status?: string; json?: boolean 
   const filterBits: string[] = [];
   if (opts.chat) filterBits.push(`chat=${opts.chat}`);
   if (opts.status) filterBits.push(`status=${opts.status}`);
+  if (opts.all) filterBits.push('incl. system');
   console.log(
     formatTasksText(rows, {
       compact: false,
@@ -294,6 +298,7 @@ async function addTask(opts: AddTaskOpts): Promise<void> {
       context_mode: contextMode,
       next_run: nextRun,
       status: 'active',
+      kind: 'user',
       created_at: new Date().toISOString(),
     });
   } catch (err: any) {
@@ -328,6 +333,7 @@ function printUsage(): void {
   console.log('  list                       List all scheduled tasks');
   console.log('       --chat <jid>            Filter by chat_jid');
   console.log('       --status <s>            Filter by status (active|paused|completed)');
+  console.log('       --all                   Include internal system tasks (hidden by default)');
   console.log('       --json                  Emit JSON instead of human format');
   console.log('  info <id>                  Show full task + recent run logs');
   console.log('       --json                  Emit JSON instead of human format');
@@ -396,6 +402,7 @@ export async function runTaskCommand(args: string[]): Promise<void> {
         chat: typeof flags.chat === 'string' ? flags.chat : undefined,
         status: typeof flags.status === 'string' ? flags.status : undefined,
         json: flags.json === true,
+        all: flags.all === true,
       });
       return;
     case 'info':

@@ -7,6 +7,7 @@ import { runAgentForChat, resolveAgentForChat } from './config-extensions.js';
 import { ContainerOutput, runContainerAgent, writeTasksSnapshot } from './container-runner.js';
 import {
   clearConsecutiveGroupMissing,
+  deleteTask,
   getAllTasks,
   getDueTasks,
   getTaskById,
@@ -112,6 +113,27 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
     const errorMsg = `Group not found: ${task.group_folder}`;
 
     if (shouldPause) {
+      // System tasks (e.g. memory daily-summary) are GC'd rather than
+      // paused when their group is gone for good: they're auto-registered
+      // per chat surface, so a re-binder (`ensureDailySummaryTask`) will
+      // recreate a fresh one if/when the surface returns. Leaving a
+      // paused stale row around just clutters state (and would leak into
+      // `/tasks all`). Deleting also drops its task_run_logs children via
+      // deleteTask. User tasks are only paused — never deleted — so a
+      // human's task is never silently discarded.
+      if (task.kind === 'system') {
+        deleteTask(task.id);
+        logger.info(
+          {
+            taskId: task.id,
+            groupFolder: task.group_folder,
+            missCount,
+            threshold: MAX_CONSECUTIVE_GROUP_MISSING,
+          },
+          'GC: removed stale system task (group missing for consecutive ticks)',
+        );
+        return;
+      }
       // Auto-pause stops the once-per-poll log spam (was 1440 lines/day
       // for a daily-summary task on a 60s scheduler tick) when the group
       // is gone for good. `ensureDailySummaryTask` (and any other
@@ -189,6 +211,7 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
       last_result: t.last_result,
       context_mode: t.context_mode,
       consecutive_group_missing: t.consecutive_group_missing,
+      kind: t.kind,
     })),
   );
 

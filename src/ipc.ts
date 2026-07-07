@@ -304,6 +304,7 @@ export async function processTaskIpc(
           context_mode: contextMode,
           next_run: nextRun,
           status: 'active',
+          kind: 'user',
           created_at: new Date().toISOString(),
         });
         logger.info({ taskId, sourceGroup, targetFolder, contextMode }, 'Task created via IPC');

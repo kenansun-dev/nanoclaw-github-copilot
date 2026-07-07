@@ -1191,6 +1191,7 @@ async function runAgent(
       schedule_value: t.schedule_value,
       status: t.status,
       next_run: t.next_run,
+      kind: t.kind,
     })),
   );
 
@@ -2195,6 +2196,7 @@ async function main(): Promise<void> {
         schedule_value: t.schedule_value,
         status: t.status,
         next_run: t.next_run,
+        kind: t.kind,
       }));
       for (const group of Object.values(registeredGroups)) {
         // Bucket A: dual-read for tasks snapshot writer.

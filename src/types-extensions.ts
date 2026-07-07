@@ -96,6 +96,18 @@ export interface ScheduledTask {
    *   New writes always store 'isolated'.
    */
   context_mode: 'group' | 'isolated';
+  /**
+   * Task provenance. `'user'` (default) = created by a human via the
+   * agent's schedule tool / CLI; shown in `/tasks` and `nanoclaw task
+   * list`. `'system'` = auto-registered internal task (e.g. the memory
+   * daily-summary) that leverages the same scheduling machinery but is
+   * NOT part of the user's task list. Display layers hide `'system'`
+   * tasks by default (opt in with an `all` flag); the scheduler,
+   * `getDueTasks`, and the container snapshot treat all kinds equally so
+   * system tasks still execute. Migrated column; defaults to `'user'`
+   * for pre-migration rows.
+   */
+  kind: 'user' | 'system';
   next_run: string | null;
   last_run: string | null;
   last_result: string | null;
