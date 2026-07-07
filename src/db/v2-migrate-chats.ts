@@ -122,9 +122,7 @@ function resolveDmOwnerId(
   // requires the legacy `messages` table (only on messages.db, not v2.db).
   if (!legacyDb) return null;
   try {
-    const hasMessages = legacyDb
-      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='messages'`)
-      .get();
+    const hasMessages = legacyDb.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='messages'`).get();
     if (!hasMessages) return null;
     // Prefer a real human sender: exclude the synthetic 'user' placeholder and
     // NULL/empty senders. Any inbound row in a 1:1 DM is the owner.
