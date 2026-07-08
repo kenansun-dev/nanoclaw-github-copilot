@@ -459,6 +459,79 @@ describe('handleSlashCommand', () => {
     expect(sentText).not.toContain('task-b');
   });
 
+  it('/tasks hides system tasks by default (invisible-system-task contract)', async () => {
+    const db = await import('./db.js');
+    const userRoles = await import('./modules/permissions/db/user-roles.js');
+    const fixtures = [
+      {
+        id: 'task-user',
+        group_folder: 'group-A',
+        chat_jid: 'tg:A1',
+        prompt: 'user task',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+        kind: 'user',
+      },
+      {
+        id: 'memory-daily-summary:tg:A1',
+        group_folder: 'group-A',
+        chat_jid: 'tg:A1',
+        prompt: 'summarize',
+        schedule_type: 'cron',
+        schedule_value: '0 3 * * *',
+        next_run: null,
+        status: 'active',
+        kind: 'system',
+      },
+    ];
+    (db.getAllTasks as any).mockReturnValueOnce(fixtures);
+    (userRoles.isOwner as any).mockReturnValueOnce(true);
+    const ctx = makeCtx({ chatJid: 'tg:A1', groupFolder: 'group-A', senderId: 'telegram:1' });
+    await handleSlashCommand('/tasks', ctx);
+    const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    expect(sentText).toContain('task-user');
+    expect(sentText).not.toContain('memory-daily-summary');
+  });
+
+  it('/tasks all reveals system tasks (operator opt-in)', async () => {
+    const db = await import('./db.js');
+    const userRoles = await import('./modules/permissions/db/user-roles.js');
+    const fixtures = [
+      {
+        id: 'task-user',
+        group_folder: 'group-A',
+        chat_jid: 'tg:A1',
+        prompt: 'user task',
+        schedule_type: 'cron',
+        schedule_value: '0 * * * *',
+        next_run: null,
+        status: 'active',
+        kind: 'user',
+      },
+      {
+        id: 'memory-daily-summary:tg:A1',
+        group_folder: 'group-A',
+        chat_jid: 'tg:A1',
+        prompt: 'summarize',
+        schedule_type: 'cron',
+        schedule_value: '0 3 * * *',
+        next_run: null,
+        status: 'active',
+        kind: 'system',
+      },
+    ];
+    (db.getAllTasks as any).mockReturnValueOnce(fixtures);
+    (userRoles.isOwner as any).mockReturnValueOnce(true);
+    const ctx = makeCtx({ chatJid: 'tg:A1', groupFolder: 'group-A', senderId: 'telegram:1' });
+    const result = await handleSlashCommand('/tasks all', ctx);
+    expect(result.handled).toBe(true);
+    const sentText = (ctx.channel!.sendMessage as any).mock.calls[0][1] as string;
+    expect(sentText).toContain('task-user');
+    expect(sentText).toContain('memory-daily-summary');
+  });
+
   it('/capabilities returns handled: false (passthrough to agent)', async () => {
     const ctx = makeCtx();
     const result = await handleSlashCommand('/capabilities', ctx);

@@ -130,6 +130,7 @@ function createSchema(database: Database.Database): void {
       last_result TEXT,
       status TEXT DEFAULT 'active',
       consecutive_group_missing INTEGER DEFAULT 0,
+      kind TEXT NOT NULL DEFAULT 'user',
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_next_run ON scheduled_tasks(next_run);
@@ -243,6 +244,23 @@ function createSchema(database: Database.Database): void {
     database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN consecutive_group_missing INTEGER DEFAULT 0`);
   } catch {
     /* column already exists */
+  }
+
+  // Add `kind` column to distinguish user tasks from internal system
+  // tasks (e.g. the memory daily-summary). System tasks reuse the full
+  // scheduling machinery (getDueTasks / scheduler / snapshot / reap) but
+  // are hidden from user-facing list views (`/tasks`, `nanoclaw task
+  // list`) by default. See ScheduledTask.kind and task-scheduler.runTask
+  // (system tasks are GC'd rather than paused when their group is gone).
+  try {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'user'`);
+    // One-time backfill: the only pre-existing system task is the memory
+    // daily-summary, keyed `memory-daily-summary:<chatJid>`. Tag those
+    // rows so they drop out of user views immediately on upgrade. The id
+    // prefix is used ONLY here as a backfill key — never at runtime.
+    database.exec(`UPDATE scheduled_tasks SET kind = 'system' WHERE id LIKE 'memory-daily-summary:%'`);
+  } catch {
+    /* column already exists (backfill already ran on a prior boot) */
   }
 
   // Add is_bot_message column if it doesn't exist (migration for existing DBs)
@@ -577,8 +595,8 @@ export function getLastBotMessageTimestamp(chatJid: string, botPrefix: string): 
 export function createTask(task: Omit<ScheduledTask, 'last_run' | 'last_result'>): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, script, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, script, schedule_type, schedule_value, context_mode, next_run, status, kind, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -591,6 +609,7 @@ export function createTask(task: Omit<ScheduledTask, 'last_run' | 'last_result'>
     task.context_mode || 'isolated',
     task.next_run,
     task.status,
+    task.kind || 'user',
     task.created_at,
   );
 }

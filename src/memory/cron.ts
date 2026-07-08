@@ -150,6 +150,10 @@ export function ensureDailySummaryTask(opts: { chatJid: string; groupFolder: str
         context_mode: 'isolated',
         next_run: next,
         status: 'active',
+        // Internal system task: reuses the scheduling machinery but is
+        // hidden from user-facing task lists (`/tasks`, `nanoclaw task
+        // list`). See ScheduledTask.kind.
+        kind: 'system',
         created_at: new Date().toISOString(),
       });
       // First-time-per-process log so users can discover the feature

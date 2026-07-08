@@ -88,6 +88,59 @@ function heuristicIsGroup(channelType: string, rawId: string): boolean {
   return false;
 }
 
+/**
+ * Resolve the real owner user-id for a DM chat.
+ *
+ * For most channels (Telegram, Discord, …) a DM jid's `rawId` IS the peer's
+ * user id, so `<channelType>:<rawId>` is the correct owner id. But **Teams is
+ * different**: the DM jid is `teams:<conversation.id>` (e.g.
+ * `teams:a:1Rw3-…`), and `conversation.id` is an opaque *conversation*
+ * identifier, NOT the user's `aadObjectId`. Inbound Teams messages store the
+ * real sender in `messages.sender` (= `activity.from.aadObjectId`). A 1:1 Teams
+ * DM has exactly one human sender, so we can recover the true owner id from the
+ * legacy message rows for that chat_jid.
+ *
+ * Without this, the migration seeded `roleBindings[<conversation.id>] = owner`,
+ * which never matches the runtime senderId `teams:<aadObjectId>` → `isOwner()`
+ * is always false → owner-scoped features (e.g. `/tasks` operator view) silently
+ * break. (Root-caused 2026-07-06 on a live Windows install.)
+ *
+ * Returns the resolved `<channelType>:<realId>` when a distinct real id is
+ * found, else null (caller falls back to the jid-derived id for non-Teams
+ * channels, or skips owner bootstrap for Teams when the sender is unknown).
+ */
+function resolveDmOwnerId(
+  legacyDb: Database.Database | undefined,
+  channelType: string,
+  jid: string,
+  rawId: string,
+): string | null {
+  // Non-Teams: the jid rawId is the user id. Preserve existing behavior.
+  if (channelType !== 'teams') return `${channelType}:${rawId}`;
+
+  // Teams: recover the aadObjectId from a stored inbound message. Best-effort —
+  // requires the legacy `messages` table (only on messages.db, not v2.db).
+  if (!legacyDb) return null;
+  try {
+    const hasMessages = legacyDb.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='messages'`).get();
+    if (!hasMessages) return null;
+    // Prefer a real human sender: exclude the synthetic 'user' placeholder and
+    // NULL/empty senders. Any inbound row in a 1:1 DM is the owner.
+    const row = legacyDb
+      .prepare(
+        `SELECT sender FROM messages
+          WHERE chat_jid = ? AND sender IS NOT NULL AND sender != '' AND sender != 'user'
+          ORDER BY timestamp ASC LIMIT 1`,
+      )
+      .get(jid) as { sender?: string } | undefined;
+    const realId = row?.sender;
+    if (!realId) return null;
+    return `${channelType}:${realId}`;
+  } catch {
+    return null;
+  }
+}
+
 function pushUnique(list: string[] | undefined, value: string): string[] {
   const arr = list ?? [];
   if (!arr.includes(value)) arr.push(value);
@@ -257,35 +310,53 @@ export function migrateChatsToV2(
             summary.dms.push(jid);
 
             if (entry.isMain) {
-              const ownerId = `${channelType}:${rawId}`;
-              // v2 RBAC cutover: write to channels.<channelType>.roleBindings
-              // (raw id → 'owner') instead of commands.ownerAllowFrom.
-              // Shallow-clone `config.channels` and the target channel
-              // before mutating: when the loaded config never declared a
-              // `channels` key, deepMerge leaves it pointing at the shared
-              // DEFAULTS.channels object by reference. Mutation would
-              // leak globally and bleed across boots / tests.
-              const cfgRoot = config as unknown as {
-                channels?: Record<string, { roleBindings?: Record<string, 'owner' | 'admin'>; [k: string]: unknown }>;
-              };
-              cfgRoot.channels = { ...((cfgRoot.channels ?? {}) as Record<string, never>) };
-              const channels = cfgRoot.channels!;
-              const existing = channels[channelType] ?? ({ enabled: false } as never);
-              const ch = {
-                ...existing,
-                roleBindings: {
-                  ...((existing as { roleBindings?: Record<string, 'owner' | 'admin'> }).roleBindings ?? {}),
-                },
-              };
-              if (ch.roleBindings[rawId] !== 'owner' && ch.roleBindings[rawId] !== 'admin') {
-                ch.roleBindings[rawId] = 'owner';
-              }
-              channels[channelType] = ch as never;
-              const userInfo = insertUser.run(ownerId, channelType, now);
-              const roleInfo = insertOwnerRole.run(ownerId, now);
-              if (userInfo.changes > 0 || roleInfo.changes > 0) {
-                summary.ownersBootstrapped.push(ownerId);
-                ownerIdsAdded.push(ownerId);
+              // Resolve the REAL owner user-id. For Teams the jid rawId is a
+              // conversation id (not aadObjectId), so recover the true sender
+              // from legacy messages. See resolveDmOwnerId for the rationale.
+              const resolvedOwnerId = resolveDmOwnerId(legacyDb, channelType, jid, rawId);
+              if (!resolvedOwnerId) {
+                // Teams DM with no recoverable sender (e.g. fresh install, no
+                // stored inbound yet). Skip owner bootstrap rather than seed a
+                // conversation id that can never match a runtime senderId.
+                log.warn(
+                  `🪧  v2 migrate: skipping owner bootstrap for ${jid} — cannot resolve real user id ` +
+                    `(Teams jid rawId is a conversation id, not aadObjectId; no stored sender found)`,
+                );
+              } else {
+                const ownerId = resolvedOwnerId;
+                // The raw id to write into roleBindings is the part after
+                // `<channelType>:`. For non-Teams this equals the jid rawId;
+                // for Teams it's the recovered aadObjectId.
+                const ownerRawId = ownerId.slice(channelType.length + 1);
+                // v2 RBAC cutover: write to channels.<channelType>.roleBindings
+                // (raw id → 'owner') instead of commands.ownerAllowFrom.
+                // Shallow-clone `config.channels` and the target channel
+                // before mutating: when the loaded config never declared a
+                // `channels` key, deepMerge leaves it pointing at the shared
+                // DEFAULTS.channels object by reference. Mutation would
+                // leak globally and bleed across boots / tests.
+                const cfgRoot = config as unknown as {
+                  channels?: Record<string, { roleBindings?: Record<string, 'owner' | 'admin'>; [k: string]: unknown }>;
+                };
+                cfgRoot.channels = { ...((cfgRoot.channels ?? {}) as Record<string, never>) };
+                const channels = cfgRoot.channels!;
+                const existing = channels[channelType] ?? ({ enabled: false } as never);
+                const ch = {
+                  ...existing,
+                  roleBindings: {
+                    ...((existing as { roleBindings?: Record<string, 'owner' | 'admin'> }).roleBindings ?? {}),
+                  },
+                };
+                if (ch.roleBindings[ownerRawId] !== 'owner' && ch.roleBindings[ownerRawId] !== 'admin') {
+                  ch.roleBindings[ownerRawId] = 'owner';
+                }
+                channels[channelType] = ch as never;
+                const userInfo = insertUser.run(ownerId, channelType, now);
+                const roleInfo = insertOwnerRole.run(ownerId, now);
+                if (userInfo.changes > 0 || roleInfo.changes > 0) {
+                  summary.ownersBootstrapped.push(ownerId);
+                  ownerIdsAdded.push(ownerId);
+                }
               }
             }
           }

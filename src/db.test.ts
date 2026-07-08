@@ -627,6 +627,39 @@ describe('task CRUD', () => {
     deleteTask('task-3');
     expect(getTaskById('task-3')).toBeUndefined();
   });
+
+  it('defaults kind to "user" when not specified', () => {
+    createTask({
+      id: 'task-kind-default',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'no kind given',
+      schedule_type: 'once',
+      schedule_value: '2024-06-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+    expect(getTaskById('task-kind-default')!.kind).toBe('user');
+  });
+
+  it('persists kind="system" for internal tasks', () => {
+    createTask({
+      id: 'memory-daily-summary:group@g.us',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'summarize',
+      schedule_type: 'cron',
+      schedule_value: '0 3 * * *',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      kind: 'system',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+    expect(getTaskById('memory-daily-summary:group@g.us')!.kind).toBe('system');
+  });
 });
 
 // --- LIMIT behavior ---

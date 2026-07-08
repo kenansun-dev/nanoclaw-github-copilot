@@ -227,6 +227,68 @@ describe('task scheduler', () => {
     expect(task?.last_result).toMatch(/missing-group/);
   });
 
+  it('GCs (deletes) a system task whose group has been missing for the threshold', async () => {
+    // System tasks (kind='system', e.g. memory daily-summary) are
+    // deleted rather than paused when their group is gone: a re-binder
+    // recreates a fresh one if the surface returns. A user task in the
+    // same gone group is only paused, never deleted.
+    const overdueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'memory-daily-summary:gone@g.us',
+      group_folder: 'gone-group',
+      chat_jid: 'gone@g.us',
+      prompt: 'summarize',
+      schedule_type: 'cron',
+      schedule_value: '0 9 * * *',
+      context_mode: 'isolated',
+      next_run: overdueAt,
+      status: 'active',
+      kind: 'system',
+      created_at: '2026-04-22T00:00:00.000Z',
+    });
+    createTask({
+      id: 'user-in-gone-group',
+      group_folder: 'gone-group',
+      chat_jid: 'gone@g.us',
+      prompt: 'noop',
+      schedule_type: 'cron',
+      schedule_value: '0 9 * * *',
+      context_mode: 'isolated',
+      next_run: overdueAt,
+      status: 'active',
+      kind: 'user',
+      created_at: '2026-04-22T00:00:00.000Z',
+    });
+
+    const enqueueTask = vi.fn((_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+      void fn();
+    });
+
+    startSchedulerLoop({
+      registeredGroups: () => ({}),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    const { updateTask } = await import('./db.js');
+    for (let i = 0; i < MAX_CONSECUTIVE_GROUP_MISSING; i++) {
+      for (const id of ['memory-daily-summary:gone@g.us', 'user-in-gone-group']) {
+        const t = getTaskById(id);
+        if (t && t.status === 'active') {
+          updateTask(id, { next_run: new Date(Date.now() - 1_000).toISOString() });
+        }
+      }
+      await vi.advanceTimersByTimeAsync(60_001);
+    }
+
+    // System task GC'd (row gone); user task merely paused (still present).
+    expect(getTaskById('memory-daily-summary:gone@g.us')).toBeUndefined();
+    const userTask = getTaskById('user-in-gone-group');
+    expect(userTask?.status).toBe('paused');
+  });
+
   it('resets the missing-group counter when the group reappears', async () => {
     const overdueAt = new Date(Date.now() - 60_000).toISOString();
     createTask({
