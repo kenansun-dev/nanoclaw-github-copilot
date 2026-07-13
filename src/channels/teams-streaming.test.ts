@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TeamsStreamingSession, type ActivitySender, type TeamsActivity } from './teams-streaming.js';
+import { TeamsStreamingSession, SendTimeoutError, type ActivitySender, type TeamsActivity } from './teams-streaming.js';
 
 /**
  * Tests for the Teams streaming wire protocol implementation.
@@ -674,5 +674,95 @@ describe('TeamsStreamingSession native thinking phase', () => {
     await s.cancel();
     await s.appendThinking('after-cancel');
     // Cancel + drop should not throw.
+  });
+});
+
+describe('TeamsStreamingSession black-hole send timeout (2026-07-13)', () => {
+  // Root cause of "Teams stuck, only `ncl restart` fixes it": the BFA
+  // outbound send has no timeout, so a transport that accepts a frame
+  // but never ACKs (never resolves, never throws) hangs the drain loop
+  // forever. That wedges `end()`'s `_waitForDrain()`, which wedges the
+  // dispatcher's per-JID queue slot until a restart. These tests pin
+  // that a black-holed send now (a) times out, (b) degrades to a single
+  // plain `message` with NO streaminfo entity (Teams rejects a final
+  // message carrying stale stream entities), and (c) the whole thing
+  // completes in bounded wall-clock time.
+
+  beforeEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('chunk send that never resolves times out, then end() degrades to a plain message (no streaminfo)', async () => {
+    vi.useFakeTimers();
+    const calls: Array<Partial<TeamsActivity>> = [];
+    let typingSeen = 0;
+    const sender: ActivitySender = (activity) => {
+      calls.push(JSON.parse(JSON.stringify(activity)));
+      if (activity.type === 'typing') {
+        typingSeen++;
+        // First typing frame black-holes: a promise that never settles.
+        if (typingSeen === 1) return new Promise<string>(() => {});
+      }
+      return Promise.resolve(`msg-${calls.length}`);
+    };
+
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+
+    await s.chunk('hello');
+    // Let the drain loop dispatch the first (black-holing) typing send.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // end() will _waitForDrain(); advance past the send timeout so the
+    // black-holed frame is abandoned and the degrade path runs.
+    const endPromise = s.end('hello world');
+    await vi.advanceTimersByTimeAsync(9000);
+    const id = await endPromise;
+
+    const typing = calls.filter((c) => c.type === 'typing');
+    const messages = calls.filter((c) => c.type === 'message');
+    // One typing attempted (timed out), one plain-message final.
+    expect(typing.length).toBe(1);
+    expect(messages.length).toBe(1);
+    // WIRE INVARIANT (VM review): the degraded final MUST be a plain
+    // message with no streaminfo entity, or Teams rejects it with
+    // "Only end streaming type is allowed as a message activity".
+    expect(messages[0].entities ?? []).toEqual([]);
+    expect(messages[0].text).toBe('hello world');
+    expect(typeof id).toBe('string');
+  });
+
+  it('a black-holed send never wedges the turn: end() resolves in bounded time', async () => {
+    vi.useFakeTimers();
+    const sender: ActivitySender = (activity) => {
+      // EVERY send black-holes, including the degrade fallback.
+      return new Promise<string>(() => {});
+    };
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+
+    await s.chunk('x');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    let settled = false;
+    const endPromise = s.end('final').then((v) => {
+      settled = true;
+      return v;
+    });
+
+    // Advance well past the drain-wait upper bound + a degrade send
+    // timeout. Even with every send black-holing, end() must return
+    // (the reply may not land, but the turn is freed and the queue slot
+    // is released — no restart needed).
+    await vi.advanceTimersByTimeAsync(30000);
+    await endPromise;
+    expect(settled).toBe(true);
+  });
+
+  it('SendTimeoutError is thrown with a descriptive message', () => {
+    const err = new SendTimeoutError(8000);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe('SendTimeoutError');
+    expect(err.message).toContain('8000');
   });
 });
