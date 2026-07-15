@@ -67,6 +67,54 @@ import type { TurnContext, ConversationReference } from 'botbuilder';
 import { logger } from '../log-extensions.js';
 import type { NativeThinkingStreamHandle } from '../types-extensions.js';
 
+/**
+ * Per-activity outbound send timeout (ms).
+ *
+ * The Bot Framework adapter's `continueConversation`/`sendActivity` has
+ * no built-in timeout. If the outbound tunnel accepts a frame but never
+ * ACKs it (a "black-hole" send: the promise neither resolves, rejects,
+ * nor throws), a raw `await this.send(...)` hangs forever. That wedges
+ * the whole per-JID turn: `_drainLoop` never resolves `_drain` →
+ * `end()`'s `_waitForDrain()` never returns → the dispatcher's
+ * `runForGroup` never reaches `activeCount--` → the chat's queue slot is
+ * held until `ncl restart`. This was the root cause of "Teams stuck,
+ * only a restart fixes it" (kenan repro, 2026-07-13; confirmed against
+ * INFO logs: only the affected JID wedged while independent task slots
+ * kept running).
+ *
+ * `_sendWithTimeout` races every send against this deadline so control
+ * flow is always freed and we can degrade to a plain message. 8s sits
+ * comfortably above Teams' normal ~1s round-trip while still recovering
+ * quickly when the transport black-holes. Note: the underlying send
+ * promise cannot be truly aborted (BFA does not honor an AbortSignal on
+ * the HTTP call), so a black-holed send leaks one pending continuation —
+ * acceptable, because our turn is unblocked and the slot is freed.
+ */
+const SEND_TIMEOUT_MS = 8000;
+
+/**
+ * Wall-clock upper bound (ms) on how long `end()` waits for the drain
+ * loop to flush. With every send bounded by SEND_TIMEOUT_MS the drain
+ * can no longer hang, but this independent guard ensures a future logic
+ * change (e.g. a chunk that keeps re-arming `_pendingChunk`) can never
+ * re-introduce the unbounded `while (this._drain) await this._drain`
+ * wedge.
+ */
+const DRAIN_WAIT_TIMEOUT_MS = SEND_TIMEOUT_MS + 5000;
+
+/**
+ * Thrown by `_sendWithTimeout` when an outbound activity exceeds
+ * SEND_TIMEOUT_MS. Callers treat it like a generic wire failure
+ * (abort stream + degrade to plain message), but the distinct type
+ * keeps logs and tests unambiguous about *why* the send was abandoned.
+ */
+export class SendTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Teams activity send timed out after ${timeoutMs}ms`);
+    this.name = 'SendTimeoutError';
+  }
+}
+
 // --- Types: minimal, deliberately narrow to ease unit testing ----------
 
 /**
@@ -284,7 +332,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     // stream.
     if (this._cancelled || !this._isStreamingChannel) {
       try {
-        const id = await this.send({ type: 'message', text: finalText });
+        const id = await this._sendWithTimeout({ type: 'message', text: finalText });
         return id;
       } catch (err: any) {
         this.log.warn({ err: err?.message ?? String(err) }, 'Teams streaming: degraded final send failed');
@@ -301,7 +349,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     if (this._explicitCancel) return;
     if (this._cancelled || !this._isStreamingChannel) {
       try {
-        const id = await this.send({ type: 'message', text: finalText });
+        const id = await this._sendWithTimeout({ type: 'message', text: finalText });
         return id;
       } catch (err: any) {
         this.log.warn({ err: err?.message ?? String(err) }, 'Teams streaming: post-drain degraded final send failed');
@@ -319,7 +367,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     // still lands. Regression discovered 2026-04-22.
     if (!this._streamId) {
       try {
-        const id = await this.send({ type: 'message', text: finalText });
+        const id = await this._sendWithTimeout({ type: 'message', text: finalText });
         return id;
       } catch (err: any) {
         this.log.warn(
@@ -342,7 +390,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     };
     this._stampStreamId(activity);
     try {
-      const id = await this.send(activity);
+      const id = await this._sendWithTimeout(activity);
       return id;
     } catch (err: any) {
       this.log.warn(
@@ -353,7 +401,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
       // silently drop the agent's reply. Strip stream entities since
       // they only make sense inside an active stream.
       try {
-        const id = await this.send({ type: 'message', text: finalText });
+        const id = await this._sendWithTimeout({ type: 'message', text: finalText });
         return id;
       } catch (err2: any) {
         this.log.error({ err: err2?.message ?? String(err2) }, 'Teams streaming: fallback final send also failed');
@@ -447,7 +495,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
       };
       this._stampStreamId(activity);
       try {
-        const id = await this.send(activity);
+        const id = await this._sendWithTimeout(activity);
         // We no longer need to backfill `_streamId` from the response —
         // it was minted at construction. The response id is ignored on
         // purpose so subsequent chunks always stamp the same value.
@@ -456,6 +504,19 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
         this._lastSent = textToSend;
       } catch (err: any) {
         const msg = String(err?.message ?? err);
+        if (err instanceof SendTimeoutError) {
+          // Black-holed transport: the frame was accepted (or the socket
+          // stalled) but never ACKed. Abort the stream so `end()` can
+          // degrade to a single plain `message` instead of hanging the
+          // whole per-JID turn forever (root cause of "Teams stuck until
+          // restart", 2026-07-13).
+          this.log.warn(
+            { err: msg, sequence: this._nextSequence - 1 },
+            'Teams streaming: chunk send timed out; aborting stream and degrading to plain message',
+          );
+          this._cancelled = true;
+          return;
+        }
         if (msg.includes('ContentStreamNotAllowed')) {
           // User paused / client disabled streaming. Stop sending,
           // but allow `end()` to publish a final non-streaming message
@@ -486,8 +547,31 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
   }
 
   private async _waitForDrain(): Promise<void> {
+    // Independent upper bound. With every `send()` bounded by
+    // SEND_TIMEOUT_MS the drain can no longer hang on the wire, but this
+    // guard ensures a future change that keeps re-arming `_pendingChunk`
+    // (or any other logic regression) can never re-introduce the
+    // original unbounded `while (this._drain) await this._drain` wedge
+    // that held the per-JID queue slot until `ncl restart`.
+    const deadline = Date.now() + DRAIN_WAIT_TIMEOUT_MS;
     while (this._drain) {
-      await this._drain;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        this.log.warn(
+          { timeoutMs: DRAIN_WAIT_TIMEOUT_MS },
+          'Teams streaming: drain wait exceeded upper bound; proceeding to final send',
+        );
+        return;
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, remaining);
+      });
+      try {
+        await Promise.race([this._drain, timeout]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     }
   }
 
@@ -503,6 +587,30 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     if (!activity.entities) activity.entities = [];
     if (!activity.entities[0]) activity.entities[0] = { type: 'streaminfo' };
     activity.entities[0].streamId = this._streamId;
+  }
+
+  /**
+   * Send one activity with a wall-clock timeout so a black-holed
+   * transport (accepts the frame, never ACKs, never throws) can no
+   * longer hang the turn forever. On timeout we throw a
+   * `SendTimeoutError` that callers treat like any other wire failure:
+   * abort the stream and degrade to a single plain `message`.
+   *
+   * The losing (timed-out) send promise is intentionally left pending
+   * — the BFA HTTP call has no abort hook — but control flow returns
+   * immediately, which is the whole point (frees `_drain` and the queue
+   * slot).
+   */
+  private async _sendWithTimeout(activity: Partial<TeamsActivity>): Promise<string | undefined> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new SendTimeoutError(SEND_TIMEOUT_MS)), SEND_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([this.send(activity), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 }
 
