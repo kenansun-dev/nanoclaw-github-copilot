@@ -74,7 +74,11 @@ describe('ensureTunnelHosting', () => {
     });
     const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined as any);
     await ensureTunnelHosting('/tmp/ws');
-    expect(spawnMock).toHaveBeenCalledWith('devtunnel', ['host', 'nanoclaw-abc1', '--allow-anonymous'], expect.any(Object));
+    expect(spawnMock).toHaveBeenCalledWith(
+      'devtunnel',
+      ['host', 'nanoclaw-abc1', '--allow-anonymous'],
+      expect.any(Object),
+    );
     expect(writeSpy).toHaveBeenCalled();
   });
 
