@@ -133,7 +133,14 @@ export async function ensureTunnelHosting(ws: string, opts: EnsureTunnelOptions 
     );
     return;
   }
-  const hostCount = showOut.match(/Host connections\s*:\s*(\d+)/);
+  // Case-insensitive on purpose: the real `devtunnel show` (CLI 1.0.1516)
+  // emits sentence-case "Host connections : N", so the plain regex already
+  // matches — but `devtunnel list` renders a title-case "Host Connections"
+  // column header, and casing could drift across CLI versions/platforms
+  // (kenan runs Windows, verified lowercase on Linux). `/i` is zero-cost
+  // hardening so a future casing change can't silently read every tunnel as
+  // "not hosting" and spawn a duplicate host.
+  const hostCount = showOut.match(/Host connections\s*:\s*(\d+)/i);
   if (hostCount && hostCount[1] !== '0') {
     console.log(`DevTunnel already hosting: ${tid} (connections: ${hostCount[1]})`);
     return;

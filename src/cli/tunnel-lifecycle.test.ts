@@ -110,6 +110,22 @@ describe('ensureTunnelHosting', () => {
     expect(joined()).toMatch(/already hosting: nanoclaw-abc1 \(connections: 1\)/);
   });
 
+  it('reads hosting state case-insensitively (title-case "Host Connections")', async () => {
+    // devtunnel `show` on this CLI emits lowercase "Host connections", but the
+    // `list` table header is title-case and casing can drift across versions /
+    // platforms. A case-sensitive regex would read a hosting tunnel as "not
+    // hosting" and spawn a duplicate host. Pin the /i behavior.
+    setConfig({ channels: { teams: { enabled: true } } });
+    execMock.mockImplementation((cmd: string) => {
+      if (cmd === 'devtunnel list') return 'nanoclaw-abc1 nanoclaw Active\n';
+      if (cmd.startsWith('devtunnel show')) return 'Host Connections      : 2\n';
+      return '';
+    });
+    await ensureTunnelHosting('/tmp/ws');
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(joined()).toMatch(/already hosting: nanoclaw-abc1 \(connections: 2\)/);
+  });
+
   it('retries a cold first `devtunnel list` and succeeds on the second attempt', async () => {
     setConfig({ channels: { teams: { enabled: true } } });
     let listCalls = 0;
