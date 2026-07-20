@@ -295,7 +295,23 @@ export class TeamsChannel implements Channel {
             return;
           }
 
-          logger.debug({ activityType: activity.type, from: activity.from?.name }, 'Teams webhook received');
+          // INFO (not debug) on purpose: this is the single proof that an
+          // inbound POST actually reached the local :3978 webhook. When Teams
+          // goes silent (recurring incident, e.g. 2026-07-17→20), operators
+          // must currently `ncl loglevel debug` to learn anything — but by
+          // then the tunnel may have been restarted and the evidence is gone.
+          // Logging arrival at INFO makes the failure self-diagnosing WITHOUT
+          // enabling debug:
+          //   - NO arrival line at all  => packet never reached local:3978
+          //                                 (tunnel host / transport is down)
+          //   - arrival line present but no later 'Teams message activity
+          //     received' => adapter silently rejected it (e.g. JWT 401),
+          //                   which returns 4xx without throwing → no ERROR.
+          // One line per inbound activity; volume is bounded by real traffic.
+          logger.info(
+            { activityType: activity.type, from: activity.from?.name },
+            'Teams webhook POST received (inbound reached local endpoint)',
+          );
 
           // BotFrameworkAdapter expects Express-style req.body and res methods
           (req as any).body = activity;
@@ -337,6 +353,20 @@ export class TeamsChannel implements Channel {
               await this.adapter.processActivity(req, expressRes, async (context: TurnContext) => {
                 await this.handleIncoming(context);
               });
+              // The adapter can silently reject an inbound activity by writing
+              // a 4xx (e.g. 401 on JWT/auth failure) to the response WITHOUT
+              // throwing — so the catch below never fires and handleIncoming()
+              // never runs. That is invisible at INFO today and is a prime
+              // suspect for the recurring "inbound dead, no errors" incidents.
+              // Log the resulting status so a silent auth reject is provable
+              // without enabling debug: arrival line + statusCode>=400 here +
+              // no 'Teams message activity received' == adapter rejected it.
+              if (res.statusCode >= 400) {
+                logger.warn(
+                  { statusCode: res.statusCode, activityType: activity.type },
+                  'Teams adapter returned >=400 without throwing (likely auth/JWT reject) — inbound dropped',
+                );
+              }
             } catch (err: any) {
               logger.error({ err: err.message }, 'Teams processActivity error');
               if (!res.headersSent) {
