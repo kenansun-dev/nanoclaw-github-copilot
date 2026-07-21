@@ -2102,6 +2102,31 @@ async function main(): Promise<void> {
     logger.warn('No channels connected — service running for TUI/IPC only');
   }
 
+  // Tunnel health ring: the `devtunnel host` process can outlive its relay
+  // connection for days (NAT/relay idle close, token expiry, wifi blip),
+  // silently killing all Teams inbound while `ncl status` shows green because
+  // it only probed the pid. `ensureTunnelHosting` ran once at `ncl start` and
+  // nothing re-hosted afterwards. This supervisor periodically probes the real
+  // connection and auto-rehosts, and writes state/tunnel-health.json so status
+  // reports the true connection state. No-ops when there is no tunnel to watch
+  // (Teams disabled / proxy transport / devtunnel absent).
+  try {
+    const { resolveNanoclawTunnelId } = await import('./cli/tunnel-lifecycle.js');
+    const { startTunnelSupervisor } = await import('./cli/tunnel-supervisor.js');
+    const tunnelId = await resolveNanoclawTunnelId();
+    if (tunnelId) {
+      const { resolveWorkspace } = await import('./workspace.js');
+      startTunnelSupervisor({
+        ws: resolveWorkspace(),
+        tunnelId,
+        logger: { info: (o, m) => logger.info(o, m), warn: (o, m) => logger.warn(o, m) },
+      });
+      logger.info({ tunnelId }, 'Tunnel health supervisor started');
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Tunnel health supervisor not started');
+  }
+
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
     registeredGroups: () => registeredGroups,
