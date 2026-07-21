@@ -132,8 +132,7 @@ export function evaluateTunnelHealth(
 
   const consecutiveFailures = prev.consecutiveFailures + 1;
   const thresholdCrossed = consecutiveFailures >= cfg.failureThreshold;
-  const cooldownOk =
-    prev.lastRehostAtMs == null || nowMs - prev.lastRehostAtMs >= cfg.rehostCooldownMs;
+  const cooldownOk = prev.lastRehostAtMs == null || nowMs - prev.lastRehostAtMs >= cfg.rehostCooldownMs;
   const shouldRehost = thresholdCrossed && cooldownOk;
 
   const nextState: TunnelHealthState = {
