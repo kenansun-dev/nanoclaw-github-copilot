@@ -168,6 +168,17 @@ export async function ensureTunnelHosting(ws: string, opts: EnsureTunnelOptions 
  * null (never throws, never spawns) when Teams is disabled, the transport is
  * proxy/relay, devtunnel is missing/cold, or no nanoclaw tunnel exists — all
  * normal states in which there is simply nothing to supervise.
+ *
+ * SELECTION IS DELIBERATELY IDENTICAL to ensureTunnelHosting's: both take the
+ * first `devtunnel list` line containing "nanoclaw". This keeps the supervisor
+ * watching exactly the tunnel that ensureTunnelHosting hosts/rehosts, so probe
+ * and rehost can never target different tunnels. The known limitation — a
+ * multi-account setup (PR #56 `nanoclaw-<agent>` bots) can list several
+ * "nanoclaw" tunnels and only the first is supervised — is a pre-existing
+ * property of ensureTunnelHosting (it already hosts only one), not something
+ * introduced here. True per-account multi-tunnel supervision is a follow-up
+ * that must change both functions together; do NOT desync this resolver from
+ * ensureTunnelHosting to "fix" it in isolation.
  */
 export async function resolveNanoclawTunnelId(): Promise<string | null> {
   let cfg: any;
