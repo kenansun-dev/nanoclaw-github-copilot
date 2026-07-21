@@ -42,6 +42,8 @@ export interface StatusInfo {
   channels: string[];
   chatCount: number;
   tunnelRunning: boolean;
+  /** Human-readable tunnel connection detail (health ring or pid fallback). */
+  tunnelDetail?: string;
   workspace: string;
   /** Workspace logs directory. The active log file rotates daily
    * (`nanoclaw-YYYY-MM-DD.log`) and gets gzipped after a week, so
@@ -227,13 +229,33 @@ export async function collectStatus(chatJid?: string): Promise<StatusInfo> {
     chatCount = 0;
   }
 
-  // DevTunnel
+  // DevTunnel. Prefer the daemon health ring's real connection verdict
+  // (state/tunnel-health.json) over the pid probe: the recurring inbound-
+  // silence bug is "process alive, relay connection dead", which the pid
+  // check reads as green. Fall back to the pid probe only when the daemon
+  // hasn't written a health snapshot yet (e.g. Teams disabled, or an older
+  // daemon build without the supervisor).
   const dtPidFile = join(ws, 'devtunnel.pid');
   let tunnelRunning = false;
-  if (existsSync(dtPidFile)) {
+  let tunnelDetail: string | undefined;
+  try {
+    const { readTunnelHealth } = await import('./tunnel-supervisor.js');
+    const health = readTunnelHealth(ws);
+    if (health) {
+      tunnelRunning = health.connected;
+      const ageS = Math.max(0, Math.round((Date.now() - health.checkedAtMs) / 1000));
+      tunnelDetail = health.connected
+        ? `connected (checked ${ageS}s ago)`
+        : `DOWN — ${health.consecutiveFailures} failed check(s), last ${ageS}s ago`;
+    }
+  } catch {
+    /* no snapshot helper / unreadable → pid fallback below */
+  }
+  if (tunnelDetail === undefined && existsSync(dtPidFile)) {
     try {
       process.kill(parseInt(fs.readFileSync(dtPidFile, 'utf-8').trim()), 0);
       tunnelRunning = true;
+      tunnelDetail = 'process running (connection state unknown)';
     } catch {
       /* dead */
     }
@@ -280,6 +302,7 @@ export async function collectStatus(chatJid?: string): Promise<StatusInfo> {
     channels,
     chatCount,
     tunnelRunning,
+    tunnelDetail,
     workspace: ws,
     logDir,
     chatJid,
@@ -322,7 +345,9 @@ export function formatStatusText(s: StatusInfo): string {
   lines.push(`🔑 Auth:      ${s.hasAuth ? `✅ ${s.authLabel}` : '❌ not configured'}`);
   lines.push(`📡 Channels:  ${s.channels.length > 0 ? s.channels.join(', ') : 'none'}`);
   lines.push(`💬 Chats:     ${s.chatCount} registered`);
-  if (s.tunnelRunning) {
+  if (s.tunnelDetail !== undefined) {
+    lines.push(`🌐 Tunnel:    ${s.tunnelDetail}`);
+  } else if (s.tunnelRunning) {
     lines.push(`🌐 Tunnel:    running`);
   }
   lines.push(`📁 Workspace: ${s.workspace}`);
