@@ -23,9 +23,10 @@
  * outcome prints a reason, and the cold first call is retried once with a
  * longer timeout so a warm-up hiccup no longer costs an entire start.
  */
-import { execSync, spawn } from 'child_process';
+import { spawn } from 'child_process';
 import fs from 'fs';
 import { join } from 'path';
+import { winExecSync } from '../win-process.js';
 
 export interface EnsureTunnelOptions {
   /** Delay before retrying a cold `devtunnel list`. Overridable for tests. */
@@ -79,12 +80,12 @@ export async function ensureTunnelHosting(ws: string, opts: EnsureTunnelOptions 
   // `devtunnel list` — retry once. The first CLI invocation after a reboot is
   // cold and can time out or transiently error; a silent skip here is exactly
   // the reported bug. Attempt 1 uses the normal timeout, attempt 2 a longer one.
+  // winExecSync (execFile, no cmd.exe) so Windows doesn't flash a console
+  // window on this boot-time shell-out (kenan, 2026-07-23).
   let listOut: string | null = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      listOut = execSync('devtunnel list', {
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
+      listOut = winExecSync('devtunnel', ['list'], {
         timeout: attempt === 1 ? 12000 : 25000,
       });
       break;
@@ -121,11 +122,7 @@ export async function ensureTunnelHosting(ws: string, opts: EnsureTunnelOptions 
   // already warmed the CLI, so a failure here is a genuine anomaly worth seeing.
   let showOut = '';
   try {
-    showOut = execSync(`devtunnel show ${tid}`, {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 15000,
-    });
+    showOut = winExecSync('devtunnel', ['show', tid], { timeout: 15000 });
   } catch (err: any) {
     console.log(
       `[tunnel] NOT hosting: "devtunnel show ${tid}" failed (${firstLine(err)}); ` +
@@ -150,6 +147,7 @@ export async function ensureTunnelHosting(ws: string, opts: EnsureTunnelOptions 
   const dtProc = spawn('devtunnel', ['host', tid, '--allow-anonymous'], {
     detached: true,
     stdio: 'ignore',
+    windowsHide: true,
   });
   dtProc.unref();
   try {
@@ -197,11 +195,7 @@ export async function resolveNanoclawTunnelId(): Promise<string | null> {
 
   let listOut: string;
   try {
-    listOut = execSync('devtunnel list', {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 15000,
-    });
+    listOut = winExecSync('devtunnel', ['list'], { timeout: 15000 });
   } catch {
     return null;
   }

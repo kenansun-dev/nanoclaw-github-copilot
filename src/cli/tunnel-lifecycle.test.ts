@@ -14,12 +14,20 @@
  * eating the error. These tests pin both.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { execSync, spawn } from 'child_process';
+import { spawn } from 'child_process';
+import { winExecSync } from '../win-process.js';
 import fs from 'fs';
 
 vi.mock('child_process', async () => {
   const actual = await vi.importActual<typeof import('child_process')>('child_process');
-  return { ...actual, execSync: vi.fn(), spawn: vi.fn() };
+  return { ...actual, spawn: vi.fn() };
+});
+
+// list/show now go through winExecSync (execFile + windowsHide) so Windows
+// doesn't flash a console window; mock that instead of child_process.execSync.
+vi.mock('../win-process.js', async () => {
+  const actual = await vi.importActual<typeof import('../win-process.js')>('../win-process.js');
+  return { ...actual, winExecSync: vi.fn() };
 });
 
 const memoryConfig: any = { channels: {} };
@@ -30,7 +38,7 @@ vi.mock('../config-loader.js', async () => {
 
 import { ensureTunnelHosting, stopTrackedTunnel } from './tunnel-lifecycle.js';
 
-const execMock = execSync as unknown as ReturnType<typeof vi.fn>;
+const execMock = winExecSync as unknown as ReturnType<typeof vi.fn>;
 const spawnMock = spawn as unknown as ReturnType<typeof vi.fn>;
 
 function setConfig(cfg: any) {
@@ -81,9 +89,9 @@ describe('ensureTunnelHosting', () => {
 
   it('hosts the tunnel when one exists and is not already hosting', async () => {
     setConfig({ channels: { teams: { enabled: true } } });
-    execMock.mockImplementation((cmd: string) => {
-      if (cmd === 'devtunnel list') return 'nanoclaw-abc1 nanoclaw Active\n';
-      if (cmd.startsWith('devtunnel show')) return 'Host connections : 0\n';
+    execMock.mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === 'list') return 'nanoclaw-abc1 nanoclaw Active\n';
+      if (args[0] === 'show') return 'Host connections : 0\n';
       return '';
     });
     const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined as any);
@@ -100,9 +108,9 @@ describe('ensureTunnelHosting', () => {
 
   it('skips hosting (with a reason) when the tunnel is already hosting', async () => {
     setConfig({ channels: { teams: { enabled: true } } });
-    execMock.mockImplementation((cmd: string) => {
-      if (cmd === 'devtunnel list') return 'nanoclaw-abc1 nanoclaw Active\n';
-      if (cmd.startsWith('devtunnel show')) return 'Host connections : 1\n';
+    execMock.mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === 'list') return 'nanoclaw-abc1 nanoclaw Active\n';
+      if (args[0] === 'show') return 'Host connections : 1\n';
       return '';
     });
     await ensureTunnelHosting('/tmp/ws');
@@ -116,9 +124,9 @@ describe('ensureTunnelHosting', () => {
     // platforms. A case-sensitive regex would read a hosting tunnel as "not
     // hosting" and spawn a duplicate host. Pin the /i behavior.
     setConfig({ channels: { teams: { enabled: true } } });
-    execMock.mockImplementation((cmd: string) => {
-      if (cmd === 'devtunnel list') return 'nanoclaw-abc1 nanoclaw Active\n';
-      if (cmd.startsWith('devtunnel show')) return 'Host Connections      : 2\n';
+    execMock.mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === 'list') return 'nanoclaw-abc1 nanoclaw Active\n';
+      if (args[0] === 'show') return 'Host Connections      : 2\n';
       return '';
     });
     await ensureTunnelHosting('/tmp/ws');
@@ -129,13 +137,13 @@ describe('ensureTunnelHosting', () => {
   it('retries a cold first `devtunnel list` and succeeds on the second attempt', async () => {
     setConfig({ channels: { teams: { enabled: true } } });
     let listCalls = 0;
-    execMock.mockImplementation((cmd: string) => {
-      if (cmd === 'devtunnel list') {
+    execMock.mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === 'list') {
         listCalls++;
         if (listCalls === 1) throw new Error('ETIMEDOUT');
         return 'nanoclaw-abc1 nanoclaw Active\n';
       }
-      if (cmd.startsWith('devtunnel show')) return 'Host connections : 0\n';
+      if (args[0] === 'show') return 'Host connections : 0\n';
       return '';
     });
     vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined as any);
@@ -158,8 +166,8 @@ describe('ensureTunnelHosting', () => {
 
   it('logs a reason when no nanoclaw tunnel is found', async () => {
     setConfig({ channels: { teams: { enabled: true } } });
-    execMock.mockImplementation((cmd: string) => {
-      if (cmd === 'devtunnel list') return 'some-other-tunnel foo Active\n';
+    execMock.mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === 'list') return 'some-other-tunnel foo Active\n';
       return '';
     });
     await ensureTunnelHosting('/tmp/ws', { retryDelayMs: 0 });
@@ -169,9 +177,9 @@ describe('ensureTunnelHosting', () => {
 
   it('does not start a host (and logs) when `devtunnel show` errors', async () => {
     setConfig({ channels: { teams: { enabled: true } } });
-    execMock.mockImplementation((cmd: string) => {
-      if (cmd === 'devtunnel list') return 'nanoclaw-abc1 nanoclaw Active\n';
-      if (cmd.startsWith('devtunnel show')) throw new Error('boom');
+    execMock.mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === 'list') return 'nanoclaw-abc1 nanoclaw Active\n';
+      if (args[0] === 'show') throw new Error('boom');
       return '';
     });
     await ensureTunnelHosting('/tmp/ws', { retryDelayMs: 0 });
