@@ -26,10 +26,21 @@ function read(rel: string): string {
 // execFile via winExec* is fine.
 const BANNED = /\bexec(?:Sync|Async)\s*\(\s*[`'"][^`'"]*\b(taskkill|tasklist|schtasks|reg query)\b/;
 
+// The daemon tunnel health ring probes `devtunnel show` every ~60s and the
+// boot/start lifecycle shells `devtunnel list`/`show`. String-form execSync of
+// devtunnel on win32 routes through cmd.exe and flashes a console window every
+// minute (kenan, 2026-07-23). These files must use winExecSync (execFile +
+// windowsHide) instead. Flag any string-form exec*/spawnSync of devtunnel.
+const BANNED_DEVTUNNEL = /\b(?:exec(?:Sync|Async)|spawnSync)\s*\(\s*[`'"][^`'"]*\bdevtunnel\b/;
+
 // Files that must never reintroduce a string-form win32 console shell-out.
 // win-process.ts is excluded here because it *documents* the banned pattern in
 // comments (and contains no real shell-out); it is covered by the export check.
 const GUARDED_FILES = ['cli.ts', 'cli/update.ts', 'host-runner.ts', 'group-queue.ts'];
+
+// Files whose devtunnel shell-outs run automatically (daemon 60s probe /
+// boot-time hosting) and so must stay console-hidden.
+const GUARDED_DEVTUNNEL_FILES = ['cli/tunnel-supervisor.ts', 'cli/tunnel-lifecycle.ts'];
 
 describe('win console-flicker source guard', () => {
   for (const f of GUARDED_FILES) {
@@ -37,6 +48,14 @@ describe('win console-flicker source guard', () => {
       const src = read(f);
       const match = src.match(BANNED);
       expect(match, match ? `Found banned string-form win32 shell-out: "${match[0]}"` : '').toBeNull();
+    });
+  }
+
+  for (const f of GUARDED_DEVTUNNEL_FILES) {
+    it(`${f} has no string-form execSync devtunnel (must use winExecSync)`, () => {
+      const src = read(f);
+      const match = src.match(BANNED_DEVTUNNEL);
+      expect(match, match ? `Found banned string-form devtunnel shell-out: "${match[0]}"` : '').toBeNull();
     });
   }
 

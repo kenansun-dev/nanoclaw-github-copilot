@@ -44,8 +44,8 @@
  */
 
 import fs from 'fs';
-import { execSync } from 'child_process';
 import { join } from 'path';
+import { winExecSync } from '../win-process.js';
 
 /** Persisted verdict `ncl status` reads so it can report the real state. */
 export interface TunnelHealthSnapshot {
@@ -192,14 +192,17 @@ export function readTunnelHealth(ws: string): TunnelHealthSnapshot | null {
  * Reuses the exact `/Host connections\s*:\s*(\d+)/i` shape verified against
  * devtunnel CLI 1.0.1516 in PR #70 (sentence-case on Linux, title-case column
  * on Windows; `/i` covers both).
+ *
+ * Runs via `winExecSync` (execFile + `windowsHide:true`, no `cmd.exe`) rather
+ * than string-form `execSync`. On Windows the string form always routes
+ * through `cmd.exe /d /s /c` with `windowsHide:false`, and since this probe
+ * fires every ~60s from the daemon it would flash a console window every
+ * minute (kenan, 2026-07-23). execFile bypasses the shell entirely — no window
+ * to flash — and is a no-op difference on POSIX.
  */
 export function defaultTunnelProbe(tunnelId: string): ProbeResult {
   try {
-    const out = execSync(`devtunnel show ${tunnelId}`, {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 15000,
-    });
+    const out = winExecSync('devtunnel', ['show', tunnelId], { timeout: 15000 });
     const m = out.match(/Host connections\s*:\s*(\d+)/i);
     return { connected: !!m && m[1] !== '0' };
   } catch {
