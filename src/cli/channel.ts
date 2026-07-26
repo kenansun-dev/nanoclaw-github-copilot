@@ -262,15 +262,21 @@ async function channelAdd(name: string | undefined, args: string[]): Promise<voi
     return;
   }
 
-  // Resolve a per-account botName. For accountId='default' we keep the
-  // historical `nanoclaw-<agentName>` shape (so existing deploys keep their
-  // Azure resource names). For non-default accounts we suffix the accountId
-  // so two accounts that resolve to the same agent name still get distinct
-  // Azure AD app + Bot resources (e.g. `nanoclaw-andy-bot-b`).
+  // Resolve a per-account botName. The ensure-existing lookup keys off this
+  // name (`az ad app list --display-name`, `az bot show --name`), so the base
+  // shape determines which Azure AD app + Bot resources get reused vs created.
+  // For accountId='default' the base is `ncl-<agentName>`; for non-default
+  // accounts we suffix the accountId so two accounts that resolve to the same
+  // agent name still get distinct resources (e.g. `ncl-andy-bot-b`).
+  // NOTE: renamed from the older `nanoclaw-<agentName>` prefix — existing
+  // deployments that were set up under the old prefix will not be matched by
+  // the ensure-existing lookup and would get fresh `ncl-*` resources on the
+  // next `--setup` (running bots are unaffected; they use appId/appPassword
+  // already in config, not the name).
   const resolveBotName = (cfg = config): string => {
     const agent = resolveAgent(cfg, agentId);
     const agentName = agent.name || agentId || 'default';
-    const base = `nanoclaw-${agentName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
+    const base = `ncl-${agentName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
     if (accountId === 'default') return base;
     const safeAccount = accountId.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     return `${base}-${safeAccount}`;

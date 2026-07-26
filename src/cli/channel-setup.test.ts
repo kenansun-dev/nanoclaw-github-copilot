@@ -145,13 +145,13 @@ describe('nanoclaw channel add teams --setup multi-account', () => {
     await runChannelCommand(['add', 'teams', '--setup', '--agent', 'main']);
     expect(memoryConfig.channels.teams).toBeDefined();
     expect(memoryConfig.channels.teams.enabled).toBe(true);
-    expect(memoryConfig.channels.teams.accounts.default.appId).toMatch(/^app-id-nanoclaw-andy$/);
+    expect(memoryConfig.channels.teams.accounts.default.appId).toMatch(/^app-id-ncl-andy$/);
     expect(memoryConfig.channels.teams.accounts.default.webhookPort).toBe(3978);
     // .env got written (single-account fallback path)
     const envWrites = writeFileSyncSpy.mock.calls.filter((c: any[]) => String(c[0]).endsWith('.env'));
     expect(envWrites.length).toBeGreaterThan(0);
     const envBody = String(envWrites[envWrites.length - 1][1]);
-    expect(envBody).toMatch(/MSTEAMS_APP_ID=app-id-nanoclaw-andy/);
+    expect(envBody).toMatch(/MSTEAMS_APP_ID=app-id-ncl-andy/);
     expect(envBody).toMatch(/MSTEAMS_APP_PASSWORD=secret-/);
   });
 
@@ -174,7 +174,7 @@ describe('nanoclaw channel add teams --setup multi-account', () => {
 
     // New account written with distinct botName (suffixed with accountId)
     expect(memoryConfig.channels.teams.accounts['bot-b']).toBeDefined();
-    expect(memoryConfig.channels.teams.accounts['bot-b'].appId).toBe('app-id-nanoclaw-coder-bot-b');
+    expect(memoryConfig.channels.teams.accounts['bot-b'].appId).toBe('app-id-ncl-coder-bot-b');
     expect(memoryConfig.channels.teams.accounts['bot-b'].appPassword).toMatch(/^secret-/);
 
     // Port auto-allocated to next free (3979)
@@ -199,8 +199,8 @@ describe('nanoclaw channel add teams --setup multi-account', () => {
 
     // bot-b and bot-c both used the 'coder' agent — confirm their botNames
     // are nonetheless distinct (account suffix), so Azure resources don't collide.
-    expect(memoryConfig.channels.teams.accounts['bot-b'].appId).toBe('app-id-nanoclaw-coder-bot-b');
-    expect(memoryConfig.channels.teams.accounts['bot-c'].appId).toBe('app-id-nanoclaw-coder-bot-c');
+    expect(memoryConfig.channels.teams.accounts['bot-b'].appId).toBe('app-id-ncl-coder-bot-b');
+    expect(memoryConfig.channels.teams.accounts['bot-c'].appId).toBe('app-id-ncl-coder-bot-c');
   });
 
   it('--webhookPort flag overrides auto-allocation', async () => {
@@ -261,7 +261,7 @@ describe('nanoclaw channel add teams --setup multi-account', () => {
     await runChannelCommand(['add', 'teams', '--setup-app', '--account', 'bot-b', '--agent', 'coder']);
 
     expect(memoryConfig.channels.teams.accounts.default.appId).toBe('app-id-existing');
-    expect(memoryConfig.channels.teams.accounts['bot-b'].appId).toBe('app-id-nanoclaw-coder-bot-b');
+    expect(memoryConfig.channels.teams.accounts['bot-b'].appId).toBe('app-id-ncl-coder-bot-b');
     const envWrites = writeFileSyncSpy.mock.calls.filter((c: any[]) => String(c[0]).endsWith('.env'));
     expect(envWrites.length).toBe(0);
   });
@@ -334,7 +334,7 @@ describe('nanoclaw channel add teams --transport proxy (relay)', () => {
     const acct = memoryConfig.channels.teams.accounts.default;
     expect(acct.transport).toBe('proxy');
     expect(acct.proxy.southEndpoint).toBe('relay-host:443');
-    expect(acct.appId).toMatch(/^app-id-nanoclaw-andy$/);
+    expect(acct.appId).toMatch(/^app-id-ncl-andy$/);
 
     // No devtunnel calls on the proxy path.
     const dtCalls = exec.mock.calls.map((c: any[]) => String(c[0])).filter((c: string) => c.startsWith('devtunnel'));

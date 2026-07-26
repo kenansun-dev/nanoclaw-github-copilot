@@ -14,11 +14,11 @@ CLI command per bot. Each bot gets its own:
 ```bash
 # First bot (default) — same as before
 nanoclaw channel add teams --setup --agent main
-# → bot named `nanoclaw-andy`, port 3978, writes accounts.default
+# → bot named `ncl-andy`, port 3978, writes accounts.default
 
 # Second bot — pass --account <id> and --agent <agentId>
 nanoclaw channel add teams --setup --account bot-b --agent coder
-# → bot named `nanoclaw-coder-bot-b`, port 3979, writes accounts.bot-b
+# → bot named `ncl-coder-bot-b`, port 3979, writes accounts.bot-b
 #   (port auto-allocated as max(in-use)+1)
 
 nanoclaw restart
@@ -31,9 +31,9 @@ per account.
 
 ## What `--setup --account <id>` does
 
-1. **Resolve a unique `botName`.** For `accountId='default'` it stays
-   `nanoclaw-<agentName>` (back-compat). For other accounts it suffixes
-   the accountId: `nanoclaw-<agentName>-<accountId>`. Two accounts that
+1. **Resolve a unique `botName`.** For `accountId='default'` it is
+   `ncl-<agentName>`. For other accounts it suffixes
+   the accountId: `ncl-<agentName>-<accountId>`. Two accounts that
    resolve to the same agent still get distinct Azure resources.
 
 2. **Allocate a webhook port.** Reuses
