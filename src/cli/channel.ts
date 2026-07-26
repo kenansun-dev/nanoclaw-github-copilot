@@ -262,24 +262,59 @@ async function channelAdd(name: string | undefined, args: string[]): Promise<voi
     return;
   }
 
+  // Sanitize a segment for use in an Azure resource name: lowercase, keep
+  // [a-z0-9-], collapse runs of '-', trim leading/trailing '-'.
+  const sanitizeSeg = (s: string): string =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+  // The az CLI user's UPN (e.g. "alice@contoso.com"), resolved once and cached.
+  // Empty string if az isn't logged in — setupApp() aborts on its own az check
+  // in that case, so the (non-namespaced) fallback name never actually gets used
+  // to touch Azure.
+  let cachedUpn: string | undefined;
+  const currentUpn = (): string => {
+    if (cachedUpn !== undefined) return cachedUpn;
+    const r = runCmd('az account show --query user.name -o tsv');
+    cachedUpn = r.ok ? r.output.trim() : '';
+    return cachedUpn;
+  };
+
   // Resolve a per-account botName. The ensure-existing lookup keys off this
   // name (`az ad app list --display-name`, `az bot show --name`), so the base
   // shape determines which Azure AD app + Bot resources get reused vs created.
-  // For accountId='default' the base is `ncl-<agentName>`; for non-default
-  // accounts we suffix the accountId so two accounts that resolve to the same
-  // agent name still get distinct resources (e.g. `ncl-andy-bot-b`).
-  // NOTE: renamed from the older `nanoclaw-<agentName>` prefix — existing
-  // deployments that were set up under the old prefix will not be matched by
-  // the ensure-existing lookup and would get fresh `ncl-*` resources on the
-  // next `--setup` (running bots are unaffected; they use appId/appPassword
-  // already in config, not the name).
+  //
+  // The name is namespaced by the current az user's UPN: `ncl-<upn>-<agentName>`
+  // (plus `-<accountId>` for non-default accounts). WITHOUT the UPN, two people
+  // in the same tenant who both keep the default agent name would each resolve
+  // to `ncl-andy`; because `az ad app list --display-name` returns ALL matches
+  // and we take `[0].appId`, the second person's `--setup` would find the FIRST
+  // person's app and `az ad app credential reset` it — silently hijacking the
+  // app and revoking the first person's secret (killing their bot). The UPN is
+  // unique within a tenant, so it isolates each operator's resources.
+  //
+  // NOTE: renamed from the older `nanoclaw-<agentName>` / `ncl-<agentName>`
+  // shapes — deployments set up under an old shape won't be matched by the
+  // ensure-existing lookup and would get fresh resources on the next `--setup`
+  // (running bots are unaffected; they use appId/appPassword already in config,
+  // not the name).
   const resolveBotName = (cfg = config): string => {
     const agent = resolveAgent(cfg, agentId);
-    const agentName = agent.name || agentId || 'default';
-    const base = `ncl-${agentName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
-    if (accountId === 'default') return base;
-    const safeAccount = accountId.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-    return `${base}-${safeAccount}`;
+    const agentSeg = sanitizeSeg(agent.name || agentId || 'default') || 'agent';
+    const suffix = accountId === 'default' ? agentSeg : `${agentSeg}-${sanitizeSeg(accountId)}`;
+    const upn = sanitizeSeg(currentUpn());
+    // az not logged in → fall back to the un-namespaced name (setupApp aborts).
+    if (!upn) return `ncl-${suffix}`;
+    // Azure Bot names cap at 64 chars. Keep the agent/account suffix intact
+    // (it's the per-operator multi-bot disambiguator) and truncate only the UPN
+    // segment if a very long UPN would push the whole name over the limit.
+    const prefix = 'ncl-';
+    const room = 64 - prefix.length - 1 - suffix.length; // chars left for the UPN
+    const upnSeg = upn.length > room ? sanitizeSeg(upn.slice(0, Math.max(1, room))) : upn;
+    return `${prefix}${upnSeg}-${suffix}`;
   };
 
   // Allocate a webhook port for this account. Reuses an existing
