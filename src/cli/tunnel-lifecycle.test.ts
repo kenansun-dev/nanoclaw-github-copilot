@@ -8,14 +8,26 @@
  * These tests pin the extracted helper's behavior: no-op when Teams is off /
  * transport is proxy, host when a tunnel exists and isn't hosting, skip when
  * already hosting, and fail-soft when devtunnel is missing.
+ *
+ * Observability (2026-07-16): every skip/no-op path must now print a reason,
+ * and a cold first `devtunnel list` must be retried once instead of silently
+ * eating the error. These tests pin both.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { execSync, spawn } from 'child_process';
+import { spawn } from 'child_process';
+import { winExecSync } from '../win-process.js';
 import fs from 'fs';
 
 vi.mock('child_process', async () => {
   const actual = await vi.importActual<typeof import('child_process')>('child_process');
-  return { ...actual, execSync: vi.fn(), spawn: vi.fn() };
+  return { ...actual, spawn: vi.fn() };
+});
+
+// list/show now go through winExecSync (execFile + windowsHide) so Windows
+// doesn't flash a console window; mock that instead of child_process.execSync.
+vi.mock('../win-process.js', async () => {
+  const actual = await vi.importActual<typeof import('../win-process.js')>('../win-process.js');
+  return { ...actual, winExecSync: vi.fn() };
 });
 
 const memoryConfig: any = { channels: {} };
@@ -26,7 +38,7 @@ vi.mock('../config-loader.js', async () => {
 
 import { ensureTunnelHosting, stopTrackedTunnel } from './tunnel-lifecycle.js';
 
-const execMock = execSync as unknown as ReturnType<typeof vi.fn>;
+const execMock = winExecSync as unknown as ReturnType<typeof vi.fn>;
 const spawnMock = spawn as unknown as ReturnType<typeof vi.fn>;
 
 function setConfig(cfg: any) {
@@ -34,42 +46,52 @@ function setConfig(cfg: any) {
   Object.assign(memoryConfig, cfg);
 }
 
+let logs: string[];
+
 beforeEach(() => {
   execMock.mockReset();
   spawnMock.mockReset();
   spawnMock.mockReturnValue({ pid: 4242, unref: () => {} } as any);
+  logs = [];
+  vi.spyOn(console, 'log').mockImplementation((...a: any[]) => {
+    logs.push(a.join(' '));
+  });
 });
 
 afterEach(() => vi.restoreAllMocks());
 
+const joined = () => logs.join('\n');
+
 describe('ensureTunnelHosting', () => {
-  it('no-ops when Teams is disabled', async () => {
+  it('no-ops (quiet) when Teams is disabled', async () => {
     setConfig({ channels: {} });
     await ensureTunnelHosting('/tmp/ws');
     expect(execMock).not.toHaveBeenCalled();
     expect(spawnMock).not.toHaveBeenCalled();
   });
 
-  it('no-ops when channel transport is proxy (relay, no local tunnel)', async () => {
+  it('logs and no-ops when channel transport is proxy (relay, no local tunnel)', async () => {
     setConfig({ channels: { teams: { enabled: true, transport: 'proxy' } } });
     await ensureTunnelHosting('/tmp/ws');
     expect(execMock).not.toHaveBeenCalled();
     expect(spawnMock).not.toHaveBeenCalled();
+    expect(joined()).toMatch(/proxy\/relay/);
   });
 
-  it('no-ops when every account is proxy transport', async () => {
+  it('logs and no-ops when every account is proxy transport', async () => {
     setConfig({
       channels: { teams: { enabled: true, accounts: { default: { transport: 'proxy' }, b: { transport: 'proxy' } } } },
     });
     await ensureTunnelHosting('/tmp/ws');
     expect(spawnMock).not.toHaveBeenCalled();
+    expect(joined()).toMatch(/proxy\/relay/);
   });
 
   it('hosts the tunnel when one exists and is not already hosting', async () => {
     setConfig({ channels: { teams: { enabled: true } } });
-    execMock.mockImplementation((cmd: string) => {
-      if (cmd === 'devtunnel list') return 'nanoclaw-abc1 nanoclaw Active\n';
-      if (cmd.startsWith('devtunnel show')) return 'Host connections : 0\n';
+    execMock.mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === 'list') return 'nanoclaw-abc1 nanoclaw Active\n';
+      if (args[0] === 'show') return 'Host connections : 0\n';
       return '';
     });
     const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined as any);
@@ -80,26 +102,89 @@ describe('ensureTunnelHosting', () => {
       expect.any(Object),
     );
     expect(writeSpy).toHaveBeenCalled();
+    expect(joined()).toMatch(/Starting devtunnel: nanoclaw-abc1/);
+    expect(joined()).toMatch(/DevTunnel started \(pid: 4242\)/);
   });
 
-  it('skips hosting when the tunnel is already hosting', async () => {
+  it('skips hosting (with a reason) when the tunnel is already hosting', async () => {
     setConfig({ channels: { teams: { enabled: true } } });
-    execMock.mockImplementation((cmd: string) => {
-      if (cmd === 'devtunnel list') return 'nanoclaw-abc1 nanoclaw Active\n';
-      if (cmd.startsWith('devtunnel show')) return 'Host connections : 1\n';
+    execMock.mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === 'list') return 'nanoclaw-abc1 nanoclaw Active\n';
+      if (args[0] === 'show') return 'Host connections : 1\n';
       return '';
     });
     await ensureTunnelHosting('/tmp/ws');
     expect(spawnMock).not.toHaveBeenCalled();
+    expect(joined()).toMatch(/already hosting: nanoclaw-abc1 \(connections: 1\)/);
   });
 
-  it('fail-soft when devtunnel is not installed', async () => {
+  it('reads hosting state case-insensitively (title-case "Host Connections")', async () => {
+    // devtunnel `show` on this CLI emits lowercase "Host connections", but the
+    // `list` table header is title-case and casing can drift across versions /
+    // platforms. A case-sensitive regex would read a hosting tunnel as "not
+    // hosting" and spawn a duplicate host. Pin the /i behavior.
+    setConfig({ channels: { teams: { enabled: true } } });
+    execMock.mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === 'list') return 'nanoclaw-abc1 nanoclaw Active\n';
+      if (args[0] === 'show') return 'Host Connections      : 2\n';
+      return '';
+    });
+    await ensureTunnelHosting('/tmp/ws');
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(joined()).toMatch(/already hosting: nanoclaw-abc1 \(connections: 2\)/);
+  });
+
+  it('retries a cold first `devtunnel list` and succeeds on the second attempt', async () => {
+    setConfig({ channels: { teams: { enabled: true } } });
+    let listCalls = 0;
+    execMock.mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === 'list') {
+        listCalls++;
+        if (listCalls === 1) throw new Error('ETIMEDOUT');
+        return 'nanoclaw-abc1 nanoclaw Active\n';
+      }
+      if (args[0] === 'show') return 'Host connections : 0\n';
+      return '';
+    });
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined as any);
+    await ensureTunnelHosting('/tmp/ws', { retryDelayMs: 0 });
+    expect(listCalls).toBe(2);
+    expect(spawnMock).toHaveBeenCalled();
+    expect(joined()).toMatch(/failed on first try .*retrying once/);
+  });
+
+  it('logs a clear NOT-hosting reason (not silence) when devtunnel fails twice', async () => {
     setConfig({ channels: { teams: { enabled: true } } });
     execMock.mockImplementation(() => {
       throw new Error('devtunnel: command not found');
     });
-    await expect(ensureTunnelHosting('/tmp/ws')).resolves.toBeUndefined();
+    await expect(ensureTunnelHosting('/tmp/ws', { retryDelayMs: 0 })).resolves.toBeUndefined();
     expect(spawnMock).not.toHaveBeenCalled();
+    expect(joined()).toMatch(/NOT hosting.*failed twice/);
+    expect(joined()).toMatch(/devtunnel user login/);
+  });
+
+  it('logs a reason when no nanoclaw tunnel is found', async () => {
+    setConfig({ channels: { teams: { enabled: true } } });
+    execMock.mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === 'list') return 'some-other-tunnel foo Active\n';
+      return '';
+    });
+    await ensureTunnelHosting('/tmp/ws', { retryDelayMs: 0 });
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(joined()).toMatch(/no "nanoclaw" tunnel found/);
+  });
+
+  it('does not start a host (and logs) when `devtunnel show` errors', async () => {
+    setConfig({ channels: { teams: { enabled: true } } });
+    execMock.mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === 'list') return 'nanoclaw-abc1 nanoclaw Active\n';
+      if (args[0] === 'show') throw new Error('boom');
+      return '';
+    });
+    await ensureTunnelHosting('/tmp/ws', { retryDelayMs: 0 });
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(joined()).toMatch(/"devtunnel show nanoclaw-abc1" failed/);
   });
 });
 
