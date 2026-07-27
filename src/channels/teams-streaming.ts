@@ -377,6 +377,17 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
         return;
       }
     }
+    // NOTE: the final `message` activity MUST NOT carry `streamSequence`.
+    // The Teams streaming spec is explicit: "For the final message,
+    // streamSequence must not be set." and the reference JSON for the
+    // end-streaming frame omits it entirely
+    // (learn.microsoft.com/.../bots/streaming-ux "Final Streaming").
+    // We previously stamped `streamSequence: this._nextSequence++` here,
+    // which is a strong suspect for the server rejecting the final frame
+    // with "Only end streaming type is allowed as a message activity"
+    // (kenan Teams repro 2026-07-27: every turn logged that reject 200ms
+    // after the typing-frame reject). Only `streamType: 'final'` +
+    // `streamId` belong on the end frame.
     const activity: Partial<TeamsActivity> = {
       type: 'message',
       text: finalText,
@@ -384,7 +395,6 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
         {
           type: 'streaminfo',
           streamType: 'final',
-          streamSequence: this._nextSequence++,
         },
       ],
     };
@@ -394,7 +404,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
       return id;
     } catch (err: any) {
       this.log.warn(
-        { err: err?.message ?? String(err) },
+        { err: err?.message ?? String(err), streamType: 'final', hasStreamId: !!this._streamId },
         'Teams streaming: final activity send failed; falling back to plain message',
       );
       // Last-ditch: send the final as a plain message so we don't
@@ -504,6 +514,18 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
         this._lastSent = textToSend;
       } catch (err: any) {
         const msg = String(err?.message ?? err);
+        // Diagnostic (kenan Teams repro 2026-07-27): capture the server's
+        // rejection detail so we can tell WHY a frame was refused
+        // (bootstrap informative vs continue streaming; error code/subcode
+        // from the Bot Connector). The BFA REST error stashes HTTP status
+        // on `statusCode`/`code` and the parsed body on `body`.
+        const wireDiag = {
+          isBootstrap: !this._bootstrapSent,
+          streamType: this._bootstrapSent ? 'streaming' : 'informative',
+          sequence: this._nextSequence - 1,
+          statusCode: err?.statusCode ?? err?.code ?? err?.status,
+          body: err?.body ?? err?.response?.body,
+        };
         if (err instanceof SendTimeoutError) {
           // Black-holed transport: the frame was accepted (or the socket
           // stalled) but never ACKed. Abort the stream so `end()` can
@@ -531,11 +553,14 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
           // Don't cancel — `end()` will send a non-streaming final.
           return;
         }
-        // Other errors: log and stop the stream. End() will try a
-        // plain-message fallback.
+        // Other errors (incl. the wire-protocol rejects
+        // "Only start streaming and continue streaming types are
+        // allowed..."): log with full diagnostic and stop the stream.
+        // end() will degrade to a plain-message fallback so the reply
+        // still lands.
         this.log.warn(
-          { err: msg, sequence: this._nextSequence - 1 },
-          'Teams streaming: chunk send failed; aborting stream',
+          { err: msg, ...wireDiag },
+          'Teams streaming: chunk send failed; aborting stream (end() will degrade to plain message)',
         );
         this._cancelled = true;
         return;
@@ -627,10 +652,41 @@ export function makeAdapterSender(opts: {
 }): ActivitySender {
   return async (activity: Partial<TeamsActivity>) => {
     let id: string | undefined;
+    // Delivery-guarantee fix (kenan Teams repro 2026-07-27): capture any
+    // error from `sendActivity` inside the logic callback and re-surface
+    // it to the caller (the streaming session).
+    //
+    // Why this is necessary: `continueConversation` runs our logic through
+    // the adapter's `runMiddleware`, which routes any thrown error to
+    // `adapter.onTurnError` (see botbuilder-core/botAdapter.js). The Teams
+    // adapter's `onTurnError` classifies streaming-wire rejects
+    // ("Only start streaming and continue streaming types are allowed...",
+    // "Only end streaming type is allowed...") as benign and returns
+    // WITHOUT re-throwing — so `continueConversation` resolves as if the
+    // send succeeded. The streaming session then never sees the failure,
+    // `_cancelled` stays false, and `end()`'s degrade-to-plain-message
+    // path (and the dispatcher's coalesced-final fallback) never fire →
+    // the agent's final answer is silently dropped and the user sees
+    // "typing" then nothing.
+    //
+    // By catching the error here and NOT re-throwing inside the callback,
+    // `onTurnError` is not invoked for outbound streaming sends (so it no
+    // longer swallows the signal, and it does not inject a spurious
+    // "Sorry, something went wrong." proactive message). We then re-throw
+    // after `continueConversation` resolves, which the streaming session's
+    // `_sendWithTimeout` treats like any other wire failure: abort the
+    // stream and degrade to a single plain `message`. onTurnError remains
+    // the catch-all for the INBOUND turn path, which is unaffected.
+    let sendError: unknown;
     await opts.adapter.continueConversation(opts.ref, async (ctx) => {
-      const res = await ctx.sendActivity(activity as any);
-      id = res?.id;
+      try {
+        const res = await ctx.sendActivity(activity as any);
+        id = res?.id;
+      } catch (err) {
+        sendError = err;
+      }
     });
+    if (sendError !== undefined) throw sendError;
     return id;
   };
 }

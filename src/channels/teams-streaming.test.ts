@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TeamsStreamingSession, SendTimeoutError, type ActivitySender, type TeamsActivity } from './teams-streaming.js';
+import {
+  TeamsStreamingSession,
+  SendTimeoutError,
+  makeAdapterSender,
+  type ActivitySender,
+  type TeamsActivity,
+} from './teams-streaming.js';
 
 /**
  * Tests for the Teams streaming wire protocol implementation.
@@ -764,5 +770,144 @@ describe('TeamsStreamingSession black-hole send timeout (2026-07-13)', () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe('SendTimeoutError');
     expect(err.message).toContain('8000');
+  });
+});
+
+/**
+ * Regression tests for the 2026-07-27 Teams delivery-guarantee bug
+ * (kenan repro: Windows Teams, agent shows "typing" then goes silent;
+ * every turn logged two suppressed wire rejects 200ms apart —
+ * "Only start streaming and continue streaming types are allowed as a
+ * typing activity" then "Only end streaming type is allowed as a
+ * message activity").
+ *
+ * Two independent defects combined to silently drop the final answer:
+ *   1. The final `message` frame carried `streamSequence`, which the
+ *      Teams streaming spec forbids ("For the final message,
+ *      streamSequence must not be set."). Strong suspect for the second
+ *      reject.
+ *   2. `makeAdapterSender` let `continueConversation` swallow send
+ *      errors: the adapter's `onTurnError` classifies streaming-wire
+ *      rejects as benign and returns without re-throwing, so
+ *      `continueConversation` resolved as success. The streaming session
+ *      never saw the failure, so neither `end()`'s degrade-to-plain path
+ *      nor the dispatcher's coalesced-final fallback ever fired.
+ */
+describe('Teams delivery-guarantee regression (2026-07-27)', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('final frame does NOT carry streamSequence (spec: must not be set on final)', async () => {
+    const { calls, sender } = makeSender();
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+
+    await s.chunk('a');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.chunk('ab');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.end('abc');
+
+    const final = calls[calls.length - 1];
+    expect(final.type).toBe('message');
+    expect(final.entities?.[0].streamType).toBe('final');
+    // The forbidden field must be absent (undefined), while the final
+    // frame still carries the streamId per the end-streaming contract.
+    expect(final.entities?.[0].streamSequence).toBeUndefined();
+    expect(typeof final.entities?.[0].streamId).toBe('string');
+
+    // Typing frames still carry a monotonic streamSequence starting at 1.
+    const typing = calls.filter((c) => c.type === 'typing');
+    expect(typing[0].entities?.[0].streamSequence).toBe(1);
+  });
+
+  it('a wire-reject on the streaming frames still lands the final answer as a plain message', async () => {
+    // Simulate the exact repro: the server rejects the typing (bootstrap)
+    // frame with the wire-protocol error. The session must abort streaming
+    // and end() must degrade to a single plain `message` so the answer is
+    // NOT lost.
+    const calls: Array<Partial<TeamsActivity>> = [];
+    const sender: ActivitySender = async (activity) => {
+      calls.push(JSON.parse(JSON.stringify(activity)));
+      if (activity.type === 'typing') {
+        throw new Error('Only start streaming and continue streaming types are allowed as a typing activity');
+      }
+      return 'msg-final';
+    };
+
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+
+    await s.chunk('partial answer');
+    await new Promise((r) => setTimeout(r, 5));
+    const id = await s.end('the complete answer');
+
+    const messages = calls.filter((c) => c.type === 'message');
+    // Exactly one final message lands (no duplicates).
+    expect(messages.length).toBe(1);
+    expect(messages[0].text).toBe('the complete answer');
+    // Degraded final is a plain message: no streaminfo entity, or Teams
+    // rejects it ("Only end streaming type is allowed as a message activity").
+    expect(messages[0].entities ?? []).toEqual([]);
+    expect(id).toBe('msg-final');
+  });
+
+  it('isCancelled() trips after a wire-reject so the dispatcher can coalesce', async () => {
+    const sender: ActivitySender = async (activity) => {
+      if (activity.type === 'typing') {
+        throw new Error('Only start streaming and continue streaming types are allowed as a typing activity');
+      }
+      return 'ok';
+    };
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+
+    await s.chunk('x');
+    await new Promise((r) => setTimeout(r, 5));
+
+    // Wire died (not an explicit dispatcher cancel) → isCancelled() true,
+    // which is the signal index.ts's probeWireDeath() reads to arm the
+    // coalesced-final buffer.
+    expect(s.isCancelled()).toBe(true);
+  });
+});
+
+/**
+ * makeAdapterSender must re-surface send errors instead of letting
+ * `continueConversation` swallow them. This is the core of defect #2
+ * above: without it, a rejected send looks like success to the session.
+ */
+describe('makeAdapterSender error propagation (2026-07-27)', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('re-throws an error raised by sendActivity inside continueConversation', async () => {
+    // Faithful stand-in for BotFrameworkAdapter.continueConversation: it
+    // runs the logic callback and resolves normally (the real adapter
+    // routes a THROWN error to onTurnError, but our callback no longer
+    // throws — it captures the error for re-throw after resolve).
+    const adapter = {
+      continueConversation: async (_ref: any, logic: (ctx: any) => Promise<void>) => {
+        const ctx = {
+          sendActivity: async () => {
+            throw new Error('Only end streaming type is allowed as a message activity');
+          },
+        };
+        await logic(ctx);
+      },
+    };
+    const sender = makeAdapterSender({ adapter: adapter as any, ref: {} as any });
+
+    await expect(sender({ type: 'message', text: 'hi' })).rejects.toThrow(/Only end streaming type is allowed/);
+  });
+
+  it('returns the activity id on success', async () => {
+    const adapter = {
+      continueConversation: async (_ref: any, logic: (ctx: any) => Promise<void>) => {
+        const ctx = { sendActivity: async () => ({ id: 'server-id-123' }) };
+        await logic(ctx);
+      },
+    };
+    const sender = makeAdapterSender({ adapter: adapter as any, ref: {} as any });
+    await expect(sender({ type: 'typing', text: 'x' })).resolves.toBe('server-id-123');
   });
 });
