@@ -58,6 +58,15 @@ export interface ContainerInput {
    * for scheduled-task or programmatic invocations.
    */
   triggeringUserId?: string;
+  /**
+   * "Is this turn allowed to see every group's tasks?" = isDefaultAgent OR
+   * isOwner(triggeringUserId), computed host-side (only the host can call
+   * isOwner()). Drives the container `list_tasks` read filter so an owner
+   * chatting from a non-default-agent folder sees all tasks — parity with
+   * the owner-override the write-path IPC gates already apply (src/ipc.ts).
+   * Undefined/false for scheduled-task or programmatic invocations.
+   */
+  isOperator?: boolean;
   isScheduledTask?: boolean;
   /** When isScheduledTask=true, the scheduled task id for processName formatting. */
   taskId?: string;
@@ -806,7 +815,13 @@ export async function runContainerAgent(
 
 export function writeTasksSnapshot(
   groupFolder: string,
-  isDefaultAgent: boolean,
+  // "Can this turn see every group's tasks?" = default-agent OR owner.
+  // Computed host-side by the caller because only the host has DB access
+  // to isOwner(); the container/runner cannot re-derive it. Mirrors the
+  // owner-override the write-path IPC gates already apply (see
+  // src/ipc.ts processTaskIpc + ipc-privilege-gates.test.ts "isOwner ||
+  // isDefaultAgent"). Non-operator groups still see only their own folder.
+  canSeeAllTasks: boolean,
   tasks: Array<{
     id: string;
     groupFolder: string;
@@ -836,8 +851,8 @@ export function writeTasksSnapshot(
   // across `/tasks`, `nanoclaw task list`, and the agent's list_tasks.
   const userTasks = tasks.filter((t) => t.kind !== 'system');
 
-  // Main sees all tasks, others only see their own
-  const filteredTasks = isDefaultAgent ? userTasks : userTasks.filter((t) => t.groupFolder === groupFolder);
+  // Operator (default-agent OR owner) sees all tasks; others only their own.
+  const filteredTasks = canSeeAllTasks ? userTasks : userTasks.filter((t) => t.groupFolder === groupFolder);
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
   fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));

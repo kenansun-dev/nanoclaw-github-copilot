@@ -53,6 +53,7 @@ import { shadowRoute } from './shadow-inbound.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { folderIsDefaultAgent } from './v2-default-agent.js';
+import { isOwner } from './modules/permissions/db/user-roles.js';
 import { findChannel, formatMessages, formatOutbound, formatConversationContext } from './text-format.js';
 import { restoreRemoteControl, startRemoteControl, stopRemoteControl } from './remote-control.js';
 import { isSenderAllowed, isTriggerAllowed, loadSenderAllowlist, shouldDropMessage } from './sender-allowlist.js';
@@ -1173,15 +1174,23 @@ async function runAgent(
   // mount-security.validateMount, host-runner template path) and the
   // tasks/groups snapshot writers.
   const isDefaultAgent = folderIsDefaultAgent(group.folder) === true;
+  // Operator = default-agent OR owner. Owner chatting from a
+  // non-default-agent folder (e.g. a Teams DM whose folder != 'main')
+  // must still see all tasks in `list_tasks`, matching the owner view
+  // `/tasks` already grants (src/slash-commands.ts) and the owner-override
+  // the write-path IPC gates already apply (src/ipc.ts processTaskIpc).
+  // isOwner() reads user_roles; only the host can call it, so we resolve
+  // the flag here and thread it through the snapshot + ContainerInput.
+  const isOperator = isDefaultAgent || (triggeringUserId ? isOwner(triggeringUserId) : false);
   const agent = resolveAgentForChat(chatJid);
   const provider = getAgentProvider(agent);
   const sessionId = sessions[group.folder]?.[provider];
 
-  // Update tasks snapshot for container to read (filtered by group)
+  // Update tasks snapshot for container to read (filtered by operator scope)
   const tasks = getAllTasks();
   writeTasksSnapshot(
     group.folder,
-    isDefaultAgent,
+    isOperator,
     tasks.map((t) => ({
       id: t.id,
       groupFolder: t.group_folder,
@@ -1221,6 +1230,7 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isDefaultAgent: isDefaultAgent,
+        isOperator,
         triggeringUserId,
         assistantName: ASSISTANT_NAME,
       },
@@ -2224,7 +2234,13 @@ async function main(): Promise<void> {
         kind: t.kind,
       }));
       for (const group of Object.values(registeredGroups)) {
-        // Bucket A: dual-read for tasks snapshot writer.
+        // Best-effort between-turns refresh. No per-user context here, so
+        // we can only grant the default-agent folder the all-tasks view;
+        // an owner's cross-folder visibility is (re)applied on their next
+        // turn by the operator-aware write in runAgent(). Writing
+        // operator=true for every folder here would leak all tasks into
+        // non-owner folders' snapshots, so we deliberately keep this
+        // folder-scoped.
         writeTasksSnapshot(group.folder, folderIsDefaultAgent(group.folder) === true, taskRows);
       }
     },

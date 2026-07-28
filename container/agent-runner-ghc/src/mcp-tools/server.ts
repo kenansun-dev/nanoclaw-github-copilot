@@ -36,12 +36,19 @@ export const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 // Legacy NANOCLAW_IS_MAIN env was retired alongside the v1 isMain field.
 export const isDefaultAgent = process.env.NANOCLAW_IS_DEFAULT_AGENT === '1';
 
+// Operator = default-agent OR owner (host-resolved via isOwner, since only
+// the host has DB access to user_roles). Drives the `list_tasks` read
+// filter so an owner chatting from a non-default-agent folder still sees
+// every group's tasks — parity with the owner view `/tasks` grants and the
+// owner-override the write-path IPC gates already apply. Falls back to
+// isDefaultAgent when the env is absent (older host writing new snapshot).
+export const isOperator = process.env.NANOCLAW_IS_OPERATOR === '1' || process.env.NANOCLAW_IS_DEFAULT_AGENT === '1';
+
 // Channel-qualified user id of the user whose latest message triggered
 // this turn (e.g. `telegram:8731187021`). Stamped onto IPC payloads so
 // the host can apply isOwner privilege gates without re-deriving identity.
 // Empty env => undefined (HR list #3, 2026-05-16 isOwner phase 1).
-export const triggeringUserId: string | undefined =
-  process.env.NANOCLAW_TRIGGERING_USER_ID || undefined;
+export const triggeringUserId: string | undefined = process.env.NANOCLAW_TRIGGERING_USER_ID || undefined;
 
 // ---------------------------------------------------------------------------
 // Atomic IPC file write (preserved verbatim)

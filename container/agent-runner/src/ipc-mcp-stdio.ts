@@ -23,6 +23,11 @@ const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 // v2-only (PR #49): NANOCLAW_IS_DEFAULT_AGENT is the sole signal.
 // Legacy NANOCLAW_IS_MAIN env was retired alongside the v1 isMain field.
 const isDefaultAgent = process.env.NANOCLAW_IS_DEFAULT_AGENT === '1';
+// Operator = default-agent OR owner (host-resolved via isOwner). Drives the
+// `list_tasks` read filter so an owner chatting from a non-default-agent
+// folder still sees every group's tasks. Falls back to isDefaultAgent when
+// the env is absent (older host writing a new snapshot).
+const isOperator = process.env.NANOCLAW_IS_OPERATOR === '1' || process.env.NANOCLAW_IS_DEFAULT_AGENT === '1';
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -223,7 +228,9 @@ server.tool(
 
       const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
 
-      const tasks = isDefaultAgent ? allTasks : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
+      const tasks = isOperator
+        ? allTasks
+        : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
 
       if (tasks.length === 0) {
         return {
