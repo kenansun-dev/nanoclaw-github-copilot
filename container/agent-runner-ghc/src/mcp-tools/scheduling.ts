@@ -18,6 +18,7 @@ import {
   chatJid,
   groupFolder,
   isDefaultAgent,
+  isOperator,
   triggeringUserId,
 } from './server.js';
 import { formatTasksText, type TaskRow } from '../cli-shared/task-format.js';
@@ -173,7 +174,7 @@ server.tool(
         Record<string, unknown>
       >;
 
-      const filtered = isDefaultAgent
+      const filtered = isOperator
         ? allTasks
         : allTasks.filter((t) => (t as { groupFolder?: string }).groupFolder === groupFolder);
 
@@ -199,7 +200,7 @@ server.tool(
         };
       });
 
-      const text = formatTasksText(rows, { compact: !isDefaultAgent });
+      const text = formatTasksText(rows, { compact: !isOperator });
       return { content: [{ type: 'text' as const, text }] };
     } catch (err) {
       return {

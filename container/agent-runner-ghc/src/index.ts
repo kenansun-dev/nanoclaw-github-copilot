@@ -29,6 +29,9 @@ interface ContainerInput {
   isDefaultAgent: boolean;
   /** Channel-qualified user id of the latest sender (e.g. `telegram:123`). */
   triggeringUserId?: string;
+  /** Host-resolved: isDefaultAgent OR isOwner(triggeringUserId). Drives the
+   *  `list_tasks` read filter so an owner sees all tasks from any folder. */
+  isOperator?: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
   model?: string;
@@ -42,10 +45,7 @@ interface ContainerInput {
  * import time). Mirrors src/container-runner.ts `ContainerProgressEnvelope`
  * byte-for-byte.
  */
-import {
-  toProgressEnvelope,
-  type ContainerProgressEnvelope,
-} from './progress-envelope.js';
+import { toProgressEnvelope, type ContainerProgressEnvelope } from './progress-envelope.js';
 
 interface ContainerOutput {
   status: 'success' | 'error' | 'thinking' | 'progress';
@@ -464,6 +464,11 @@ async function main(): Promise<void> {
               // v2-only (PR #49): only NANOCLAW_IS_DEFAULT_AGENT remains;
               // legacy NANOCLAW_IS_MAIN was retired with the v1 isMain field.
               NANOCLAW_IS_DEFAULT_AGENT: containerInput.isDefaultAgent ? '1' : '0',
+              // Operator = default-agent OR owner (host-resolved via
+              // isOwner). Lets `list_tasks` show all tasks when an owner
+              // chats from a non-default-agent folder — parity with the
+              // owner-override the write-path IPC gates already apply.
+              NANOCLAW_IS_OPERATOR: containerInput.isOperator ? '1' : '0',
               NANOCLAW_TRIGGERING_USER_ID: containerInput.triggeringUserId ?? '',
             },
             tools: ['*'],
