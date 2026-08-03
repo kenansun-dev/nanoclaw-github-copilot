@@ -28,7 +28,26 @@ function useColorFor(stream: NodeJS.WriteStream): boolean {
   return stream === process.stderr ? STDERR_IS_TTY : STDOUT_IS_TTY;
 }
 
-const threshold = LEVELS[(process.env.LOG_LEVEL as Level) || 'info'] ?? LEVELS.info;
+// Runtime log threshold. Fork change (2026-08-03 B3): upstream freezes
+// this as a `const` read once at module load, so `nanoclaw loglevel <x>`
+// (which updates the mutable level in log-extensions.ts) never actually
+// changed what `emit()` gates on — a silent no-op (kenan hit this: tail
+// stayed error-only after `ncl loglevel debug`). Make it a `let` and let
+// `setLogThreshold` (called by log-extensions' setLogLevel/applyConfigLogLevel)
+// push the effective level down so runtime changes take effect. log.ts
+// does NOT import log-extensions, so no import cycle.
+let threshold: number = LEVELS[(process.env.LOG_LEVEL as Level) || 'info'] ?? LEVELS.info;
+
+/**
+ * Fork-only (B3): update the live threshold that `emit()` gates on.
+ * The log-level *policy* (env-lock, force-unlock, validation) stays in
+ * log-extensions.ts; this is just the downstream sink so a runtime change
+ * is honored by the actual emit gate.
+ */
+export function setLogThreshold(level: string): void {
+  const next = (LEVELS as Record<string, number>)[level];
+  if (next != null) threshold = next;
+}
 
 function formatErr(err: unknown): string {
   if (err instanceof Error) {

@@ -67,3 +67,56 @@ describe('logger runtime control', () => {
     expect(getLogLevel()).toBe('debug');
   });
 });
+
+/**
+ * B3 regression (2026-08-03): the pre-fix bug was that setLogLevel only
+ * updated the *name* returned by getLogLevel(), while emit()'s gate in
+ * log.ts kept comparing against a frozen module-const `threshold`. So
+ * `ncl loglevel debug` reported success but produced zero extra output.
+ * These tests assert the actual emit gate moves, not just the label.
+ */
+describe('B3: setLogLevel moves the real emit gate (not just the label)', () => {
+  async function captureStdout(fn: () => void): Promise<string> {
+    const chunks: string[] = [];
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout as any).write = (s: any) => {
+      chunks.push(typeof s === 'string' ? s : String(s));
+      return true;
+    };
+    try {
+      fn();
+    } finally {
+      (process.stdout as any).write = orig;
+    }
+    return chunks.join('');
+  }
+
+  it('emits debug lines after setLogLevel(debug), and suppresses them after setLogLevel(warn)', async () => {
+    const { log } = await import('./log.js');
+
+    setLogLevel('warn', { force: true });
+    const suppressed = await captureStdout(() => log.debug('DEBUG_SHOULD_BE_HIDDEN'));
+    expect(suppressed).not.toContain('DEBUG_SHOULD_BE_HIDDEN');
+
+    setLogLevel('debug', { force: true });
+    const shown = await captureStdout(() => log.debug('DEBUG_SHOULD_SHOW'));
+    expect(shown).toContain('DEBUG_SHOULD_SHOW');
+
+    // Flip back down: the gate must tighten again (this is the exact
+    // no-op the fix addresses — previously the gate never changed).
+    setLogLevel('warn', { force: true });
+    const suppressedAgain = await captureStdout(() => log.debug('DEBUG_HIDDEN_AGAIN'));
+    expect(suppressedAgain).not.toContain('DEBUG_HIDDEN_AGAIN');
+
+    setLogLevel('info', { force: true });
+  });
+
+  it('applyConfigLogLevel also moves the emit gate', async () => {
+    const { log } = await import('./log.js');
+    setLogLevel('info', { force: true });
+    applyConfigLogLevel('debug');
+    const shown = await captureStdout(() => log.debug('CFG_DEBUG_SHOWS'));
+    expect(shown).toContain('CFG_DEBUG_SHOWS');
+    setLogLevel('info', { force: true });
+  });
+});
