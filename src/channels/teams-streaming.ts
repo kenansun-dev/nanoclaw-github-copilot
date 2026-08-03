@@ -115,6 +115,55 @@ export class SendTimeoutError extends Error {
   }
 }
 
+/**
+ * Extract the server's rejection detail from a Bot Framework send error.
+ *
+ * B1 (kenan Teams repro 2026-08-03): the previous diagnostic read
+ * `err.body` / `err.response.body`, both of which are `undefined` for the
+ * errors BFA actually throws now — so the live log showed `body=undefined`
+ * and the *why* of the 400 was lost. BFA `@botframework-connector` routes
+ * through `@azure/core-rest-pipeline`, whose `RestError`
+ * (`@typespec/ts-http-runtime`) carries:
+ *   - `statusCode`  HTTP status (number)
+ *   - `code`        Bot Connector error code, lifted from
+ *                   `response.parsedBody.error.code` by
+ *                   `@azure/core-client` deserializationPolicy
+ *   - `message`     server reason text (e.g. "Only start streaming...")
+ *   - `response.bodyAsText`     raw JSON body string
+ *   - `response.parsedBody.error` structured `{ code, message }`
+ * We surface all of them (bodyText clamped) so the next occurrence is
+ * self-diagnosing and can disambiguate suspect B-i (local streamId) vs
+ * B-ii (service-side change) without a live debug session.
+ */
+export function extractWireRejectDetail(err: any): {
+  statusCode?: number | string;
+  code?: string;
+  reason?: string;
+  bodyText?: string;
+} {
+  const resp = err?.response;
+  const parsedErr = resp?.parsedBody?.error;
+  const rawBody = resp?.bodyAsText ?? err?.body ?? resp?.body;
+  let bodyText: string | undefined;
+  if (typeof rawBody === 'string') {
+    bodyText = rawBody;
+  } else if (rawBody != null) {
+    try {
+      bodyText = JSON.stringify(rawBody);
+    } catch {
+      bodyText = String(rawBody);
+    }
+  }
+  // Keep logs bounded — the reason string is what matters, not a wall of body.
+  if (bodyText && bodyText.length > 600) bodyText = bodyText.slice(0, 600) + '…';
+  return {
+    statusCode: err?.statusCode ?? err?.code ?? err?.status,
+    code: parsedErr?.code ?? err?.code,
+    reason: parsedErr?.message ?? err?.message,
+    bodyText,
+  };
+}
+
 // --- Types: minimal, deliberately narrow to ease unit testing ----------
 
 /**
@@ -333,9 +382,18 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     if (this._cancelled || !this._isStreamingChannel) {
       try {
         const id = await this._sendWithTimeout({ type: 'message', text: finalText });
+        // B5 (2026-08-03): tag which terminal path delivered so an
+        // error-only log tells us how the reply landed (or that it didn't).
+        this.log.info(
+          { endPath: 'cancelled-early-degrade', delivered: true, hasId: !!id },
+          'Teams reply delivered via plain-degraded (wire cancelled before drain)',
+        );
         return id;
       } catch (err: any) {
-        this.log.warn({ err: err?.message ?? String(err) }, 'Teams streaming: degraded final send failed');
+        this.log.warn(
+          { endPath: 'cancelled-early-degrade', delivered: false, ...extractWireRejectDetail(err) },
+          'Teams streaming: degraded final send failed (reply DROPPED)',
+        );
         return;
       }
     }
@@ -350,9 +408,16 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     if (this._cancelled || !this._isStreamingChannel) {
       try {
         const id = await this._sendWithTimeout({ type: 'message', text: finalText });
+        this.log.info(
+          { endPath: 'cancelled-postdrain-degrade', delivered: true, hasId: !!id },
+          'Teams reply delivered via plain-degraded (wire cancelled during drain)',
+        );
         return id;
       } catch (err: any) {
-        this.log.warn({ err: err?.message ?? String(err) }, 'Teams streaming: post-drain degraded final send failed');
+        this.log.warn(
+          { endPath: 'cancelled-postdrain-degrade', delivered: false, ...extractWireRejectDetail(err) },
+          'Teams streaming: post-drain degraded final send failed (reply DROPPED)',
+        );
         return;
       }
     }
@@ -368,11 +433,15 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     if (!this._streamId) {
       try {
         const id = await this._sendWithTimeout({ type: 'message', text: finalText });
+        this.log.info(
+          { endPath: 'no-streamId-degrade', delivered: true, hasId: !!id },
+          'Teams reply delivered via plain-degraded (no streamId obtained)',
+        );
         return id;
       } catch (err: any) {
         this.log.warn(
-          { err: err?.message ?? String(err) },
-          'Teams streaming: final without streamId, plain send failed',
+          { endPath: 'no-streamId-degrade', delivered: false, ...extractWireRejectDetail(err) },
+          'Teams streaming: final without streamId, plain send failed (reply DROPPED)',
         );
         return;
       }
@@ -401,10 +470,14 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     this._stampStreamId(activity);
     try {
       const id = await this._sendWithTimeout(activity);
+      this.log.info(
+        { endPath: 'final-frame', delivered: true, hasId: !!id },
+        'Teams reply delivered via streaming final frame',
+      );
       return id;
     } catch (err: any) {
       this.log.warn(
-        { err: err?.message ?? String(err), streamType: 'final', hasStreamId: !!this._streamId },
+        { endPath: 'final-frame', streamType: 'final', hasStreamId: !!this._streamId, ...extractWireRejectDetail(err) },
         'Teams streaming: final activity send failed; falling back to plain message',
       );
       // Last-ditch: send the final as a plain message so we don't
@@ -412,9 +485,20 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
       // they only make sense inside an active stream.
       try {
         const id = await this._sendWithTimeout({ type: 'message', text: finalText });
+        this.log.info(
+          { endPath: 'final-frame-plain-fallback', delivered: true, hasId: !!id },
+          'Teams reply delivered via plain fallback (final frame rejected)',
+        );
         return id;
       } catch (err2: any) {
-        this.log.error({ err: err2?.message ?? String(err2) }, 'Teams streaming: fallback final send also failed');
+        // Both the streaming final AND the plain fallback failed: the
+        // reply is genuinely lost. B5 tags this so an error-only export
+        // makes the drop unambiguous; A2 (dispatcher) turns this into a
+        // cursor rollback so the turn can retry instead of vanishing.
+        this.log.error(
+          { endPath: 'total-failure', delivered: false, ...extractWireRejectDetail(err2) },
+          'Teams streaming: fallback final send also failed (reply DROPPED)',
+        );
       }
     }
   }
@@ -514,17 +598,16 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
         this._lastSent = textToSend;
       } catch (err: any) {
         const msg = String(err?.message ?? err);
-        // Diagnostic (kenan Teams repro 2026-07-27): capture the server's
-        // rejection detail so we can tell WHY a frame was refused
-        // (bootstrap informative vs continue streaming; error code/subcode
-        // from the Bot Connector). The BFA REST error stashes HTTP status
-        // on `statusCode`/`code` and the parsed body on `body`.
+        // Diagnostic (kenan Teams repro 2026-07-27, body fix 2026-08-03 B1):
+        // capture the server's rejection detail so we can tell WHY a frame
+        // was refused (bootstrap informative vs continue streaming; error
+        // code/subcode + raw body from the Bot Connector). See
+        // `extractWireRejectDetail` for where BFA now stashes these.
         const wireDiag = {
           isBootstrap: !this._bootstrapSent,
           streamType: this._bootstrapSent ? 'streaming' : 'informative',
           sequence: this._nextSequence - 1,
-          statusCode: err?.statusCode ?? err?.code ?? err?.status,
-          body: err?.body ?? err?.response?.body,
+          ...extractWireRejectDetail(err),
         };
         if (err instanceof SendTimeoutError) {
           // Black-holed transport: the frame was accepted (or the socket

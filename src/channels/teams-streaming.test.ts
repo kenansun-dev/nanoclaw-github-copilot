@@ -3,6 +3,7 @@ import {
   TeamsStreamingSession,
   SendTimeoutError,
   makeAdapterSender,
+  extractWireRejectDetail,
   type ActivitySender,
   type TeamsActivity,
 } from './teams-streaming.js';
@@ -909,5 +910,116 @@ describe('makeAdapterSender error propagation (2026-07-27)', () => {
     };
     const sender = makeAdapterSender({ adapter: adapter as any, ref: {} as any });
     await expect(sender({ type: 'typing', text: 'x' })).resolves.toBe('server-id-123');
+  });
+});
+
+describe('extractWireRejectDetail (B1: 2026-08-03 body=undefined fix)', () => {
+  it('pulls statusCode/code/reason/body from the real BFA RestError shape', () => {
+    // Shape produced by @azure/core-client deserializationPolicy for a
+    // Bot Connector 400: RestError.message = server reason, .code lifted
+    // from parsedBody.error.code, raw JSON on response.bodyAsText.
+    const err: any = new Error('Only start streaming and continue streaming types are allowed as a typing activity');
+    err.statusCode = 400;
+    err.code = 'BadArgument';
+    err.response = {
+      bodyAsText:
+        '{"error":{"code":"BadArgument","message":"Only start streaming and continue streaming types are allowed as a typing activity"}}',
+      parsedBody: {
+        error: {
+          code: 'BadArgument',
+          message: 'Only start streaming and continue streaming types are allowed as a typing activity',
+        },
+      },
+    };
+    const d = extractWireRejectDetail(err);
+    expect(d.statusCode).toBe(400);
+    expect(d.code).toBe('BadArgument');
+    expect(d.reason).toMatch(/Only start streaming/);
+    // The old diagnostic read err.body / err.response.body — both absent
+    // here (the exact live `body=undefined`). bodyText must come from
+    // response.bodyAsText instead.
+    expect(d.bodyText).toContain('BadArgument');
+    expect(err.body).toBeUndefined();
+    expect(err.response.body).toBeUndefined();
+  });
+
+  it('falls back to err.message when no structured body is present', () => {
+    const err: any = new Error('socket hang up');
+    err.statusCode = undefined;
+    const d = extractWireRejectDetail(err);
+    expect(d.reason).toBe('socket hang up');
+    expect(d.bodyText).toBeUndefined();
+  });
+
+  it('clamps oversized body text so logs stay bounded', () => {
+    const big = 'x'.repeat(5000);
+    const err: any = new Error('boom');
+    err.response = { bodyAsText: big };
+    const d = extractWireRejectDetail(err);
+    expect(d.bodyText!.length).toBeLessThanOrEqual(601);
+    expect(d.bodyText!.endsWith('\u2026')).toBe(true);
+  });
+
+  it('stringifies a non-string body object', () => {
+    const err: any = new Error('boom');
+    err.body = { error: { code: 'X', message: 'y' } };
+    const d = extractWireRejectDetail(err);
+    expect(d.bodyText).toContain('"code":"X"');
+  });
+});
+
+describe('B5: end-path delivery-outcome instrumentation (2026-08-03)', () => {
+  function capturingLog() {
+    const info: Array<{ data: any; msg: string }> = [];
+    const warn: Array<{ data: any; msg: string }> = [];
+    const error: Array<{ data: any; msg: string }> = [];
+    const log = {
+      info: (data: any, msg: string) => info.push({ data, msg }),
+      warn: (data: any, msg: string) => warn.push({ data, msg }),
+      error: (data: any, msg: string) => error.push({ data, msg }),
+      debug: () => {},
+    } as any;
+    return { log, info, warn, error };
+  }
+
+  it('tags final-frame delivery with endPath + delivered=true on the happy path', async () => {
+    const { calls, sender } = makeSender();
+    const { log, info } = capturingLog();
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log });
+    await s.chunk('a');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.end('abc');
+    void calls;
+    const delivered = info.find((l) => l.data?.endPath === 'final-frame');
+    expect(delivered).toBeDefined();
+    expect(delivered!.data.delivered).toBe(true);
+  });
+
+  it('tags total-failure with delivered=false + reject detail when both final AND plain fail', async () => {
+    // Every send rejects → final frame fails, last-ditch plain also fails.
+    // B5 must emit endPath=total-failure delivered=false carrying the
+    // server reason (so an error-only log shows the drop + why).
+    const sender: ActivitySender = async (activity) => {
+      const err: any = new Error('Only end streaming type is allowed as a message activity');
+      err.statusCode = 400;
+      err.response = {
+        bodyAsText: '{"error":{"code":"BadArgument","message":"Only end streaming type is allowed"}}',
+        parsedBody: { error: { code: 'BadArgument', message: 'Only end streaming type is allowed' } },
+      };
+      void activity;
+      throw err;
+    };
+    const { log, error } = capturingLog();
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log });
+    // Prime a streamId (chunk bootstrap will also reject, flipping
+    // _cancelled → end() takes the cancelled-early-degrade path). To
+    // exercise the final-frame → total-failure branch we drive end()
+    // directly on a session whose stream is still "live".
+    await s.end('final answer text');
+    const drop = error.find((l) => l.data?.endPath === 'total-failure' || l.data?.delivered === false);
+    expect(drop).toBeDefined();
+    expect(drop!.data.delivered).toBe(false);
+    // Reject detail must be present (not body=undefined).
+    expect(String(drop!.data.reason ?? drop!.data.bodyText ?? '')).toMatch(/streaming type is allowed|BadArgument/);
   });
 });

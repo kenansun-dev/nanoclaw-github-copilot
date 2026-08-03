@@ -97,20 +97,6 @@ from error-only logs:
 
 We DO NOT bet B. The fix must not depend on B being resolved.
 
-**Defect B — why streaming is rejected at all (❓ UNPROVEN, 2 suspects)**
-`body=undefined` in the log → the server's rejection detail was never
-captured, so the *why* is unproven. Competing suspects, indistinguishable
-from error-only logs:
-- B-i: we stamp a **locally-minted streamId** on the bootstrap
-  (informative) frame (`_stampStreamId` stamps every frame incl. the
-  first; `_streamId = randomUUID()` at construction, intentional 5/29
-  "bug 1" fix for continuation frames). Spec for the *start* frame may
-  not want a client streamId → server rejects.
-- B-ii: Teams service-side change (there is an upstream issue where the
-  same 400 broke MS's own SDK), independent of our streamId.
-
-We DO NOT bet B. The fix must not depend on B being resolved.
-
 ## 3. Fix design (one PR, 3 layers)
 
 ### Layer A — Delivery guarantee (deterministic, root-cause-independent)
