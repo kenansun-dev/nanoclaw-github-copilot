@@ -167,6 +167,18 @@ export interface StreamHandle {
    * Slack) may always return false.
    */
   isCancelled?(): boolean;
+
+  /**
+   * A2 (2026-08-03): true only after `end()` has run and EVERY publish
+   * attempt for the final reply failed (e.g. Teams streaming final frame
+   * rejected AND the plain last-ditch fallback also rejected). The
+   * dispatcher awaits `end()` then checks this: when true it must NOT mark
+   * the turn delivered/finalized and should roll the message cursor back
+   * so the turn retries, instead of the reply silently vanishing (kenan
+   * Teams repro 2026-08-03). Channels that always deliver (or that have no
+   * total-failure path) may omit this or return false.
+   */
+  endFailed?(): boolean;
 }
 
 /**

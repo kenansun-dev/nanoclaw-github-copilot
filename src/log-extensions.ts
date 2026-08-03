@@ -23,7 +23,7 @@
  * for `src/logger.ts` original impl.
  */
 
-import { log } from './log.js';
+import { log, setLogThreshold } from './log.js';
 
 export { log };
 
@@ -65,6 +65,9 @@ export function applyConfigLogLevel(level?: string): void {
   const normalized = level.trim().toLowerCase();
   if (!getValidLevels().includes(normalized)) return;
   currentLevel = normalized;
+  // B3 (2026-08-03): push the change down to log.ts's emit gate, else the
+  // level is updated in name only and emit() keeps using the frozen value.
+  setLogThreshold(normalized);
 }
 
 export function getLogLevel(): string {
@@ -92,4 +95,8 @@ export function setLogLevel(level: string, opts?: { force?: boolean }): void {
   }
   if (envLocked) return;
   currentLevel = normalized;
+  // B3 (2026-08-03): propagate to log.ts's emit threshold so a runtime
+  // `nanoclaw loglevel <x>` (force-unlock path) actually raises/lowers
+  // verbosity instead of being a silent no-op.
+  setLogThreshold(normalized);
 }
