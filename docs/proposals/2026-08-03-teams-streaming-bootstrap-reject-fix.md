@@ -38,26 +38,50 @@ a complete guarantee needs both closed. Both verified against `c4bc8a5`.
   nothing was delivered → answer dropped AND cursor not rolled back (retry
   won't resend). Existing test (`teams-streaming.test.ts:462`) only covers
   "last-ditch plain send SUCCEEDS", so this gap is untested.
-- **A-path-2 (Rpi5): all-partial turn, `end(text)` never called.**
-  `end(text)` is only invoked from the **non-partial** final branch
-  (index.ts:1016). If the GHC turn emits only `partial:true` deltas and no
-  distinct `assistant.message` final, line 1016 never runs → `end()` never
-  runs → **VM's A-path-1 signal never fires.** The finally-guard
-  (index.ts:1130) calls `cancel()` (not `end()`), which publishes nothing
-  (`_explicitCancel`). The coalesce buffer only holds **non-partial**
-  finals (`streamDiedCoalesced.push(text)` in the final branch; both
-  terminal flushes guard `length > 0`), so it is empty → user gets
-  nothing, silently.
+- **A-path-2 (Rpi5, rationale corrected by VM): final branch skipped OR
+  probe misjudged → no coalesce arm, then finally-guard sends nothing.**
+  Correction: "all-partial turn never calls `end()`" is too narrow — the
+  GHC runner's terminal `assistant.message` writeOutput has **no**
+  `partial` field (`container/agent-runner-ghc/src/index.ts:756`) → falsy
+  → dispatcher takes the final branch (index.ts:1016) → `end()` **is**
+  called on a normal successful turn. All-partial is only reachable on
+  mid-turn error / process death before `assistant.message`. The more
+  likely mechanism is a **probe race**: `chunk()` does NOT await the drain
+  (schedules `_drainLoop` and returns, teams-streaming.ts:725-729); the
+  dispatcher `await`s `chunk()` then **immediately** calls
+  `probeWireDeath('answer-chunk')` (index.ts:973) — but the bootstrap
+  send has not yet round-tripped to its 400, so `_cancelled` is still
+  false → probe misses → coalesce not armed.
+  - Single-partial turn: the one probe misses; final still arrives with
+    `streamHandle` non-null + `streamDiedCoalesced===undefined` → `end()`
+    is called, `_cancelled` now true → line 333 early plain-degrade fires.
+    This path *should* deliver — so if it were kenan's path we'd expect
+    either a delivered message or a `degraded final send failed` (338)
+    warn.
+  - Multi-partial turn (delta every ~1.5s): the 2nd/3rd probe catches
+    `_cancelled=true` → arms coalesce → final pushes → flush plain →
+    delivers (Bug 2 saves it).
+  - The genuine gap: when the final branch is skipped (mid-turn
+    death/all-partial), finally-guard calls `cancel()` (index.ts:1130),
+    which publishes nothing (`_explicitCancel`); coalesce holds only
+    non-partial finals, so it's empty → silent drop. A1 (finally-guard
+    terminal send of accumulated `progressiveText`) closes this.
 
-**Which path did kenan hit? (leans A-path-2, not proven — no truncation
-guarantee on the pasted tail):** his tail shows 2× `chunk send failed`
-(bootstrap informative) and NONE of: `degraded final send failed` (338),
-`final activity send failed` (408), or the coalesce-flush INFO line. If
-`end()` had been reached with the wire cancelled and the plain-degrade
-failed, line 338 WARN would be present. Its absence leans toward `end()`
-never being reached = A-path-2. Cannot fully rule out a truncated tail.
-**Consequence: VM's A-path-1 fix alone would likely NOT have saved this
-turn.** Ship both.
+**Which path did kenan hit? (UNPROVEN — tail cannot disambiguate):** his
+tail shows 2× `chunk send failed` (bootstrap informative, ~6s apart = two
+separate stream sessions each minting its own bootstrap) and NONE of:
+`degraded final send failed` (338), `final activity send failed` (408),
+or the coalesce-flush INFO line, and nothing was delivered.
+- If single-partial: `end()` → line 333 plain-degrade → either delivered
+  (contradicts "nothing") or logs 338 (not in tail). Neither matches.
+- If all-partial / final-branch-skipped: finally-guard `cancel()` →
+  silent, no 338. Matches "nothing + no 338" — but requires mid-turn
+  death, which we have not confirmed.
+Honest boundary now extends BEYOND "why the first frame is rejected":
+**which end-path actually executed is also unproven.** That is exactly
+what B1 + the new end-path instrumentation (B5) must resolve. Both A1 and
+A2 are still required — they close different structural holes regardless
+of which one kenan hit.
 
 **Defect B — why streaming is rejected at all (❓ UNPROVEN, 2 suspects)**
 `body=undefined` in the log → the server's rejection detail was never
@@ -144,7 +168,17 @@ Both drop-paths must close; they are complementary, not either/or.
 - **B4. Grep-completeness:** enumerate every path that reaches "wire
   rejected + nothing delivered" (bootstrap reject, mid-stream reject,
   thinking-phase reject, timeout, all-partial) and confirm each has a
-  guaranteed plain-message terminal after A1+A2.
+  guaranteed plain-message terminal after A1+A2. Also decide the
+  `probeWireDeath` race fix: make `chunk()` reflect `_cancelled`
+  synchronously after cancel, or have the dispatcher await a microtask /
+  the drain before probing, so a single-partial turn's probe cannot miss.
+- **B5. End-path instrumentation (VM).** Add a WARN at `end()` entry and
+  on each degrade branch tagging which path executed: `final-frame` /
+  `cancelled-early-degrade` (333) / `no-streamId-degrade` (368) /
+  `all-sends-failed` (417) / `finally-guard-cancel` (never reached end).
+  Today the tail cannot tell us which terminal fired — next occurrence
+  this line names it directly. This is what makes "which end-path
+  executed" provable instead of inferred.
 
 ### Layer C — Streaming kill-switch (opt-in stopgap)  [Rpi5]
 Config `channels.teams.streaming.enabled` (default true, per-account
@@ -155,7 +189,7 @@ isolation lever for debugging.
 
 ## 4. Division of labor
 - Rpi5: A1 (finally-guard terminal), C (kill-switch), doc integration.
-- VM: A2 (end() signal + cursor rollback), B1–B4, review of A1/C.
+- VM: A2 (end() signal + cursor rollback), B1–B5, review of A1/C.
 
 ## 5. Open question for kenan
 - Is your tenant rejecting streaming **persistently** (→ ship C defaulted
