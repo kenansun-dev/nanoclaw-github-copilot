@@ -1007,7 +1007,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               // Buffer this final and let the flush at turn-end publish
               // a single concatenated message instead of N bubbles.
               streamDiedCoalesced.push(text);
-              outputSentToUser = true;
               turnFinalized = true;
               progressiveMsgId = undefined;
               progressiveText = '';
@@ -1123,17 +1122,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       try {
         const msgId = await channel.sendMessage(chatJid, combined);
         if (typeof msgId === 'string') lastFinalMsgId = msgId;
-        // A1 gate only: mark that a plain terminal already went out so the
-        // finally-guard A1 fallback cannot re-send. Intentionally does NOT
-        // touch outputSentToUser here — that would change the pre-existing
-        // error-path rollback semantics for the coalesce path (out of scope
-        // for A1/A2).
+        // The buffered final is not delivered until this send succeeds.
+        // Mark both gates here (not when buffering) so a failed flush rolls
+        // the cursor back instead of silently advancing it.
         deliveredPlainFallback = true;
+        outputSentToUser = true;
         logger.info(
           { group: group.name, parts: streamDiedCoalesced.length, length: combined.length },
           'Coalesced multi-final flushed (streaming wire died mid-turn)',
         );
       } catch (err) {
+        hadError = true;
         logger.error({ group: group.name, err: (err as Error).message }, 'Coalesced multi-final flush failed');
       }
       streamDiedCoalesced = undefined;
@@ -1176,6 +1175,39 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // instead of the answer silently vanishing. Leave outputSentToUser
         // false; the hadError path below performs the rollback.
         hadError = true;
+      }
+    }
+
+    // A1: if the native streaming wire died before any non-partial final
+    // reached end(), deliver the latest cumulative answer as one plain
+    // message BEFORE deciding whether to advance or roll back the cursor.
+    // Do not reuse this for A2 total-end failure: A2 already made its one
+    // terminal delivery attempt above and owns the retry decision.
+    const nativeStreamNeedsPartialFallback =
+      !streamDeliveryFailed && (streamDiedCoalesced !== undefined || streamHandle?.isCancelled?.() === true);
+    if (
+      nativeStreamNeedsPartialFallback &&
+      !deliveredPlainFallback &&
+      !outputSentToUser &&
+      progressiveText &&
+      progressiveText.trim().length > 0
+    ) {
+      try {
+        const fbId = await channel.sendMessage(chatJid, progressiveText);
+        if (typeof fbId === 'string') lastFinalMsgId = fbId;
+        deliveredPlainFallback = true;
+        outputSentToUser = true;
+        turnFinalized = true;
+        logger.warn(
+          { chatJid, group: group.name, length: progressiveText.length },
+          'A1 terminal: streaming wire died before a final was published; delivered accumulated answer as a plain message',
+        );
+      } catch (err) {
+        hadError = true;
+        logger.warn(
+          { chatJid, err: (err as Error).message },
+          'A1 terminal plain send failed; rolling cursor back for retry',
+        );
       }
     }
 
@@ -1233,31 +1265,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         );
       }
       streamDiedCoalesced = undefined;
-    }
-    // A1 (2026-08-03): terminal delivery guarantee for the case the Bug-2
-    // coalesce buffer does NOT cover — the native stream opened and the wire
-    // died (isCancelled) but end()'s non-partial final branch never ran
-    // (all-partial turn / mid-turn error / process death before
-    // assistant.message), so cancel() fired in the guard above and published
-    // nothing, and the coalesce buffer (non-partial finals only) is empty.
-    // Without this, the user sees 'typing' then nothing. If we have an
-    // accumulated answer snapshot and nothing has been delivered this turn,
-    // publish it once as a plain message. Gated by deliveredPlainFallback so
-    // this can never double-send with the coalesce flush or the A2 fallback.
-    if (!deliveredPlainFallback && !outputSentToUser && progressiveText && progressiveText.trim().length > 0) {
-      try {
-        await channel.sendMessage(chatJid, progressiveText);
-        deliveredPlainFallback = true;
-        logger.warn(
-          { chatJid, group: group.name, length: progressiveText.length },
-          'A1 finally-guard terminal: streaming wire died before a final was published; delivered accumulated answer as a plain message',
-        );
-      } catch (err) {
-        logger.warn(
-          { chatJid, err: (err as Error).message },
-          'A1 finally-guard terminal plain send failed (reply lost this turn)',
-        );
-      }
     }
     // Progress draft: any draft still open at finally-guard time means the
     // turn ended without a normal final-output path (error, cancel, etc).
