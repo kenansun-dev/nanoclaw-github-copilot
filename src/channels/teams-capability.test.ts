@@ -435,7 +435,29 @@ describe('native streaming dispatcher source contract', () => {
     expect(src).toMatch(/channel\.usesNativeStreaming\s*&&\s*channel\.streamMessage/);
     expect(src).toMatch(/streamHandle\s*=\s*await\s+channel\.streamMessage/);
     expect(src).toMatch(/streamHandle\.chunk\(chunkText\)/);
-    expect(src).toMatch(/streamHandle\.end\(text\)/);
+    // A2 (2026-08-03) captures the handle in a local `activeHandle` before
+    // nulling `streamHandle`, so it can probe `endFailed()` after `end()`.
+    // Accept either the alias or the direct call so this invariant tracks
+    // "the final is closed via end()" without pinning the variable name.
+    expect(src).toMatch(/(?:activeHandle|streamHandle)\.end\(text\)/);
+  });
+
+  it('src/index.ts wires the A1/A2 delivery guarantee for a failed streaming end()', async () => {
+    // Regression pin for the 2026-08-03 bootstrap-reject silent-drop fix.
+    // A2: dispatcher must consult endFailed() and, on total failure, avoid
+    // marking the turn delivered so the cursor rolls back for retry.
+    // A1: a plain-message terminal fallback must exist so the accumulated
+    // answer still lands when the streaming wire died before a final.
+    const src = await import('node:fs').then((fs) =>
+      fs.promises.readFile(new URL('../index.ts', import.meta.url), 'utf-8'),
+    );
+    // A2 signal consulted.
+    expect(src).toMatch(/endFailed\?\.\(\)\s*===\s*true/);
+    // Single delivery+cursor decision gated so it cannot double-send.
+    expect(src).toMatch(/streamDeliveryFailed\s*&&\s*!deliveredPlainFallback/);
+    // A1 finally-guard terminal fallback on accumulated answer text.
+    expect(src).toMatch(/deliveredPlainFallback/);
+    expect(src).toMatch(/progressiveText\.trim\(\)\.length\s*>\s*0/);
   });
 
   it('src/index.ts cancels streamHandle on turn boundary and finally-guard', async () => {

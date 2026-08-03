@@ -396,6 +396,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // purpose — cheap, idempotent, no harm calling setTyping(false) twice.)
   let hadError = false;
   let outputSentToUser = false;
+  // A1/A2 (2026-08-03): true once a plain-message terminal fallback has
+  // been published, so the Bug-2 coalesce flush, the A2 stream-failure
+  // fallback, and the A1 finally-guard can never double-send the same
+  // reply.
+  let deliveredPlainFallback = false;
+  // A2: set when native streaming end() reported total delivery failure
+  // (endFailed()===true). Drives a single plain-message delivery attempt +
+  // cursor rollback after the output loop.
+  let streamDeliveryFailed = false;
+  let streamFailureFinalText = '';
   // Progressive send state: track message ID for editMessage on partial updates
   let progressiveMsgId: string | undefined;
   let progressiveText = '';
@@ -1013,9 +1023,33 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               // Native streaming path: close the stream with the final text.
               // The handle owns whether this becomes a new message or replaces
               // the in-flight stream bubble (Teams: replaces; others: TBD).
-              const msgId = await streamHandle.end(text);
+              const activeHandle = streamHandle;
+              const msgId = await activeHandle.end(text);
               streamHandle = undefined;
               lastFinalMsgId = typeof msgId === 'string' ? msgId : undefined;
+              // A2 (2026-08-03): the streaming session degrades to a plain
+              // message on wire reject, but if EVERY publish attempt failed
+              // (streaming final + last-ditch plain both rejected) the reply
+              // did NOT land. Without this, the tail below unconditionally
+              // sets outputSentToUser=true + turnFinalized=true, so the turn
+              // is marked delivered, the cursor advances, and the answer is
+              // silently lost with no retry (kenan Teams repro 2026-08-03).
+              // A2 = signal only here: flag the failure and stash the final
+              // text; the single delivery attempt + cursor decision happens
+              // in ONE place (deliverStreamFailureFallback, run after the
+              // output loop) so there is exactly one send path and no
+              // double-send.
+              if (activeHandle.endFailed?.() === true) {
+                streamDeliveryFailed = true;
+                streamFailureFinalText = text;
+                progressiveMsgId = undefined;
+                logger.warn(
+                  { chatJid, group: group.name },
+                  'native streaming end() failed to deliver; deferring to single plain fallback + cursor decision',
+                );
+                await armTypingBounded(channel, chatJid, 'after-failed-final', INTERIM_TYPING_TTL_MS);
+                return;
+              }
             } else if (progressiveMsgId && channel.editMessage) {
               // Replace the progressive message with final content. Capture
               // the (possibly new) id from the editMessage fallback path so
@@ -1089,6 +1123,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       try {
         const msgId = await channel.sendMessage(chatJid, combined);
         if (typeof msgId === 'string') lastFinalMsgId = msgId;
+        // A1 gate only: mark that a plain terminal already went out so the
+        // finally-guard A1 fallback cannot re-send. Intentionally does NOT
+        // touch outputSentToUser here — that would change the pre-existing
+        // error-path rollback semantics for the coalesce path (out of scope
+        // for A1/A2).
+        deliveredPlainFallback = true;
         logger.info(
           { group: group.name, parts: streamDiedCoalesced.length, length: combined.length },
           'Coalesced multi-final flushed (streaming wire died mid-turn)',
@@ -1097,6 +1137,46 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         logger.error({ group: group.name, err: (err as Error).message }, 'Coalesced multi-final flush failed');
       }
       streamDiedCoalesced = undefined;
+    }
+
+    // A2 (2026-08-03): single delivery+cursor decision for a native
+    // streaming end() that reported total failure (endFailed()===true).
+    // Done here — after the output loop, BEFORE the hadError/rollback check
+    // below — so the delivery attempt and the cursor decision are made
+    // together in one place (no split between main body and finally-guard,
+    // which previously risked rolling the cursor back AND delivering =
+    // duplicate next turn). Exactly one send path => no double-send.
+    if (streamDeliveryFailed && !deliveredPlainFallback) {
+      let landed = false;
+      if (streamFailureFinalText && streamFailureFinalText.trim().length > 0) {
+        try {
+          const fbId = await channel.sendMessage(chatJid, streamFailureFinalText);
+          deliveredPlainFallback = true;
+          landed = true;
+          if (typeof fbId === 'string') lastFinalMsgId = fbId;
+          logger.warn(
+            { chatJid, group: group.name, length: streamFailureFinalText.length },
+            'A2 terminal: streaming end() failed; delivered final answer as a plain message',
+          );
+        } catch (err) {
+          logger.warn(
+            { chatJid, err: (err as Error).message },
+            'A2 terminal plain fallback also failed; rolling cursor back for retry',
+          );
+        }
+      }
+      if (landed) {
+        // The reply DID land via the fallback: mark delivered so the turn
+        // is not re-processed (which would duplicate the answer).
+        outputSentToUser = true;
+        turnFinalized = true;
+        streamDeliveryFailed = false;
+      } else {
+        // Nothing reached the user: roll the cursor back so the turn retries
+        // instead of the answer silently vanishing. Leave outputSentToUser
+        // false; the hadError path below performs the rollback.
+        hadError = true;
+      }
     }
 
     await traceSetTyping(channel, chatJid, false, 'turn-end');
@@ -1145,6 +1225,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const combined = streamDiedCoalesced.join('\n\n');
       try {
         await channel.sendMessage(chatJid, combined);
+        deliveredPlainFallback = true;
       } catch (err) {
         logger.warn(
           { chatJid, err: (err as Error).message },
@@ -1152,6 +1233,31 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         );
       }
       streamDiedCoalesced = undefined;
+    }
+    // A1 (2026-08-03): terminal delivery guarantee for the case the Bug-2
+    // coalesce buffer does NOT cover — the native stream opened and the wire
+    // died (isCancelled) but end()'s non-partial final branch never ran
+    // (all-partial turn / mid-turn error / process death before
+    // assistant.message), so cancel() fired in the guard above and published
+    // nothing, and the coalesce buffer (non-partial finals only) is empty.
+    // Without this, the user sees 'typing' then nothing. If we have an
+    // accumulated answer snapshot and nothing has been delivered this turn,
+    // publish it once as a plain message. Gated by deliveredPlainFallback so
+    // this can never double-send with the coalesce flush or the A2 fallback.
+    if (!deliveredPlainFallback && !outputSentToUser && progressiveText && progressiveText.trim().length > 0) {
+      try {
+        await channel.sendMessage(chatJid, progressiveText);
+        deliveredPlainFallback = true;
+        logger.warn(
+          { chatJid, group: group.name, length: progressiveText.length },
+          'A1 finally-guard terminal: streaming wire died before a final was published; delivered accumulated answer as a plain message',
+        );
+      } catch (err) {
+        logger.warn(
+          { chatJid, err: (err as Error).message },
+          'A1 finally-guard terminal plain send failed (reply lost this turn)',
+        );
+      }
     }
     // Progress draft: any draft still open at finally-guard time means the
     // turn ended without a normal final-output path (error, cancel, etc).
