@@ -1023,3 +1023,54 @@ describe('B5: end-path delivery-outcome instrumentation (2026-08-03)', () => {
     expect(String(drop!.data.reason ?? drop!.data.bodyText ?? '')).toMatch(/streaming type is allowed|BadArgument/);
   });
 });
+
+describe('A2: endFailed() delivery signal (2026-08-03 cursor-rollback source)', () => {
+  it('is false on a healthy streaming turn', async () => {
+    const { sender } = makeSender();
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+    await s.chunk('a');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.end('abc');
+    expect(s.endFailed()).toBe(false);
+  });
+
+  it('is false when the final frame is rejected but the plain fallback lands', async () => {
+    // Streaming final rejected, plain last-ditch succeeds → reply DID land
+    // → no rollback.
+    let n = 0;
+    const sender: ActivitySender = async (activity) => {
+      // First real end() send is the streaming `final` frame — reject it.
+      if (activity.type === 'message' && activity.entities?.[0]?.streamType === 'final') {
+        throw new Error('Only end streaming type is allowed as a message activity');
+      }
+      // Plain fallback message — succeeds.
+      return `msg-${++n}`;
+    };
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+    await s.chunk('a');
+    await new Promise((r) => setTimeout(r, 5));
+    await s.end('abc');
+    expect(s.endFailed()).toBe(false);
+  });
+
+  it('is true when both the final frame AND the plain fallback are rejected', async () => {
+    const sender: ActivitySender = async () => {
+      throw new Error('hard wire failure');
+    };
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+    // Drive end() directly so we hit final-frame → plain fallback →
+    // total-failure (streamId is minted at construction, so we skip the
+    // no-streamId branch).
+    await s.end('final answer text');
+    expect(s.endFailed()).toBe(true);
+  });
+
+  it('is false after an explicit dispatcher cancel (nothing was meant to publish)', async () => {
+    const { sender } = makeSender();
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+    await s.chunk('a');
+    await s.cancel();
+    await s.end('abc');
+    expect(s.endFailed()).toBe(false);
+  });
+});

@@ -272,6 +272,17 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
    * never wired the distinction.
    */
   private _explicitCancel = false;
+  /**
+   * A2 (2026-08-03): true when `end()` tried to publish the final reply
+   * and EVERY send path failed (streaming final rejected AND the plain
+   * last-ditch fallback also rejected). The dispatcher reads this via
+   * `endFailed()` after awaiting `end()` and, when true, must NOT mark the
+   * turn delivered — it rolls the message cursor back so the turn retries
+   * instead of the reply silently vanishing. Distinct from `_cancelled`
+   * (wire gave up but a plain degrade may still have landed) and
+   * `isCancelled()` (probe used mid-turn to arm the coalesce buffer).
+   */
+  private _deliveryFailed = false;
   /** Cumulative text last sent to client; used to skip no-op chunks. */
   private _lastSent = '';
   /** Cumulative text most recently received; what `end` will publish. */
@@ -390,6 +401,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
         );
         return id;
       } catch (err: any) {
+        this._deliveryFailed = true;
         this.log.warn(
           { endPath: 'cancelled-early-degrade', delivered: false, ...extractWireRejectDetail(err) },
           'Teams streaming: degraded final send failed (reply DROPPED)',
@@ -414,6 +426,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
         );
         return id;
       } catch (err: any) {
+        this._deliveryFailed = true;
         this.log.warn(
           { endPath: 'cancelled-postdrain-degrade', delivered: false, ...extractWireRejectDetail(err) },
           'Teams streaming: post-drain degraded final send failed (reply DROPPED)',
@@ -439,6 +452,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
         );
         return id;
       } catch (err: any) {
+        this._deliveryFailed = true;
         this.log.warn(
           { endPath: 'no-streamId-degrade', delivered: false, ...extractWireRejectDetail(err) },
           'Teams streaming: final without streamId, plain send failed (reply DROPPED)',
@@ -493,8 +507,10 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
       } catch (err2: any) {
         // Both the streaming final AND the plain fallback failed: the
         // reply is genuinely lost. B5 tags this so an error-only export
-        // makes the drop unambiguous; A2 (dispatcher) turns this into a
-        // cursor rollback so the turn can retry instead of vanishing.
+        // makes the drop unambiguous; A2 flips `_deliveryFailed` so the
+        // dispatcher turns this into a cursor rollback (retry) instead of
+        // silently marking the turn delivered.
+        this._deliveryFailed = true;
         this.log.error(
           { endPath: 'total-failure', delivered: false, ...extractWireRejectDetail(err2) },
           'Teams streaming: fallback final send also failed (reply DROPPED)',
@@ -526,6 +542,19 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
    */
   isCancelled(): boolean {
     return this._cancelled && !this._explicitCancel;
+  }
+
+  /**
+   * A2 (2026-08-03): true only after `end()` has run AND every publish
+   * attempt for the final reply failed (streaming final + plain last-ditch
+   * both rejected). The dispatcher awaits `end()` then checks this to
+   * decide whether the turn actually delivered: on failure it must not
+   * mark the turn finalized and should roll the message cursor back so the
+   * turn retries, instead of the reply silently vanishing. Returns false
+   * on the happy path, on explicit cancel, and any time a degrade landed.
+   */
+  endFailed(): boolean {
+    return this._deliveryFailed;
   }
 
   // --- Internals ------------------------------------------------------
