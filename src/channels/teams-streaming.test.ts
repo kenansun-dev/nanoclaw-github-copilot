@@ -377,7 +377,7 @@ describe('TeamsStreamingSession', () => {
     expect(typeof id).toBe('string');
   });
 
-  it('defaults delay to 1000ms for msteams channel and 250ms otherwise', () => {
+  it('defaults delay to 1500ms for msteams channel and 250ms otherwise', () => {
     const teams = new TeamsStreamingSession(makeSender().sender, {
       channelId: 'msteams',
       log: silentLog,

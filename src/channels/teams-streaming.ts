@@ -317,11 +317,16 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     opts: TeamsStreamingOpts = {},
   ) {
     this.log = opts.log ?? logger;
-    // Teams enforces ~1s; other Bot Framework channels default lower.
+    // Teams throttles streaming to 1 request/second and the docs recommend
+    // buffering tokens for 1.5-2s to keep the stream smooth
+    // (learn.microsoft.com/.../bots/streaming-ux). The old 1000ms sat exactly
+    // on the throttle limit, so any scheduling jitter pushed a frame over it
+    // and risked a 429/ContentStreamSequenceOrderPreConditionFailed. Use
+    // 1500ms to stay inside the recommended band.
     if (opts.delayInMs !== undefined) {
       this._delayInMs = opts.delayInMs;
     } else if (opts.channelId === 'msteams') {
-      this._delayInMs = 1000;
+      this._delayInMs = 1500;
     } else {
       this._delayInMs = 250;
     }
