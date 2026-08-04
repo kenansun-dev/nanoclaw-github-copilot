@@ -12,7 +12,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { DATA_DIR, getConfig, reloadConfig } from './config.js';
+import { ASSISTANT_NAME, DATA_DIR, getConfig, reloadConfig } from './config.js';
 import { deleteSession, getSessionOverrides, setSessionOverride } from './db.js';
 import {
   getEffectiveThinkLevel,
@@ -43,6 +43,16 @@ export interface SlashCommand {
 }
 
 export const COMMANDS: SlashCommand[] = [
+  {
+    name: 'chatid',
+    description: 'Get this chat registration ID',
+    noArgs: true,
+  },
+  {
+    name: 'ping',
+    description: 'Check if bot is online',
+    noArgs: true,
+  },
   {
     name: 'think',
     description: 'Set reasoning effort level',
@@ -246,6 +256,24 @@ export async function handleSlashCommand(input: string, ctx: SlashCommandContext
     const mode = streamingMatch[1] as StreamingMode | undefined;
     const isDefault = !!streamingMatch[2];
     await handleStreaming(mode, ctx, { isDefault });
+    return { handled: true };
+  }
+
+  // /chatid — show the channel-qualified registration id on every surface.
+  // Telegram handles this command directly in its adapter so it can include
+  // Telegram-specific chat metadata; Teams/Discord/CLI use this common path.
+  if (input === '/chatid') {
+    if (ctx.channel) {
+      await ctx.channel.sendMessage(ctx.chatJid, `Chat ID: \`${ctx.chatJid}\``);
+    }
+    return { handled: true };
+  }
+
+  // /ping — fast liveness check without an agent round-trip.
+  if (input === '/ping') {
+    if (ctx.channel) {
+      await ctx.channel.sendMessage(ctx.chatJid, `${ASSISTANT_NAME} is online.`);
+    }
     return { handled: true };
   }
 
@@ -1010,25 +1038,18 @@ async function handleThink(
  * Register commands with Telegram Bot API (setMyCommands).
  * Call once after bot connects. Non-invasive — uses HTTP API directly.
  *
- * Includes Telegram-only utility commands (`/chatid`, `/ping`) that are not
- * in the canonical `COMMANDS` registry but live as bot-side handlers in
- * `channels/telegram.ts`. Single source of truth for the rendered menu —
- * channel adapters must NOT call `setMyCommands` directly (drift hazard:
- * race-condition overwrite of this list).
+ * `/chatid` and `/ping` remain direct Telegram adapter handlers for richer
+ * Telegram-specific replies, but their menu metadata now comes from the same
+ * canonical `COMMANDS` registry used by every other channel.
  */
 export async function registerTelegramCommands(botToken: string): Promise<void> {
-  const tgOnly = [
-    { command: 'chatid', description: 'Get chat registration ID' },
-    { command: 'ping', description: 'Check if bot is online' },
-  ];
-  const fromRegistry = COMMANDS.map((c) => {
+  const commands = COMMANDS.map((c) => {
     const desc = c.description + (c.args ? ` (${c.args})` : '');
     return {
       command: c.name,
       description: desc.length > 256 ? desc.slice(0, 253) + '…' : desc,
     };
   });
-  const commands = [...tgOnly, ...fromRegistry];
 
   try {
     const resp = await fetch(`https://api.telegram.org/bot${botToken}/setMyCommands`, {
