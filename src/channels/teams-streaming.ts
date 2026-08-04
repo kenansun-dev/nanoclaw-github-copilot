@@ -519,8 +519,27 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     }
   }
 
+  /**
+   * Wait for the background drain started by chunk() to reveal its terminal
+   * wire state. chunk() deliberately returns before Bot Connector ACKs so it
+   * cannot serialize the agent on Teams' pacing; callers therefore need this
+   * bounded terminal barrier before deciding that the stream is healthy.
+   */
+  async settle(): Promise<void> {
+    await this._waitForDrain();
+  }
+
   async cancel(): Promise<void> {
-    if (this._cancelled || this._ended) return;
+    if (this._ended) return;
+
+    // A chunk send runs in the background. If its 400/timeout arrives after
+    // the dispatcher's immediate probe but before terminal cleanup, marking
+    // this as an explicit cancel would hide the real wire failure from
+    // isCancelled() and suppress the plain fallback. Settle first (bounded by
+    // _waitForDrain), then preserve wire-cancel state when the drain failed.
+    await this.settle();
+    if (this._cancelled || !this._isStreamingChannel) return;
+
     this._explicitCancel = true;
     this._cancelled = true;
     this._ended = true;

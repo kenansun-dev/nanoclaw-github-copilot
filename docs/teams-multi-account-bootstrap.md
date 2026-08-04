@@ -14,11 +14,11 @@ CLI command per bot. Each bot gets its own:
 ```bash
 # First bot (default) — same as before
 nanoclaw channel add teams --setup --agent main
-# → bot named `nanoclaw-andy`, port 3978, writes accounts.default
+# → bot named `ncl-<upn>-andy`, port 3978, writes accounts.default
 
 # Second bot — pass --account <id> and --agent <agentId>
 nanoclaw channel add teams --setup --account bot-b --agent coder
-# → bot named `nanoclaw-coder-bot-b`, port 3979, writes accounts.bot-b
+# → bot named `ncl-<upn>-coder-bot-b`, port 3979, writes accounts.bot-b
 #   (port auto-allocated as max(in-use)+1)
 
 nanoclaw restart
@@ -31,10 +31,22 @@ per account.
 
 ## What `--setup --account <id>` does
 
-1. **Resolve a unique `botName`.** For `accountId='default'` it stays
-   `nanoclaw-<agentName>` (back-compat). For other accounts it suffixes
-   the accountId: `nanoclaw-<agentName>-<accountId>`. Two accounts that
-   resolve to the same agent still get distinct Azure resources.
+1. **Resolve a unique `botName`.** The name is namespaced by the current
+   `az` CLI user's UPN so two operators in the same tenant don't collide:
+   `ncl-<upn>-<agentName>` for `accountId='default'`, and
+   `ncl-<upn>-<agentName>-<accountId>` for other accounts. The UPN comes
+   from `az account show --query user.name` (sanitized to `[a-z0-9-]`, so
+   `alice@contoso.com` → `alice-contoso-com`).
+
+   Why the UPN matters: `az ad app list --display-name` returns **all**
+   matching apps and setup takes the first one, then rotates its client
+   secret. Without the UPN, two people who both kept the default agent name
+   would resolve to the same `ncl-andy`; the second person's `--setup`
+   would find the first person's app and revoke their secret. The UPN is
+   unique within a tenant, so it isolates each operator's resources. Two
+   accounts under the same operator+agent still get distinct names via the
+   `-<accountId>` suffix. (Bot names cap at 64 chars; a very long UPN is
+   truncated, the agent/account suffix is always kept.)
 
 2. **Allocate a webhook port.** Reuses
    `accounts[<id>].webhookPort` if already set, otherwise picks

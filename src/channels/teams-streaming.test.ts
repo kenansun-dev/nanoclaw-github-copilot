@@ -1074,3 +1074,47 @@ describe('A2: endFailed() delivery signal (2026-08-03 cursor-rollback source)', 
     expect(s.endFailed()).toBe(false);
   });
 });
+
+describe('terminal settle barrier (2026-08-04 bootstrap-reject race)', () => {
+  it('cancel waits for a delayed bootstrap reject and preserves wire-death state for end() fallback', async () => {
+    const calls: Array<Partial<TeamsActivity>> = [];
+    const sender: ActivitySender = async (activity) => {
+      calls.push(JSON.parse(JSON.stringify(activity)));
+      if (activity.type === 'typing') {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        throw new Error('Only start streaming and continue streaming types are allowed as a typing activity');
+      }
+      return 'plain-final-id';
+    };
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+
+    await s.chunk('partial answer');
+    // The immediate probe would still see false; cancel() must settle the
+    // in-flight send before deciding whether this is an explicit cancel.
+    expect(s.isCancelled()).toBe(false);
+    await s.cancel();
+    expect(s.isCancelled()).toBe(true);
+
+    const id = await s.end('complete answer');
+    expect(id).toBe('plain-final-id');
+    const messages = calls.filter((c) => c.type === 'message');
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ type: 'message', text: 'complete answer' });
+    expect(messages[0].entities ?? []).toEqual([]);
+  });
+
+  it('settle reveals a delayed timeout/reject without ending a healthy caller-visible session', async () => {
+    const sender: ActivitySender = async (activity) => {
+      if (activity.type === 'typing') {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        throw new Error('wire rejected after chunk returned');
+      }
+      return 'plain-id';
+    };
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+    await s.chunk('draft');
+    await s.settle();
+    expect(s.isCancelled()).toBe(true);
+    await expect(s.end('final')).resolves.toBe('plain-id');
+  });
+});

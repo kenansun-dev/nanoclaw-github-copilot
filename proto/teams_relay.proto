@@ -1,0 +1,203 @@
+syntax = "proto3";
+
+// Teams App Service relay — bidirectional contract between the local NCL host
+// (gRPC client, dials out) and the Azure App Service relay (gRPC server).
+//
+// Design: docs/2026-06-26-teams-appservice-relay-design.md
+//
+// Topology recap (the load-bearing decoupling):
+//   - NCL runs LOCALLY and dials OUT to the relay (one long-lived stream).
+//   - Teams Bot Service POSTs inbound activities to the relay's per-bot HTTPS
+//     endpoint (north edge), independent of whether an NCL stream is attached.
+//   - Relay terminates inbound BotFramework JWT auth, then routes by bot id
+//     (= the bot's appId; see Hello.bot_ids) to the attached NCL stream. No stream attached -> buffer with TTL, drop on
+//     expiry, write audit. NCL attached but Teams broken -> harmless, just no
+//     e2e.
+//   - South edge (this stream) is authed by the OWNER's AAD token in call
+//     metadata, validated against an allowlist by a server interceptor BEFORE
+//     the stream is accepted (see §5). Auth does NOT ride in these messages.
+//
+// Versioning: this is v1. Add fields, never renumber. Both NCL client and relay
+// server compile this exact file.
+
+package nanoclaw.teamsrelay.v1;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Service
+// ─────────────────────────────────────────────────────────────────────────────
+
+service TeamsRelay {
+  // Single long-lived bidirectional stream. NCL opens it once (after the
+  // metadata AAD token passes the server interceptor) and keeps it open:
+  //   - client->server (FromNcl): a Hello registering which bot ids this NCL
+  //     serves, then outbound replies + acks + heartbeats.
+  //   - server->client (ToNcl): inbound (JWT-validated) Teams activities for
+  //     those bots, plus control frames (heartbeat, buffer overflow, drain).
+  rpc Attach(stream FromNcl) returns (stream ToNcl);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Client -> Server  (FromNcl)
+// ─────────────────────────────────────────────────────────────────────────────
+
+message FromNcl {
+  oneof kind {
+    Hello hello = 1;            // MUST be the first frame on the stream.
+    OutboundReply reply = 2;    // an NCL-produced reply to deliver to Teams.
+    InboundAck ack = 3;         // ack that an inbound activity was received.
+    Heartbeat heartbeat = 4;    // client liveness ping (shared Heartbeat type).
+  }
+}
+
+// First frame. Declares which bots this NCL instance serves so the relay can
+// route inbound activities for those bot ids to this stream. Rejecting an
+// unknown/unauthorized bot id is the server's call (it cross-checks the
+// allowlist + which bots exist on the relay).
+message Hello {
+  // Bot ids this NCL serves = the bots' appIds, which are the relay's per-bot
+  // routing keys: the <appId> segment in /api/messages/<appId> (appId-as-
+  // routing-key, docs/2026-06-27-relay-appid-routing-key.md). The inbound JWT's
+  // aud must equal this id, so it is self-describing — no configured map. Empty
+  // = serve nothing (rejected).
+  repeated string bot_ids = 1;
+
+  // Free-form NCL instance label for audit/observability (host name etc.).
+  string ncl_instance = 2;
+
+  // Protocol version the client speaks (this file's package version = 1).
+  uint32 protocol_version = 3;
+
+  // If set, the relay should flush any buffered (non-expired) inbound
+  // activities for these bots to this stream right after attach.
+  bool replay_buffered = 4;
+}
+
+// An outbound reply NCL wants delivered to Teams. The relay performs the
+// outbound MSI->per-bot federation token exchange and calls Bot Connector;
+// this message carries only the application payload + routing, never a token.
+message OutboundReply {
+  // Which bot this reply is from (must be one of Hello.bot_ids).
+  string bot_id = 1;
+
+  // The InboundActivity.activity_id this replies to, when the reply is a direct
+  // response (value is exactly the relay-assigned InboundActivity.activity_id,
+  // NOT the Bot Framework activity id). Empty for proactive sends.
+  string in_reply_to = 2;
+
+  // Bot Framework conversation reference / activity JSON (opaque to the relay
+  // except for the connector service_url it must POST to). UTF-8 JSON bytes.
+  bytes activity_json = 3;
+
+  // The Bot Connector base URL (serviceUrl) this conversation belongs to, e.g.
+  // https://smba.trafficmanager.net/.../ — relay needs it to address Connector.
+  string service_url = 4;
+
+  // Idempotency key so a redelivered reply (client reconnect) is not double
+  // sent by the relay.
+  string client_msg_id = 5;
+}
+
+message InboundAck {
+  string activity_id = 1;     // the ToNcl.InboundActivity.activity_id received.
+  string bot_id = 2;
+}
+
+// Shared liveness ping, used in both directions (FromNcl.heartbeat and
+// ToNcl.heartbeat). The wrapping oneof already encodes the direction, so one
+// type suffices.
+message Heartbeat {
+  uint64 sent_unix_ms = 1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Server -> Client  (ToNcl)
+// ─────────────────────────────────────────────────────────────────────────────
+
+message ToNcl {
+  oneof kind {
+    AttachAck attach_ack = 1;        // server's response to Hello.
+    InboundActivity inbound = 2;     // a JWT-validated Teams activity to handle.
+    OutboundAck outbound_ack = 3;    // ack/result of an OutboundReply.
+    Heartbeat heartbeat = 4;         // server liveness ping (shared Heartbeat type).
+    BufferOverflow overflow = 5;     // a bot's inbound buffer dropped item(s).
+    Drain drain = 6;                 // server is draining (shutdown/redeploy).
+  }
+}
+
+// Server's reply to Hello. Lists which requested bot ids were accepted (on the
+// allowlist AND known to the relay) vs rejected, so NCL can surface config
+// drift instead of silently not receiving for a bot.
+message AttachAck {
+  repeated string accepted_bot_ids = 1;
+  repeated RejectedBot rejected = 2;
+  uint32 server_protocol_version = 3;
+  // Heartbeat interval the server expects from the client (ms). 0 = no expectation.
+  uint32 heartbeat_interval_ms = 4;
+  // Relay-assigned id for THIS attach/stream. Appears in relay audit/logs so a
+  // specific stream can be correlated across reconnects (debugging multiple
+  // NCL instances / flapping connections).
+  string session_id = 5;
+}
+
+message RejectedBot {
+  string bot_id = 1;
+  string reason = 2;          // human-readable, e.g. "not on allowlist".
+}
+
+// A Teams activity that already passed inbound JWT validation at the relay's
+// north edge. Routed here by bot id.
+message InboundActivity {
+  string bot_id = 1;
+
+  // Relay-assigned id for this delivery (NCL acks with it; also the buffer key).
+  string activity_id = 2;
+
+  // The Bot Framework activity JSON (UTF-8). Opaque to NCL transport layer,
+  // parsed by the Teams channel handler.
+  bytes activity_json = 3;
+
+  // serviceUrl extracted from the activity, echoed so NCL can put it on its
+  // OutboundReply without re-parsing (still present in activity_json too).
+  string service_url = 4;
+
+  // Unix ms when the relay received this from Teams. Lets NCL measure staleness
+  // for replayed/buffered items.
+  uint64 received_unix_ms = 5;
+
+  // True if this was held in the relay buffer (NCL was absent) and is now being
+  // replayed, vs delivered live.
+  bool from_buffer = 6;
+}
+
+message OutboundAck {
+  string client_msg_id = 1;   // echoes OutboundReply.client_msg_id.
+  bool ok = 2;
+  // Connector HTTP status when ok=false (e.g. 401/429/5xx), 0 if not applicable.
+  uint32 connector_status = 3;
+  string error = 4;           // human-readable failure detail when ok=false.
+  // Whether NCL should retry this reply. The relay maps connector semantics so
+  // NCL does not re-derive HTTP meaning: 429/5xx/transient -> true,
+  // 401/4xx/permanent -> false. Only meaningful when ok=false.
+  bool retryable = 5;
+}
+
+// Notifies NCL that the relay dropped one or more buffered inbound activities
+// for a bot (TTL expiry or capacity). Carries counts for audit, not the lost
+// payloads (those are in the relay's audit log).
+message BufferOverflow {
+  string bot_id = 1;
+  uint32 dropped_count = 2;
+  string reason = 3;          // "ttl_expired" | "capacity" | ...
+}
+
+// Server is going away (redeploy/scale-in). NCL should expect the stream to
+// close after drain_deadline_unix_ms and reconnect (library backoff).
+message Drain {
+  uint64 drain_deadline_unix_ms = 1;
+  string reason = 2;
+  // Inbound activities still buffered (not yet flushed to any NCL) at drain
+  // time. The in-memory buffer is LOST on redeploy/scale-in unless backed by
+  // durable storage (see design §8 buffer-durability open item); this count is
+  // surfaced so NCL/audit can record the loss. 0 = nothing was buffered.
+  uint32 buffered_count = 3;
+}

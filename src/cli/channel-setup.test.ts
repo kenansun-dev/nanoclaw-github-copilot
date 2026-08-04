@@ -84,6 +84,7 @@ function setupExecStubs(): void {
     }
     if (c.startsWith('devtunnel show')) return 'https://nanoclaw-abc1.devtunnels.ms\n';
     // az
+    if (c.startsWith('az account show') && c.includes('user.name')) return 'alice@contoso.com\n';
     if (c.startsWith('az account show')) return 'test-subscription\n';
     if (c.includes('az ad app list')) return ''; // no existing
     if (c.includes('az ad app create')) {
@@ -99,6 +100,9 @@ function setupExecStubs(): void {
     if (c.includes('az bot create')) return '';
     if (c.includes('az bot msteams create')) return '';
     if (c.includes('az bot update')) return '';
+    if (c.includes('az ad app federated-credential list')) return '';
+    if (c.includes('az ad app federated-credential create')) return '';
+    if (c.includes('az ad app federated-credential update')) return '';
     return '';
   });
 }
@@ -142,13 +146,13 @@ describe('nanoclaw channel add teams --setup multi-account', () => {
     await runChannelCommand(['add', 'teams', '--setup', '--agent', 'main']);
     expect(memoryConfig.channels.teams).toBeDefined();
     expect(memoryConfig.channels.teams.enabled).toBe(true);
-    expect(memoryConfig.channels.teams.accounts.default.appId).toMatch(/^app-id-nanoclaw-andy$/);
+    expect(memoryConfig.channels.teams.accounts.default.appId).toMatch(/^app-id-ncl-alice-contoso-com-andy$/);
     expect(memoryConfig.channels.teams.accounts.default.webhookPort).toBe(3978);
     // .env got written (single-account fallback path)
     const envWrites = writeFileSyncSpy.mock.calls.filter((c: any[]) => String(c[0]).endsWith('.env'));
     expect(envWrites.length).toBeGreaterThan(0);
     const envBody = String(envWrites[envWrites.length - 1][1]);
-    expect(envBody).toMatch(/MSTEAMS_APP_ID=app-id-nanoclaw-andy/);
+    expect(envBody).toMatch(/MSTEAMS_APP_ID=app-id-ncl-alice-contoso-com-andy/);
     expect(envBody).toMatch(/MSTEAMS_APP_PASSWORD=secret-/);
   });
 
@@ -171,7 +175,7 @@ describe('nanoclaw channel add teams --setup multi-account', () => {
 
     // New account written with distinct botName (suffixed with accountId)
     expect(memoryConfig.channels.teams.accounts['bot-b']).toBeDefined();
-    expect(memoryConfig.channels.teams.accounts['bot-b'].appId).toBe('app-id-nanoclaw-coder-bot-b');
+    expect(memoryConfig.channels.teams.accounts['bot-b'].appId).toBe('app-id-ncl-alice-contoso-com-coder-bot-b');
     expect(memoryConfig.channels.teams.accounts['bot-b'].appPassword).toMatch(/^secret-/);
 
     // Port auto-allocated to next free (3979)
@@ -180,6 +184,44 @@ describe('nanoclaw channel add teams --setup multi-account', () => {
     // .env NOT touched for non-default account (would overwrite default bot's fallback)
     const envWrites = writeFileSyncSpy.mock.calls.filter((c: any[]) => String(c[0]).endsWith('.env'));
     expect(envWrites.length).toBe(0);
+  });
+
+  it('namespaces the app name by az UPN so two operators in one tenant do not collide', async () => {
+    // Operator A: az user alice@contoso.com, default agent (Andy).
+    const mkStubs = (upn: string, secret: string) => (cmd: string) => {
+      const c = String(cmd);
+      if (c.startsWith('az account show') && c.includes('user.name')) return `${upn}\n`;
+      if (c.startsWith('az account show')) return 'sub\n';
+      if (c.startsWith('devtunnel --version')) return 'devtunnel 1.0\n';
+      if (c.startsWith('devtunnel user show')) return 'user\n';
+      if (c.startsWith('devtunnel list')) return 'nanoclaw-abc1 nanoclaw Active\n';
+      if (c.startsWith('devtunnel create')) return 'Tunnel ID: nanoclaw-abc1\n';
+      if (c.startsWith('devtunnel port create')) return 'created\n';
+      if (c.startsWith('devtunnel access create')) return 'created\n';
+      if (c.startsWith('devtunnel port show')) return 'https://nanoclaw-abc1-3978.devtunnels.ms\n';
+      if (c.startsWith('devtunnel show')) return 'https://nanoclaw-abc1.devtunnels.ms\n';
+      if (c.includes('az ad app list')) return ''; // no existing app for this display-name
+      if (c.includes('az ad app create')) {
+        const m = c.match(/--display-name "([^"]+)"/);
+        return `app-id-${m ? m[1] : 'x'}\n`;
+      }
+      if (c.includes('az ad app credential reset')) return `${secret}\n`;
+      return '';
+    };
+
+    exec.mockImplementation(mkStubs('alice@contoso.com', 'secret-a'));
+    await runChannelCommand(['add', 'teams', '--setup', '--agent', 'main']);
+    expect(memoryConfig.channels.teams.accounts.default.appId).toBe('app-id-ncl-alice-contoso-com-andy');
+
+    // Reset config; Operator B: az user bob@contoso.com, ALSO default agent (Andy).
+    for (const k of Object.keys(memoryConfig)) delete memoryConfig[k];
+    memoryConfig.channels = {};
+    memoryConfig.agents = { defaults: { name: 'Andy' }, list: [{ id: 'main', name: 'Andy' }] };
+    exec.mockImplementation(mkStubs('bob@contoso.com', 'secret-b'));
+    await runChannelCommand(['add', 'teams', '--setup', '--agent', 'main']);
+    // Bob's app name is distinct from Alice's despite the identical agent name,
+    // so his --setup never finds/rotates Alice's app.
+    expect(memoryConfig.channels.teams.accounts.default.appId).toBe('app-id-ncl-bob-contoso-com-andy');
   });
 
   it('three-account chain allocates ports 3978/3979/3980', async () => {
@@ -196,8 +238,8 @@ describe('nanoclaw channel add teams --setup multi-account', () => {
 
     // bot-b and bot-c both used the 'coder' agent — confirm their botNames
     // are nonetheless distinct (account suffix), so Azure resources don't collide.
-    expect(memoryConfig.channels.teams.accounts['bot-b'].appId).toBe('app-id-nanoclaw-coder-bot-b');
-    expect(memoryConfig.channels.teams.accounts['bot-c'].appId).toBe('app-id-nanoclaw-coder-bot-c');
+    expect(memoryConfig.channels.teams.accounts['bot-b'].appId).toBe('app-id-ncl-alice-contoso-com-coder-bot-b');
+    expect(memoryConfig.channels.teams.accounts['bot-c'].appId).toBe('app-id-ncl-alice-contoso-com-coder-bot-c');
   });
 
   it('--webhookPort flag overrides auto-allocation', async () => {
@@ -258,8 +300,120 @@ describe('nanoclaw channel add teams --setup multi-account', () => {
     await runChannelCommand(['add', 'teams', '--setup-app', '--account', 'bot-b', '--agent', 'coder']);
 
     expect(memoryConfig.channels.teams.accounts.default.appId).toBe('app-id-existing');
-    expect(memoryConfig.channels.teams.accounts['bot-b'].appId).toBe('app-id-nanoclaw-coder-bot-b');
+    expect(memoryConfig.channels.teams.accounts['bot-b'].appId).toBe('app-id-ncl-alice-contoso-com-coder-bot-b');
     const envWrites = writeFileSyncSpy.mock.calls.filter((c: any[]) => String(c[0]).endsWith('.env'));
     expect(envWrites.length).toBe(0);
+  });
+});
+
+describe('nanoclaw channel add teams --transport proxy (relay)', () => {
+  it('--transport proxy (no setup verb) persists mode + endpoint + credEnv', async () => {
+    memoryConfig.channels.teams = {
+      enabled: true,
+      accounts: { default: { appId: 'app-x', appPassword: 'y', webhookPort: 3978 } },
+    };
+
+    await runChannelCommand([
+      'add',
+      'teams',
+      '--transport',
+      'proxy',
+      '--relay-endpoint',
+      'relay-host:443',
+      '--relay-cred-env',
+      'NCL_RELAY_CRED',
+    ]);
+
+    const acct = memoryConfig.channels.teams.accounts.default;
+    expect(acct.transport).toBe('proxy');
+    expect(acct.proxy.southEndpoint).toBe('relay-host:443');
+    expect(acct.proxy.auth.credentialEnv).toBe('NCL_RELAY_CRED');
+    // appPassword left intact (federation not run in this path)
+    expect(acct.appPassword).toBe('y');
+  });
+
+  it('credentialEnv defaults to NCL_RELAY_CRED when --relay-cred-env omitted', async () => {
+    memoryConfig.channels.teams = { enabled: true, accounts: { default: { appId: 'app-x' } } };
+    await runChannelCommand(['add', 'teams', '--transport', 'proxy', '--relay-endpoint', 'r:443']);
+    expect(memoryConfig.channels.teams.accounts.default.proxy.auth.credentialEnv).toBe('NCL_RELAY_CRED');
+  });
+
+  it('`relay` is accepted as an alias for proxy', async () => {
+    memoryConfig.channels.teams = { enabled: true, accounts: { default: { appId: 'app-x' } } };
+    await runChannelCommand(['add', 'teams', '--transport', 'relay', '--relay-endpoint', 'r:443']);
+    expect(memoryConfig.channels.teams.accounts.default.transport).toBe('proxy');
+  });
+
+  it('--transport tunnel persists tunnel mode without touching proxy', async () => {
+    memoryConfig.channels.teams = { enabled: true, accounts: { default: { appId: 'app-x' } } };
+    await runChannelCommand(['add', 'teams', '--transport', 'tunnel']);
+    expect(memoryConfig.channels.teams.accounts.default.transport).toBe('tunnel');
+    expect(memoryConfig.channels.teams.accounts.default.proxy).toBeUndefined();
+  });
+
+  it('--setup --transport proxy populates schema and skips devtunnel', async () => {
+    exec.mockClear();
+    setupExecStubs();
+    await runChannelCommand([
+      'add',
+      'teams',
+      '--setup',
+      '--transport',
+      'proxy',
+      '--agent',
+      'main',
+      '--relay-endpoint',
+      'relay-host:443',
+      '--relay-cred-env',
+      'NCL_RELAY_CRED',
+      '--relay-issuer',
+      'https://issuer.example/oidc',
+    ]);
+
+    const acct = memoryConfig.channels.teams.accounts.default;
+    expect(acct.transport).toBe('proxy');
+    expect(acct.proxy.southEndpoint).toBe('relay-host:443');
+    expect(acct.appId).toMatch(/^app-id-ncl-alice-contoso-com-andy$/);
+
+    // No devtunnel calls on the proxy path.
+    const dtCalls = exec.mock.calls.map((c: any[]) => String(c[0])).filter((c: string) => c.startsWith('devtunnel'));
+    expect(dtCalls.length).toBe(0);
+  });
+
+  it('--setup-federation without issuer does NOT create a credential', async () => {
+    exec.mockClear();
+    setupExecStubs();
+    memoryConfig.channels.teams = { enabled: true, accounts: { default: { appId: 'app-x' } } };
+
+    await runChannelCommand(['add', 'teams', '--setup-federation']);
+
+    const fedCreate = exec.mock.calls
+      .map((c: any[]) => String(c[0]))
+      .filter((c: string) => c.includes('az ad app federated-credential create'));
+    expect(fedCreate.length).toBe(0);
+  });
+
+  it('--setup-federation with issuer + subject creates the credential', async () => {
+    exec.mockClear();
+    setupExecStubs();
+    memoryConfig.channels.teams = { enabled: true, accounts: { default: { appId: 'app-x' } } };
+    // Provide subject via ARM output file read.
+    readFileSyncSpy.mockImplementation((p: any) => {
+      if (String(p).includes('arm') || String(p).includes('outputs')) {
+        return JSON.stringify({ msiPrincipalId: { value: 'msi-principal-123' } });
+      }
+      if (String(p).endsWith('.env')) return '';
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    });
+
+    await runChannelCommand(['add', 'teams', '--setup-federation', '--relay-issuer', 'https://issuer.example/oidc']);
+
+    const fedCreate = exec.mock.calls
+      .map((c: any[]) => String(c[0]))
+      .filter((c: string) => c.includes('az ad app federated-credential create'));
+    expect(fedCreate.length).toBe(1);
+    expect(fedCreate[0]).toContain('msi-principal-123');
+    expect(fedCreate[0]).toContain('https://issuer.example/oidc');
+    expect(fedCreate[0]).toContain('api://AzureADTokenExchange');
   });
 });

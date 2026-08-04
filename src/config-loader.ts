@@ -69,6 +69,34 @@ export interface TelegramAccountConfig extends AccountAccessConfig {
   botToken?: string;
 }
 
+/**
+ * Outbound transport for a Teams bot.
+ * - `tunnel` (default): the historical path — this NCL host runs its own
+ *   BotFramework webhook (`webhookPort`) reached via a devtunnel. No relay.
+ * - `proxy`: inbound/outbound go through the Teams relay (App Service). The
+ *   host opens a south-edge gRPC stream to `proxy.southEndpoint` and never
+ *   exposes a public webhook. See docs/2026-06-27-relay-appid-routing-key.md.
+ */
+export type TeamsTransport = 'tunnel' | 'proxy';
+
+/**
+ * Relay (proxy-transport) settings. Only read when `transport === 'proxy'`.
+ * CLI (task 1) writes `southEndpoint`; the south-edge client (task 2) reads
+ * both. `auth.credentialEnv` is an env-var NAME (never the secret itself) —
+ * the credential value is resolved from `.env`/process env at attach time,
+ * mirroring the `appPassword`/`certPrivateKeyPath` convention (no plaintext
+ * secrets in nanoclaw.json).
+ */
+export interface TeamsProxyConfig {
+  /** gRPC host:port of the relay south edge (e.g. "relay-host:443"). */
+  southEndpoint: string;
+  /** Auth block — shape owned by the south client (task 2); CLI only writes the field. */
+  auth: {
+    /** Name of the env var holding the personal AAD credential/token. */
+    credentialEnv: string;
+  };
+}
+
 export interface TeamsAccountConfig extends AccountAccessConfig {
   appId?: string;
   appPassword?: string;
@@ -77,6 +105,10 @@ export interface TeamsAccountConfig extends AccountAccessConfig {
   authMode?: 'secret' | 'certificate';
   certThumbprint?: string;
   certPrivateKeyPath?: string;
+  /** Outbound transport; defaults to 'tunnel' when unset. */
+  transport?: TeamsTransport;
+  /** Relay settings; required/read only when transport === 'proxy'. */
+  proxy?: TeamsProxyConfig;
 }
 
 export interface DiscordAccountConfig extends AccountAccessConfig {
@@ -148,6 +180,10 @@ export interface NanoclawConfig {
       authMode: 'secret' | 'certificate';
       certThumbprint?: string;
       certPrivateKeyPath?: string;
+      /** Channel-level default transport; per-account `transport` overrides. */
+      transport?: TeamsTransport;
+      /** Channel-level default relay settings; per-account `proxy` overrides. */
+      proxy?: TeamsProxyConfig;
       accounts?: Record<string, TeamsAccountConfig>;
       roleBindings?: RoleBindings;
     };
@@ -1133,6 +1169,8 @@ export function loadConfig(): NanoclawConfig {
       authMode: acct.authMode || tm.authMode,
       certThumbprint: acct.certThumbprint || tm.certThumbprint,
       certPrivateKeyPath: acct.certPrivateKeyPath || tm.certPrivateKeyPath,
+      transport: acct.transport || tm.transport,
+      proxy: acct.proxy || tm.proxy,
     };
   }
 

@@ -29,3 +29,24 @@ jobs:
 
       - name: Build agent-runner
         run: cd container/agent-runner && npm install && npm run build
+
+  relay:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: relay/package-lock.json
+
+      - name: Install relay dependencies
+        run: cd relay && npm ci
+
+      - name: Typecheck relay
+        run: cd relay && npm run typecheck
+
+      - name: Run relay tests
+        run: cd relay && npm test
