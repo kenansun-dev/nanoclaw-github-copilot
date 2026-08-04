@@ -17,14 +17,14 @@
  *
  * Wire protocol summary:
  *   1. The FIRST activity is a `typing` activity carrying a
- *      `streamInfo` entity with `streamType:'informative'` (the
+ *      `streaminfo` entity with `streamType:'informative'` (the
  *      "start streaming" bootstrap). The Teams server returns the
  *      `streamId` on this response. Sending `streaming` as the very
  *      first activity is rejected by the server with
  *      "Only start streaming and continue streaming types are allowed
  *       as a typing activity".
  *   2. Each subsequent in-flight chunk is a `typing` activity carrying
- *      a `streamInfo` entity with `streamType:'streaming'` and a
+ *      a `streaminfo` entity with `streamType:'streaming'` and a
  *      monotonically increasing `streamSequence`. These activities set
  *      `id = streamId` and include `streamId` on the first entity.
  *      Teams uses this to render all updates in a single bubble
@@ -217,12 +217,14 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
   //
   // The previous "Bug 1 fix" (2026-05-29) minted a local randomUUID() and
   // stamped it onto the bootstrap frame, then deliberately discarded the
-  // server's response id. That inverted the protocol: we asserted an id the
-  // service never issued. It went unnoticed because the sibling bug in this
-  // same commit (entity `type: 'streaminfo'` instead of the spec's
-  // `streamInfo`) meant the server never parsed the entity at all, so the
-  // bogus id was invisible. Fixing the casing alone would have surfaced this
-  // as the next 400, so both are corrected together.
+  // server's response id. That inverts the protocol: we assert an id the
+  // service never issued.
+  //
+  // NOTE on the entity name: the Learn field table says `streamInfo`, but
+  // every JSON example on that same page — and Microsoft's own Agents-for-js
+  // implementation — emits lowercase `streaminfo`. The table is the outlier;
+  // do NOT "correct" the casing against live behaviour (rpi5 catch,
+  // 2026-08-04).
   //
   // undefined until the bootstrap response arrives. If the service returns
   // no id we cannot legally continue the stream, so `_streamAbandoned`
@@ -410,7 +412,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     // Wire-level cancel (ContentStreamNotAllowed / generic send failure)
     // OR channel-rejected streaming: degrade to a single non-streaming
     // `message` activity so the agent's final reply still lands. We strip
-    // streamInfo entities since they only make sense inside an active
+    // streaminfo entities since they only make sense inside an active
     // stream.
     if (this._cancelled || !this._isStreamingChannel) {
       try {
@@ -498,7 +500,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
       text: finalText,
       entities: [
         {
-          type: 'streamInfo',
+          type: 'streaminfo',
           streamType: 'final',
         },
       ],
@@ -651,7 +653,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
         text: textToSend,
         entities: [
           {
-            type: 'streamInfo',
+            type: 'streaminfo',
             streamType: isBootstrap ? 'informative' : 'streaming',
             streamSequence: this._nextSequence++,
           },
@@ -781,7 +783,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     if (!this._streamId) return;
     activity.id = this._streamId;
     if (!activity.entities) activity.entities = [];
-    if (!activity.entities[0]) activity.entities[0] = { type: 'streamInfo' };
+    if (!activity.entities[0]) activity.entities[0] = { type: 'streaminfo' };
     activity.entities[0].streamId = this._streamId;
   }
 

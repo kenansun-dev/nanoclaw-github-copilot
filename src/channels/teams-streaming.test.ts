@@ -75,7 +75,7 @@ describe('TeamsStreamingSession', () => {
 
     expect(first.type).toBe('typing');
     expect(first.text).toBe('hello');
-    expect(first.entities?.[0].type).toBe('streamInfo');
+    expect(first.entities?.[0].type).toBe('streaminfo');
     // First activity is `informative` (start streaming) per Teams docs.
     // Sending `streaming` as the first activity is rejected by the
     // server ("Only start streaming and continue streaming types are
