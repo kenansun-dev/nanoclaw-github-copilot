@@ -376,6 +376,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
+  queue.setCurrentTurnStartCursor(chatJid, previousCursor);
   lastAgentTimestamp[chatJid] = missedMessages[missedMessages.length - 1].timestamp;
   saveState();
 
@@ -401,6 +402,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // fallback, and the A1 finally-guard can never double-send the same
   // reply.
   let deliveredPlainFallback = false;
+  // Exactly one dispatcher-level plain terminal is allowed per turn. The
+  // channel-level streaming session may already have attempted its own final
+  // fallback; this gate covers coalesce/A1/A2/finally so they cannot race or
+  // double-send after the asynchronous wire result becomes visible.
+  let terminalPlainAttempted = false;
+  let terminalFailureHandled = false;
+  const initialUserTurnSeq = queue.getUserTurnSeq(chatJid);
   // A2: set when native streaming end() reported total delivery failure
   // (endFailed()===true). Drives a single plain-message delivery attempt +
   // cursor rollback after the output loop.
@@ -501,6 +509,153 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     streamHandle = undefined;
     return true;
   };
+
+  // chunk() is intentionally fire-and-forget, so an immediate probe can run
+  // before Bot Connector's 400/timeout flips isCancelled(). At a terminal
+  // boundary, wait for the bounded channel drain before making the delivery
+  // decision. This closes the bootstrap-reject -> explicit-cancel race.
+  const settleAndProbeWireDeath = async (where: string): Promise<void> => {
+    const activeHandle = streamHandle;
+    if (!activeHandle) return;
+    try {
+      await activeHandle.settle?.();
+    } catch (err) {
+      logger.warn(
+        { chatJid, group: group.name, endPath: where, err: (err as Error).message },
+        'native streaming terminal settle failed',
+      );
+    }
+    if (streamHandle === activeHandle) probeWireDeath(where);
+  };
+
+  const sendPlainTerminal = async (text: string, endPath: string): Promise<boolean> => {
+    if (terminalPlainAttempted || deliveredPlainFallback || !text.trim()) return deliveredPlainFallback;
+    terminalPlainAttempted = true;
+    try {
+      const msgId = await channel.sendMessage(chatJid, text);
+      if (typeof msgId === 'string') lastFinalMsgId = msgId;
+      deliveredPlainFallback = true;
+      outputSentToUser = true;
+      turnFinalized = true;
+      logger.warn(
+        { chatJid, group: group.name, endPath, delivered: true, length: text.length },
+        'native streaming reply delivered via plain terminal fallback',
+      );
+      return true;
+    } catch (err) {
+      logger.warn(
+        { chatJid, group: group.name, endPath, delivered: false, err: (err as Error).message },
+        'native streaming plain terminal fallback failed',
+      );
+      return false;
+    }
+  };
+
+  /**
+   * Terminalize one logical user turn. This is deliberately reusable: the
+   * first query returns through processGroupMessages(), while follow-up IPC
+   * queries keep using this onOutput closure after that promise has resolved.
+   * Every query-complete signal must therefore run the same delivery state
+   * machine, with the outer try-tail/finally serving only as safety nets.
+   */
+  const finalizeNativeStreamTerminal = async (endPath: string): Promise<boolean> => {
+    if (streamDiedCoalesced && streamDiedCoalesced.length > 0) {
+      const combined = streamDiedCoalesced.join('\n\n');
+      const landed = await sendPlainTerminal(combined, `${endPath}-coalesced-final`);
+      streamDiedCoalesced = undefined;
+      if (!landed) streamDeliveryFailed = true;
+    }
+
+    if (streamDeliveryFailed && !deliveredPlainFallback) {
+      const landed = await sendPlainTerminal(streamFailureFinalText, `${endPath}-end-total-failure`);
+      if (landed) streamDeliveryFailed = false;
+    }
+
+    await settleAndProbeWireDeath(`${endPath}-settle`);
+    const nativeStreamNeedsPartialFallback =
+      !streamDeliveryFailed && (streamDiedCoalesced !== undefined || streamHandle?.isCancelled?.() === true);
+    if (nativeStreamNeedsPartialFallback && !deliveredPlainFallback && progressiveText.trim().length > 0) {
+      const landed = await sendPlainTerminal(progressiveText, `${endPath}-partial-wire-death`);
+      if (!landed) streamDeliveryFailed = true;
+    }
+
+    // A query can terminate after cumulative partials without a separate
+    // non-partial final (runner error/edge provider sequence). If the wire is
+    // still healthy, finalize that same stream instead of explicit-cancelling
+    // it and making the visible draft disappear. Wire-dead handles were
+    // nulled by probeWireDeath above and already took the plain path.
+    if (streamHandle && !outputSentToUser && progressiveText.trim().length > 0) {
+      const activeHandle = streamHandle;
+      streamHandle = undefined;
+      try {
+        const msgId = await activeHandle.end(progressiveText);
+        if (activeHandle.endFailed?.() === true) {
+          streamDeliveryFailed = true;
+          streamFailureFinalText = progressiveText;
+          const landed = await sendPlainTerminal(progressiveText, `${endPath}-partial-final-total-failure`);
+          if (landed) streamDeliveryFailed = false;
+        } else {
+          if (typeof msgId === 'string') lastFinalMsgId = msgId;
+          outputSentToUser = true;
+          turnFinalized = true;
+          logger.info(
+            { chatJid, group: group.name, endPath: `${endPath}-partial-final`, delivered: true },
+            'native streaming unfinished partial finalized at query terminal',
+          );
+        }
+      } catch (err) {
+        streamDeliveryFailed = true;
+        streamFailureFinalText = progressiveText;
+        logger.warn(
+          { chatJid, group: group.name, endPath: `${endPath}-partial-final`, err: (err as Error).message },
+          'native streaming partial finalization threw; using plain terminal fallback',
+        );
+        const landed = await sendPlainTerminal(progressiveText, `${endPath}-partial-final-throw`);
+        if (landed) streamDeliveryFailed = false;
+      }
+    }
+
+    // A healthy unfinished stream with no answer text is cleanup-only.
+    if (streamHandle) {
+      try {
+        await streamHandle.cancel();
+      } catch (err) {
+        logger.warn(
+          { chatJid, group: group.name, endPath: `${endPath}-cancel`, err: (err as Error).message },
+          'streamHandle.cancel at query terminal failed (non-fatal)',
+        );
+      }
+      streamHandle = undefined;
+    }
+
+    const failed = streamDeliveryFailed || (terminalPlainAttempted && !deliveredPlainFallback);
+    if (failed && !terminalFailureHandled) {
+      terminalFailureHandled = true;
+      const isFollowUp = queue.getUserTurnSeq(chatJid) > initialUserTurnSeq;
+      if (isFollowUp) {
+        const rollbackCursor = queue.requestDeliveryRetry(chatJid);
+        if (rollbackCursor !== null) {
+          const before = lastAgentTimestamp[chatJid];
+          lastAgentTimestamp[chatJid] = rollbackCursor;
+          saveState();
+          logger.warn(
+            { chatJid, group: group.name, endPath, before, rolledBackTo: rollbackCursor },
+            'follow-up terminal delivery failed; rolled back current turn and queued retry',
+          );
+        }
+      } else {
+        // Initial query: processGroupMessages' normal hadError path returns
+        // false to GroupQueue, which schedules the existing bounded retry.
+        hadError = true;
+      }
+      return false;
+    }
+
+    if (outputSentToUser || deliveredPlainFallback) {
+      queue.notifyUserDelivery(chatJid);
+    }
+    return !failed;
+  };
   // Progress-draft lane (proposal docs/proposals/2026-05-23-progress-drafts.md).
   // Lazily created on the first `status==='progress'` event when the channel
   // is configured `streaming.mode === 'progress'`. Independent of the
@@ -558,15 +713,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // turn edit the previous reply (kenan TG repro 2026-04-25 22:41).
   let queryBoundaryPendingThinking = false;
   let queryBoundaryPendingResult = false;
-  // Independent turn-boundary signal sourced from GroupQueue. The SDK's
-  // newSessionId sentinel only fires for the FIRST turn of a session;
-  // follow-up user messages piped to a running container reuse the same
-  // sessionId, so the dispatcher would never see a sentinel for turns 2+.
-  // GroupQueue increments userTurnSeq on every pipe (initial + follow-up),
-  // so comparing against the last-seen value gives a reliable per-turn
-  // boundary regardless of SDK sentinel behaviour. (kenan TG repro
-  // 2026-04-25 22:54: 4 user msgs, 1 sentinel, 3 missed turn boundaries.)
-  let lastUserTurnSeqSeen = queue.getUserTurnSeq(chatJid);
+  // Independent turn-boundary signal sourced from GroupQueue. The GHC
+  // runner emits query-complete after every query, but userTurnSeq is still
+  // the authoritative *start* boundary: it advances before the first output
+  // of every initial/follow-up turn and protects state reset if a runner ever
+  // omits or delays its terminal sentinel.
+  let lastUserTurnSeqSeen = initialUserTurnSeq;
   // True after a result.result with !partial fires for the current turn.
   // Any further thinking / reasoning_delta events that arrive before a new
   // turn boundary (userTurnSeq advance OR sentinel) are SDK trailing-delta
@@ -574,6 +726,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // bubbles AFTER the answer was already finalized (kenan TG repro
   // 2026-04-26 00:03: thinking bubble appeared post-answer).
   let turnFinalized = false;
+  let deliveryStateTurnSeq = initialUserTurnSeq;
+  const resetDeliveryStateForTurn = (seq: number): void => {
+    if (seq === deliveryStateTurnSeq) return;
+    deliveryStateTurnSeq = seq;
+    hadError = false;
+    outputSentToUser = false;
+    deliveredPlainFallback = false;
+    terminalPlainAttempted = false;
+    terminalFailureHandled = false;
+    streamDeliveryFailed = false;
+    streamFailureFinalText = '';
+    progressiveMsgId = undefined;
+    progressiveText = '';
+    lastFinalMsgId = undefined;
+    streamDiedCoalesced = undefined;
+    turnFinalized = false;
+  };
   // Native reasoning=on extension (PR #53 phase B commit 2): when channel
   // supportsNativeThinking AND mode === 'on', stream the thinking text
   // through the same streamHandle as a cumulative `<formatted-thinking>\n\n<answer>`
@@ -589,14 +758,26 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       prompt,
       chatJid,
       async (result) => {
-        // Streaming output callback
+        // Streaming output callback. Reset delivery gates at the first event
+        // of every new userTurnSeq, regardless of event kind (thinking,
+        // progress, result). The query-complete sentinel itself must keep the
+        // current turn's state until terminalization finishes.
+        const isQueryComplete = result.result === null && (result as any).newSessionId && !result.partial;
+        if (!isQueryComplete) {
+          resetDeliveryStateForTurn(queue.getUserTurnSeq(chatJid));
+        }
 
         // Query-complete sentinel: agent finished a query and is waiting for
         // the next IPC pipe (IPC mode only). Mark a boundary so the next
         // non-null result resets per-turn message-id state. Doing the reset
         // here (on the sentinel) instead of pre-emptively at the top of the
         // next turn avoids racing with trailing partials of the current turn.
-        if (result.result === null && (result as any).newSessionId && !result.partial) {
+        if (isQueryComplete) {
+          // The GHC runner emits this after EVERY query, including IPC
+          // follow-ups. Terminalize here because processGroupMessages' outer
+          // try-tail/finally runs only for the first query of a long-lived
+          // host process; later turns keep using this callback closure.
+          await finalizeNativeStreamTerminal('query-complete');
           queryBoundaryPendingThinking = true;
           queryBoundaryPendingResult = true;
           // Don't return — let the rest of the handler run for thinking/status
@@ -642,6 +823,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           // below resets thinkingMsgId / opening lock.
           const currentSeq = queue.getUserTurnSeq(chatJid);
           if (currentSeq !== lastUserTurnSeqSeen) {
+            resetDeliveryStateForTurn(currentSeq);
             lastUserTurnSeqSeen = currentSeq;
             queryBoundaryPendingThinking = true;
             queryBoundaryPendingResult = true;
@@ -819,6 +1001,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           // as a new turn even if no SDK sentinel fired.
           const currentSeq = queue.getUserTurnSeq(chatJid);
           if (currentSeq !== lastUserTurnSeqSeen) {
+            resetDeliveryStateForTurn(currentSeq);
             lastUserTurnSeqSeen = currentSeq;
             queryBoundaryPendingResult = true;
             queryBoundaryPendingThinking = true;
@@ -1073,8 +1256,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 lastFinalMsgId = editedId;
               }
             } else {
-              const msgId = await channel.sendMessage(chatJid, text, sendOpts);
-              lastFinalMsgId = typeof msgId === 'string' ? msgId : undefined;
+              try {
+                const msgId = await channel.sendMessage(chatJid, text, sendOpts);
+                lastFinalMsgId = typeof msgId === 'string' ? msgId : undefined;
+              } catch (err) {
+                if (!channel.usesNativeStreaming) throw err;
+                streamDeliveryFailed = true;
+                streamFailureFinalText = text;
+                logger.warn(
+                  { chatJid, group: group.name, endPath: 'direct-final', err: (err as Error).message },
+                  'native-streaming channel direct final failed; deferring to terminal retry decision',
+                );
+                return;
+              }
             }
             progressiveMsgId = undefined;
             progressiveText = '';
@@ -1114,102 +1308,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       triggeringUserId,
     );
 
-    // Bug 2 flush: if the streaming wire died mid-turn, publish all the
-    // buffered finals as a single concatenated `channel.sendMessage`.
-    // Worst-case: 1 long DM instead of 34 short ones.
-    if (streamDiedCoalesced && streamDiedCoalesced.length > 0) {
-      const combined = streamDiedCoalesced.join('\n\n');
-      try {
-        const msgId = await channel.sendMessage(chatJid, combined);
-        if (typeof msgId === 'string') lastFinalMsgId = msgId;
-        // The buffered final is not delivered until this send succeeds.
-        // Mark both gates here (not when buffering) so a failed flush rolls
-        // the cursor back instead of silently advancing it.
-        deliveredPlainFallback = true;
-        outputSentToUser = true;
-        logger.info(
-          { group: group.name, parts: streamDiedCoalesced.length, length: combined.length },
-          'Coalesced multi-final flushed (streaming wire died mid-turn)',
-        );
-      } catch (err) {
-        hadError = true;
-        logger.error({ group: group.name, err: (err as Error).message }, 'Coalesced multi-final flush failed');
-      }
-      streamDiedCoalesced = undefined;
-    }
-
-    // A2 (2026-08-03): single delivery+cursor decision for a native
-    // streaming end() that reported total failure (endFailed()===true).
-    // Done here — after the output loop, BEFORE the hadError/rollback check
-    // below — so the delivery attempt and the cursor decision are made
-    // together in one place (no split between main body and finally-guard,
-    // which previously risked rolling the cursor back AND delivering =
-    // duplicate next turn). Exactly one send path => no double-send.
-    if (streamDeliveryFailed && !deliveredPlainFallback) {
-      let landed = false;
-      if (streamFailureFinalText && streamFailureFinalText.trim().length > 0) {
-        try {
-          const fbId = await channel.sendMessage(chatJid, streamFailureFinalText);
-          deliveredPlainFallback = true;
-          landed = true;
-          if (typeof fbId === 'string') lastFinalMsgId = fbId;
-          logger.warn(
-            { chatJid, group: group.name, length: streamFailureFinalText.length },
-            'A2 terminal: streaming end() failed; delivered final answer as a plain message',
-          );
-        } catch (err) {
-          logger.warn(
-            { chatJid, err: (err as Error).message },
-            'A2 terminal plain fallback also failed; rolling cursor back for retry',
-          );
-        }
-      }
-      if (landed) {
-        // The reply DID land via the fallback: mark delivered so the turn
-        // is not re-processed (which would duplicate the answer).
-        outputSentToUser = true;
-        turnFinalized = true;
-        streamDeliveryFailed = false;
-      } else {
-        // Nothing reached the user: roll the cursor back so the turn retries
-        // instead of the answer silently vanishing. Leave outputSentToUser
-        // false; the hadError path below performs the rollback.
-        hadError = true;
-      }
-    }
-
-    // A1: if the native streaming wire died before any non-partial final
-    // reached end(), deliver the latest cumulative answer as one plain
-    // message BEFORE deciding whether to advance or roll back the cursor.
-    // Do not reuse this for A2 total-end failure: A2 already made its one
-    // terminal delivery attempt above and owns the retry decision.
-    const nativeStreamNeedsPartialFallback =
-      !streamDeliveryFailed && (streamDiedCoalesced !== undefined || streamHandle?.isCancelled?.() === true);
-    if (
-      nativeStreamNeedsPartialFallback &&
-      !deliveredPlainFallback &&
-      !outputSentToUser &&
-      progressiveText &&
-      progressiveText.trim().length > 0
-    ) {
-      try {
-        const fbId = await channel.sendMessage(chatJid, progressiveText);
-        if (typeof fbId === 'string') lastFinalMsgId = fbId;
-        deliveredPlainFallback = true;
-        outputSentToUser = true;
-        turnFinalized = true;
-        logger.warn(
-          { chatJid, group: group.name, length: progressiveText.length },
-          'A1 terminal: streaming wire died before a final was published; delivered accumulated answer as a plain message',
-        );
-      } catch (err) {
-        hadError = true;
-        logger.warn(
-          { chatJid, err: (err as Error).message },
-          'A1 terminal plain send failed; rolling cursor back for retry',
-        );
-      }
-    }
+    // Idempotent safety call: query-complete normally terminalized already;
+    // the shared attempt/failure gates and cleared handle make repeats no-ops.
+    await finalizeNativeStreamTerminal('process-tail');
 
     await traceSetTyping(channel, chatJid, false, 'turn-end');
 
@@ -1232,40 +1333,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
     return true;
   } finally {
-    // Safety net: always release typing, even if anything above threw.
-    // traceSetTyping swallows its own errors. The 'finally-guard' reason
-    // makes stuck-typing investigations greppable: if grep shows finally-guard
-    // right before a stuck-typing report, an exception escaped the happy path.
-    // Cancel any unfinished native stream so the channel can clean up its
-    // queue / mark the stream bubble as ended on the user's client. cancel()
-    // is idempotent; called even if a normal end() already fired (the second
-    // call no-ops).
-    if (streamHandle) {
-      try {
-        await streamHandle.cancel();
-      } catch (err) {
-        logger.warn(
-          { chatJid, err: (err as Error).message },
-          'streamHandle.cancel in finally-guard failed (non-fatal)',
-        );
-      }
-    }
-    // Bug 2 finally-flush: if the turn threw before reaching the happy-path
-    // flush above and there is buffered coalesced text, try once more so the
-    // user still gets the agent's reply (in one bubble) instead of nothing.
-    if (streamDiedCoalesced && streamDiedCoalesced.length > 0) {
-      const combined = streamDiedCoalesced.join('\n\n');
-      try {
-        await channel.sendMessage(chatJid, combined);
-        deliveredPlainFallback = true;
-      } catch (err) {
-        logger.warn(
-          { chatJid, err: (err as Error).message },
-          'Coalesced multi-final flush in finally-guard failed (non-fatal)',
-        );
-      }
-      streamDiedCoalesced = undefined;
-    }
+    // Safety net for the first query. Follow-up IPC turns terminalize from the
+    // per-query sentinel above because this outer finally has already run.
+    await finalizeNativeStreamTerminal('finally-guard');
     // Progress draft: any draft still open at finally-guard time means the
     // turn ended without a normal final-output path (error, cancel, etc).
     // Abandon without wire traffic; caller's error path owns any user-visible

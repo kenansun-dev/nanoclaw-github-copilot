@@ -1006,7 +1006,7 @@ export class TeamsChannel implements Channel {
     const ref = this.conversationRefs.get(jid);
     if (!ref) {
       logger.warn({ jid }, 'Teams: no conversation reference for JID, cannot send');
-      return;
+      throw new Error(`Teams: no conversation reference for JID ${jid}`);
     }
 
     // Proxy transport: route the final message through the relay sender (L2
@@ -1033,7 +1033,7 @@ export class TeamsChannel implements Channel {
         return lastId;
       } catch (err: any) {
         logger.error({ jid, err: err?.message ?? String(err) }, 'Teams proxy sendMessage failed after retries');
-        return;
+        throw err;
       }
     }
 
@@ -1066,6 +1066,10 @@ export class TeamsChannel implements Channel {
       } catch {
         /* swallow */
       }
+      // Delivery callers use rejection to decide whether to advance or roll
+      // back the message cursor. Swallowing here made A1/A2 mark a vanished
+      // reply as delivered merely because sendMessage resolved `undefined`.
+      throw err;
     }
   }
 
@@ -1196,6 +1200,9 @@ export class TeamsChannel implements Channel {
         chunk: async () => {},
         end: async () => {},
         cancel: async () => {},
+        settle: async () => {},
+        isCancelled: () => true,
+        endFailed: () => true,
       };
     }
     const sender = this.outboundSenderFor(jid, ref as ConversationReference);

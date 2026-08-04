@@ -61,6 +61,16 @@ interface GroupState {
    */
   inFlightCursorRollback: string | null;
   /**
+   * Cursor at the start of the current logical user turn. Unlike
+   * inFlightCursorRollback, this survives agent output and is consumed only
+   * after the channel confirms terminal delivery. It lets the dispatcher
+   * roll back exactly the failed follow-up turn without touching the
+   * process-death state machine above.
+   */
+  currentTurnStartCursor: string | null;
+  /** Full IPC prompt(s) for the current turn, retained until delivery. */
+  currentTurnText: string | null;
+  /**
    * Monotonic counter incremented on EVERY user message that becomes a new
    * turn for the agent: both the initial turn (when the queue spawns a
    * container or runs the first prompt) and every follow-up message piped
@@ -129,6 +139,8 @@ export class GroupQueue {
         pipedSinceOutput: 0,
         agentHasOutput: false,
         inFlightCursorRollback: null,
+        currentTurnStartCursor: null,
+        currentTurnText: null,
         userTurnSeq: 0,
       };
       this.slots.set(slotKey, state);
@@ -437,6 +449,13 @@ export class GroupQueue {
       if (rollbackCursor && !state.inFlightCursorRollback) {
         state.inFlightCursorRollback = rollbackCursor;
       }
+      // Independent delivery cursor: keep the earliest cursor for this turn
+      // until the dispatcher confirms a user-visible terminal. Agent output
+      // alone is not delivery (Teams streaming may reject it asynchronously).
+      if (rollbackCursor && !state.currentTurnStartCursor) {
+        state.currentTurnStartCursor = rollbackCursor;
+      }
+      state.currentTurnText = state.currentTurnText ? `${state.currentTurnText}\n${text}` : text;
       logger.info(
         {
           groupJid,
@@ -460,6 +479,45 @@ export class GroupQueue {
    */
   getUserTurnSeq(groupJid: string): number {
     return this.getGroup(groupJid).userTurnSeq;
+  }
+
+  setCurrentTurnStartCursor(groupJid: string, cursor: string): void {
+    this.getGroup(groupJid).currentTurnStartCursor = cursor;
+  }
+
+  getCurrentTurnStartCursor(groupJid: string): string | null {
+    return this.getGroup(groupJid).currentTurnStartCursor;
+  }
+
+  notifyUserDelivery(groupJid: string): void {
+    const state = this.getGroup(groupJid);
+    state.currentTurnStartCursor = null;
+    state.currentTurnText = null;
+  }
+
+  /**
+   * Re-pipe the exact follow-up turn whose terminal channel delivery failed.
+   * The query-complete sentinel is emitted before the runner waits for its
+   * next IPC file, so writing now is safe and avoids manufacturing idle state
+   * or spawning a second process. Cursor/text are cleared only long enough for
+   * sendMessage() to establish the retry as a fresh logical turn; on write
+   * failure the original delivery state is restored.
+   */
+  requestDeliveryRetry(groupJid: string): string | null {
+    const state = this.getGroup(groupJid);
+    const cursor = state.currentTurnStartCursor;
+    const text = state.currentTurnText;
+    if (cursor === null || !text) return cursor;
+
+    state.currentTurnStartCursor = null;
+    state.currentTurnText = null;
+    state.pipedSinceOutput = 0;
+    state.agentHasOutput = false;
+    if (!this.sendMessage(groupJid, text, cursor)) {
+      state.currentTurnStartCursor = cursor;
+      state.currentTurnText = text;
+    }
+    return cursor;
   }
 
   /**

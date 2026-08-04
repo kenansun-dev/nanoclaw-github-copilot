@@ -156,6 +156,14 @@ export interface StreamHandle {
   end(finalText: string): Promise<string | void>;
   cancel(): Promise<void>;
   /**
+   * Wait for fire-and-forget wire work started by `chunk()` to settle,
+   * without ending or explicitly cancelling the stream. Native streaming
+   * dispatchers call this at terminal boundaries before deciding whether a
+   * wire failure needs a plain-message fallback. Implementations must bound
+   * the wait; channels with synchronous chunk delivery may omit it.
+   */
+  settle?(): Promise<void>;
+  /**
    * True if the wire transport (e.g. Teams streaming) gave up mid-turn
    * after a non-recoverable reject (`ContentStreamNotAllowed`, wire
    * protocol error). Distinct from explicit dispatcher-driven `cancel()`

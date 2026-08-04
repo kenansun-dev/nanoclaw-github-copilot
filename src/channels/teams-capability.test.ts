@@ -442,30 +442,25 @@ describe('native streaming dispatcher source contract', () => {
     expect(src).toMatch(/(?:activeHandle|streamHandle)\.end\(text\)/);
   });
 
-  it('src/index.ts wires the A1/A2 delivery guarantee for a failed streaming end()', async () => {
-    // Regression pin for the 2026-08-03 bootstrap-reject silent-drop fix.
-    // A2: dispatcher must consult endFailed() and, on total failure, avoid
-    // marking the turn delivered so the cursor rolls back for retry.
-    // A1: a plain-message terminal fallback must exist so the accumulated
-    // answer still lands when the streaming wire died before a final.
+  it('src/index.ts terminalizes every native-stream query with bounded settle + truthful retry', async () => {
     const src = await import('node:fs').then((fs) =>
       fs.promises.readFile(new URL('../index.ts', import.meta.url), 'utf-8'),
     );
-    // A2 signal consulted.
+    // A2 signal from end() total failure remains wired.
     expect(src).toMatch(/endFailed\?\.\(\)\s*===\s*true/);
-    // Single delivery+cursor decision gated so it cannot double-send.
-    expect(src).toMatch(/streamDeliveryFailed\s*&&\s*!deliveredPlainFallback/);
-    // A1 terminal fallback on accumulated answer text MUST be gated by
-    // an observed native-stream wire failure and run before cursor choice.
-    // Without this, unrelated Telegram/Discord partial errors can duplicate
-    // output, or a successful fallback can still be retried next turn.
-    expect(src).toMatch(/const\s+nativeStreamNeedsPartialFallback\s*=/);
-    expect(src).toMatch(/nativeStreamNeedsPartialFallback[\s\S]*progressiveText\.trim\(\)\.length\s*>\s*0/);
-    expect(src).toMatch(/A1 terminal:[\s\S]*await traceSetTyping\(channel, chatJid, false, 'turn-end'\)/);
-    // Buffered coalesced output is not delivered until its actual send
-    // succeeds; never mark it delivered at buffer time.
+    // Fire-and-forget chunk sends must settle before terminal wire-death probe.
+    expect(src).toMatch(/await activeHandle\.settle\?\.\(\)/);
+    expect(src).toMatch(/settleAndProbeWireDeath\(`\$\{endPath\}-settle`\)/);
+    // One shared plain-terminal gate covers coalesce/A1/A2/finally.
+    expect(src).toMatch(/terminalPlainAttempted \|\| deliveredPlainFallback/);
+    expect(src).toMatch(/sendPlainTerminal\(progressiveText, `\$\{endPath\}-partial-wire-death`\)/);
+    // The GHC per-query sentinel, not just processGroupMessages' first-query
+    // tail, invokes the reusable terminal state machine for IPC follow-ups.
+    expect(src).toMatch(/result\.result === null[\s\S]*await finalizeNativeStreamTerminal\('query-complete'\)/);
+    // Follow-up total failure uses a per-turn cursor and queues a retry.
+    expect(src).toMatch(/queue\.requestDeliveryRetry\(chatJid\)/);
+    // Buffered output is never marked delivered merely when buffered.
     expect(src).not.toMatch(/streamDiedCoalesced\.push\(text\);\s*outputSentToUser\s*=\s*true/);
-    expect(src).toMatch(/channel\.sendMessage\(chatJid, combined\)[\s\S]*outputSentToUser\s*=\s*true/);
   });
 
   it('src/index.ts cancels streamHandle on turn boundary and finally-guard', async () => {

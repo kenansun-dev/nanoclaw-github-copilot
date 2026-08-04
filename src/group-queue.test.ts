@@ -781,3 +781,89 @@ describe('GroupQueue', () => {
     });
   });
 });
+
+describe('per-turn delivery cursor', () => {
+  it('survives agent output and clears only after confirmed user delivery', () => {
+    const queue = new GroupQueue();
+    const state = (queue as any).getGroup('delivery@g.us');
+    state.active = true;
+    state.groupFolder = 'delivery-folder';
+    state.process = { exitCode: null, killed: false } as any;
+
+    expect(queue.sendMessage('delivery@g.us', 'question', 'cursor-before-turn')).toBe(true);
+    expect(queue.getCurrentTurnStartCursor('delivery@g.us')).toBe('cursor-before-turn');
+    queue.notifyAgentOutput('delivery@g.us');
+    expect(queue.getCurrentTurnStartCursor('delivery@g.us')).toBe('cursor-before-turn');
+    queue.notifyUserDelivery('delivery@g.us');
+    expect(queue.getCurrentTurnStartCursor('delivery@g.us')).toBeNull();
+    queue.shutdown();
+  });
+
+  it('requestDeliveryRetry re-pipes the same turn repeatedly without clearing its cursor or forging idle state', () => {
+    const queue = new GroupQueue();
+    const state = (queue as any).getGroup('retry@g.us');
+    state.active = true;
+    state.idleWaiting = true;
+    state.groupFolder = 'retry-folder';
+    state.process = { exitCode: null, killed: false } as any;
+
+    expect(queue.sendMessage('retry@g.us', 'turn-2 prompt', 'turn-2-start')).toBe(true);
+    queue.notifyAgentOutput('retry@g.us');
+    const seqAfterOriginalPipe = state.userTurnSeq;
+
+    expect(queue.requestDeliveryRetry('retry@g.us')).toBe('turn-2-start');
+    expect(queue.getCurrentTurnStartCursor('retry@g.us')).toBe('turn-2-start');
+    expect(state.currentTurnText).toBe('turn-2 prompt');
+    expect(state.userTurnSeq).toBe(seqAfterOriginalPipe + 1);
+    expect(state.idleWaiting).toBe(false);
+    expect(state.agentHasOutput).toBe(false);
+
+    // A real new user message can arrive in the retry window. The runner
+    // intentionally batches queued IPC files into one query; delivery state
+    // must preserve the OLDEST cursor while retaining both prompts.
+    expect(queue.sendMessage('retry@g.us', 'new user prompt', 'turn-3-start')).toBe(true);
+    expect(queue.getCurrentTurnStartCursor('retry@g.us')).toBe('turn-2-start');
+    expect(state.currentTurnText).toBe('turn-2 prompt\nnew user prompt');
+    expect(state.inFlightCursorRollback).toBe('turn-2-start');
+
+    // A second terminal failure re-pipes the combined query and still uses
+    // turn 2's cursor; no message can fall through a later cursor.
+    queue.notifyAgentOutput('retry@g.us');
+    expect(queue.requestDeliveryRetry('retry@g.us')).toBe('turn-2-start');
+    expect(queue.getCurrentTurnStartCursor('retry@g.us')).toBe('turn-2-start');
+    expect(state.currentTurnText).toBe('turn-2 prompt\nnew user prompt');
+    expect(state.inFlightCursorRollback).toBe('turn-2-start');
+    expect(state.userTurnSeq).toBe(seqAfterOriginalPipe + 3);
+    queue.shutdown();
+  });
+
+  it('retry re-pipe followed by process death uses the same earliest cursor through existing case2 rollback', async () => {
+    const { EventEmitter } = await import('events');
+    const queue = new GroupQueue();
+    const callback = vi.fn();
+    queue.setOnProcessDiedWithoutOutput(callback);
+    const state = (queue as any).getGroup('retry-death@g.us');
+    state.active = true;
+    state.idleWaiting = true;
+    state.groupFolder = 'retry-death-folder';
+    (queue as any).activeCount = 1;
+    const proc = new EventEmitter() as any;
+    proc.pid = 55123;
+    proc.exitCode = null;
+    proc.killed = false;
+    proc.kill = vi.fn();
+    queue.registerProcess('retry-death@g.us', proc, 'retry-death-container', 'retry-death-folder');
+
+    queue.sendMessage('retry-death@g.us', 'turn prompt', 'turn-start');
+    queue.notifyAgentOutput('retry-death@g.us');
+    queue.requestDeliveryRetry('retry-death@g.us');
+    expect(state.pipedSinceOutput).toBe(1);
+    expect(state.agentHasOutput).toBe(false);
+    expect(state.inFlightCursorRollback).toBe('turn-start');
+
+    proc.exitCode = 143;
+    proc.emit('exit');
+    expect(callback).toHaveBeenCalledWith('retry-death@g.us', 'turn-start', 143);
+    queue.shutdown();
+  });
+});
