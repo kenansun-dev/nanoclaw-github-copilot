@@ -16,13 +16,11 @@
  *    the full Teams adapter.
  *
  * Wire protocol summary:
- *   1. The FIRST activity is a `typing` activity carrying a
- *      `streaminfo` entity with `streamType:'informative'` (the
- *      "start streaming" bootstrap). The Teams server returns the
- *      `streamId` on this response. Sending `streaming` as the very
- *      first activity is rejected by the server with
- *      "Only start streaming and continue streaming types are allowed
- *       as a typing activity".
+ *   1. This implementation starts with a `typing` activity carrying a
+ *      `streaminfo` entity with `streamType:'informative'`. The first
+ *      request omits `id`/`streamId`; Teams returns the server-owned
+ *      `streamId` in its 201 response. (The protocol also permits an initial
+ *      `streaming` update; we choose `informative` for thinking/progress.)
  *   2. Each subsequent in-flight chunk is a `typing` activity carrying
  *      a `streaminfo` entity with `streamType:'streaming'` and a
  *      monotonically increasing `streamSequence`. These activities set
@@ -62,7 +60,6 @@
  *   - Pacing: per-chunk delay matches Teams' enforced rate limit.
  */
 
-import { randomUUID } from 'node:crypto';
 import type { TurnContext, ConversationReference } from 'botbuilder';
 import { logger } from '../log-extensions.js';
 import type { NativeThinkingStreamHandle } from '../types-extensions.js';
@@ -215,34 +212,23 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
   // `201 {"id":"a-0000l"}` and that id must be echoed as `streamId` on
   // every subsequent frame ("streamId from the initial streaming request").
   //
-  // The previous "Bug 1 fix" (2026-05-29) minted a local randomUUID() and
+  // The previous "Bug 1 fix" (2026-05-29) minted a local UUID and
   // stamped it onto the bootstrap frame, then deliberately discarded the
-  // server's response id. That inverts the protocol: we assert an id the
-  // service never issued.
+  // server's response id. That inverted the protocol: we asserted an id the
+  // service never issued. Microsoft Learn's REST examples and Microsoft's
+  // current Agents-for-js implementation both use entity type `streaminfo`
+  // (lowercase), so casing is deliberately unchanged here; the docs property
+  // table's `streamInfo` spelling conflicts with both primary examples.
   //
-  // NOTE on the entity name: the Learn field table says `streamInfo`, but
-  // every JSON example on that same page — and Microsoft's own Agents-for-js
-  // implementation — emits lowercase `streaminfo`. The table is the outlier;
-  // do NOT "correct" the casing against live behaviour (rpi5 catch,
-  // 2026-08-04).
-  //
-  // undefined until the bootstrap response arrives. If the service returns
-  // no id we cannot legally continue the stream, so `_streamAbandoned`
-  // flips and end() degrades to a single plain message.
+  // Undefined until the bootstrap response arrives. If the service returns
+  // no id we cannot legally continue the stream, so end() degrades to a
+  // single plain message.
   private _streamId: string | undefined;
   /**
-   * Set when the bootstrap frame was accepted but carried no usable id.
-   * Continuing without a server streamId is a protocol violation, so we
-   * stop streaming and let `end()` publish one plain message instead.
-   */
-  private _streamAbandoned = false;
-  /**
-   * True once the bootstrap (`streamType: 'informative'`) activity has
-   * been sent. Tracked separately from `_streamId` because the server
-   * response may not always carry an id back — if we relied on
-   * `!_streamId` to mean "first activity" we'd send `informative`
-   * forever, and Teams rejects more than one informative per stream
-   * ("You can set only one informative message").
+   * True once this session's chosen bootstrap (`streamType: 'informative'`)
+   * has been sent. Tracked separately from `_streamId` so a successful 201
+   * with no usable id cannot trigger repeated start requests; that case
+   * abandons streaming and lets `end()` publish one plain message.
    */
   private _bootstrapSent = false;
   /**
@@ -278,10 +264,10 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
    * must publish nothing — the dispatcher has decided this stream is dead.
    *
    * Distinct from `_cancelled`, which is also set when the wire layer
-   * rejects mid-stream (`ContentStreamNotAllowed`, generic send failure):
-   * those cases stop further streaming activities, but `end()` MUST still
-   * publish the final text as a plain non-streaming message, otherwise
-   * the agent's reply silently disappears.
+   * rejects mid-stream (generic failure or non-user-stop
+   * `ContentStreamNotAllowed`). Those cases stop further streaming but still
+   * allow `end()` to publish a plain final. Confirmed user Stop is tracked
+   * separately by `_userCancelled` and suppresses the final as required.
    *
    * Bug discovered in code review (rpi5, 2026-04-22): without this flag,
    * `ContentStreamNotAllowed` mid-stream caused `_cancelled = true`, then
@@ -291,6 +277,8 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
    * never wired the distinction.
    */
   private _explicitCancel = false;
+  /** True only when Teams confirms that the user pressed Stop. */
+  private _userCancelled = false;
   /**
    * A2 (2026-08-03): true when `end()` tried to publish the final reply
    * and EVERY send path failed (streaming final rejected AND the plain
@@ -395,10 +383,9 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     this._phase = 'answer';
     this._latestText = '';
     this._lastSent = '';
-    // We intentionally keep `_bootstrapSent` true: the informative frame
-    // already went out, and Teams accepts only ONE informative per stream.
-    // Subsequent answer chunks must continue as `streaming` activities
-    // under the same streamId.
+    // We intentionally keep `_bootstrapSent` true: this session already
+    // chose and sent its one progress bootstrap. Subsequent answer chunks
+    // continue as `streaming` activities under the same streamId.
   }
 
   async end(finalText: string): Promise<string | void> {
@@ -407,7 +394,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     this._phase = 'ended';
     this._latestText = finalText;
     // Explicit dispatcher-driven cancel: nothing to publish.
-    if (this._explicitCancel) return;
+    if (this._explicitCancel || this._userCancelled) return;
 
     // Wire-level cancel (ContentStreamNotAllowed / generic send failure)
     // OR channel-rejected streaming: degrade to a single non-streaming
@@ -584,7 +571,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
    * `docs/proposals/2026-05-29-teams-streaming-multi-final-fix.md`.
    */
   isCancelled(): boolean {
-    return this._cancelled && !this._explicitCancel;
+    return this._cancelled && !this._explicitCancel && !this._userCancelled;
   }
 
   /**
@@ -624,29 +611,17 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
         // Nothing new since last send; skip pacing wait too.
         continue;
       }
-      // Teams server requires the FIRST activity in a stream to be a
-      // start-streaming signal (`streamType: 'informative'`). Subsequent
-      // typing activities use `streaming` and MUST carry the `streamId`
-      // returned by the first send. Sending `streaming` as the very first
-      // activity is rejected with:
-      //   "Only start streaming and continue streaming types are allowed
-      //    as a typing activity"
-      // (per-doc literal enum is `informative` / `streaming`; the server
-      // error wording reads them as 'start' / 'continue'). The MS
-      // reference impl (@microsoft/agents-hosting StreamingResponse)
-      // exposes `queueInformativeUpdate()` for this; bots that skip it
-      // and call `queueTextChunk()` first hit the same regression.
-      // Regression discovered 2026-04-22 (kenan repro on Teams Windows
-      // client). Fix: bootstrap the stream with one informative activity
-      // before any `streaming` chunks.
+      // We choose one informative start request so thinking/progress can
+      // appear before answer streaming. The first request MUST omit id and
+      // streamId; after its 201 response, every continuation carries the
+      // exact server-owned streamId. Microsoft Learn also permits an initial
+      // `streaming` request, so the live 400 was not evidence that
+      // `informative` itself was wrong: botframework-connector@4.23.3 had
+      // stripped these extension fields from the wire payload entirely.
       //
-      // Why we use `_bootstrapSent` instead of `!_streamId`: the server
-      // response is not guaranteed to carry an `id` back. If we keyed
-      // off `!_streamId` and the response came back without an id,
-      // every subsequent chunk would also be sent as `informative` —
-      // and Teams rejects more than one informative per stream
-      // ("You can set only one informative message"). Tracking the
-      // bootstrap step separately avoids that failure mode.
+      // `_bootstrapSent` is separate from `_streamId`: a successful response
+      // with no usable id abandons streaming instead of retrying start frames
+      // or sending an illegal continuation without streamId.
       const isBootstrap = !this._bootstrapSent;
       const activity: Partial<TeamsActivity> = {
         type: 'typing',
@@ -675,7 +650,6 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
             this._streamId = id;
           } else {
             this.log.info('Teams streaming: bootstrap returned no streamId; degrading to a single plain message');
-            this._streamAbandoned = true;
             this._cancelled = true;
             this._bootstrapSent = true;
             this._lastSent = textToSend;
@@ -711,10 +685,18 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
           return;
         }
         if (msg.includes('ContentStreamNotAllowed')) {
-          // User paused / client disabled streaming. Stop sending,
-          // but allow `end()` to publish a final non-streaming message
-          // so the agent's reply still lands.
-          this.log.info('Teams streaming: client returned ContentStreamNotAllowed; degrading');
+          // Teams reuses this code for user Stop, feature denial, completed
+          // streams, timeouts, and oversize messages. Only an explicit user
+          // cancellation suppresses the final reply; the other variants
+          // degrade to a plain message so the answer is not lost.
+          const reason = wireDiag.reason ?? msg;
+          this._userCancelled = /cancel(?:l)?ed by user/i.test(reason);
+          this.log.info(
+            { userCancelled: this._userCancelled, reason },
+            this._userCancelled
+              ? 'Teams streaming: user stopped the response; suppressing final'
+              : 'Teams streaming: ContentStreamNotAllowed; degrading to plain message',
+          );
           this._cancelled = true;
           return;
         }
@@ -736,7 +718,11 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
         this._cancelled = true;
         return;
       }
-      if (this._delayInMs > 0 && this._pendingChunk) {
+      // Pace every successful streaming frame, even when no newer chunk is
+      // pending yet. Waiting only when `_pendingChunk` was already true left
+      // a hole: a chunk arriving just after the previous send resolved could
+      // be sent immediately and violate Teams' 1 request/sec limit.
+      if (this._delayInMs > 0) {
         await new Promise((r) => setTimeout(r, this._delayInMs));
       }
     }

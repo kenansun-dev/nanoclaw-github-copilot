@@ -13,6 +13,7 @@ import { TeamsStreamingSession, makeAdapterSender, type ActivitySender } from '.
 import { makeRelaySender } from './teams-outbound-sender.js';
 import { TeamsRelayClient, type RelayInbound } from './teams-relay-client.js';
 import { expandHtmlLinks } from './teams-html.js';
+import { ensureTeamsConnectorEntitySerialization } from './teams-connector-serialization.js';
 
 // ---------------------------------------------------------------------------
 // Teams Channel — implements the same Channel interface as Telegram
@@ -219,6 +220,10 @@ export class TeamsChannel implements Channel {
     certThumbprint?: string,
     certPrivateKeyPath?: string,
   ) {
+    // botframework-connector@4.23.3 otherwise strips streamType,
+    // streamSequence, and streamId from Entity objects on the tunnel path.
+    ensureTeamsConnectorEntitySerialization();
+
     // Fail-fast contract check: `supportsNativeThinking=true` (set above)
     // requires the TeamsStreamingSession class to actually implement
     // `appendThinking` and `commitAnswer`. Without this guard, a future

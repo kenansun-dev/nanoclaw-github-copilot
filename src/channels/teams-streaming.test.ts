@@ -31,9 +31,9 @@ import {
  *  - Single in-flight: chunks queued during a slow send don't fire
  *    in parallel; the latest cumulative text wins.
  *  - Idempotency: end()/cancel() called twice are no-ops.
- *  - Error degradation: ContentStreamNotAllowed cancels; the
- *    "streaming api is not enabled" error switches to a single-final
- *    fallback so end() still publishes the agent's reply.
+ *  - Error classification: confirmed user Stop suppresses the final;
+ *    other ContentStreamNotAllowed variants and feature-disabled responses
+ *    degrade to one plain final so the reply is not lost.
  */
 
 function makeSender() {
@@ -76,10 +76,8 @@ describe('TeamsStreamingSession', () => {
     expect(first.type).toBe('typing');
     expect(first.text).toBe('hello');
     expect(first.entities?.[0].type).toBe('streaminfo');
-    // First activity is `informative` (start streaming) per Teams docs.
-    // Sending `streaming` as the first activity is rejected by the
-    // server ("Only start streaming and continue streaming types are
-    // allowed as a typing activity"). Regression 2026-04-22.
+    // This implementation chooses an informative progress bootstrap;
+    // Teams also permits an initial response-streaming update.
     expect(first.entities?.[0].streamType).toBe('informative');
     expect(first.entities?.[0].streamSequence).toBe(1);
 
@@ -109,9 +107,12 @@ describe('TeamsStreamingSession', () => {
     // 2026-08-04: streamId is SERVER-assigned. The bootstrap frame carries
     // NO streamId; the id returned by that first call is echoed on every
     // subsequent activity (per the Teams streaming REST contract).
+    expect(first.id).toBeUndefined();
     expect(first.entities?.[0].streamId).toBeUndefined();
     const serverId = second?.entities?.[0].streamId;
     expect(serverId).toBe('msg-1');
+    expect(second?.id).toBe(serverId);
+    expect(final.id).toBe(serverId);
     expect(final.entities?.[0].streamId).toBe(serverId);
   });
 
@@ -260,7 +261,7 @@ describe('TeamsStreamingSession', () => {
       if (activity.type === 'typing') {
         chunkCalled++;
         if (chunkCalled === 1) {
-          throw new Error('ContentStreamNotAllowed: user paused at client');
+          throw new Error('ContentStreamNotAllowed: streaming is not enabled for this conversation');
         }
       }
       return `msg-${calls.length}`;
@@ -289,10 +290,28 @@ describe('TeamsStreamingSession', () => {
     expect(typeof id).toBe('string');
   });
 
+  it('suppresses the final when Teams confirms that the user stopped streaming', async () => {
+    const calls: Array<Partial<TeamsActivity>> = [];
+    const sender: ActivitySender = async (activity) => {
+      calls.push(JSON.parse(JSON.stringify(activity)));
+      if (activity.type === 'typing') {
+        throw new Error('ContentStreamNotAllowed: Content stream was canceled by user.');
+      }
+      return `msg-${calls.length}`;
+    };
+    const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
+
+    await s.chunk('partial');
+    await new Promise((r) => setTimeout(r, 10));
+    expect(s.isCancelled()).toBe(false);
+    expect(await s.end('must not be posted after Stop')).toBeUndefined();
+    expect(calls.filter((c) => c.type === 'message')).toHaveLength(0);
+  });
+
   it('isCancelled() flips true after wire reject but stays false after explicit cancel (bug 2 dispatcher contract)', async () => {
     // The dispatcher distinguishes the two cases to decide whether to
-    // arm the coalesced-final fallback (bug 2). Wire reject (e.g.
-    // `ContentStreamNotAllowed`, `streaming api is not enabled`)
+    // arm the coalesced-final fallback (bug 2). Recoverable wire reject
+    // (e.g. non-user-stop `ContentStreamNotAllowed`, feature disabled)
     // → `isCancelled() === true` and subsequent finals must be
     // buffered + flushed as one bubble. Explicit dispatcher cancel
     // → `isCancelled() === false` (it's a normal turn boundary, not
@@ -302,7 +321,7 @@ describe('TeamsStreamingSession', () => {
       if (activity.type === 'typing') {
         chunkCalled++;
         if (chunkCalled === 1) {
-          throw new Error('ContentStreamNotAllowed: user paused at client');
+          throw new Error('ContentStreamNotAllowed: streaming is not enabled for this conversation');
         }
       }
       return `msg-${chunkCalled}`;
@@ -391,6 +410,42 @@ describe('TeamsStreamingSession', () => {
     expect(teams).toBeInstanceOf(TeamsStreamingSession);
     expect(generic).toBeInstanceOf(TeamsStreamingSession);
   });
+
+  it('paces later Teams chunks even when they arrive after the prior send completed', async () => {
+    vi.useFakeTimers();
+    const sentAt: number[] = [];
+    let nextId = 1;
+    const sender: ActivitySender = async () => {
+      sentAt.push(Date.now());
+      return `msg-${nextId++}`;
+    };
+    const s = new TeamsStreamingSession(sender, {
+      channelId: 'msteams',
+      log: silentLog,
+    });
+
+    await s.chunk('a');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sentAt).toHaveLength(1);
+
+    // The first wire call has resolved and there was no queued text at that
+    // instant. A later chunk must still wait out the 1500ms pacing window.
+    await vi.advanceTimersByTimeAsync(1000);
+    await s.chunk('ab');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sentAt).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(sentAt).toHaveLength(2);
+    expect(sentAt[1] - sentAt[0]).toBeGreaterThanOrEqual(1500);
+
+    const endPromise = s.end('abc');
+    await vi.runAllTimersAsync();
+    await endPromise;
+    expect(sentAt).toHaveLength(3);
+    expect(sentAt[2] - sentAt[1]).toBeGreaterThanOrEqual(1500);
+    vi.useRealTimers();
+  });
 });
 
 /**
@@ -400,19 +455,13 @@ describe('TeamsStreamingSession', () => {
  *   allowed as a typing activity" then "Only end streaming type is
  *   allowed as a message activity".
  *
- * Root causes (paired):
- *   1. First chunk used `streamType: 'streaming'` directly. Per Teams
- *      docs the first activity should be `informative` (start streaming);
- *      the server rejected our shape with the typing-activity error.
- *   2. Because (1) failed, no `streamId` was captured. The follow-up
- *      `final` message went out without `streamId`, which Teams rejected
- *      with the message-activity error — silently losing the agent's reply.
- *
- * Fix: bootstrap the stream with one informative activity; degrade the
- * final to plain non-streaming when no streamId was ever obtained.
+ * Current contract: the chosen informative bootstrap omits id/streamId,
+ * captures the server-owned id from the first response, and degrades to a
+ * plain final when the service returns no id. A transport-level test separately
+ * pins that Bot Framework preserves all streaminfo extension fields on wire.
  */
 describe('Teams streaming wire-protocol regression (2026-04-22)', () => {
-  it('first chunk is `informative` (start streaming), not `streaming`', async () => {
+  it('uses an informative bootstrap without a client-supplied streamId', async () => {
     const { calls, sender } = makeSender();
     const s = new TeamsStreamingSession(sender, {
       delayInMs: 0,
@@ -427,6 +476,7 @@ describe('Teams streaming wire-protocol regression (2026-04-22)', () => {
     expect(calls[0].entities?.[0].streamType).toBe('informative');
     // 2026-08-04: the start-streaming frame must NOT carry a streamId —
     // the Bot Connector *assigns* it and returns it in the 201 response.
+    expect(calls[0].id).toBeUndefined();
     expect(calls[0].entities?.[0].streamId).toBeUndefined();
   });
 
@@ -1066,9 +1116,8 @@ describe('A2: endFailed() delivery signal (2026-08-03 cursor-rollback source)', 
       throw new Error('hard wire failure');
     };
     const s = new TeamsStreamingSession(sender, { delayInMs: 0, log: silentLog });
-    // Drive end() directly so we hit final-frame → plain fallback →
-    // total-failure (streamId is minted at construction, so we skip the
-    // no-streamId branch).
+    // With no successful bootstrap, end() takes the plain-message path;
+    // the hard send failure must still mark the turn undelivered.
     await s.end('final answer text');
     expect(s.endFailed()).toBe(true);
   });
