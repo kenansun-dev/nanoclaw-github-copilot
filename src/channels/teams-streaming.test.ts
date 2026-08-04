@@ -75,7 +75,7 @@ describe('TeamsStreamingSession', () => {
 
     expect(first.type).toBe('typing');
     expect(first.text).toBe('hello');
-    expect(first.entities?.[0].type).toBe('streaminfo');
+    expect(first.entities?.[0].type).toBe('streamInfo');
     // First activity is `informative` (start streaming) per Teams docs.
     // Sending `streaming` as the first activity is rejected by the
     // server ("Only start streaming and continue streaming types are
@@ -106,15 +106,13 @@ describe('TeamsStreamingSession', () => {
     const second = calls.find((c, i) => i > 0 && c.type === 'typing') as Partial<TeamsActivity>;
     const final = calls[calls.length - 1];
 
-    // Bug 1 fix (2026-05-29): streamId is minted locally at construction
-    // (not learned from server response). It is the same UUID on every
-    // activity in the session. `id` on the activity itself is unrelated —
-    // the dispatcher does not learn it from anywhere.
-    const mintedId = first.entities?.[0].streamId;
-    expect(typeof mintedId).toBe('string');
-    expect(mintedId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(second?.entities?.[0].streamId).toBe(mintedId);
-    expect(final.entities?.[0].streamId).toBe(mintedId);
+    // 2026-08-04: streamId is SERVER-assigned. The bootstrap frame carries
+    // NO streamId; the id returned by that first call is echoed on every
+    // subsequent activity (per the Teams streaming REST contract).
+    expect(first.entities?.[0].streamId).toBeUndefined();
+    const serverId = second?.entities?.[0].streamId;
+    expect(serverId).toBe('msg-1');
+    expect(final.entities?.[0].streamId).toBe(serverId);
   });
 
   it('uses monotonically increasing streamSequence numbers', async () => {
@@ -427,10 +425,9 @@ describe('Teams streaming wire-protocol regression (2026-04-22)', () => {
     expect(calls.length).toBeGreaterThanOrEqual(1);
     expect(calls[0].type).toBe('typing');
     expect(calls[0].entities?.[0].streamType).toBe('informative');
-    // Bug 1 fix (2026-05-29): streamId is minted locally at construction
-    // so the first activity DOES carry it (previously the test asserted
-    // undefined because the impl waited for the server to assign one).
-    expect(calls[0].entities?.[0].streamId).toMatch(/^[0-9a-f-]{36}$/);
+    // 2026-08-04: the start-streaming frame must NOT carry a streamId —
+    // the Bot Connector *assigns* it and returns it in the 201 response.
+    expect(calls[0].entities?.[0].streamId).toBeUndefined();
   });
 
   it('subsequent chunks switch to `streaming` once streamId is bound', async () => {
@@ -450,13 +447,16 @@ describe('Teams streaming wire-protocol regression (2026-04-22)', () => {
     const typings = calls.filter((c) => c.type === 'typing');
     expect(typings.length).toBeGreaterThanOrEqual(2);
     expect(typings[0].entities?.[0].streamType).toBe('informative');
-    const mintedId = typings[0].entities?.[0].streamId;
-    expect(typeof mintedId).toBe('string');
+    // Bootstrap carries no streamId; the server-assigned id from its
+    // response is echoed on every later frame.
+    expect(typings[0].entities?.[0].streamId).toBeUndefined();
+    const serverId = typings[1].entities?.[0].streamId;
+    expect(serverId).toBe('msg-1');
     // All later typing activities are `streaming` and carry the same
-    // locally-minted streamId.
+    // server-assigned streamId.
     for (let i = 1; i < typings.length; i++) {
       expect(typings[i].entities?.[0].streamType).toBe('streaming');
-      expect(typings[i].entities?.[0].streamId).toBe(mintedId);
+      expect(typings[i].entities?.[0].streamId).toBe(serverId);
     }
   });
 
@@ -512,20 +512,17 @@ describe('Teams streaming wire-protocol regression (2026-04-22)', () => {
     const final = calls[calls.length - 1];
     expect(final.type).toBe('message');
     expect(final.entities?.[0].streamType).toBe('final');
-    // CRITICAL: Teams server rejects final without streamId. Bug 1 fix
-    // (2026-05-29) mints it locally so the final always has one.
-    expect(final.entities?.[0].streamId).toMatch(/^[0-9a-f-]{36}$/);
+    // CRITICAL: Teams rejects a final without streamId. The id is the one
+    // the server assigned on the bootstrap response.
+    expect(final.entities?.[0].streamId).toBe('msg-1');
   });
 
-  it('only ONE informative activity even if server returns no id (no infinite informative loop)', async () => {
-    // Hardening for issue caught in 2026-04-22 self-audit:
-    //   If we keyed the bootstrap-vs-continuation decision off `!_streamId`
-    //   AND the server response carried no `id`, every subsequent chunk
-    //   would also be sent as `streamType: 'informative'`. Teams
-    //   rejects more than one informative message per stream
-    //   ("You can set only one informative message"), so this would
-    //   silently break long streams whenever the channel happens to
-    //   not return an id. We track bootstrap separately to avoid this.
+  it('abandons the stream when the bootstrap response carries no id', async () => {
+    // 2026-08-04: streamId is server-assigned. If the bootstrap is accepted
+    // but returns no id, we cannot legally send continuation frames (they
+    // require streamId). Fabricating one locally was the 2026-05-29 bug that
+    // produced 400 BadSyntax on every turn. Correct behaviour: stop
+    // streaming after the bootstrap and let end() publish one plain message.
     const calls: Array<Partial<TeamsActivity>> = [];
     const sender: ActivitySender = async (activity) => {
       calls.push(JSON.parse(JSON.stringify(activity)));
@@ -545,14 +542,18 @@ describe('Teams streaming wire-protocol regression (2026-04-22)', () => {
     await new Promise((r) => setTimeout(r, 5));
 
     const typings = calls.filter((c) => c.type === 'typing');
-    expect(typings.length).toBeGreaterThanOrEqual(2);
-    // Exactly one informative activity — the bootstrap.
-    const informatives = typings.filter((c) => c.entities?.[0].streamType === 'informative');
-    expect(informatives.length).toBe(1);
-    // All subsequent chunks must be `streaming`, not informative.
-    for (let i = 1; i < typings.length; i++) {
-      expect(typings[i].entities?.[0].streamType).toBe('streaming');
-    }
+    // Exactly one typing frame: the bootstrap. No continuation frames are
+    // sent because we never received a streamId to put on them.
+    expect(typings.length).toBe(1);
+    expect(typings[0].entities?.[0].streamType).toBe('informative');
+    expect(typings[0].entities?.[0].streamId).toBeUndefined();
+
+    // The reply still lands, as a single plain (non-streaming) message.
+    await s.end('abc');
+    const last = calls[calls.length - 1];
+    expect(last.type).toBe('message');
+    expect(last.text).toBe('abc');
+    expect(last.entities).toBeUndefined();
   });
 });
 
@@ -999,22 +1000,29 @@ describe('B5: end-path delivery-outcome instrumentation (2026-08-03)', () => {
     // Every send rejects → final frame fails, last-ditch plain also fails.
     // B5 must emit endPath=total-failure delivered=false carrying the
     // server reason (so an error-only log shows the drop + why).
+    //
+    // 2026-08-04: streamId is server-assigned, so this branch is only
+    // reachable once a bootstrap actually returned an id. Accept the first
+    // (bootstrap) frame to bind one, then reject everything after it.
+    let sent = 0;
     const sender: ActivitySender = async (activity) => {
+      void activity;
+      sent += 1;
+      if (sent === 1) return 'stream-1';
       const err: any = new Error('Only end streaming type is allowed as a message activity');
       err.statusCode = 400;
       err.response = {
         bodyAsText: '{"error":{"code":"BadArgument","message":"Only end streaming type is allowed"}}',
         parsedBody: { error: { code: 'BadArgument', message: 'Only end streaming type is allowed' } },
       };
-      void activity;
       throw err;
     };
     const { log, error } = capturingLog();
     const s = new TeamsStreamingSession(sender, { delayInMs: 0, log });
-    // Prime a streamId (chunk bootstrap will also reject, flipping
-    // _cancelled → end() takes the cancelled-early-degrade path). To
-    // exercise the final-frame → total-failure branch we drive end()
-    // directly on a session whose stream is still "live".
+    // Bootstrap binds the server-assigned streamId so the stream is "live";
+    // end() then takes the final-frame → plain-fallback → total-failure path.
+    await s.chunk('a');
+    await new Promise((r) => setTimeout(r, 5));
     await s.end('final answer text');
     const drop = error.find((l) => l.data?.endPath === 'total-failure' || l.data?.delivered === false);
     expect(drop).toBeDefined();

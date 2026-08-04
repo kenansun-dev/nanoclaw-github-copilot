@@ -17,14 +17,14 @@
  *
  * Wire protocol summary:
  *   1. The FIRST activity is a `typing` activity carrying a
- *      `streaminfo` entity with `streamType:'informative'` (the
+ *      `streamInfo` entity with `streamType:'informative'` (the
  *      "start streaming" bootstrap). The Teams server returns the
  *      `streamId` on this response. Sending `streaming` as the very
  *      first activity is rejected by the server with
  *      "Only start streaming and continue streaming types are allowed
  *       as a typing activity".
  *   2. Each subsequent in-flight chunk is a `typing` activity carrying
- *      a `streaminfo` entity with `streamType:'streaming'` and a
+ *      a `streamInfo` entity with `streamType:'streaming'` and a
  *      monotonically increasing `streamSequence`. These activities set
  *      `id = streamId` and include `streamId` on the first entity.
  *      Teams uses this to render all updates in a single bubble
@@ -208,15 +208,32 @@ export interface TeamsStreamingOpts {
  * `end` and `cancel` are idempotent.
  */
 export class TeamsStreamingSession implements NativeThinkingStreamHandle {
-  // Bug 1 fix (2026-05-29): mint streamId locally at session construction
-  // instead of waiting for the server's sendActivity response. Bot
-  // Connector treats typing activities as fire-and-forget and frequently
-  // returns no id, leaving `_streamId` undefined; `_stampStreamId` then
-  // early-returns, continuation chunks ship without a streamId entity,
-  // and the server rejects them ("Only start streaming and continue
-  // streaming types are allowed as a typing activity"). MS reference
-  // implementations mint client-side for the same reason.
-  private _streamId: string = randomUUID();
+  // 2026-08-04: `streamId` is SERVER-assigned, not client-minted.
+  //
+  // Per learn.microsoft.com/microsoftteams/platform/bots/streaming-ux the
+  // start-streaming frame carries NO streamId; the Bot Connector answers
+  // `201 {"id":"a-0000l"}` and that id must be echoed as `streamId` on
+  // every subsequent frame ("streamId from the initial streaming request").
+  //
+  // The previous "Bug 1 fix" (2026-05-29) minted a local randomUUID() and
+  // stamped it onto the bootstrap frame, then deliberately discarded the
+  // server's response id. That inverted the protocol: we asserted an id the
+  // service never issued. It went unnoticed because the sibling bug in this
+  // same commit (entity `type: 'streaminfo'` instead of the spec's
+  // `streamInfo`) meant the server never parsed the entity at all, so the
+  // bogus id was invisible. Fixing the casing alone would have surfaced this
+  // as the next 400, so both are corrected together.
+  //
+  // undefined until the bootstrap response arrives. If the service returns
+  // no id we cannot legally continue the stream, so `_streamAbandoned`
+  // flips and end() degrades to a single plain message.
+  private _streamId: string | undefined;
+  /**
+   * Set when the bootstrap frame was accepted but carried no usable id.
+   * Continuing without a server streamId is a protocol violation, so we
+   * stop streaming and let `end()` publish one plain message instead.
+   */
+  private _streamAbandoned = false;
   /**
    * True once the bootstrap (`streamType: 'informative'`) activity has
    * been sent. Tracked separately from `_streamId` because the server
@@ -388,7 +405,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
     // Wire-level cancel (ContentStreamNotAllowed / generic send failure)
     // OR channel-rejected streaming: degrade to a single non-streaming
     // `message` activity so the agent's final reply still lands. We strip
-    // streaminfo entities since they only make sense inside an active
+    // streamInfo entities since they only make sense inside an active
     // stream.
     if (this._cancelled || !this._isStreamingChannel) {
       try {
@@ -476,7 +493,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
       text: finalText,
       entities: [
         {
-          type: 'streaminfo',
+          type: 'streamInfo',
           streamType: 'final',
         },
       ],
@@ -629,7 +646,7 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
         text: textToSend,
         entities: [
           {
-            type: 'streaminfo',
+            type: 'streamInfo',
             streamType: isBootstrap ? 'informative' : 'streaming',
             streamSequence: this._nextSequence++,
           },
@@ -638,10 +655,26 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
       this._stampStreamId(activity);
       try {
         const id = await this._sendWithTimeout(activity);
-        // We no longer need to backfill `_streamId` from the response —
-        // it was minted at construction. The response id is ignored on
-        // purpose so subsequent chunks always stamp the same value.
-        void id;
+        // The bootstrap (start-streaming) call is the ONLY one that yields a
+        // streamId: the Bot Connector answers 201 {"id":"a-0000l"} and every
+        // later frame must echo it back. Capture it here.
+        //
+        // If the service accepted the bootstrap but returned no id we cannot
+        // legally send continuation frames (they would omit the required
+        // streamId). Rather than fabricate one — the 2026-05-29 mistake —
+        // abandon the stream so end() degrades to a single plain message.
+        if (isBootstrap) {
+          if (typeof id === 'string' && id.length > 0) {
+            this._streamId = id;
+          } else {
+            this.log.info('Teams streaming: bootstrap returned no streamId; degrading to a single plain message');
+            this._streamAbandoned = true;
+            this._cancelled = true;
+            this._bootstrapSent = true;
+            this._lastSent = textToSend;
+            return;
+          }
+        }
         this._bootstrapSent = true;
         this._lastSent = textToSend;
       } catch (err: any) {
@@ -737,11 +770,13 @@ export class TeamsStreamingSession implements NativeThinkingStreamHandle {
    * carry it.
    */
   private _stampStreamId(activity: Partial<TeamsActivity>): void {
-    // `_streamId` is always set (locally minted at construction); no
-    // guard required. Kept method for the entity-shape contract.
+    // No-op until the bootstrap response supplies an id: the start-streaming
+    // frame must NOT carry a streamId (the id is *returned* by that call).
+    // Every later frame must carry it.
+    if (!this._streamId) return;
     activity.id = this._streamId;
     if (!activity.entities) activity.entities = [];
-    if (!activity.entities[0]) activity.entities[0] = { type: 'streaminfo' };
+    if (!activity.entities[0]) activity.entities[0] = { type: 'streamInfo' };
     activity.entities[0].streamId = this._streamId;
   }
 
