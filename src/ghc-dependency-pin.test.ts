@@ -17,11 +17,16 @@ interface PackageLock {
 describe('GitHub Copilot SDK/CLI dependency pin', () => {
   it('keeps the Bun Docker install and published package in sync', () => {
     const bunLock = fs.readFileSync('container/agent-runner/bun.lock', 'utf8');
+    const dockerfile = fs.readFileSync('container/Dockerfile', 'utf8');
     const rootPackage = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
     expect(bunLock).toContain(`"@github/copilot-sdk": "${EXPECTED_SDK_VERSION}"`);
     expect(bunLock).toContain(`"@github/copilot": "${EXPECTED_CLI_VERSION}"`);
     expect(rootPackage.files).toContain('container/agent-runner/bun.lock');
+    expect(dockerfile).toMatch(/ARG PNPM_VERSION=\d+\.\d+\.\d+/);
+    expect(dockerfile).toContain('ENV PATH="$PNPM_HOME/bin:$PNPM_HOME:$PATH"');
+    expect(dockerfile).toContain('npm install -g "pnpm@${PNPM_VERSION}"');
+    expect(dockerfile).toContain("-name 'agent-browser-linux-*' -exec chmod 0755 {} +");
   });
 
   for (const runner of RUNNERS) {
