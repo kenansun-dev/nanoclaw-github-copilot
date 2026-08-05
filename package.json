@@ -97,6 +97,7 @@
     "container/agent-runner-ghc/src/",
     "container/agent-runner-ghc/tsconfig.json",
     "container/agent-runner/dist/",
+    "container/agent-runner/bun.lock",
     "container/agent-runner/package-lock.json",
     "container/agent-runner/package.json",
     "container/agent-runner/src/",

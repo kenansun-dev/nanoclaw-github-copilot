@@ -15,6 +15,15 @@ interface PackageLock {
 }
 
 describe('GitHub Copilot SDK/CLI dependency pin', () => {
+  it('keeps the Bun Docker install and published package in sync', () => {
+    const bunLock = fs.readFileSync('container/agent-runner/bun.lock', 'utf8');
+    const rootPackage = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+
+    expect(bunLock).toContain(`"@github/copilot-sdk": "${EXPECTED_SDK_VERSION}"`);
+    expect(bunLock).toContain(`"@github/copilot": "${EXPECTED_CLI_VERSION}"`);
+    expect(rootPackage.files).toContain('container/agent-runner/bun.lock');
+  });
+
   for (const runner of RUNNERS) {
     it(`${runner} resolves one reproducible SDK/CLI version`, () => {
       const packageJson = JSON.parse(fs.readFileSync(path.join(runner, 'package.json'), 'utf8'));
