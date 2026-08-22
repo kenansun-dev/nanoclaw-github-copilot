@@ -14,6 +14,81 @@ import { COMMANDS } from '../slash-commands.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const TEAMS_MANIFEST_VERSION = '1.30';
+const TEAMS_COMMANDS_PER_LIST = 12;
+
+interface TeamsManifestCommand {
+  title: string;
+  description: string;
+}
+
+/**
+ * Build the manifest JSON independently from ZIP/file I/O so the command
+ * surface and schema constraints can be regression-tested.
+ */
+export function buildTeamsManifest(appId: string, botName: string, now = new Date()): Record<string, any> {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const yymmdd = `${pad(now.getFullYear() % 100)}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+  const hhmmss = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  // Strip leading zeros so Teams accepts each semver segment as a plain int.
+  const appVersion = `0.${parseInt(yymmdd, 10)}.${parseInt(hhmmss, 10)}`;
+
+  const commands: TeamsManifestCommand[] = COMMANDS.map((command) => {
+    const description = command.description + (command.args ? ` (${command.args})` : '');
+    return {
+      // Teams adds the slash in the compose UI; manifest command titles do
+      // not include it (Microsoft's examples use e.g. "summarize").
+      title: command.name,
+      description: description.length > 128 ? description.slice(0, 125) + '…' : description,
+    };
+  });
+
+  // Schema 1.30 permits at most 12 commands per commandList and 3 lists.
+  // Balance the commands across the minimum number of lists so the current
+  // 15-command surface becomes 8 + 7 and future additions remain valid up to
+  // the schema-wide maximum of 36 commands.
+  const listCount = Math.ceil(commands.length / TEAMS_COMMANDS_PER_LIST);
+  if (listCount > 3) {
+    throw new Error(`Teams manifest supports at most 36 slash commands; got ${commands.length}`);
+  }
+  const commandsPerList = Math.ceil(commands.length / listCount);
+  const commandLists = Array.from({ length: listCount }, (_, index) => ({
+    scopes: ['personal', 'team', 'groupChat'],
+    triggers: ['slash'],
+    commands: commands.slice(index * commandsPerList, (index + 1) * commandsPerList),
+  }));
+
+  return {
+    $schema: `https://developer.microsoft.com/en-us/json-schemas/teams/v${TEAMS_MANIFEST_VERSION}/MicrosoftTeams.schema.json`,
+    manifestVersion: TEAMS_MANIFEST_VERSION,
+    version: appVersion,
+    id: appId,
+    developer: {
+      name: 'NanoClaw',
+      websiteUrl: 'https://github.com/kenans/nanoclaw-github-copilot',
+      privacyUrl: 'https://github.com/kenans/nanoclaw-github-copilot',
+      termsOfUseUrl: 'https://github.com/kenans/nanoclaw-github-copilot',
+    },
+    name: { short: botName, full: `${botName} AI Assistant` },
+    description: {
+      short: 'AI Assistant powered by NanoClaw',
+      full: 'NanoClaw AI Assistant - runs agents securely.',
+    },
+    icons: { outline: 'outline.png', color: 'color.png' },
+    accentColor: '#4F46E5',
+    bots: [
+      {
+        botId: appId,
+        scopes: ['personal', 'team', 'groupChat'],
+        supportsFiles: true,
+        isNotificationOnly: false,
+        supportsTargetedMessages: true,
+        commandLists,
+      },
+    ],
+  };
+}
+
 /**
  * Generate a simple solid-color PNG image.
  * Returns a Buffer with a valid PNG file.
@@ -175,61 +250,7 @@ export async function setupManifest(appId: string, botName: string): Promise<str
   // Format: 0.<YYMMDD>.<HHMMSS> — human-readable, always monotonically increasing,
   // starts with 0 (not 1) per kenan. Teams requires MAJOR.MINOR.PATCH with each
   // segment ≤ 32 bits (max 4294967295), YYMMDD/HHMMSS both fit.
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const yymmdd = `${pad(d.getFullYear() % 100)}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
-  const hhmmss = `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-  // Strip leading zeros so Teams doesn't reject (segments must be plain ints).
-  const manifestVersion = `0.${parseInt(yymmdd, 10)}.${parseInt(hhmmss, 10)}`;
-
-  const manifest = {
-    $schema: 'https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json',
-    manifestVersion: '1.17',
-    version: manifestVersion,
-    id: appId,
-    developer: {
-      name: 'NanoClaw',
-      websiteUrl: 'https://github.com/kenans/nanoclaw-github-copilot',
-      privacyUrl: 'https://github.com/kenans/nanoclaw-github-copilot',
-      termsOfUseUrl: 'https://github.com/kenans/nanoclaw-github-copilot',
-    },
-    name: { short: botName, full: `${botName} AI Assistant` },
-    description: {
-      short: 'AI Assistant powered by NanoClaw',
-      full: 'NanoClaw AI Assistant - runs agents securely.',
-    },
-    icons: { outline: 'outline.png', color: 'color.png' },
-    accentColor: '#4F46E5',
-    bots: [
-      {
-        botId: appId,
-        scopes: ['personal', 'team', 'groupChat'],
-        supportsFiles: true,
-        isNotificationOnly: false,
-        // Single source of truth (kenan 2026-05-18): derive command list
-        // from the canonical `COMMANDS` registry + the two Telegram-style
-        // utility commands (chatid/ping) that live as bot-side handlers
-        // (mirror of `registerTelegramCommands` in src/slash-commands.ts).
-        // Teams `commandList.commands[].description` max 128 chars.
-        commandLists: [
-          {
-            scopes: ['personal'],
-            commands: [
-              { title: '/chatid', description: 'Get this chat registration ID' },
-              { title: '/ping', description: 'Check if bot is online' },
-              ...COMMANDS.map((c) => {
-                const desc = c.description + (c.args ? ` (${c.args})` : '');
-                return {
-                  title: `/${c.name}`,
-                  description: desc.length > 128 ? desc.slice(0, 125) + '…' : desc,
-                };
-              }),
-            ],
-          },
-        ],
-      },
-    ],
-  };
+  const manifest = buildTeamsManifest(appId, botName);
 
   // Icons: use custom icons from workspace if available, otherwise generate placeholders
   const wsPaths = paths;
@@ -269,6 +290,10 @@ export async function setupManifest(appId: string, botName: string): Promise<str
   console.log('    1. Open Teams → Apps → Manage your apps → Upload a custom app');
   console.log(`    2. Select ${zipPath}`);
   console.log('    3. Add the bot to a chat or team');
+  console.log('');
+  console.log('  ⚠️  Slash commands opt the bot into targeted messages.');
+  console.log('     Test this package in a personal chat first. Do not enable it in shared');
+  console.log('     team/group chats until targeted replies are verified to stay private.');
   console.log('');
 
   return zipPath;

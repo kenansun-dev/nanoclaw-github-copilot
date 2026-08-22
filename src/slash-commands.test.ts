@@ -139,6 +139,20 @@ describe('handleSlashCommand', () => {
     expect(ctx.clearSession).toHaveBeenCalledWith('test-group');
   });
 
+  it('/chatid sends the channel-qualified registration id', async () => {
+    const ctx = makeCtx();
+    const result = await handleSlashCommand('/chatid', ctx);
+    expect(result.handled).toBe(true);
+    expect(ctx.channel!.sendMessage).toHaveBeenCalledWith('tg:123', 'Chat ID: `tg:123`');
+  });
+
+  it('/ping responds without an agent round-trip', async () => {
+    const ctx = makeCtx();
+    const result = await handleSlashCommand('/ping', ctx);
+    expect(result.handled).toBe(true);
+    expect(ctx.channel!.sendMessage).toHaveBeenCalledWith('tg:123', expect.stringContaining('is online.'));
+  });
+
   it('/help sends help text and returns handled', async () => {
     const ctx = makeCtx();
     const result = await handleSlashCommand('/help', ctx);
@@ -832,14 +846,13 @@ describe('registerTelegramCommands', () => {
     expect(url).toContain('api.telegram.org/botfake-token-123/setMyCommands');
     expect(opts.method).toBe('POST');
 
-    // Body should contain command definitions: tg-only (chatid, ping) +
-    // every entry in COMMANDS. Assert both surfaces to lock the contract.
+    // Body should mirror every entry in the canonical COMMANDS registry.
     const body = JSON.parse(opts.body);
     expect(body.commands).toBeDefined();
     expect(body.commands.length).toBeGreaterThanOrEqual(3);
     const names = body.commands.map((c: { command: string }) => c.command);
-    expect(names).toContain('chatid'); // tg-only utility, not in COMMANDS
-    expect(names).toContain('ping'); // tg-only utility, not in COMMANDS
+    expect(names).toContain('chatid');
+    expect(names).toContain('ping');
     expect(names).toContain('help'); // from COMMANDS
     expect(names).toContain('status'); // from COMMANDS
 
