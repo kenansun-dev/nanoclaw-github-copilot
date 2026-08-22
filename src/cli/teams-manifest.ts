@@ -14,7 +14,7 @@ import { COMMANDS } from '../slash-commands.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const TEAMS_MANIFEST_VERSION = '1.29';
+const TEAMS_MANIFEST_VERSION = '1.30';
 const TEAMS_COMMANDS_PER_LIST = 12;
 
 interface TeamsManifestCommand {
@@ -37,13 +37,13 @@ export function buildTeamsManifest(appId: string, botName: string, now = new Dat
     const description = command.description + (command.args ? ` (${command.args})` : '');
     return {
       // Teams adds the slash in the compose UI; manifest command titles do
-      // not include it (Microsoft's 1.29 examples use e.g. "summarize").
+      // not include it (Microsoft's examples use e.g. "summarize").
       title: command.name,
       description: description.length > 128 ? description.slice(0, 125) + '…' : description,
     };
   });
 
-  // Schema 1.29 permits at most 12 commands per commandList and 3 lists.
+  // Schema 1.30 permits at most 12 commands per commandList and 3 lists.
   // Balance the commands across the minimum number of lists so the current
   // 15-command surface becomes 8 + 7 and future additions remain valid up to
   // the schema-wide maximum of 36 commands.
@@ -290,6 +290,10 @@ export async function setupManifest(appId: string, botName: string): Promise<str
   console.log('    1. Open Teams → Apps → Manage your apps → Upload a custom app');
   console.log(`    2. Select ${zipPath}`);
   console.log('    3. Add the bot to a chat or team');
+  console.log('');
+  console.log('  ⚠️  Slash commands opt the bot into targeted messages.');
+  console.log('     Test this package in a personal chat first. Do not enable it in shared');
+  console.log('     team/group chats until targeted replies are verified to stay private.');
   console.log('');
 
   return zipPath;

@@ -7,11 +7,11 @@ describe('Teams manifest native slash commands', () => {
   const manifest = buildTeamsManifest(appId, 'Andy', new Date(2026, 7, 4, 23, 59, 1));
   const bot = manifest.bots[0];
 
-  it('uses schema 1.29 and opts in to targeted messages', () => {
+  it('uses schema 1.30 and opts in to targeted messages', () => {
     expect(manifest.$schema).toBe(
-      'https://developer.microsoft.com/en-us/json-schemas/teams/v1.29/MicrosoftTeams.schema.json',
+      'https://developer.microsoft.com/en-us/json-schemas/teams/v1.30/MicrosoftTeams.schema.json',
     );
-    expect(manifest.manifestVersion).toBe('1.29');
+    expect(manifest.manifestVersion).toBe('1.30');
     expect(manifest.version).toBe('0.260804.235901');
     expect(bot.supportsTargetedMessages).toBe(true);
   });
