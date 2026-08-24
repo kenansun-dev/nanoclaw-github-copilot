@@ -435,7 +435,8 @@ export async function runHostAgent(
   // the runner starts, so neither runner needs access to host credentials.
   try {
     const { prepareMcpRuntimeConfig } = await import('./mcp-runtime-config.js');
-    const runtimeMcpConfig = await prepareMcpRuntimeConfig(sessionDir, onMcpAuthPrompt);
+    const runtimeDir = path.join(ws, 'runtime', 'mcp', group.folder, sessionDirName);
+    const runtimeMcpConfig = await prepareMcpRuntimeConfig(runtimeDir, onMcpAuthPrompt);
     if (runtimeMcpConfig) env.NANOCLAW_MCP_CONFIG = runtimeMcpConfig;
   } catch (err) {
     logger.warn(

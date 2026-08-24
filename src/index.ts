@@ -1665,8 +1665,8 @@ async function startMessageLoop(): Promise<void> {
               ]);
             const runtimeMcpConfig = path.join(
               resolveWorkspace(),
-              'data',
-              'sessions',
+              'runtime',
+              'mcp',
               group.folder,
               resolveSessionDir(chatJid),
               'mcp.json',

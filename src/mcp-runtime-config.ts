@@ -12,11 +12,11 @@ import { paths as wsPaths } from './workspace.js';
  * Tokens stay in a per-session host file and are mounted read-only in sandbox.
  */
 function loadMergedMcpServers(): Record<string, any> {
-  const configuredServers = getConfig().mcp?.servers || {};
+  const configuredServers = structuredClone(getConfig().mcp?.servers || {});
   let mcpJson: Record<string, any> = {};
   if (fs.existsSync(wsPaths.mcpConfig)) {
     try {
-      mcpJson = JSON.parse(fs.readFileSync(wsPaths.mcpConfig, 'utf-8')) as Record<string, any>;
+      mcpJson = structuredClone(JSON.parse(fs.readFileSync(wsPaths.mcpConfig, 'utf-8')) as Record<string, any>);
     } catch (err) {
       logger.warn(
         { err: err instanceof Error ? err.message : String(err) },
@@ -61,6 +61,12 @@ export async function prepareMcpRuntimeConfig(
         servers[name].headers = { ...(servers[name].headers || {}), ...authHeaders };
       }
       for (const [name, error] of Object.entries(errors)) {
+        const serverHeaders = servers[name]?.headers;
+        if (serverHeaders) {
+          for (const key of Object.keys(serverHeaders)) {
+            if (key.toLowerCase() === 'authorization') delete serverHeaders[key];
+          }
+        }
         logger.warn({ server: name }, `MCP auth: ${error}`);
       }
     } catch (err) {
@@ -71,9 +77,24 @@ export async function prepareMcpRuntimeConfig(
     }
   }
 
-  fs.mkdirSync(outputDir, { recursive: true });
+  fs.mkdirSync(outputDir, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') fs.chmodSync(outputDir, 0o700);
   const runtimePath = path.join(outputDir, 'mcp.json');
-  fs.writeFileSync(runtimePath, JSON.stringify({ mcpServers: servers }, null, 2), { mode: 0o600 });
-  fs.chmodSync(runtimePath, 0o600);
+  const tempPath = path.join(outputDir, `.mcp-${process.pid}-${Date.now()}.tmp`);
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify({ mcpServers: servers }, null, 2), {
+      mode: 0o600,
+      flag: 'wx',
+    });
+    fs.renameSync(tempPath, runtimePath);
+    if (process.platform !== 'win32') fs.chmodSync(runtimePath, 0o600);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch {
+      /* best effort */
+    }
+    throw err;
+  }
   return runtimePath;
 }

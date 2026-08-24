@@ -323,9 +323,14 @@ export async function runQuery(opts: QueryOptions): Promise<ContainerOutput> {
     env.NANOCLAW_SKILLS_DIR = containerSkills;
   }
 
-  // MCP
-  if (fs.existsSync(wsPaths.mcpConfig)) {
-    env.NANOCLAW_MCP_CONFIG = wsPaths.mcpConfig;
+  // MCP — prepare the same merged/authenticated runtime config as daemon mode.
+  try {
+    const { prepareMcpRuntimeConfig } = await import('../mcp-runtime-config.js');
+    const runtimeDir = path.join(resolveWorkspace(), 'runtime', 'mcp', opts.groupFolder, 'tui-local');
+    const runtimeConfig = await prepareMcpRuntimeConfig(runtimeDir, (message) => console.log(`\n${message}\n`));
+    if (runtimeConfig) env.NANOCLAW_MCP_CONFIG = runtimeConfig;
+  } catch {
+    // Keep TUI usable without optional MCP configuration.
   }
 
   // Resolve runner command: prefer tsx (dev), fall back to node + compiled JS (global install)
@@ -569,6 +574,15 @@ export async function runSandboxQuery(opts: QueryOptions): Promise<ContainerOutp
       }
     };
 
+    let runtimeMcpConfig: string | undefined;
+    try {
+      const { prepareMcpRuntimeConfig } = await import('../mcp-runtime-config.js');
+      const runtimeDir = path.join(resolveWorkspace(), 'runtime', 'mcp', opts.groupFolder, 'tui-local');
+      runtimeMcpConfig = await prepareMcpRuntimeConfig(runtimeDir, (message) => console.log(`\n${message}\n`));
+    } catch {
+      // Keep TUI usable without optional MCP configuration.
+    }
+
     const output = await runContainerAgent(
       group,
       input,
@@ -579,6 +593,7 @@ export async function runSandboxQuery(opts: QueryOptions): Promise<ContainerOutp
         lastOutput = out;
         if (shouldWriteCloseSentinel(closeState, out)) writeCloseSentinel();
       },
+      runtimeMcpConfig,
     );
 
     clearInterval(spinTimer);

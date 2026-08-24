@@ -428,8 +428,8 @@ export async function runAgentForChat(
   let runtimeMcpConfig: string | undefined;
   try {
     const { prepareMcpRuntimeConfig } = await import('./mcp-runtime-config.js');
-    const sessionDir = path.join(resolveWorkspace(), 'data', 'sessions', group.folder, resolveSessionDir(chatJid));
-    runtimeMcpConfig = await prepareMcpRuntimeConfig(sessionDir, onMcpAuthPrompt);
+    const runtimeDir = path.join(resolveWorkspace(), 'runtime', 'mcp', group.folder, resolveSessionDir(chatJid));
+    runtimeMcpConfig = await prepareMcpRuntimeConfig(runtimeDir, onMcpAuthPrompt);
   } catch {
     // Container runner keeps its existing no-MCP fallback when preparation fails.
   }
