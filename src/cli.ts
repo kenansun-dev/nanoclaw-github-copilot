@@ -989,6 +989,7 @@ Sandbox
 Tunnel
 
 MCP
+  mcp auth <server>                 Authenticate an Azure-protected MCP server
   mcp list                          List configured MCP servers
   mcp add <name> <url>              Add remote MCP server
   mcp remove <name>                 Remove MCP server
@@ -1004,6 +1005,17 @@ async function runMcp(args: string[]) {
   const sub = args[0];
 
   switch (sub) {
+    case 'auth': {
+      const server = args[1];
+      if (!server) {
+        console.error('Usage: nanoclaw mcp auth <server-name>');
+        process.exitCode = 1;
+        break;
+      }
+      const { testMcpAuth } = await import('./mcp-azure-auth.js');
+      await testMcpAuth(server);
+      break;
+    }
     case undefined:
     case 'list': {
       // Parity with `claude mcp` / `gh copilot mcp list` and the `/mcp`
@@ -1079,9 +1091,10 @@ async function runMcp(args: string[]) {
       break;
     }
     default:
-      console.log(`Usage: nanoclaw mcp <list|add|remove> [args]
+      console.log(`Usage: nanoclaw mcp <auth|list|add|remove> [args]
 
 Commands:
+  auth <server>         Authenticate an Azure-protected MCP server
   list                  List configured MCP servers
   add <name> <url>      Add a remote MCP server
   remove <name>         Remove an MCP server`);

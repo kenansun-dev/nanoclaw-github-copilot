@@ -165,7 +165,12 @@ export function parseHostCopilotConfig(raw: string): Record<string, unknown> {
   return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
 }
 
-function buildVolumeMounts(group: RegisteredGroup, isDefaultAgent: boolean, chatJid?: string): VolumeMount[] {
+function buildVolumeMounts(
+  group: RegisteredGroup,
+  isDefaultAgent: boolean,
+  chatJid?: string,
+  mcpConfigOverride?: string,
+): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const sessionDir = resolveSessionDir(chatJid);
   const projectRoot = PACKAGE_ROOT;
@@ -307,7 +312,7 @@ function buildVolumeMounts(group: RegisteredGroup, isDefaultAgent: boolean, chat
   });
 
   // Provider-specific mounts (GHC: skills, mcp.json)
-  mounts.push(...buildProviderMounts(chatJid));
+  mounts.push(...buildProviderMounts(chatJid, mcpConfigOverride));
 
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
@@ -450,13 +455,14 @@ export async function runContainerAgent(
   input: ContainerInput,
   onProcess: (proc: ChildProcess, containerName: string) => void,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  runtimeMcpConfig?: string,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(group, input.isDefaultAgent, input.chatJid);
+  const mounts = buildVolumeMounts(group, input.isDefaultAgent, input.chatJid, runtimeMcpConfig);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
   const containerArgs = buildContainerArgs(mounts, containerName, input.chatJid, input.triggeringUserId);

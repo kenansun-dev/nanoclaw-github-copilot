@@ -707,6 +707,19 @@ describe('GroupQueue', () => {
       return { proc };
     }
 
+    it('recycles an idle agent before a new turn when MCP auth needs refresh', () => {
+      const state = (queue as any).getGroup('refresh@g.us');
+      const proc = { pid: undefined, exitCode: null, killed: false, kill: vi.fn() } as any;
+      state.active = true;
+      state.idleWaiting = true;
+      state.groupFolder = 'refresh-folder';
+      state.process = proc;
+
+      expect(queue.recycleIdleForAuthRefresh('refresh@g.us')).toBe(true);
+      expect(state.pendingMessages).toBe(true);
+      expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+    });
+
     it('fires onProcessDiedWithoutOutput with rollback cursor when piped agent dies idle', async () => {
       const callback = vi.fn();
       queue.setOnProcessDiedWithoutOutput(callback);

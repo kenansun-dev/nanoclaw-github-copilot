@@ -130,11 +130,10 @@ For remote MCP servers that require Azure AD (Entra ID) authentication, add an `
 **Token acquisition priority:**
 1. Cached valid token (`~/.nanoclaw/credentials/mcp-tokens.json`)
 2. Refresh token (automatic renewal)
-3. `az account get-access-token` (if `az` CLI installed and logged in)
-4. `az login --use-device-code` (output returned to agent/user)
-5. Built-in device code flow (fallback when `az` not installed)
+3. `az account get-access-token` (POSIX only, if `az` CLI is already logged in)
+4. NanoClaw's built-in device code flow (prompt sent to the triggering owner's private DM; token cached for all chats)
 
-Test auth: `node -e "import('./dist/mcp-azure-auth.js').then(m => m.testMcpAuth('devbox'))"`
+Token resolution runs before a host or sandbox agent process starts. Before piping a new turn into an idle long-lived agent, NanoClaw recycles it when an Azure token is missing or within five minutes of expiry, so the fresh process refreshes and reinjects the header. `nanoclaw mcp auth devbox` can pre-authenticate explicitly. Scheduled tasks never post device codes into their target channel; pre-authenticate them with the CLI or trigger auth from an owner chat.
 
 ### chats
 

@@ -301,6 +301,7 @@ export async function runHostAgent(
   input: ContainerInput,
   onProcess: (proc: ChildProcess, name: string) => void,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  onMcpAuthPrompt?: (message: string) => void | Promise<void>,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
   const agent = resolveAgentForChat(input.chatJid);
@@ -429,55 +430,18 @@ export async function runHostAgent(
     env.NANOCLAW_SKILLS_DIR = containerSkills;
   }
 
-  // MCP config — resolve Azure AD tokens for remote servers
-  // Read from both mcp.json AND nanoclaw.json mcp.servers (merged by config-loader)
-  const mergedMcpServers = getConfig().mcp?.servers || {};
-  const hasMcpConfig = fs.existsSync(wsPaths.mcpConfig) || Object.keys(mergedMcpServers).length > 0;
-  if (hasMcpConfig) {
-    try {
-      // Start with mcp.json if it exists, then overlay nanoclaw.json servers
-      let mcpJson: any = {};
-      if (fs.existsSync(wsPaths.mcpConfig)) {
-        mcpJson = JSON.parse(fs.readFileSync(wsPaths.mcpConfig, 'utf-8'));
-      }
-      const servers = {
-        ...(mcpJson.mcpServers || mcpJson),
-        ...mergedMcpServers,
-      };
-      const hasAzureAuth = Object.values(servers).some((s: any) => s.auth?.provider === 'azure');
-      if (hasAzureAuth) {
-        const { resolveAllMcpTokens } = await import('./mcp-azure-auth.js');
-        const { headers: authHeaders, errors } = await resolveAllMcpTokens(servers);
-        // Inject auth headers into server configs
-        for (const [name, hdrs] of Object.entries(authHeaders)) {
-          if (servers[name]) {
-            servers[name].headers = {
-              ...(servers[name].headers || {}),
-              ...hdrs,
-            };
-          }
-        }
-        // Log errors for servers that need auth but couldn't get tokens
-        for (const [name, err] of Object.entries(errors)) {
-          logger.warn({ server: name }, `MCP auth: ${err}`);
-        }
-        // Write augmented config to session dir
-        const augmentedPath = path.join(sessionDir, 'mcp.json');
-        fs.writeFileSync(augmentedPath, JSON.stringify({ mcpServers: servers }, null, 2));
-        env.NANOCLAW_MCP_CONFIG = augmentedPath;
-      } else {
-        // No azure auth needed, but still write merged config
-        const augmentedPath = path.join(sessionDir, 'mcp.json');
-        fs.writeFileSync(augmentedPath, JSON.stringify({ mcpServers: servers }, null, 2));
-        env.NANOCLAW_MCP_CONFIG = augmentedPath;
-      }
-    } catch (err) {
-      logger.warn(
-        { err: err instanceof Error ? err.message : String(err) },
-        'MCP auth resolution failed, using original config',
-      );
-      env.NANOCLAW_MCP_CONFIG = wsPaths.mcpConfig;
-    }
+  // MCP config — one shared host-side preparation path for host and sandbox.
+  // It merges workspace + nanoclaw.json servers and injects Azure tokens before
+  // the runner starts, so neither runner needs access to host credentials.
+  try {
+    const { prepareMcpRuntimeConfig } = await import('./mcp-runtime-config.js');
+    const runtimeMcpConfig = await prepareMcpRuntimeConfig(sessionDir, onMcpAuthPrompt);
+    if (runtimeMcpConfig) env.NANOCLAW_MCP_CONFIG = runtimeMcpConfig;
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      'MCP runtime config preparation failed; continuing without MCP config',
+    );
   }
 
   // Plugin directories — collect from 3 sources:

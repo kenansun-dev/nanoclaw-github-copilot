@@ -388,6 +388,21 @@ export class GroupQueue {
     state.idleWaiting = true;
   }
 
+  /**
+   * Recycle an idle long-lived agent before piping a new turn when its
+   * process-scoped MCP Authorization header is near expiry. The message is
+   * still unread in the DB; case1 exit cleanup drains it into a fresh process.
+   */
+  recycleIdleForAuthRefresh(groupJid: string): boolean {
+    const state = this.getGroup(groupJid);
+    const proc = state.process;
+    if (!state.active || !state.idleWaiting || !proc || proc.exitCode !== null || proc.killed) return false;
+    state.pendingMessages = true;
+    logger.info({ groupJid, pid: proc.pid }, 'Recycling idle agent for MCP auth refresh');
+    this.killProcess(proc, 'SIGTERM');
+    return true;
+  }
+
   sendMessage(groupJid: string, text: string, rollbackCursor?: string): boolean {
     const state = this.getGroup(groupJid);
     // Note: chat slot's isTaskContainer is structurally always false post-§4.1.A
