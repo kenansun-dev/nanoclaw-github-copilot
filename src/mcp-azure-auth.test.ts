@@ -297,6 +297,35 @@ describe('mcp-azure-auth coordination and prompt safety', () => {
     expect(httpsRequestMock).toHaveBeenCalledTimes(2);
   });
 
+  it('does not let a concurrent background acquisition suppress an owner device-code flow', async () => {
+    execSyncMock.mockImplementation(() => {
+      throw new Error('not logged in');
+    });
+    enqueueHttpsResponse({
+      device_code: 'device-code-owner-after-background',
+      user_code: 'OWNER-CODE',
+      verification_uri: 'https://microsoft.com/devicelogin',
+      expires_in: 60,
+      interval: 0.001,
+    });
+    enqueueHttpsResponse({
+      access_token: 'owner-token-after-background',
+      refresh_token: 'owner-refresh-after-background',
+      expires_in: 3600,
+    });
+    const prompts: string[] = [];
+
+    const background = getAzureToken('prodicm', AUTH);
+    const owner = getAzureToken('prodicm', AUTH, (prompt) => prompts.push(prompt));
+    const [backgroundResult, ownerResult] = await Promise.all([background, owner]);
+
+    expect(backgroundResult.token).toBeNull();
+    expect(ownerResult).toEqual({ token: 'owner-token-after-background', method: 'device-code' });
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain('OWNER-CODE');
+    expect(httpsRequestMock).toHaveBeenCalledTimes(2);
+  });
+
   it('fails closed when the private prompt cannot be delivered', async () => {
     execSyncMock.mockImplementation(() => {
       throw new Error('not logged in');

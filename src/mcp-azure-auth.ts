@@ -98,7 +98,11 @@ export function getAzureToken(
   const resource = authConfig.resource;
   const tenantId = authConfig.tenantId || 'organizations';
   const scope = authConfig.scope || `${resource}/.default`;
-  const acquisitionKey = JSON.stringify([serverName, resource, tenantId, scope]);
+  // Interactive and background callers must not share the same acquisition.
+  // A scheduled task has no safe place to display a device code and therefore
+  // returns a non-interactive result. If an owner message arrives in the same
+  // tick, joining that promise would suppress the owner's device-code flow.
+  const acquisitionKey = JSON.stringify([serverName, resource, tenantId, scope, Boolean(onAuthPrompt)]);
   const existing = tokenAcquisitions.get(acquisitionKey);
   if (existing) return existing;
 
