@@ -287,7 +287,7 @@ export interface VolumeMount {
  * - All providers: plugin directories from 3 sources (workspace, ~/.copilot, ~/.claude).
  *   CC consumes via additionalDirectories; GHC consumes via --plugin-dir.
  */
-export function buildProviderMounts(chatJid?: string): VolumeMount[] {
+export function buildProviderMounts(chatJid?: string, mcpConfigOverride?: string): VolumeMount[] {
   const agent = chatJid ? resolveAgentForChat(chatJid) : undefined;
   const agentIsGHC = agent ? isAgentGHC(agent) : IS_GHC_PROVIDER;
 
@@ -309,7 +309,7 @@ export function buildProviderMounts(chatJid?: string): VolumeMount[] {
   // mcp.json: mount for both CC and GHC sandbox so user remote MCP servers
   // work in sandbox mode. Host-mode reads mcp.json directly via host-runner's
   // NANOCLAW_MCP_CONFIG env (with auth tokens resolved).
-  const mcpConfig = path.join(ws, 'mcp.json');
+  const mcpConfig = mcpConfigOverride || path.join(ws, 'mcp.json');
   if (fs.existsSync(mcpConfig)) {
     mounts.push({
       hostPath: mcpConfig,
@@ -402,6 +402,7 @@ async function getHostRunner() {
 type RunnerGroup = Parameters<typeof runContainerAgent>[0];
 type OnProcess = (proc: ChildProcess, name: string) => void;
 type OnOutput = (output: ContainerOutput) => Promise<void>;
+type OnMcpAuthPrompt = (message: string) => void | Promise<void>;
 
 export async function runAgentForChat(
   chatJid: string,
@@ -409,6 +410,7 @@ export async function runAgentForChat(
   input: ContainerInput,
   onProcess: OnProcess,
   onOutput?: OnOutput,
+  onMcpAuthPrompt?: OnMcpAuthPrompt,
 ): Promise<ContainerOutput> {
   const agent = resolveAgentForChat(chatJid);
   // Enrich input with agent-specific overrides
@@ -420,7 +422,16 @@ export async function runAgentForChat(
   };
   if (agent.mode === 'host') {
     const { runHostAgent } = await getHostRunner();
-    return runHostAgent(group, enrichedInput, onProcess, onOutput);
+    return runHostAgent(group, enrichedInput, onProcess, onOutput, onMcpAuthPrompt);
   }
-  return runContainerAgent(group, enrichedInput, onProcess, onOutput);
+
+  let runtimeMcpConfig: string | undefined;
+  try {
+    const { prepareMcpRuntimeConfig } = await import('./mcp-runtime-config.js');
+    const runtimeDir = path.join(resolveWorkspace(), 'runtime', 'mcp', group.folder, resolveSessionDir(chatJid));
+    runtimeMcpConfig = await prepareMcpRuntimeConfig(runtimeDir, onMcpAuthPrompt);
+  } catch {
+    // Container runner keeps its existing no-MCP fallback when preparation fails.
+  }
+  return runContainerAgent(group, enrichedInput, onProcess, onOutput, runtimeMcpConfig);
 }

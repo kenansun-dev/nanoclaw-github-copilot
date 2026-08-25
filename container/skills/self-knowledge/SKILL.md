@@ -226,9 +226,7 @@ Remote MCP servers that require Azure AD authentication can be configured with a
 }
 ```
 
-Token acquisition: cached token → refresh → `az account get-access-token` → `az login --use-device-code` → built-in device code flow.
-
-If auth is needed and the user hasn't logged in, the agent will receive a `loginPrompt` with instructions to guide the user.
+Token acquisition at agent-process start: cached token → refresh → reuse an existing Azure CLI token on POSIX → NanoClaw's built-in device code flow. If sign-in is needed during an interactive owner turn, NanoClaw sends the code to that owner's private DM, waits, then caches the token globally for all chats; the user does not need to run `az login`. Scheduled tasks do not publish device codes into their target channels. Before a new turn, an idle long-lived agent is recycled when its Azure token is missing or near expiry so a fresh header is injected.
 
 ## Plugin system
 

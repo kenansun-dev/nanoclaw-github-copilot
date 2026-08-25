@@ -1419,6 +1419,21 @@ async function runAgent(
       },
       (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
+      triggeringUserId && isOwner(triggeringUserId)
+        ? async (message) => {
+            // Device codes bind a globally cached MCP identity. Never post
+            // them into the originating group: resolve the triggering owner
+            // to a private DM and fail closed if private delivery is unavailable.
+            const [{ ensureUserDm }, { getDeliveryAdapter }] = await Promise.all([
+              import('./modules/permissions/user-dm.js'),
+              import('./delivery.js'),
+            ]);
+            const dm = await ensureUserDm(triggeringUserId);
+            const adapter = getDeliveryAdapter();
+            if (!dm || !adapter) throw new Error('No private owner DM available for MCP authentication');
+            await adapter.deliver(dm.channel_type, dm.platform_id, null, 'chat-sdk', JSON.stringify({ text: message }));
+          }
+        : undefined,
     );
 
     if (output.newSessionId) {
@@ -1636,6 +1651,36 @@ async function startMessageLoop(): Promise<void> {
           // these messages are silently lost — they're already past the
           // cursor when the next agent spawn drains the DB.
           const cursorBeforePipe = lastAgentTimestamp[chatJid] || '';
+
+          // Host/sandbox runners inject MCP Authorization headers at process
+          // start. Before reusing an idle long-lived agent, recycle it when a
+          // configured Azure token is missing or within five minutes of expiry;
+          // the unread DB message is then handled by a fresh authenticated process.
+          try {
+            const [{ configuredMcpAzureTokensNeedRefresh }, { resolveWorkspace }, { resolveSessionDir }] =
+              await Promise.all([
+                import('./mcp-runtime-config.js'),
+                import('./workspace.js'),
+                import('./config-extensions.js'),
+              ]);
+            const runtimeMcpConfig = path.join(
+              resolveWorkspace(),
+              'runtime',
+              'mcp',
+              group.folder,
+              resolveSessionDir(chatJid),
+              'mcp.json',
+            );
+            if (
+              (await configuredMcpAzureTokensNeedRefresh(runtimeMcpConfig)) &&
+              queue.recycleIdleForAuthRefresh(chatJid)
+            ) {
+              continue;
+            }
+          } catch (err) {
+            logger.warn({ chatJid, err }, 'MCP auth freshness check failed; keeping current agent');
+          }
+
           if (queue.sendMessage(chatJid, fullPrompt, cursorBeforePipe)) {
             logger.debug({ chatJid, count: messagesToSend.length }, 'Piped messages to active container');
             lastAgentTimestamp[chatJid] = messagesToSend[messagesToSend.length - 1].timestamp;

@@ -190,6 +190,32 @@ describe('buildProviderMounts', () => {
     }
   });
 
+  it('prefers a prepared runtime MCP config in sandbox mode', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const pathMod = await import('node:path');
+    const { buildProviderMounts } = await import('./config-extensions.js');
+
+    const tmpRoot = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'nc-runtime-mcp-mount-'));
+    const runtimeConfig = pathMod.join(tmpRoot, 'mcp.json');
+    fs.writeFileSync(
+      runtimeConfig,
+      JSON.stringify({ mcpServers: { secured: { headers: { Authorization: 'Bearer x' } } } }),
+    );
+
+    try {
+      const mounts = buildProviderMounts(undefined, runtimeConfig);
+      const mcpMount = mounts.find((m) => m.containerPath === '/workspace/mcp.json');
+      expect(mcpMount).toEqual({
+        hostPath: runtimeConfig,
+        containerPath: '/workspace/mcp.json',
+        readonly: true,
+      });
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
   it('mounts plugins for both CC and GHC providers', async () => {
     const fs = await import('node:fs');
     const os = await import('node:os');
