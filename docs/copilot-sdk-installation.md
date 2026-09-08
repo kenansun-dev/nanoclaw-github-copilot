@@ -69,3 +69,38 @@ with `useLoggedInUser: false`, an isolated home/base directory, `mode: 'empty'`,
 no available tools, and external networking blocked. Session creation and
 stop without sending any prompt are not inference validation. Other operating
 systems and architectures still require native CI/host smoke coverage.
+
+## Plugin directory limit
+
+Both runners resolve existing `NANOCLAW_PLUGIN_DIRS` entries to absolute paths
+(relative to the runner's working directory) and deduplicate the resolved paths
+in first-seen order. Empty and nonexistent entries are ignored as before.
+The SDK's `plugins.builtin.set` accepts at most **64** roots and replaces the
+complete set; repeated batches are **not** additive.
+
+When there are more than 64 unique roots, only the **first 64** are registered
+with the SDK. Startup logs a warning with the total count, skipped count and
+all skipped paths. **Native plugin features beyond 64 are not loaded.** The
+existing `loadPluginAgents` fallback still scans **all** normalized roots for
+`agents/*.md` (including skipped roots), with its existing agent-name deduplication;
+this does not restore other native plugin features.
+
+Reduce `NANOCLAW_PLUGIN_DIRS` (PATH-separated: `:` on Unix, `;` on Windows), or
+reduce the host's discovered plugin set, to 64 or fewer unique roots for full
+native loading. Reordering puts the most important roots first but does not
+remove the limit. Resolution is lexical (`path.resolve`), not symlink realpath
+canonicalization.
+
+Regression checks (no install or packaging lifecycle):
+
+```sh
+node node_modules/vitest/vitest.mjs run src/ghc-plugin-directories.test.ts src/ghc-sdk-options.test.ts
+# Optional Linux native startup boundary probe, after compiling both runners:
+node scripts/test-plugin-directories.mjs
+```
+
+The native probe requires `unshare --user --map-root-user --net`. It fails if
+network isolation is unavailable; it never falls back to an online run. It uses
+an empty allowlisted environment and temporary HOME, no credentials, no prompts
+and no inference. Both runner SDKs must start with the bounded options for
+64/65 input roots; the raw 65-root control must fail with the native limit error.

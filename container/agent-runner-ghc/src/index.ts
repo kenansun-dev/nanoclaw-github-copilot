@@ -19,6 +19,7 @@ import { CopilotClient, approveAll, type CopilotClientOptions } from '@github/co
 import { fileURLToPath } from 'url';
 import { isSessionNotFoundError } from './session-recovery.js';
 import { loadPluginAgents } from './load-plugin-agents.js';
+import { resolvePluginDirectories } from './plugin-directories.js';
 import { makeIpcHelpers } from './ipc-helpers.js';
 
 interface ContainerInput {
@@ -353,15 +354,8 @@ async function main(): Promise<void> {
   //
   // For the workaround itself we walk the same dirs ourselves and turn each
   // plugin's agents/*.md into customAgents in the SessionConfig below.
-  const pluginDirs: string[] = [];
-  if (process.env.NANOCLAW_PLUGIN_DIRS) {
-    for (const dir of process.env.NANOCLAW_PLUGIN_DIRS.split(path.delimiter)) {
-      if (dir && fs.existsSync(dir)) {
-        pluginDirs.push(dir);
-        log(`Plugin directory: ${dir}`);
-      }
-    }
-  }
+  const { pluginDirs, builtinPluginDirectories } = resolvePluginDirectories(process.env.NANOCLAW_PLUGIN_DIRS, log);
+  for (const dir of pluginDirs) log(`Plugin directory: ${dir}`);
 
   const pluginCustomAgents = loadPluginAgents(pluginDirs, {
     onWarn: (msg) => log(msg),
@@ -376,7 +370,7 @@ async function main(): Promise<void> {
 
   const clientOpts: CopilotClientOptions = {};
   if (githubToken) clientOpts.gitHubToken = githubToken;
-  if (pluginDirs.length > 0) clientOpts.builtinPluginDirectories = pluginDirs;
+  if (builtinPluginDirectories.length > 0) clientOpts.builtinPluginDirectories = builtinPluginDirectories;
 
   const client = new CopilotClient(clientOpts);
 

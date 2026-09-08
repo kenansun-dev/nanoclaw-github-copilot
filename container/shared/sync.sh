@@ -19,6 +19,7 @@ declare -a TARGETS=(
 # Files to sync (basename only; will be copied into each TARGET dir).
 declare -a FILES=(
   "memory-tools.ts"
+  "plugin-directories.ts"
 )
 
 for target in "${TARGETS[@]}"; do

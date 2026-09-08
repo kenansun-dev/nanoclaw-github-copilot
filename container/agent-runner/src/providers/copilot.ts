@@ -24,12 +24,12 @@
  */
 
 import fs from 'fs';
-import path from 'path';
 import { randomUUID } from 'crypto';
 
 import { CopilotClient, approveAll, type CopilotClientOptions } from '@github/copilot-sdk';
 
 import { loadPluginAgents } from './load-plugin-agents.js';
+import { resolvePluginDirectories } from '../plugin-directories.js';
 import { registerProvider } from './provider-registry.js';
 import type { AgentProvider, AgentQuery, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
 
@@ -50,13 +50,6 @@ function resolveModel(env: Record<string, string | undefined>): string {
   let model = env.COPILOT_MODEL || 'claude-sonnet-4';
   if (model.includes('/')) model = model.split('/').slice(1).join('/');
   return model;
-}
-
-/** Resolve plugin dirs from `NANOCLAW_PLUGIN_DIRS` (PATH-style separator). */
-function resolvePluginDirs(env: Record<string, string | undefined>): string[] {
-  const raw = env.NANOCLAW_PLUGIN_DIRS;
-  if (!raw) return [];
-  return raw.split(path.delimiter).filter((d) => d && fs.existsSync(d));
 }
 
 /**
@@ -117,23 +110,24 @@ class CopilotAgentProvider implements AgentProvider {
 
   private readonly env: Record<string, string | undefined>;
   private readonly client: CopilotClient;
+  private readonly pluginDirs: string[];
 
   constructor(private readonly options: ProviderOptions) {
     this.env = options.env ?? process.env;
     const githubToken = resolveGithubToken(this.env);
-    const pluginDirs = resolvePluginDirs(this.env);
+    const { pluginDirs, builtinPluginDirectories } = resolvePluginDirectories(this.env.NANOCLAW_PLUGIN_DIRS, log);
+    this.pluginDirs = pluginDirs;
 
     const clientOpts: CopilotClientOptions = {};
     if (githubToken) clientOpts.gitHubToken = githubToken;
-    if (pluginDirs.length > 0) clientOpts.builtinPluginDirectories = pluginDirs;
+    if (builtinPluginDirectories.length > 0) clientOpts.builtinPluginDirectories = builtinPluginDirectories;
     this.client = new CopilotClient(clientOpts);
   }
 
   query(input: QueryInput): AgentQuery {
     // Workaround for GHC SDK 0.2.2 server-mode --plugin-dir gap: load
     // plugin agents ourselves and pass via SessionConfig.customAgents.
-    const pluginDirs = resolvePluginDirs(this.env);
-    const customAgents = loadPluginAgents(pluginDirs, {
+    const customAgents = loadPluginAgents(this.pluginDirs, {
       onWarn: (msg) => log(msg),
     });
     if (customAgents.length > 0) {
