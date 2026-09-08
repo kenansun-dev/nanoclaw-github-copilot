@@ -1,10 +1,10 @@
 /**
  * Minimal test: does GHC SDK session.send() maintain conversation turns?
- * 
+ *
  * Directly calls the SDK without nanoclaw's agent-runner.
  * Tests if a second send() on the same session has context from the first.
  */
-import { CopilotClient } from '@github/copilot-sdk';
+import { CopilotClient, approveAll } from '@github/copilot-sdk';
 
 async function test() {
   const token = process.env.COPILOT_GITHUB_TOKEN;
@@ -14,13 +14,13 @@ async function test() {
   }
 
   console.log('Creating client...');
-  const client = new CopilotClient({ token });
+  const client = new CopilotClient({ gitHubToken: token });
 
   console.log('Creating session...');
   const session = await client.createSession({
     model: 'gpt-4o-mini',
     sessionId: `test-turns-${Date.now()}`,
-    onPermissionRequest: async () => true,
+    onPermissionRequest: approveAll,
   });
 
   console.log(`Session: ${session.sessionId}`);

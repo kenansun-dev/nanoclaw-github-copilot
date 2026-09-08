@@ -15,10 +15,11 @@ import { randomUUID } from 'crypto';
 
 import fs from 'fs';
 import path from 'path';
-import { CopilotClient, approveAll } from '@github/copilot-sdk';
+import { CopilotClient, approveAll, type CopilotClientOptions } from '@github/copilot-sdk';
 import { fileURLToPath } from 'url';
 import { isSessionNotFoundError } from './session-recovery.js';
 import { loadPluginAgents } from './load-plugin-agents.js';
+import { resolvePluginDirectories } from './plugin-directories.js';
 import { makeIpcHelpers } from './ipc-helpers.js';
 
 interface ContainerInput {
@@ -347,24 +348,14 @@ async function main(): Promise<void> {
 
   // Plugin directories (passed from host-runner or set manually).
   //
-  // We pass `--plugin-dir` via cliArgs even though the SDK's server-mode
-  // currently drops it (verified upstream gap, GHC SDK 0.2.2 — see
-  // load-plugin-agents.ts). Keeping the flag costs nothing and lets us shed
-  // the workaround the moment upstream fixes it.
+  // Register plugin roots through the SDK's typed protocol API. Retain the
+  // custom-agent workaround verified for SDK 0.2.2 (see load-plugin-agents.ts);
+  // this dependency upgrade does not establish that the workaround is obsolete.
   //
   // For the workaround itself we walk the same dirs ourselves and turn each
   // plugin's agents/*.md into customAgents in the SessionConfig below.
-  const pluginDirs: string[] = [];
-  const pluginCliArgs: string[] = [];
-  if (process.env.NANOCLAW_PLUGIN_DIRS) {
-    for (const dir of process.env.NANOCLAW_PLUGIN_DIRS.split(path.delimiter)) {
-      if (dir && fs.existsSync(dir)) {
-        pluginDirs.push(dir);
-        pluginCliArgs.push('--plugin-dir', dir);
-        log(`Plugin directory: ${dir}`);
-      }
-    }
-  }
+  const { pluginDirs, builtinPluginDirectories } = resolvePluginDirectories(process.env.NANOCLAW_PLUGIN_DIRS, log);
+  for (const dir of pluginDirs) log(`Plugin directory: ${dir}`);
 
   const pluginCustomAgents = loadPluginAgents(pluginDirs, {
     onWarn: (msg) => log(msg),
@@ -377,9 +368,9 @@ async function main(): Promise<void> {
     );
   }
 
-  const clientOpts: any = {};
-  if (githubToken) clientOpts.githubToken = githubToken;
-  if (pluginCliArgs.length > 0) clientOpts.cliArgs = pluginCliArgs;
+  const clientOpts: CopilotClientOptions = {};
+  if (githubToken) clientOpts.gitHubToken = githubToken;
+  if (builtinPluginDirectories.length > 0) clientOpts.builtinPluginDirectories = builtinPluginDirectories;
 
   const client = new CopilotClient(clientOpts);
 
