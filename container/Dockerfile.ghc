@@ -31,7 +31,7 @@ ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Install agent-browser and Copilot CLI globally
-# Copilot CLI is required by @github/copilot-sdk (communicates via JSON-RPC)
+# Standalone CLI is for interactive tools; SDK 1.0.13 bundles its own pinned runtime.
 RUN npm install -g agent-browser @anthropic-ai/claude-code && \
     npm install -g @anthropic-ai/claude-code 2>/dev/null; \
     curl -fsSL https://copilot.github.com/install.sh | sh 2>/dev/null || true

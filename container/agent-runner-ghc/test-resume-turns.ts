@@ -1,17 +1,20 @@
 /**
  * Test: does GHC SDK resumeSession restore conversation turns across process restarts?
- * 
+ *
  * 1. Create session, send message, get reply, stop client
  * 2. Create NEW client, resumeSession with same ID
  * 3. Send follow-up — does model remember first message?
  */
-import { CopilotClient } from '@github/copilot-sdk';
+import { CopilotClient, approveAll } from '@github/copilot-sdk';
 
 const COPILOT_HOME = '/tmp/test-resume-turns';
 
 async function waitIdle(session: any): Promise<void> {
   return new Promise((resolve) => {
-    const unsub = session.on('session.idle' as any, () => { unsub(); resolve(); });
+    const unsub = session.on('session.idle' as any, () => {
+      unsub();
+      resolve();
+    });
   });
 }
 
@@ -28,7 +31,10 @@ async function getReply(session: any): Promise<string> {
 
 async function test() {
   const token = process.env.COPILOT_GITHUB_TOKEN;
-  if (!token) { console.error('Set COPILOT_GITHUB_TOKEN'); process.exit(1); }
+  if (!token) {
+    console.error('Set COPILOT_GITHUB_TOKEN');
+    process.exit(1);
+  }
 
   const fs = await import('fs');
   fs.mkdirSync(COPILOT_HOME, { recursive: true });
@@ -37,12 +43,12 @@ async function test() {
 
   // === PHASE 1: Create session, send message, stop ===
   console.log('=== PHASE 1: Create + send + stop ===');
-  const client1 = new CopilotClient({ token });
+  const client1 = new CopilotClient({ gitHubToken: token, baseDirectory: COPILOT_HOME });
   const session1 = await client1.createSession({
     model: 'gpt-4o-mini',
     sessionId,
-    configDir: COPILOT_HOME,
-    onPermissionRequest: async () => true,
+    workingDirectory: COPILOT_HOME,
+    onPermissionRequest: approveAll,
   });
   console.log(`Session created: ${session1.sessionId}`);
 
@@ -61,17 +67,17 @@ async function test() {
   console.log('Client 1 stopped.\n');
 
   // Wait a moment
-  await new Promise(r => setTimeout(r, 3000));
+  await new Promise((r) => setTimeout(r, 3000));
 
   // === PHASE 2: New client, resume session, ask follow-up ===
   console.log('=== PHASE 2: New client + resume + ask ===');
-  const client2 = new CopilotClient({ token });
+  const client2 = new CopilotClient({ gitHubToken: token, baseDirectory: COPILOT_HOME });
   let session2: any;
   try {
     session2 = await client2.resumeSession(sessionId, {
       model: 'gpt-4o-mini',
-      configDir: COPILOT_HOME,
-      onPermissionRequest: async () => true,
+      workingDirectory: COPILOT_HOME,
+      onPermissionRequest: approveAll,
     });
     console.log(`Session resumed: ${session2.sessionId}`);
   } catch (err: any) {
@@ -80,8 +86,8 @@ async function test() {
     session2 = await client2.createSession({
       model: 'gpt-4o-mini',
       sessionId: sessionId + '-retry',
-      configDir: COPILOT_HOME,
-      onPermissionRequest: async () => true,
+      workingDirectory: COPILOT_HOME,
+      onPermissionRequest: approveAll,
     });
   }
 
@@ -99,11 +105,14 @@ async function test() {
   console.log(`\n=== RESULT: resumeSession restores turns: ${remembered ? 'YES ✅' : 'NO ❌'} ===`);
 
   await client2.stop();
-  
+
   // Cleanup
   fs.rmSync(COPILOT_HOME, { recursive: true, force: true });
-  
+
   process.exit(remembered ? 0 : 1);
 }
 
-test().catch(err => { console.error('Error:', err); process.exit(1); });
+test().catch((err) => {
+  console.error('Error:', err);
+  process.exit(1);
+});

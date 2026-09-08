@@ -1,15 +1,13 @@
 /**
  * load-plugin-agents.ts
  *
- * Workaround for upstream GHC SDK gap (verified 2026-04-23 with @github/copilot-sdk 0.2.2):
- * the CLI accepts `--plugin-dir` and parses it, but in `--server --headless` mode
- * (the path the SDK uses) the parsed `pluginDir` value is dropped — only ACP and
- * interactive modes propagate it into `SessionManager.additionalPlugins`. Empirical
- * probe: a session created via `CopilotClient` with `cliArgs: ['--plugin-dir', X]`
- * returns `agent.list -> { agents: [] }` and `plugins.list -> { plugins: [] }`
- * even when X contains a valid plugin manifest with an `agents/` subdirectory.
+ * Workaround for an upstream GHC SDK gap originally verified on 0.2.2: the old
+ * `--plugin-dir` headless path did not expose plugin agents to sessions. SDK
+ * 1.0.13 now registers roots through typed `builtinPluginDirectories`; keep
+ * loading agents ourselves until an authenticated agent-list probe proves that
+ * native registration alone supplies equivalent custom-agent behavior.
  *
- * As a workaround, we read each plugin's `agents/*.md` files ourselves and build
+ * We read each plugin's `agents/*.md` files ourselves and build
  * `CustomAgentConfig[]` to pass through `SessionConfig.customAgents`. The SDK
  * supports this field directly.
  *
@@ -57,8 +55,7 @@ export function loadPluginAgents(
   for (const dir of pluginDirs) {
     if (!dir || !fs.existsSync(dir)) continue;
     const agentsDir = path.join(dir, 'agents');
-    if (!fs.existsSync(agentsDir) || !fs.statSync(agentsDir).isDirectory())
-      continue;
+    if (!fs.existsSync(agentsDir) || !fs.statSync(agentsDir).isDirectory()) continue;
 
     let entries: string[];
     try {
@@ -102,9 +99,7 @@ export function loadPluginAgents(
       }
 
       if (seen.has(name)) {
-        warn(
-          `load-plugin-agents: duplicate agent name "${name}" — keeping first, skipping ${filePath}`,
-        );
+        warn(`load-plugin-agents: duplicate agent name "${name}" — keeping first, skipping ${filePath}`);
         continue;
       }
       seen.add(name);
